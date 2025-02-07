@@ -1,0 +1,26 @@
+{
+  "name": "blender",
+  "version": "1.0.0",
+  "description": "<!--\r Keep this document short & concise,\r linking to external resources instead of including content in-line.\r See 'release/text/readme.html' for the end user read-me.\r -->",
+  "main": "index.js",
+  "directories": {
+    "doc": "doc",
+    "lib": "lib",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/teefisher2k20/blender.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/teefisher2k20/blender/issues"
+  },
+  "homepage": "https://github.com/teefisher2k20/blender#readme"
+}
