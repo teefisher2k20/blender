@@ -121,8 +121,8 @@ struct GizmoPlacementGroup {
 static void gizmo_placement_exec(GizmoPlacementGroup *ggd)
 {
   wmOperator *op = ggd->data.op;
-  if (op == WM_operator_last_redo((bContext *)ggd->data.context)) {
-    ED_undo_operator_repeat((bContext *)ggd->data.context, op);
+  if (op == WM_operator_last_redo(ggd->data.context)) {
+    ED_undo_operator_repeat(ggd->data.context, op);
   }
 }
 
@@ -149,7 +149,7 @@ static void gizmo_placement_prop_matrix_get(const wmGizmo *gz,
 
   if (value_p != ggd->cage->matrix_offset) {
     mul_m4_m4m4(
-        static_cast<float(*)[4]>(value_p), ggd->cage->matrix_basis, ggd->cage->matrix_offset);
+        static_cast<float (*)[4]>(value_p), ggd->cage->matrix_basis, ggd->cage->matrix_offset);
     RNA_property_float_get_array(op->ptr, ggd->data.prop_matrix, value);
   }
 }
@@ -165,7 +165,7 @@ static void gizmo_placement_prop_matrix_set(const wmGizmo *gz,
   UNUSED_VARS_NDEBUG(gz_prop);
 
   float mat[4][4];
-  mul_m4_m4m4(mat, ggd->cage->matrix_basis, static_cast<const float(*)[4]>(value));
+  mul_m4_m4m4(mat, ggd->cage->matrix_basis, static_cast<const float (*)[4]>(value));
 
   if (is_negative_m4(mat)) {
     negate_mat3_m4(mat);
@@ -235,8 +235,7 @@ static void gizmo_mesh_placement_setup(const bContext *C, wmGizmoGroup *gzgroup)
     return;
   }
 
-  GizmoPlacementGroup *ggd = static_cast<GizmoPlacementGroup *>(
-      MEM_callocN(sizeof(GizmoPlacementGroup), __func__));
+  GizmoPlacementGroup *ggd = MEM_callocN<GizmoPlacementGroup>(__func__);
   gzgroup->customdata = ggd;
 
   const wmGizmoType *gzt_cage = WM_gizmotype_find("GIZMO_GT_cage_3d", true);
@@ -275,7 +274,7 @@ static void gizmo_mesh_placement_draw_prepare(const bContext * /*C*/, wmGizmoGro
 {
   GizmoPlacementGroup *ggd = static_cast<GizmoPlacementGroup *>(gzgroup->customdata);
   if (ggd->data.op->next) {
-    ggd->data.op = WM_operator_last_redo((bContext *)ggd->data.context);
+    ggd->data.op = WM_operator_last_redo(ggd->data.context);
   }
   gizmo_mesh_placement_update_from_op(ggd);
 }
@@ -305,7 +304,7 @@ static void MESH_GGT_add_bounds(wmGizmoGroupType *gzgt)
  * and share the same BMesh creation code.
  * \{ */
 
-static int add_primitive_cube_gizmo_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus add_primitive_cube_gizmo_exec(bContext *C, wmOperator *op)
 {
   Object *obedit = CTX_data_edit_object(C);
   BMEditMesh *em = BKE_editmesh_from_object(obedit);
@@ -344,6 +343,9 @@ static int add_primitive_cube_gizmo_exec(bContext *C, wmOperator *op)
   }
 
   EDBM_selectmode_flush_ex(em, SCE_SELECT_VERTEX);
+  /* TODO(@ideasman42): maintain UV sync for newly created data. */
+  EDBM_uvselect_clear(em);
+
   EDBMUpdate_Params params{};
   params.calc_looptris = true;
   params.calc_normals = false;
@@ -353,11 +355,13 @@ static int add_primitive_cube_gizmo_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int add_primitive_cube_gizmo_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus add_primitive_cube_gizmo_invoke(bContext *C,
+                                                        wmOperator *op,
+                                                        const wmEvent * /*event*/)
 {
   View3D *v3d = CTX_wm_view3d(C);
 
-  int ret = add_primitive_cube_gizmo_exec(C, op);
+  wmOperatorStatus ret = add_primitive_cube_gizmo_exec(C, op);
   if (ret & OPERATOR_FINISHED) {
     /* Setup gizmos */
     if (v3d && ((v3d->gizmo_flag & V3D_GIZMO_HIDE) == 0)) {
@@ -379,7 +383,7 @@ void MESH_OT_primitive_cube_add_gizmo(wmOperatorType *ot)
   ot->description = "Construct a cube mesh";
   ot->idname = "MESH_OT_primitive_cube_add_gizmo";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = add_primitive_cube_gizmo_invoke;
   ot->exec = add_primitive_cube_gizmo_exec;
   ot->poll = ED_operator_editmesh_view3d;

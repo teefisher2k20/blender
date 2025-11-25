@@ -11,15 +11,15 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
-#include "BLI_kdtree.h"
+#include "BLI_kdtree.hh"
+#include "BLI_listbase.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
 #include "BLI_rand.h"
+#include "BLI_rect.h"
 #include "BLI_utildefines.h"
 
-#include "DNA_defs.h"
 #include "DNA_meta_types.h"
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
@@ -146,7 +146,7 @@ MetaElem *ED_mball_add_primitive(
  * \{ */
 
 /* Select or deselect all MetaElements */
-static int mball_select_all_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus mball_select_all_exec(bContext *C, wmOperator *op)
 {
   int action = RNA_enum_get(op->ptr, "action");
 
@@ -325,7 +325,7 @@ static bool mball_select_similar_type(Object *obedit,
   return changed;
 }
 
-static int mball_select_similar_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus mball_select_similar_exec(bContext *C, wmOperator *op)
 {
   const int type = RNA_enum_get(op->ptr, "type");
   const float thresh = RNA_float_get(op->ptr, "threshold");
@@ -455,7 +455,7 @@ void MBALL_OT_select_similar(wmOperatorType *ot)
 /** \name Select Random Operator
  * \{ */
 
-static int select_random_metaelems_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus select_random_metaelems_exec(bContext *C, wmOperator *op)
 {
   const bool select = (RNA_enum_get(op->ptr, "action") == SEL_SELECT);
   const float randfac = RNA_float_get(op->ptr, "ratio");
@@ -524,7 +524,7 @@ void MBALL_OT_select_random_metaelems(wmOperatorType *ot)
  * \{ */
 
 /* Duplicate selected MetaElements */
-static int duplicate_metaelems_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus duplicate_metaelems_exec(bContext *C, wmOperator * /*op*/)
 {
   const Scene *scene = CTX_data_scene(C);
   ViewLayer *view_layer = CTX_data_view_layer(C);
@@ -579,7 +579,7 @@ void MBALL_OT_duplicate_metaelems(wmOperatorType *ot)
  * Delete all selected MetaElems (not MetaBall).
  * \{ */
 
-static int delete_metaelems_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus delete_metaelems_exec(bContext *C, wmOperator * /*op*/)
 {
   const Scene *scene = CTX_data_scene(C);
   ViewLayer *view_layer = CTX_data_view_layer(C);
@@ -613,7 +613,9 @@ static int delete_metaelems_exec(bContext *C, wmOperator * /*op*/)
   return OPERATOR_FINISHED;
 }
 
-static int delete_metaelems_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus delete_metaelems_invoke(bContext *C,
+                                                wmOperator *op,
+                                                const wmEvent * /*event*/)
 {
   if (RNA_boolean_get(op->ptr, "confirm")) {
     return WM_operator_confirm_ex(C,
@@ -621,7 +623,7 @@ static int delete_metaelems_invoke(bContext *C, wmOperator *op, const wmEvent * 
                                   IFACE_("Delete selected metaball elements?"),
                                   nullptr,
                                   IFACE_("Delete"),
-                                  ALERT_ICON_NONE,
+                                  blender::ui::AlertIcon::None,
                                   false);
   }
   return delete_metaelems_exec(C, op);
@@ -650,7 +652,7 @@ void MBALL_OT_delete_metaelems(wmOperatorType *ot)
 /** \name Hide Meta-Elements Operator
  * \{ */
 
-static int hide_metaelems_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus hide_metaelems_exec(bContext *C, wmOperator *op)
 {
   Object *obedit = CTX_data_edit_object(C);
   MetaBall *mb = (MetaBall *)obedit->data;
@@ -698,7 +700,7 @@ void MBALL_OT_hide_metaelems(wmOperatorType *ot)
 /** \name Un-Hide Meta-Elements Operator
  * \{ */
 
-static int reveal_metaelems_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus reveal_metaelems_exec(bContext *C, wmOperator *op)
 {
   Object *obedit = CTX_data_edit_object(C);
   MetaBall *mb = (MetaBall *)obedit->data;
@@ -784,11 +786,11 @@ static bool ed_mball_findnearest_metaelem(bContext *C,
 
   BLI_rcti_init_pt_radius(&rect, mval, 12);
 
-  hits = view3d_opengl_select(&vc,
-                              &buffer,
-                              &rect,
-                              use_cycle ? VIEW3D_SELECT_PICK_ALL : VIEW3D_SELECT_PICK_NEAREST,
-                              VIEW3D_SELECT_FILTER_NOP);
+  hits = view3d_gpu_select(&vc,
+                           &buffer,
+                           &rect,
+                           use_cycle ? VIEW3D_SELECT_PICK_ALL : VIEW3D_SELECT_PICK_NEAREST,
+                           VIEW3D_SELECT_FILTER_NOP);
 
   if (hits == 0) {
     return false;
@@ -848,7 +850,7 @@ static bool ed_mball_findnearest_metaelem(bContext *C,
   return found;
 }
 
-bool ED_mball_select_pick(bContext *C, const int mval[2], const SelectPick_Params *params)
+bool ED_mball_select_pick(bContext *C, const int mval[2], const SelectPick_Params &params)
 {
   Base *base = nullptr;
   MetaElem *ml = nullptr;
@@ -858,11 +860,11 @@ bool ED_mball_select_pick(bContext *C, const int mval[2], const SelectPick_Param
 
   bool found = ed_mball_findnearest_metaelem(C, mval, true, &base, &ml, &selmask);
 
-  if (params->sel_op == SEL_OP_SET) {
-    if ((found && params->select_passthrough) && (ml->flag & SELECT)) {
+  if (params.sel_op == SEL_OP_SET) {
+    if ((found && params.select_passthrough) && (ml->flag & SELECT)) {
       found = false;
     }
-    else if (found || params->deselect_all) {
+    else if (found || params.deselect_all) {
       /* Deselect everything. */
       changed |= ED_mball_deselect_all_multi(C);
     }
@@ -876,7 +878,7 @@ bool ED_mball_select_pick(bContext *C, const int mval[2], const SelectPick_Param
       ml->flag &= ~MB_SCALE_RAD;
     }
 
-    switch (params->sel_op) {
+    switch (params.sel_op) {
       case SEL_OP_ADD: {
         ml->flag |= SELECT;
         break;

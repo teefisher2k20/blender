@@ -21,8 +21,6 @@
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
-#include "BLI_string.h"
-#include "BLI_utildefines.h"
 
 #include "BLT_translation.hh"
 
@@ -35,8 +33,6 @@
 #include "BKE_screen.hh"
 
 #include "DEG_depsgraph.hh"
-
-#include "UI_interface.hh"
 
 #include "ED_mesh.hh"
 #include "ED_screen.hh"
@@ -61,6 +57,8 @@
 using blender::Vector;
 
 /* ********************** smart stitch operator *********************** */
+
+namespace {
 
 /* object that stores display data for previewing before confirming stitching */
 struct StitchPreviewer {
@@ -233,13 +231,14 @@ struct StitchStateInit {
   UvElementID *to_select;
 };
 
+}  // namespace
+
 /* constructor */
 static StitchPreviewer *stitch_preview_init()
 {
   StitchPreviewer *stitch_preview;
 
-  stitch_preview = static_cast<StitchPreviewer *>(
-      MEM_mallocN(sizeof(StitchPreviewer), "stitch_previewer"));
+  stitch_preview = MEM_mallocN<StitchPreviewer>("stitch_previewer");
   stitch_preview->preview_polys = nullptr;
   stitch_preview->preview_stitchable = nullptr;
   stitch_preview->preview_unstitchable = nullptr;
@@ -274,8 +273,8 @@ static void stitch_preview_delete(StitchPreviewer *stitch_preview)
 static void stitch_update_header(StitchStateContainer *ssc, bContext *C)
 {
   WorkspaceStatus status(C);
-  status.item(IFACE_("Cancel"), ICON_EVENT_ESC);
   status.item(IFACE_("Confirm"), ICON_MOUSE_LMB);
+  status.item(IFACE_("Cancel"), ICON_EVENT_ESC);
   status.item(fmt::format("{} {}",
                           IFACE_("Select"),
                           (ssc->mode == STITCH_VERT ? IFACE_("Vertices") : IFACE_("Edges"))),
@@ -905,7 +904,7 @@ static void stitch_propagate_uv_final_position(Scene *scene,
   BMesh *bm = state->em->bm;
   StitchPreviewer *preview = state->stitch_preview;
 
-  const BMUVOffsets offsets = BM_uv_map_get_offsets(bm);
+  const BMUVOffsets offsets = BM_uv_map_offsets_get(bm);
 
   if (element->flag & STITCH_STITCHABLE) {
     UvElement *element_iter = element;
@@ -921,7 +920,7 @@ static void stitch_propagate_uv_final_position(Scene *scene,
       if (final) {
         copy_v2_v2(luv, final_position[index].uv);
 
-        uvedit_uv_select_enable(scene, state->em->bm, l, false, offsets);
+        uvedit_uv_select_enable(scene, state->em->bm, l);
       }
       else {
         int face_preview_pos =
@@ -983,8 +982,8 @@ static int stitch_process_data(StitchStateContainer *ssc,
     preview_position[i].data_position = STITCH_NO_PREVIEW;
   }
 
-  island_stitch_data = static_cast<IslandStitchData *>(MEM_callocN(
-      sizeof(*island_stitch_data) * state->element_map->total_islands, "stitch_island_data"));
+  island_stitch_data = MEM_calloc_arrayN<IslandStitchData>(state->element_map->total_islands,
+                                                           "stitch_island_data");
   if (!island_stitch_data) {
     return 0;
   }
@@ -1077,7 +1076,7 @@ static int stitch_process_data(StitchStateContainer *ssc,
     /* fill the appropriate preview buffers */
     if (ssc->mode == STITCH_VERT) {
       for (i = 0; i < state->total_separate_uvs; i++) {
-        UvElement *element = (UvElement *)state->uvs[i];
+        UvElement *element = state->uvs[i];
         if (element->flag & STITCH_STITCHABLE) {
           luv = BM_ELEM_CD_GET_FLOAT_P(element->l, cd_loop_uv_offset);
           copy_v2_v2(&preview->preview_stitchable[stitchBufferIndex * 2], luv);
@@ -1155,8 +1154,7 @@ static int stitch_process_data(StitchStateContainer *ssc,
     /* initialize the preview buffers */
     preview->preview_polys = static_cast<float *>(
         MEM_mallocN(sizeof(float[2]) * preview->preview_uvs, "tri_uv_stitch_prev"));
-    preview->uvs_per_polygon = static_cast<uint *>(
-        MEM_mallocN(sizeof(*preview->uvs_per_polygon) * preview->num_polys, "tri_uv_stitch_prev"));
+    preview->uvs_per_polygon = MEM_malloc_arrayN<uint>(preview->num_polys, "tri_uv_stitch_prev");
 
     preview->static_tris = static_cast<float *>(
         MEM_mallocN((sizeof(float[6]) * state->tris_per_island[ssc->static_island]),
@@ -1691,7 +1689,7 @@ static void stitch_draw(const bContext * /*C*/, ARegion * /*region*/, void *arg)
     static GPUVertFormat format = {0};
     static uint pos_id;
     if (format.attr_len == 0) {
-      pos_id = GPU_vertformat_attr_add(&format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+      pos_id = GPU_vertformat_attr_add(&format, "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
     }
 
     GPU_blend(GPU_BLEND_ALPHA);
@@ -1849,9 +1847,9 @@ static StitchState *stitch_init(bContext *C,
   ToolSettings *ts = scene->toolsettings;
 
   BMEditMesh *em = BKE_editmesh_from_object(obedit);
-  const BMUVOffsets offsets = BM_uv_map_get_offsets(em->bm);
+  const BMUVOffsets offsets = BM_uv_map_offsets_get(em->bm);
 
-  state = MEM_cnew<StitchState>("stitch state obj");
+  state = MEM_callocN<StitchState>("stitch state obj");
 
   /* initialize state */
   state->obedit = obedit;
@@ -1880,14 +1878,11 @@ static StitchState *stitch_init(bContext *C,
   /* internal uvs need no normals but it is hard and slow to keep a map of
    * normals only for boundary uvs, so allocating for all uvs.
    * Times 2 because each `float[2]` is stored as `{n[2 * i], n[2*i + 1]}`. */
-  state->normals = static_cast<float *>(
-      MEM_callocN(sizeof(*state->normals) * 2 * unique_uvs, "uv_stitch_normals"));
-  state->map = map = static_cast<int *>(
-      MEM_mallocN(sizeof(*map) * state->element_map->total_uvs, "uv_stitch_unique_map"));
+  state->normals = MEM_calloc_arrayN<float>(2 * unique_uvs, "uv_stitch_normals");
+  state->map = map = MEM_malloc_arrayN<int>(state->element_map->total_uvs, "uv_stitch_unique_map");
   /* Allocate the edge stack */
   edge_hash = BLI_ghash_new(uv_edge_hash, uv_edge_compare, "stitch_edge_hash");
-  all_edges = static_cast<UvEdge *>(
-      MEM_mallocN(sizeof(*all_edges) * state->element_map->total_uvs, "ssc_edges"));
+  all_edges = MEM_malloc_arrayN<UvEdge>(state->element_map->total_uvs, "ssc_edges");
 
   BLI_assert(!state->stitch_preview); /* Paranoia. */
   if (!state->uvs || !map || !edge_hash || !all_edges) {
@@ -1912,7 +1907,7 @@ static StitchState *stitch_init(bContext *C,
 
   counter = 0;
   /* Now, on to generate our uv connectivity data */
-  const bool face_selected = !(ts->uv_flag & UV_SYNC_SELECTION);
+  const bool face_selected = !(ts->uv_flag & UV_FLAG_SELECT_SYNC);
   BM_ITER_MESH (efa, &iter, em->bm, BM_FACES_OF_MESH) {
     if (BM_elem_flag_test(efa, BM_ELEM_HIDDEN)) {
       continue;
@@ -1958,8 +1953,7 @@ static StitchState *stitch_init(bContext *C,
   }
 
   total_edges = BLI_ghash_len(edge_hash);
-  state->edges = edges = static_cast<UvEdge *>(
-      MEM_mallocN(sizeof(*edges) * total_edges, "stitch_edges"));
+  state->edges = edges = MEM_malloc_arrayN<UvEdge>(total_edges, "stitch_edges");
 
   /* I assume any system will be able to at least allocate an iterator :p */
   if (!edges) {
@@ -2087,7 +2081,7 @@ static StitchState *stitch_init(bContext *C,
 
       BM_ITER_MESH (efa, &iter, em->bm, BM_FACES_OF_MESH) {
         BM_ITER_ELEM_INDEX (l, &liter, efa, BM_LOOPS_OF_FACE, i) {
-          if (uvedit_uv_select_test(scene, l, offsets)) {
+          if (uvedit_uv_select_test(scene, em->bm, l, offsets)) {
             UvElement *element = BM_uv_element_get(state->element_map, l);
             if (element) {
               stitch_select_uv(element, state, 1);
@@ -2102,14 +2096,14 @@ static StitchState *stitch_init(bContext *C,
                       "uv_stitch_selection_stack"));
 
       BM_ITER_MESH (efa, &iter, em->bm, BM_FACES_OF_MESH) {
-        if (!(ts->uv_flag & UV_SYNC_SELECTION) &&
+        if (!(ts->uv_flag & UV_FLAG_SELECT_SYNC) &&
             (BM_elem_flag_test(efa, BM_ELEM_HIDDEN) || !BM_elem_flag_test(efa, BM_ELEM_SELECT)))
         {
           continue;
         }
 
         BM_ITER_ELEM (l, &liter, efa, BM_LOOPS_OF_FACE) {
-          if (uvedit_edge_select_test(scene, l, offsets)) {
+          if (uvedit_edge_select_test(scene, em->bm, l, offsets)) {
             UvEdge *edge = uv_edge_get(l, state);
             if (edge) {
               stitch_select_edge(edge, state, true);
@@ -2122,8 +2116,8 @@ static StitchState *stitch_init(bContext *C,
 
   /***** initialize static island preview data *****/
 
-  state->tris_per_island = static_cast<uint *>(MEM_mallocN(
-      sizeof(*state->tris_per_island) * state->element_map->total_islands, "stitch island tris"));
+  state->tris_per_island = MEM_malloc_arrayN<uint>(state->element_map->total_islands,
+                                                   "stitch island tris");
   for (i = 0; i < state->element_map->total_islands; i++) {
     state->tris_per_island[i] = 0;
   }
@@ -2136,8 +2130,8 @@ static StitchState *stitch_init(bContext *C,
     }
   }
 
-  state->island_is_stitchable = static_cast<bool *>(
-      MEM_callocN(sizeof(bool) * state->element_map->total_islands, "stitch I stops"));
+  state->island_is_stitchable = MEM_calloc_arrayN<bool>(state->element_map->total_islands,
+                                                        "stitch I stops");
   if (!state->island_is_stitchable) {
     state_delete(state);
     return nullptr;
@@ -2207,7 +2201,7 @@ static int stitch_init_all(bContext *C, wmOperator *op)
     return 0;
   }
 
-  StitchStateContainer *ssc = MEM_cnew<StitchStateContainer>("stitch collection");
+  StitchStateContainer *ssc = MEM_callocN<StitchStateContainer>("stitch collection");
 
   op->customdata = ssc;
 
@@ -2223,7 +2217,7 @@ static int stitch_init_all(bContext *C, wmOperator *op)
     ssc->mode = RNA_enum_get(op->ptr, "mode");
   }
   else {
-    if (ts->uv_flag & UV_SYNC_SELECTION) {
+    if (ts->uv_flag & UV_FLAG_SELECT_SYNC) {
       if (ts->selectmode & SCE_SELECT_VERTEX) {
         ssc->mode = STITCH_VERT;
       }
@@ -2232,7 +2226,7 @@ static int stitch_init_all(bContext *C, wmOperator *op)
       }
     }
     else {
-      if (ts->uv_selectmode & UV_SELECT_VERTEX) {
+      if (ts->uv_selectmode & UV_SELECT_VERT) {
         ssc->mode = STITCH_VERT;
       }
       else {
@@ -2241,10 +2235,8 @@ static int stitch_init_all(bContext *C, wmOperator *op)
     }
   }
 
-  ssc->objects = static_cast<Object **>(
-      MEM_callocN(sizeof(Object *) * objects.size(), "Object *ssc->objects"));
-  ssc->states = static_cast<StitchState **>(
-      MEM_callocN(sizeof(StitchState *) * objects.size(), "StitchState"));
+  ssc->objects = MEM_calloc_arrayN<Object *>(objects.size(), "Object *ssc->objects");
+  ssc->states = MEM_calloc_arrayN<StitchState *>(objects.size(), "StitchState");
   ssc->objects_len = 0;
 
   int *objs_selection_count = nullptr;
@@ -2266,8 +2258,7 @@ static int stitch_init_all(bContext *C, wmOperator *op)
       total_selected += objs_selection_count[ob_index];
     }
 
-    selected_uvs_arr = static_cast<UvElementID *>(
-        MEM_callocN(sizeof(UvElementID) * total_selected, "selected_uvs_arr"));
+    selected_uvs_arr = MEM_calloc_arrayN<UvElementID>(total_selected, "selected_uvs_arr");
     int sel_idx = 0;
     RNA_BEGIN (op->ptr, itemptr, "selection") {
       BLI_assert(sel_idx < total_selected);
@@ -2279,8 +2270,7 @@ static int stitch_init_all(bContext *C, wmOperator *op)
 
     RNA_collection_clear(op->ptr, "selection");
 
-    state_init = static_cast<StitchStateInit *>(
-        MEM_callocN(sizeof(StitchStateInit), "UV_init_selected"));
+    state_init = MEM_callocN<StitchStateInit>("UV_init_selected");
     state_init->to_select = selected_uvs_arr;
   }
 
@@ -2341,7 +2331,7 @@ static int stitch_init_all(bContext *C, wmOperator *op)
   return 1;
 }
 
-static int stitch_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus stitch_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
 {
   if (!stitch_init_all(C, op)) {
     return OPERATOR_CANCELLED;
@@ -2351,7 +2341,7 @@ static int stitch_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
 
   Scene *scene = CTX_data_scene(C);
   ToolSettings *ts = scene->toolsettings;
-  const bool synced_selection = (ts->uv_flag & UV_SYNC_SELECTION) != 0;
+  const bool synced_selection = (ts->uv_flag & UV_FLAG_SELECT_SYNC) != 0;
 
   StitchStateContainer *ssc = (StitchStateContainer *)op->customdata;
 
@@ -2435,7 +2425,7 @@ static void stitch_exit(bContext *C, wmOperator *op, int finished)
   ED_region_draw_cb_exit(CTX_wm_region(C)->runtime->type, ssc->draw_handle);
 
   ToolSettings *ts = scene->toolsettings;
-  const bool synced_selection = (ts->uv_flag & UV_SYNC_SELECTION) != 0;
+  const bool synced_selection = (ts->uv_flag & UV_FLAG_SELECT_SYNC) != 0;
 
   for (uint ob_index = 0; ob_index < ssc->objects_len; ob_index++) {
     StitchState *state = ssc->states[ob_index];
@@ -2460,7 +2450,7 @@ static void stitch_cancel(bContext *C, wmOperator *op)
   stitch_exit(C, op, 0);
 }
 
-static int stitch_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus stitch_exec(bContext *C, wmOperator *op)
 {
   Scene *scene = CTX_data_scene(C);
 
@@ -2530,7 +2520,7 @@ static StitchState *stitch_select(bContext *C,
   return nullptr;
 }
 
-static int stitch_modal(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus stitch_modal(bContext *C, wmOperator *op, const wmEvent *event)
 {
   StitchStateContainer *ssc;
   Scene *scene = CTX_data_scene(C);
@@ -2707,7 +2697,7 @@ void UV_OT_stitch(wmOperatorType *ot)
   ot->idname = "UV_OT_stitch";
   ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = stitch_invoke;
   ot->modal = stitch_modal;
   ot->exec = stitch_exec;

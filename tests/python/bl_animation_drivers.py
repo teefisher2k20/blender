@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 """
-blender -b --factory-startup --python tests/python/bl_animation_drivers.py -- --testdir /path/to/tests/data/animation
+blender -b --factory-startup --python tests/python/bl_animation_drivers.py -- --testdir /path/to/tests/files/animation
 """
 __all__ = (
     "main",
@@ -192,6 +192,74 @@ class ContextViewLayerDriverTest(AbstractEmptyDriverTest, unittest.TestCase):
         self.assertTrue(fcu.driver.is_valid)
         self.assertTrue(_is_fallback_used(fcu))
         self.assertPropValue('test_fallback', 321)
+
+
+class SubDataDriverRemovalTest(AbstractEmptyDriverTest, unittest.TestCase):
+
+    def test_remove_object_modifier(self):
+        # Removing a modifier with a driver should also delete the driver
+        modifier = self.obj.modifiers.new("test", 'ARRAY')
+        # No animation data means no drivers.
+        self.assertEqual(self.obj.animation_data, None)
+        self.obj.driver_add('modifiers["test"].count')
+        self.assertEqual(len(self.obj.animation_data.drivers), 1)
+        self.obj.modifiers.remove(modifier)
+        self.assertEqual(len(self.obj.modifiers), 0)
+        self.assertEqual(len(self.obj.animation_data.drivers), 0,
+                         "Removing the modifier should remove the driver on it")
+
+    def test_remove_object_constraint(self):
+        # Using limit distance constraint because that has a property that can have a driver.
+        constraint = self.obj.constraints.new('LIMIT_DISTANCE')
+        constraint.name = "test"
+        # No animation data means no drivers.
+        self.assertEqual(self.obj.animation_data, None)
+        self.obj.driver_add('constraints["test"].distance')
+        self.assertEqual(len(self.obj.animation_data.drivers), 1)
+        self.obj.constraints.remove(constraint)
+        self.assertEqual(len(self.obj.constraints), 0)
+        self.assertEqual(len(self.obj.animation_data.drivers), 0,
+                         "Removing the constraint should remove the driver on it")
+
+    def test_remove_bone_constraint(self):
+        arm = bpy.data.armatures.new('Armature')
+        arm_ob = bpy.data.objects.new('ArmObject', arm)
+        bpy.context.scene.collection.objects.link(arm_ob)
+        bpy.context.view_layer.objects.active = arm_ob
+        bpy.ops.object.mode_set(mode='EDIT')
+        ebone = arm.edit_bones.new(name="test")
+        ebone.tail = (1, 0, 0)
+        bpy.ops.object.mode_set(mode='POSE')
+        pose_bone = arm_ob.pose.bones["test"]
+        constraint = pose_bone.constraints.new('LIMIT_DISTANCE')
+        constraint.name = "test"
+        self.assertEqual(len(pose_bone.constraints), 1)
+        arm_ob.driver_add('pose.bones["test"].constraints["test"].distance')
+        self.assertEqual(len(arm_ob.animation_data.drivers), 1)
+
+        # To do a proper test, the depsgraph needs to be evaluated between adding
+        # the data and removing it. This causes depsgraph nodes to be built, which
+        # have to be removed as well. See #141243
+        bpy.context.evaluated_depsgraph_get()
+        pose_bone.constraints.remove(constraint)
+        self.assertEqual(len(pose_bone.constraints), 0)
+        self.assertEqual(len(arm_ob.animation_data.drivers), 0,
+                         "Removing the constraint should remove the driver on it")
+
+    def test_remove_shapekey(self):
+        self.obj.shape_key_add(name="base")
+        test_key = self.obj.shape_key_add(name="test")
+        test_key.value = 0.0
+        # Due to the weirdness of shapekeys, this is an ID.
+        shape_key_id = self.obj.data.shape_keys
+        self.assertEqual(len(shape_key_id.key_blocks), 2)
+        shape_key_id.driver_add('key_blocks["test"].value')
+        self.assertEqual(len(shape_key_id.animation_data.drivers), 1)
+
+        self.obj.shape_key_remove(test_key)
+        self.assertEqual(len(shape_key_id.key_blocks), 1)
+        self.assertEqual(len(shape_key_id.animation_data.drivers), 0,
+                         "Removing the shape key should remove any driver on it")
 
 
 def main():

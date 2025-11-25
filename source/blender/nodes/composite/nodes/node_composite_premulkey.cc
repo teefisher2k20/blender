@@ -12,92 +12,80 @@
 
 #include "NOD_multi_function.hh"
 
-#include "UI_interface.hh"
-#include "UI_resources.hh"
-
 #include "GPU_material.hh"
 
-#include "COM_shader_node.hh"
+#include "COM_result.hh"
 
 #include "node_composite_util.hh"
 
-/* **************** Pre-multiply and Key Alpha Convert ******************** */
-
 namespace blender::nodes::node_composite_premulkey_cc {
+
+static const EnumPropertyItem type_items[] = {
+    {CMP_NODE_ALPHA_CONVERT_PREMULTIPLY,
+     "STRAIGHT_TO_PREMULTIPLIED",
+     0,
+     N_("To Premultiplied"),
+     N_("Convert straight to premultiplied")},
+    {CMP_NODE_ALPHA_CONVERT_UNPREMULTIPLY,
+     "PREMULTIPLIED_TO_STRAIGHT",
+     0,
+     N_("To Straight"),
+     N_("Convert premultiplied to straight")},
+    {0, nullptr, 0, nullptr, nullptr},
+};
 
 static void cmp_node_premulkey_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Color>("Image")
-      .default_value({1.0f, 1.0f, 1.0f, 1.0f})
-      .compositor_domain_priority(0);
-  b.add_output<decl::Color>("Image");
-}
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
+  b.is_function_node();
+  b.add_input<decl::Color>("Image").default_value({1.0f, 1.0f, 1.0f, 1.0f}).hide_value();
+  b.add_output<decl::Color>("Image").align_with_previous();
 
-static void node_composit_buts_premulkey(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
-{
-  uiItemR(layout, ptr, "mapping", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
+  b.add_input<decl::Menu>("Type")
+      .default_value(CMP_NODE_ALPHA_CONVERT_PREMULTIPLY)
+      .static_items(type_items)
+      .optional_label();
 }
 
 using namespace blender::compositor;
 
-static CMPNodeAlphaConvertMode get_mode(const bNode &node)
+static int node_gpu_material(GPUMaterial *material,
+                             bNode *node,
+                             bNodeExecData * /*execdata*/,
+                             GPUNodeStack *inputs,
+                             GPUNodeStack *outputs)
 {
-  return static_cast<CMPNodeAlphaConvertMode>(node.custom1);
+  return GPU_stack_link(material, node, "node_composite_convert_alpha", inputs, outputs);
 }
 
-class AlphaConvertShaderNode : public ShaderNode {
- public:
-  using ShaderNode::ShaderNode;
-
-  void compile(GPUMaterial *material) override
-  {
-    GPUNodeStack *inputs = get_inputs_array();
-    GPUNodeStack *outputs = get_outputs_array();
-
-    if (get_mode(bnode()) == CMP_NODE_ALPHA_CONVERT_PREMULTIPLY) {
-      GPU_stack_link(material, &bnode(), "color_alpha_premultiply", inputs, outputs);
-      return;
-    }
-
-    GPU_stack_link(material, &bnode(), "color_alpha_unpremultiply", inputs, outputs);
+static float4 convert_alpha(const float4 &color, const MenuValue &type)
+{
+  switch (CMPNodeAlphaConvertMode(type.value)) {
+    case CMP_NODE_ALPHA_CONVERT_PREMULTIPLY:
+      return float4(color.xyz() * color.w, color.w);
+    case CMP_NODE_ALPHA_CONVERT_UNPREMULTIPLY:
+      return color.w == 0.0f ? color : float4(color.xyz() / color.w, color.w);
   }
-};
-
-static ShaderNode *get_compositor_shader_node(DNode node)
-{
-  return new AlphaConvertShaderNode(node);
+  return color;
 }
+
+using blender::compositor::Color;
 
 static void node_build_multi_function(blender::nodes::NodeMultiFunctionBuilder &builder)
 {
-  static auto premultiply_function = mf::build::SI1_SO<float4, float4>(
-      "Alpha Convert Premultiply",
-      [](const float4 &color) -> float4 { return float4(color.xyz() * color.w, color.w); },
-      mf::build::exec_presets::AllSpanOrSingle());
-
-  static auto unpremultiply_function = mf::build::SI1_SO<float4, float4>(
-      "Alpha Convert Unpremultiply",
-      [](const float4 &color) -> float4 {
-        if (ELEM(color.w, 0.0f, 1.0f)) {
-          return color;
-        }
-        return float4(color.xyz() / color.w, color.w);
+  static auto function = mf::build::SI2_SO<Color, MenuValue, Color>(
+      "Alpha Convert",
+      [](const Color &color, const MenuValue &type) -> Color {
+        return Color(convert_alpha(float4(color), type));
       },
       mf::build::exec_presets::AllSpanOrSingle());
-
-  switch (get_mode(builder.node())) {
-    case CMP_NODE_ALPHA_CONVERT_PREMULTIPLY:
-      builder.set_matching_fn(premultiply_function);
-      break;
-    case CMP_NODE_ALPHA_CONVERT_UNPREMULTIPLY:
-      builder.set_matching_fn(unpremultiply_function);
-      break;
-  }
+  builder.set_matching_fn(function);
 }
 
 }  // namespace blender::nodes::node_composite_premulkey_cc
 
-void register_node_type_cmp_premulkey()
+static void register_node_type_cmp_premulkey()
 {
   namespace file_ns = blender::nodes::node_composite_premulkey_cc;
 
@@ -109,9 +97,9 @@ void register_node_type_cmp_premulkey()
   ntype.enum_name_legacy = "PREMULKEY";
   ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = file_ns::cmp_node_premulkey_declare;
-  ntype.draw_buttons = file_ns::node_composit_buts_premulkey;
-  ntype.get_compositor_shader_node = file_ns::get_compositor_shader_node;
+  ntype.gpu_fn = file_ns::node_gpu_material;
   ntype.build_multi_function = file_ns::node_build_multi_function;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
+NOD_REGISTER_NODE(register_node_type_cmp_premulkey)

@@ -5,6 +5,7 @@
 #include <fmt/format.h>
 
 #include "BLI_path_utils.hh"
+#include "BLI_string_utf8.h"
 
 #include "BLT_translation.hh"
 
@@ -22,7 +23,7 @@
 
 namespace blender::ed::io {
 
-int filesel_drop_import_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+wmOperatorStatus filesel_drop_import_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
 {
 
   PropertyRNA *filepath_prop = RNA_struct_find_property(op->ptr, "filepath");
@@ -96,6 +97,7 @@ Vector<std::string> paths_from_operator_properties(PointerRNA *ptr)
       RNA_string_get(&file_ptr, "name", name);
       char path[FILE_MAX];
       BLI_path_join(path, sizeof(path), directory, name);
+      BLI_path_normalize(path);
       paths.append_non_duplicates(path);
     }
     RNA_PROP_END;
@@ -111,4 +113,24 @@ Vector<std::string> paths_from_operator_properties(PointerRNA *ptr)
   }
   return paths;
 }
+
+void paths_to_operator_properties(PointerRNA *ptr, const Span<std::string> paths)
+{
+  char dir[FILE_MAX];
+  BLI_path_split_dir_part(paths[0].c_str(), dir, sizeof(dir));
+  RNA_string_set(ptr, "directory", dir);
+
+  RNA_collection_clear(ptr, "files");
+  for (const auto &path : paths) {
+    char file[FILE_MAX];
+    STRNCPY_UTF8(file, path.c_str());
+    BLI_path_rel(file, dir);
+
+    PointerRNA itemptr{};
+    RNA_collection_add(ptr, "files", &itemptr);
+    BLI_assert_msg(BLI_path_is_rel(file), "Expected path to be relative (start with '//')");
+    RNA_string_set(&itemptr, "name", file + 2);
+  }
+}
+
 }  // namespace blender::ed::io

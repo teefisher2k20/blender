@@ -8,11 +8,12 @@
 
 #pragma once
 
-#include <stddef.h>
+#include <cstddef>
 
 #include "DNA_ID.h"
 
 struct ID;
+struct Depsgraph;
 
 /* Uncomment this to have verbose log about original and evaluated pointers
  * logged, with detailed information when they are allocated, expanded
@@ -25,8 +26,6 @@ struct ID;
 #else
 #  define DEG_COW_PRINT(format, ...)
 #endif
-
-struct Depsgraph;
 
 namespace blender::deg {
 

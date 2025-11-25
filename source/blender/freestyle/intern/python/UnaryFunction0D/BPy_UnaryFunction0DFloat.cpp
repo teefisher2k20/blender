@@ -18,10 +18,6 @@
 #include "UnaryFunction0D_float/BPy_ReadMapPixelF0D.h"
 #include "UnaryFunction0D_float/BPy_ReadSteerableViewMapPixelF0D.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -89,7 +85,6 @@ PyDoc_STRVAR(
     ".. method:: __init__()\n"
     "\n"
     "   Default constructor.\n");
-
 static int UnaryFunction0DFloat___init__(BPy_UnaryFunction0DFloat *self,
                                          PyObject *args,
                                          PyObject *kwds)
@@ -186,7 +181,3 @@ PyTypeObject UnaryFunction0DFloat_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

@@ -10,10 +10,6 @@
 
 #include "../../../view_map/Functions0D.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -42,7 +38,6 @@ PyDoc_STRVAR(
     "   :return: The 3D oriented tangent to the 1D element evaluated at the\n"
     "      pointed Interface0D.\n"
     "   :rtype: :class:`mathutils.Vector`\n");
-
 static int VertexOrientation3DF0D___init__(BPy_VertexOrientation3DF0D *self,
                                            PyObject *args,
                                            PyObject *kwds)
@@ -101,7 +96,3 @@ PyTypeObject VertexOrientation3DF0D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

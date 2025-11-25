@@ -6,13 +6,14 @@
  * \ingroup spbuttons
  */
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
 #include "MEM_guardedalloc.h"
 
 #include "BLI_listbase.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_utildefines.h"
 
 #include "BLT_translation.hh"
@@ -23,6 +24,7 @@
 #include "DNA_material_types.h"
 #include "DNA_node_types.h"
 #include "DNA_scene_types.h"
+#include "DNA_sequence_types.h"
 #include "DNA_windowmanager_types.h"
 #include "DNA_world_types.h"
 
@@ -37,6 +39,9 @@
 #include "BKE_particle.h"
 #include "BKE_screen.hh"
 
+#include "SEQ_modifier.hh"
+#include "SEQ_select.hh"
+
 #include "RNA_access.hh"
 #include "RNA_prototypes.hh"
 
@@ -45,6 +50,7 @@
 #include "ED_screen.hh"
 
 #include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "WM_api.hh"
@@ -257,17 +263,15 @@ static bool buttons_context_path_data(ButsContextPath *path, int type)
   if (RNA_struct_is_a(ptr->type, &RNA_LightProbe) && ELEM(type, -1, OB_LIGHTPROBE)) {
     return true;
   }
-  if (RNA_struct_is_a(ptr->type, &RNA_GreasePencilv3) && ELEM(type, -1, OB_GREASE_PENCIL)) {
+  if (RNA_struct_is_a(ptr->type, &RNA_GreasePencil) && ELEM(type, -1, OB_GREASE_PENCIL)) {
     return true;
   }
   if (RNA_struct_is_a(ptr->type, &RNA_Curves) && ELEM(type, -1, OB_CURVES)) {
     return true;
   }
-#ifdef WITH_POINT_CLOUD
   if (RNA_struct_is_a(ptr->type, &RNA_PointCloud) && ELEM(type, -1, OB_POINTCLOUD)) {
     return true;
   }
-#endif
   if (RNA_struct_is_a(ptr->type, &RNA_Volume) && ELEM(type, -1, OB_VOLUME)) {
     return true;
   }
@@ -343,6 +347,13 @@ static bool buttons_context_path_material(ButsContextPath *path)
 
     if (ob && OB_TYPE_SUPPORT_MATERIAL(ob->type)) {
       Material *ma = BKE_object_material_get(ob, ob->actcol);
+
+      const int slot = blender::math::max(ob->actcol - 1, 0);
+      if (ob->matbits && ob->matbits[slot] == 0) {
+        /* When material from active slot is stored in object data, include it in context path, see
+         * !134968. */
+        buttons_context_path_data(path, -1);
+      }
       if (ma != nullptr) {
         path->ptr[path->len] = RNA_id_pointer_create(&ma->id);
         path->len++;
@@ -429,9 +440,10 @@ static bool buttons_context_path_particle(ButsContextPath *path)
 
     if (ob && ob->type == OB_MESH) {
       ParticleSystem *psys = psys_get_current(ob);
-
-      path->ptr[path->len] = RNA_pointer_create_discrete(&ob->id, &RNA_ParticleSystem, psys);
-      path->len++;
+      if (psys != nullptr) {
+        path->ptr[path->len] = RNA_pointer_create_discrete(&ob->id, &RNA_ParticleSystem, psys);
+        path->len++;
+      }
       return true;
     }
   }
@@ -515,6 +527,46 @@ static bool buttons_context_path_texture(const bContext *C,
   return true;
 }
 
+static bool buttons_context_path_strip(ButsContextPath *path)
+{
+  PointerRNA *ptr = &path->ptr[path->len - 1];
+  /* If we already have a (pinned) strip, we're done. */
+  if (RNA_struct_is_a(ptr->type, &RNA_Strip)) {
+    return true;
+  }
+
+  if (buttons_context_path_scene(path)) {
+    Scene *scene = static_cast<Scene *>(path->ptr[path->len - 1].data);
+    Strip *active_strip = blender::seq::select_active_get(scene);
+    if (active_strip == nullptr) {
+      return false;
+    }
+
+    path->ptr[path->len] = RNA_pointer_create_discrete(&scene->id, &RNA_Strip, active_strip);
+    path->len++;
+    return true;
+  }
+
+  return false;
+}
+
+static bool buttons_context_path_strip_modifier(Scene *sequencer_scene, ButsContextPath *path)
+{
+  if (sequencer_scene && buttons_context_path_strip(path)) {
+    Strip *active_strip = static_cast<Strip *>(path->ptr[path->len - 1].data);
+
+    StripModifierData *smd = blender::seq::modifier_get_active(active_strip);
+    if (smd) {
+      path->ptr[path->len] = RNA_pointer_create_discrete(
+          &sequencer_scene->id, &RNA_StripModifier, smd);
+      path->len++;
+    }
+    return true;
+  }
+
+  return false;
+}
+
 #ifdef WITH_FREESTYLE
 static bool buttons_context_linestyle_pinnable(const bContext *C, ViewLayer *view_layer)
 {
@@ -546,6 +598,8 @@ static bool buttons_context_path(
    * Otherwise there is a loop reading the context that we are setting. */
   wmWindow *window = CTX_wm_window(C);
   Scene *scene = WM_window_get_active_scene(window);
+  WorkSpace *workspace = WM_window_get_active_workspace(window);
+  Scene *sequencer_scene = workspace->sequencer_scene;
   ViewLayer *view_layer = WM_window_get_active_view_layer(window);
 
   *path = {};
@@ -560,7 +614,16 @@ static bool buttons_context_path(
   }
   /* No pinned root, use scene as initial root. */
   else if (mainb != BCONTEXT_TOOL) {
-    path->ptr[0] = RNA_id_pointer_create(&scene->id);
+    if (ELEM(mainb, BCONTEXT_STRIP, BCONTEXT_STRIP_MODIFIER)) {
+      if (!sequencer_scene) {
+        return false;
+      }
+      path->ptr[0] = RNA_id_pointer_create(&sequencer_scene->id);
+    }
+    else {
+      path->ptr[0] = RNA_id_pointer_create(&scene->id);
+    }
+
     path->len++;
 
     if (!ELEM(mainb,
@@ -568,7 +631,9 @@ static bool buttons_context_path(
               BCONTEXT_RENDER,
               BCONTEXT_OUTPUT,
               BCONTEXT_VIEW_LAYER,
-              BCONTEXT_WORLD))
+              BCONTEXT_WORLD,
+              BCONTEXT_STRIP,
+              BCONTEXT_STRIP_MODIFIER))
     {
       path->ptr[path->len] = RNA_pointer_create_discrete(nullptr, &RNA_ViewLayer, view_layer);
       path->len++;
@@ -636,6 +701,12 @@ static bool buttons_context_path(
       break;
     case BCONTEXT_BONE_CONSTRAINT:
       found = buttons_context_path_pose_bone(path);
+      break;
+    case BCONTEXT_STRIP:
+      found = buttons_context_path_strip(path);
+      break;
+    case BCONTEXT_STRIP_MODIFIER:
+      found = buttons_context_path_strip_modifier(sequencer_scene, path);
       break;
     default:
       found = false;
@@ -841,10 +912,10 @@ const char *buttons_context_dir[] = {
     "gpencil",
     "grease_pencil",
     "curves",
-#ifdef WITH_POINT_CLOUD
     "pointcloud",
-#endif
     "volume",
+    "strip",
+    "strip_modifier",
     nullptr,
 };
 
@@ -854,7 +925,7 @@ int /*eContextResult*/ buttons_context(const bContext *C,
 {
   SpaceProperties *sbuts = CTX_wm_space_properties(C);
   if (sbuts && sbuts->path == nullptr) {
-    /* path is cleared for SCREEN_OT_redo_last, when global undo does a file-read which clears the
+    /* path is cleared for #SCREEN_OT_redo_last, when global undo does a file-read which clears the
      * path (see lib_link_workspace_layout_restore). */
     buttons_context_compute(C, sbuts);
   }
@@ -938,12 +1009,10 @@ int /*eContextResult*/ buttons_context(const bContext *C,
     set_pointer_type(path, result, &RNA_Curves);
     return CTX_RESULT_OK;
   }
-#ifdef WITH_POINT_CLOUD
   if (CTX_data_equals(member, "pointcloud")) {
     set_pointer_type(path, result, &RNA_PointCloud);
     return CTX_RESULT_OK;
   }
-#endif
   if (CTX_data_equals(member, "volume")) {
     set_pointer_type(path, result, &RNA_Volume);
     return CTX_RESULT_OK;
@@ -974,9 +1043,7 @@ int /*eContextResult*/ buttons_context(const bContext *C,
       if (ob && OB_TYPE_SUPPORT_MATERIAL(ob->type) && ob->totcol) {
         /* a valid actcol isn't ensured #27526. */
         int matnr = ob->actcol - 1;
-        if (matnr < 0) {
-          matnr = 0;
-        }
+        matnr = std::max(matnr, 0);
         /* Keep aligned with rna_Object_material_slots_get. */
         CTX_data_pointer_set(
             result, &ob->id, &RNA_MaterialSlot, (void *)(matnr + uintptr_t(&ob->id)));
@@ -1164,11 +1231,19 @@ int /*eContextResult*/ buttons_context(const bContext *C,
     return CTX_RESULT_OK;
   }
   if (CTX_data_equals(member, "gpencil")) {
-    set_pointer_type(path, result, &RNA_GreasePencil);
+    set_pointer_type(path, result, &RNA_Annotation);
     return CTX_RESULT_OK;
   }
   if (CTX_data_equals(member, "grease_pencil")) {
-    set_pointer_type(path, result, &RNA_GreasePencilv3);
+    set_pointer_type(path, result, &RNA_GreasePencil);
+    return CTX_RESULT_OK;
+  }
+  if (CTX_data_equals(member, "strip")) {
+    set_pointer_type(path, result, &RNA_Strip);
+    return CTX_RESULT_OK;
+  }
+  if (CTX_data_equals(member, "strip_modifier")) {
+    set_pointer_type(path, result, &RNA_StripModifier);
     return CTX_RESULT_OK;
   }
   return CTX_RESULT_MEMBER_NOT_FOUND;
@@ -1191,8 +1266,8 @@ static void buttons_panel_context_draw(const bContext *C, Panel *panel)
     return;
   }
 
-  uiLayout *row = uiLayoutRow(panel->layout, true);
-  uiLayoutSetAlignment(row, UI_LAYOUT_ALIGN_LEFT);
+  blender::ui::Layout &row = panel->layout->row(true);
+  row.alignment_set(blender::ui::LayoutAlign::Left);
 
   bool first = true;
   for (int i = 0; i < path->len; i++) {
@@ -1204,7 +1279,9 @@ static void buttons_panel_context_draw(const bContext *C, Panel *panel)
               BCONTEXT_OUTPUT,
               BCONTEXT_SCENE,
               BCONTEXT_VIEW_LAYER,
-              BCONTEXT_WORLD) &&
+              BCONTEXT_WORLD,
+              BCONTEXT_STRIP,
+              BCONTEXT_STRIP_MODIFIER) &&
         ptr->type == &RNA_Scene)
     {
       continue;
@@ -1220,13 +1297,13 @@ static void buttons_panel_context_draw(const bContext *C, Panel *panel)
       continue;
     }
 
-    /* Add > triangle. */
-    if (!first) {
-      uiItemL(row, "", ICON_RIGHTARROW);
-    }
-
     if (ptr->data == nullptr) {
       continue;
+    }
+
+    /* Add > triangle. */
+    if (!first) {
+      row.label("", ICON_RIGHTARROW);
     }
 
     /* Add icon and name. */
@@ -1235,36 +1312,33 @@ static void buttons_panel_context_draw(const bContext *C, Panel *panel)
     char *name = RNA_struct_name_get_alloc(ptr, namebuf, sizeof(namebuf), nullptr);
 
     if (name) {
-      uiItemLDrag(row, ptr, name, icon);
+      uiItemLDrag(&row, ptr, name, icon);
 
       if (name != namebuf) {
         MEM_freeN(name);
       }
     }
     else {
-      uiItemL(row, "", icon);
+      row.label("", icon);
     }
 
     first = false;
   }
 
-  uiLayout *pin_row = uiLayoutRow(row, false);
-  uiLayoutSetAlignment(pin_row, UI_LAYOUT_ALIGN_RIGHT);
-  uiItemSpacer(pin_row);
-  uiLayoutSetEmboss(pin_row, UI_EMBOSS_NONE);
-  uiItemO(pin_row,
-          "",
-          (sbuts->flag & SB_PIN_CONTEXT) ? ICON_PINNED : ICON_UNPINNED,
-          "BUTTONS_OT_toggle_pin");
+  blender::ui::Layout &pin_row = row.row(false);
+  pin_row.alignment_set(blender::ui::LayoutAlign::Right);
+  pin_row.separator_spacer();
+  pin_row.emboss_set(blender::ui::EmbossType::None);
+  pin_row.op(
+      "BUTTONS_OT_toggle_pin", "", (sbuts->flag & SB_PIN_CONTEXT) ? ICON_PINNED : ICON_UNPINNED);
 }
 
 void buttons_context_register(ARegionType *art)
 {
-  PanelType *pt = static_cast<PanelType *>(
-      MEM_callocN(sizeof(PanelType), "spacetype buttons panel context"));
-  STRNCPY(pt->idname, "PROPERTIES_PT_context");
-  STRNCPY(pt->label, N_("Context")); /* XXX C panels unavailable through RNA bpy.types! */
-  STRNCPY(pt->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
+  PanelType *pt = MEM_callocN<PanelType>("spacetype buttons panel context");
+  STRNCPY_UTF8(pt->idname, "PROPERTIES_PT_context");
+  STRNCPY_UTF8(pt->label, N_("Context")); /* XXX C panels unavailable through RNA bpy.types! */
+  STRNCPY_UTF8(pt->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
   pt->poll = buttons_panel_context_poll;
   pt->draw = buttons_panel_context_draw;
   pt->flag = PANEL_TYPE_NO_HEADER | PANEL_TYPE_NO_SEARCH;

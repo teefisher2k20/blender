@@ -8,11 +8,12 @@
 
 #include "BKE_context.hh"
 
+#include "BLI_array.hh"
 #include "BLI_string_ref.hh"
 
 #include "RNA_access.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "interface_intern.hh"
 
 using blender::StringRefNull;
@@ -27,13 +28,13 @@ static void handle_layer_buttons(bContext *C, void *arg1, void *arg2)
   if (!shift) {
     const int tot = RNA_property_array_length(&but->rnapoin, but->rnaprop);
 
+    BLI_assert(cur < tot);
+    blender::Array<bool, RNA_STACK_ARRAY> value_array(tot);
+    value_array.fill(false);
+    value_array[cur] = true;
+
     /* Normally clicking only selects one layer */
-    RNA_property_boolean_set_index(&but->rnapoin, but->rnaprop, cur, true);
-    for (int i = 0; i < tot; i++) {
-      if (i != cur) {
-        RNA_property_boolean_set_index(&but->rnapoin, but->rnaprop, i, false);
-      }
-    }
+    RNA_property_boolean_set_array(&but->rnapoin, but->rnaprop, value_array.data());
   }
 
   /* view3d layer change should update depsgraph (invisible object changed maybe) */
@@ -84,11 +85,11 @@ void uiTemplateLayers(uiLayout *layout,
   /* layers are laid out going across rows, with the columns being divided into groups */
 
   for (int group = 0; group < groups; group++) {
-    uiLayout *uCol = uiLayoutColumn(layout, true);
+    uiLayout *uCol = &layout->column(true);
 
     for (int row = 0; row < 2; row++) {
-      uiLayout *uRow = uiLayoutRow(uCol, true);
-      uiBlock *block = uiLayoutGetBlock(uRow);
+      uiLayout *uRow = &uCol->row(true);
+      uiBlock *block = uRow->block();
       int layer = groups * cols_per_group * row + cols_per_group * group;
 
       /* add layers as toggle buts */
@@ -106,7 +107,7 @@ void uiTemplateLayers(uiLayout *layout,
         uiBut *but = uiDefAutoButR(
             block, ptr, prop, layer, "", icon, 0, 0, UI_UNIT_X / 2, UI_UNIT_Y / 2);
         UI_but_func_set(but, handle_layer_buttons, but, POINTER_FROM_INT(layer));
-        but->type = UI_BTYPE_TOGGLE;
+        but->type = ButType::Toggle;
       }
     }
   }

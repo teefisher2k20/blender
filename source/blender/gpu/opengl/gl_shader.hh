@@ -16,10 +16,12 @@
 #include "BLI_subprocess.hh"
 #include "BLI_utility_mixins.hh"
 
+#include "GPU_capabilities.hh"
 #include "gpu_shader_create_info.hh"
 #include "gpu_shader_private.hh"
 
 #include <functional>
+#include <mutex>
 
 namespace blender::gpu {
 
@@ -67,6 +69,7 @@ struct GLSourcesBaked : NonCopyable {
 class GLShader : public Shader {
   friend shader::ShaderCreateInfo;
   friend shader::StageInterfaceInfo;
+  friend class GLSubprocessShaderCompiler;
   friend class GLShaderCompiler;
 
  private:
@@ -79,35 +82,26 @@ class GLShader : public Shader {
     GLuint frag_shader = 0;
     GLuint compute_shader = 0;
 
+    std::mutex compilation_mutex;
+
     GLProgram() {}
-    GLProgram(GLProgram &&other)
-    {
-      program_id = other.program_id;
-      vert_shader = other.vert_shader;
-      geom_shader = other.geom_shader;
-      frag_shader = other.frag_shader;
-      compute_shader = other.compute_shader;
-      other.program_id = 0;
-      other.vert_shader = 0;
-      other.geom_shader = 0;
-      other.frag_shader = 0;
-      other.compute_shader = 0;
-    }
     ~GLProgram();
+
+    void program_link(StringRefNull shader_name);
   };
 
   using GLProgramCacheKey = Vector<shader::SpecializationConstant::Value>;
-  Map<GLProgramCacheKey, GLProgram> program_cache_;
+  /** Contains all specialized shader variants. */
+  Map<GLProgramCacheKey, std::unique_ptr<GLProgram>> program_cache_;
 
-  /**
-   * Points to the active program. When binding a shader the active program is
-   * setup.
-   */
-  GLProgram *program_active_ = nullptr;
+  std::mutex program_cache_mutex_;
+
+  /** Main program instance. This is the default specialized variant that is first compiled. */
+  GLProgram *main_program_ = nullptr;
 
   /* When true, the shader generates its GLSources but it's not compiled.
-   * (Used for batch compilation) */
-  bool async_compilation_ = false;
+   * (Used for subprocess compilation) */
+  bool is_codegen_only_ = false;
 
   /**
    * When the shader uses Specialization Constants these attribute contains the sources to
@@ -121,34 +115,16 @@ class GLShader : public Shader {
 
   Vector<const char *> specialization_constant_names_;
 
-  /**
-   * Initialize an this instance.
-   *
-   * - Ensures that program_cache at least has a default GLProgram.
-   * - Ensures that active program is set.
-   * - Active GLProgram has a shader_program (at least in creation state).
-   * - Does nothing when instance was already initialized.
-   */
-  void init_program();
-
   void update_program_and_sources(GLSources &stage_sources, MutableSpan<StringRefNull> sources);
 
   /**
-   * Link the active program.
-   */
-  void program_link();
-  bool check_link_status();
-
-  /**
-   * Return a GLProgram program id that reflects the current state of shader.constants.values.
+   * Return a GLProgram that reflects the given `constants_state`.
    * The returned program_id is in linked state, or an error happened during linking.
    */
-  GLuint program_get();
+  GLShader::GLProgram &program_get(const shader::SpecializationConstants *constants_state);
 
   /** True if any shader failed to compile. */
   bool compilation_failed_ = false;
-
-  eGPUShaderTFBType transform_feedback_type_ = GPU_SHADER_TFB_NONE;
 
   std::string debug_source;
 
@@ -156,39 +132,40 @@ class GLShader : public Shader {
   GLShader(const char *name);
   ~GLShader();
 
-  void init(const shader::ShaderCreateInfo &info, bool is_batch_compilation) override;
+  void init(const shader::ShaderCreateInfo &info, bool is_codegen_only) override;
+
+  const shader::ShaderCreateInfo &patch_create_info(
+      const shader::ShaderCreateInfo &original_info) override
+  {
+    return original_info;
+  }
 
   /** Return true on success. */
-  void vertex_shader_from_glsl(MutableSpan<StringRefNull> sources) override;
-  void geometry_shader_from_glsl(MutableSpan<StringRefNull> sources) override;
-  void fragment_shader_from_glsl(MutableSpan<StringRefNull> sources) override;
-  void compute_shader_from_glsl(MutableSpan<StringRefNull> sources) override;
+  void vertex_shader_from_glsl(const shader::ShaderCreateInfo &info,
+                               MutableSpan<StringRefNull> sources) override;
+  void geometry_shader_from_glsl(const shader::ShaderCreateInfo &info,
+                                 MutableSpan<StringRefNull> sources) override;
+  void fragment_shader_from_glsl(const shader::ShaderCreateInfo &info,
+                                 MutableSpan<StringRefNull> sources) override;
+  void compute_shader_from_glsl(const shader::ShaderCreateInfo &info,
+                                MutableSpan<StringRefNull> sources) override;
   bool finalize(const shader::ShaderCreateInfo *info = nullptr) override;
   bool post_finalize(const shader::ShaderCreateInfo *info = nullptr);
-  void warm_cache(int /*limit*/) override{};
+  void warm_cache(int /*limit*/) override {};
 
   std::string resources_declare(const shader::ShaderCreateInfo &info) const override;
-  std::string constants_declare() const;
+  std::string constants_declare(const shader::SpecializationConstants &constants_state) const;
   std::string vertex_interface_declare(const shader::ShaderCreateInfo &info) const override;
   std::string fragment_interface_declare(const shader::ShaderCreateInfo &info) const override;
   std::string geometry_interface_declare(const shader::ShaderCreateInfo &info) const override;
   std::string geometry_layout_declare(const shader::ShaderCreateInfo &info) const override;
   std::string compute_layout_declare(const shader::ShaderCreateInfo &info) const override;
 
-  /** Should be called before linking. */
-  void transform_feedback_names_set(Span<const char *> name_list,
-                                    eGPUShaderTFBType geom_type) override;
-  bool transform_feedback_enable(VertBuf *buf) override;
-  void transform_feedback_disable() override;
-
-  void bind() override;
+  void bind(const shader::SpecializationConstants *constants_state) override;
   void unbind() override;
 
   void uniform_float(int location, int comp_len, int array_size, const float *data) override;
   void uniform_int(int location, int comp_len, int array_size, const int *data) override;
-
-  /** DEPRECATED: Kept only because of BGL API. */
-  int program_handle_get() const override;
 
   bool is_compute() const
   {
@@ -198,7 +175,7 @@ class GLShader : public Shader {
     if (!compute_sources_.is_empty()) {
       return true;
     }
-    return program_active_->compute_shader != 0;
+    return main_program_->compute_shader != 0;
   }
 
   GLSourcesBaked get_sources();
@@ -206,10 +183,16 @@ class GLShader : public Shader {
  private:
   StringRefNull glsl_patch_get(GLenum gl_stage);
 
+  bool has_specialization_constants() const
+  {
+    return constants->types.is_empty() == false;
+  }
+
   /** Create, compile and attach the shader stage to the shader program. */
   GLuint create_shader_stage(GLenum gl_stage,
                              MutableSpan<StringRefNull> sources,
-                             GLSources &gl_sources);
+                             GLSources &gl_sources,
+                             const shader::SpecializationConstants &constants_state);
 
   /**
    * \brief features available on newer implementation such as native barycentric coordinates
@@ -222,10 +205,19 @@ class GLShader : public Shader {
   MEM_CXX_CLASS_ALLOC_FUNCS("GLShader");
 };
 
+class GLShaderCompiler : public ShaderCompiler {
+ public:
+  GLShaderCompiler()
+      : ShaderCompiler(GPU_max_parallel_compilations(), GPUWorker::ContextType::PerThread, true) {
+        };
+
+  virtual void specialize_shader(const ShaderSpecialization &specialization) override;
+};
+
 #if BLI_SUBPROCESS_SUPPORT
 
 class GLCompilerWorker {
-  friend class GLShaderCompiler;
+  friend class GLSubprocessShaderCompiler;
 
  private:
   BlenderSubprocess subprocess_;
@@ -233,7 +225,7 @@ class GLCompilerWorker {
   std::unique_ptr<SharedSemaphore> start_semaphore_;
   std::unique_ptr<SharedSemaphore> end_semaphore_;
   std::unique_ptr<SharedSemaphore> close_semaphore_;
-  enum eState {
+  enum State {
     /* The worker has been acquired and the compilation has been requested. */
     COMPILATION_REQUESTED,
     /* The shader binary result is ready to be read. */
@@ -243,14 +235,14 @@ class GLCompilerWorker {
     /* The worker is not currently in use and can be acquired. */
     AVAILABLE
   };
-  eState state_ = AVAILABLE;
+  std::atomic<State> state_ = AVAILABLE;
   double compilation_start = 0;
 
   GLCompilerWorker();
   ~GLCompilerWorker();
 
   void compile(const GLSourcesBaked &sources);
-  bool is_ready();
+  bool block_until_ready();
   bool load_program_binary(GLint program);
   void release();
 
@@ -258,79 +250,28 @@ class GLCompilerWorker {
   bool is_lost();
 };
 
-class GLShaderCompiler : public ShaderCompiler {
+class GLSubprocessShaderCompiler : public ShaderCompiler {
  private:
-  std::mutex mutex_;
   Vector<GLCompilerWorker *> workers_;
+  std::mutex workers_mutex_;
 
-  struct CompilationWork {
-    const shader::ShaderCreateInfo *info = nullptr;
-    GLShader *shader = nullptr;
-    GLSourcesBaked sources;
+  GLCompilerWorker *get_compiler_worker();
 
-    GLCompilerWorker *worker = nullptr;
-    bool do_async_compilation = false;
-    bool is_ready = false;
-  };
-
-  struct Batch {
-    Vector<CompilationWork> items;
-    bool is_ready = false;
-  };
-
-  Map<BatchHandle, Batch> batches;
-
-  struct SpecializationRequest {
-    BatchHandle handle;
-    Vector<ShaderSpecialization> specializations;
-  };
-
-  Vector<SpecializationRequest> specialization_queue;
-
-  struct SpecializationWork {
-    GLShader *shader = nullptr;
-    Vector<shader::SpecializationConstant> constants;
-    GLSourcesBaked sources;
-
-    GLShader::GLProgram *program_get();
-
-    GLCompilerWorker *worker = nullptr;
-    bool do_async_compilation = false;
-    bool is_ready = false;
-  };
-
-  struct SpecializationBatch {
-    SpecializationBatchHandle handle = 0;
-    Vector<SpecializationWork> items;
-    bool is_ready = true;
-  };
-
-  SpecializationBatch current_specialization_batch;
-  void prepare_next_specialization_batch();
-
-  /* Shared across regular and specialization batches,
-   * to prevent the use of a wrong handle type. */
-  int64_t next_batch_handle = 1;
-
-  GLCompilerWorker *get_compiler_worker(const GLSourcesBaked &sources);
-  bool worker_is_lost(GLCompilerWorker *&worker);
+  GLShader::GLProgram *specialization_program_get(ShaderSpecialization &specialization);
 
  public:
-  virtual ~GLShaderCompiler() override;
+  GLSubprocessShaderCompiler()
+      : ShaderCompiler(GPU_max_parallel_compilations(), GPUWorker::ContextType::PerThread, true) {
+        };
+  virtual ~GLSubprocessShaderCompiler() override;
 
-  virtual BatchHandle batch_compile(Span<const shader::ShaderCreateInfo *> &infos) override;
-  virtual bool batch_is_ready(BatchHandle handle) override;
-  virtual Vector<Shader *> batch_finalize(BatchHandle &handle) override;
-
-  virtual SpecializationBatchHandle precompile_specializations(
-      Span<ShaderSpecialization> specializations) override;
-
-  virtual bool specialization_batch_is_ready(SpecializationBatchHandle &handle) override;
+  virtual Shader *compile_shader(const shader::ShaderCreateInfo &info) override;
+  virtual void specialize_shader(const ShaderSpecialization &specialization) override;
 };
 
 #else
 
-class GLShaderCompiler : public ShaderCompilerGeneric {};
+class GLSubprocessShaderCompiler : public ShaderCompiler {};
 
 #endif
 

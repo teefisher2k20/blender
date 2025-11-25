@@ -34,11 +34,12 @@
 #include "DNA_material_types.h"
 #include "DNA_node_types.h"
 #include "DNA_particle_types.h"
+#include "DNA_texture_types.h"
 
 #include "BKE_brush.hh"
 #include "BKE_colorband.hh"
 #include "BKE_colortools.hh"
-#include "BKE_icons.h"
+#include "BKE_icons.hh"
 #include "BKE_idtype.hh"
 #include "BKE_image.hh"
 #include "BKE_lib_id.hh"
@@ -107,8 +108,6 @@ static void texture_copy_data(Main *bmain,
     }
   }
 
-  BLI_listbase_clear((ListBase *)&texture_dst->drawdata);
-
   if ((flag & LIB_ID_COPY_NO_PREVIEW) == 0) {
     BKE_previewimg_id_copy(&texture_dst->id, &texture_src->id);
   }
@@ -120,8 +119,6 @@ static void texture_copy_data(Main *bmain,
 static void texture_free_data(ID *id)
 {
   Tex *texture = (Tex *)id;
-
-  DRW_drawdata_free(id);
 
   /* is no lib link block, but texture extension */
   if (texture->nodetree) {
@@ -139,7 +136,6 @@ static void texture_free_data(ID *id)
 static void texture_foreach_id(ID *id, LibraryForeachIDData *data)
 {
   Tex *texture = reinterpret_cast<Tex *>(id);
-  const int flag = BKE_lib_query_foreachid_process_flags_get(data);
 
   if (texture->nodetree) {
     /* nodetree **are owned by IDs**, treat them as mere sub-data and not real ID! */
@@ -147,10 +143,6 @@ static void texture_foreach_id(ID *id, LibraryForeachIDData *data)
         data, BKE_library_foreach_ID_embedded(data, (ID **)&texture->nodetree));
   }
   BKE_LIB_FOREACHID_PROCESS_IDSUPER(data, texture->ima, IDWALK_CB_USER);
-
-  if (flag & IDWALK_DO_DEPRECATED_POINTERS) {
-    BKE_LIB_FOREACHID_PROCESS_ID_NOCHECK(data, texture->ipo, IDWALK_CB_USER);
-  }
 }
 
 static void texture_blend_write(BlendWriter *writer, ID *id, const void *id_address)
@@ -187,10 +179,12 @@ static void texture_blend_read_data(BlendDataReader *reader, ID *id)
   BKE_previewimg_blend_read(reader, tex->preview);
 
   tex->iuser.scene = nullptr;
+
+  tex->runtime.last_update = 0;
 }
 
 IDTypeInfo IDType_ID_TE = {
-    /*id_code*/ ID_TE,
+    /*id_code*/ Tex::id_type,
     /*id_filter*/ FILTER_ID_TE,
     /*dependencies_id_types*/ FILTER_ID_IM | FILTER_ID_OB,
     /*main_listbase_index*/ INDEX_ID_TE,
@@ -208,6 +202,7 @@ IDTypeInfo IDType_ID_TE = {
     /*foreach_id*/ texture_foreach_id,
     /*foreach_cache*/ nullptr,
     /*foreach_path*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
     /*owner_pointer_get*/ nullptr,
 
     /*blend_write*/ texture_blend_write,
@@ -229,7 +224,7 @@ void BKE_texture_mtex_foreach_id(LibraryForeachIDData *data, MTex *mtex)
 
 TexMapping *BKE_texture_mapping_add(int type)
 {
-  TexMapping *texmap = MEM_cnew<TexMapping>("TexMapping");
+  TexMapping *texmap = MEM_callocN<TexMapping>("TexMapping");
 
   BKE_texture_mapping_default(texmap, type);
 
@@ -238,7 +233,7 @@ TexMapping *BKE_texture_mapping_add(int type)
 
 void BKE_texture_mapping_default(TexMapping *texmap, int type)
 {
-  memset(texmap, 0, sizeof(TexMapping));
+  *texmap = TexMapping{};
 
   texmap->size[0] = texmap->size[1] = texmap->size[2] = 1.0f;
   texmap->max[0] = texmap->max[1] = texmap->max[2] = 1.0f;
@@ -332,7 +327,7 @@ void BKE_texture_mapping_init(TexMapping *texmap)
 
 ColorMapping *BKE_texture_colormapping_add()
 {
-  ColorMapping *colormap = MEM_cnew<ColorMapping>("ColorMapping");
+  ColorMapping *colormap = MEM_callocN<ColorMapping>("ColorMapping");
 
   BKE_texture_colormapping_default(colormap);
 
@@ -341,7 +336,7 @@ ColorMapping *BKE_texture_colormapping_add()
 
 void BKE_texture_colormapping_default(ColorMapping *colormap)
 {
-  memset(colormap, 0, sizeof(ColorMapping));
+  *colormap = ColorMapping{};
 
   BKE_colorband_init(&colormap->coba, true);
 
@@ -376,7 +371,7 @@ Tex *BKE_texture_add(Main *bmain, const char *name)
 {
   Tex *tex;
 
-  tex = static_cast<Tex *>(BKE_id_new(bmain, ID_TE, name));
+  tex = BKE_id_new<Tex>(bmain, name);
 
   return tex;
 }
@@ -394,7 +389,7 @@ MTex *BKE_texture_mtex_add()
 {
   MTex *mtex;
 
-  mtex = static_cast<MTex *>(MEM_callocN(sizeof(MTex), "BKE_texture_mtex_add"));
+  mtex = MEM_callocN<MTex>("BKE_texture_mtex_add");
 
   BKE_texture_mtex_default(mtex);
 
@@ -587,77 +582,6 @@ void set_current_particle_texture(ParticleSettings *part, Tex *newtex)
   }
 }
 
-/* ------------------------------------------------------------------------- */
-
-void BKE_texture_pointdensity_init_data(PointDensity *pd)
-{
-  pd->flag = 0;
-  pd->radius = 0.3f;
-  pd->falloff_type = TEX_PD_FALLOFF_STD;
-  pd->falloff_softness = 2.0;
-  pd->source = TEX_PD_PSYS;
-  pd->point_tree = nullptr;
-  pd->point_data = nullptr;
-  pd->noise_size = 0.5f;
-  pd->noise_depth = 1;
-  pd->noise_fac = 1.0f;
-  pd->noise_influence = TEX_PD_NOISE_STATIC;
-  pd->coba = BKE_colorband_add(true);
-  pd->speed_scale = 1.0f;
-  pd->totpoints = 0;
-  pd->object = nullptr;
-  pd->psys = 0;
-  pd->psys_cache_space = TEX_PD_WORLDSPACE;
-  pd->falloff_curve = BKE_curvemapping_add(1, 0, 0, 1, 1);
-
-  pd->falloff_curve->preset = CURVE_PRESET_LINE;
-  pd->falloff_curve->flag &= ~CUMA_EXTEND_EXTRAPOLATE;
-  BKE_curvemap_reset(pd->falloff_curve->cm,
-                     &pd->falloff_curve->clipr,
-                     pd->falloff_curve->preset,
-                     CURVEMAP_SLOPE_POSITIVE);
-  BKE_curvemapping_changed(pd->falloff_curve, false);
-}
-
-PointDensity *BKE_texture_pointdensity_add()
-{
-  PointDensity *pd = static_cast<PointDensity *>(
-      MEM_callocN(sizeof(PointDensity), "pointdensity"));
-  BKE_texture_pointdensity_init_data(pd);
-  return pd;
-}
-
-PointDensity *BKE_texture_pointdensity_copy(const PointDensity *pd, const int /*flag*/)
-{
-  PointDensity *pdn;
-
-  pdn = static_cast<PointDensity *>(MEM_dupallocN(pd));
-  pdn->point_tree = nullptr;
-  pdn->point_data = nullptr;
-  if (pdn->coba) {
-    pdn->coba = static_cast<ColorBand *>(MEM_dupallocN(pdn->coba));
-  }
-  pdn->falloff_curve = BKE_curvemapping_copy(pdn->falloff_curve); /* can be nullptr */
-  return pdn;
-}
-
-void BKE_texture_pointdensity_free_data(PointDensity *pd)
-{
-  if (pd->point_tree) {
-    BLI_bvhtree_free(static_cast<BVHTree *>(pd->point_tree));
-    pd->point_tree = nullptr;
-  }
-  MEM_SAFE_FREE(pd->point_data);
-  MEM_SAFE_FREE(pd->coba);
-
-  BKE_curvemapping_free(pd->falloff_curve); /* can be nullptr */
-}
-
-void BKE_texture_pointdensity_free(PointDensity *pd)
-{
-  BKE_texture_pointdensity_free_data(pd);
-  MEM_freeN(pd);
-}
 /* ------------------------------------------------------------------------- */
 
 bool BKE_texture_is_image_user(const Tex *tex)

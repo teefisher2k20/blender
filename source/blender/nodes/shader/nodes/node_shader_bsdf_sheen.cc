@@ -4,7 +4,7 @@
 
 #include "node_shader_util.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 namespace blender::nodes::node_shader_bsdf_sheen_cc {
@@ -24,7 +24,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_shader_buts_sheen(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "distribution", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
+  layout->prop(ptr, "distribution", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
 }
 
 static void node_shader_init_sheen(bNodeTree * /*ntree*/, bNode *node)
@@ -57,10 +57,22 @@ NODE_SHADER_MATERIALX_BEGIN
   NodeItem color = get_input_value("Color", NodeItem::Type::Color3);
   NodeItem roughness = get_input_value("Roughness", NodeItem::Type::Float);
   NodeItem normal = get_input_link("Normal", NodeItem::Type::Vector3);
+#  if !(MATERIALX_MAJOR_VERSION <= 1 && MATERIALX_MINOR_VERSION <= 38)
+  NodeItem mode = node_->custom1 == SHD_SHEEN_MICROFIBER ? val(std::string("zeltner")) :
+                                                           val(std::string("conty_kulla"));
+#  endif
 
   return create_node("sheen_bsdf",
                      NodeItem::Type::BSDF,
-                     {{"color", color}, {"roughness", roughness}, {"normal", normal}});
+                     {{"color", color},
+                      {"roughness", roughness},
+                      {"normal", normal}
+#  if !(MATERIALX_MAJOR_VERSION <= 1 && MATERIALX_MINOR_VERSION <= 38)
+                      ,
+                      {"mode", mode}});
+#  else
+                     });
+#  endif
 }
 #endif
 NODE_SHADER_MATERIALX_END
@@ -88,5 +100,5 @@ void register_node_type_sh_bsdf_sheen()
   ntype.draw_buttons = file_ns::node_shader_buts_sheen;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

@@ -9,7 +9,6 @@
 #include "BLI_math_base.hh"
 #include "BLI_math_matrix.hh"
 
-#include "UI_interface.hh"
 #include "UI_resources.hh"
 
 #include "GPU_shader.hh"
@@ -21,46 +20,51 @@
 
 namespace blender::nodes::node_composite_directionalblur_cc {
 
-NODE_STORAGE_FUNCS(NodeDBlurData)
-
 static void cmp_node_directional_blur_declare(NodeDeclarationBuilder &b)
 {
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
+
   b.add_input<decl::Color>("Image")
       .default_value({1.0f, 1.0f, 1.0f, 1.0f})
-      .compositor_domain_priority(0);
-  b.add_output<decl::Color>("Image");
-}
+      .hide_value()
+      .structure_type(StructureType::Dynamic);
+  b.add_output<decl::Color>("Image").structure_type(StructureType::Dynamic).align_with_previous();
 
-static void node_composit_init_dblur(bNodeTree * /*ntree*/, bNode *node)
-{
-  NodeDBlurData *ndbd = MEM_cnew<NodeDBlurData>(__func__);
-  node->storage = ndbd;
-  ndbd->iter = 1;
-  ndbd->center_x = 0.5;
-  ndbd->center_y = 0.5;
-}
+  b.add_input<decl::Int>("Samples").default_value(1).min(1).max(32).description(
+      "The number of samples used to compute the blur. The more samples the smoother the "
+      "result, but at the expense of more compute time. The actual number of samples is two "
+      "to the power of this input, so it increases exponentially");
+  b.add_input<decl::Vector>("Center")
+      .subtype(PROP_FACTOR)
+      .dimensions(2)
+      .default_value({0.5f, 0.5f})
+      .min(0.0f)
+      .max(1.0f)
+      .description(
+          "The position at which the transformations pivot around. Defined in normalized "
+          "coordinates, so 0 means lower left corner and 1 means upper right corner of the image");
 
-static void node_composit_buts_dblur(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
-{
-  uiLayout *col;
+  b.add_input<decl::Float>("Rotation")
+      .default_value(0.0f)
+      .subtype(PROP_ANGLE)
+      .description("The amount of rotation that the blur spans");
+  b.add_input<decl::Float>("Scale").default_value(1.0f).min(0.0f).description(
+      "The amount of scaling that the blur spans");
 
-  uiItemR(layout, ptr, "iterations", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
-
-  col = uiLayoutColumn(layout, true);
-  uiItemL(col, IFACE_("Center:"), ICON_NONE);
-  uiItemR(col, ptr, "center_x", UI_ITEM_R_SPLIT_EMPTY_NAME, IFACE_("X"), ICON_NONE);
-  uiItemR(col, ptr, "center_y", UI_ITEM_R_SPLIT_EMPTY_NAME, IFACE_("Y"), ICON_NONE);
-
-  uiItemS(layout);
-
-  col = uiLayoutColumn(layout, true);
-  uiItemR(col, ptr, "distance", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "angle", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
-
-  uiItemS(layout);
-
-  uiItemR(layout, ptr, "spin", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
-  uiItemR(layout, ptr, "zoom", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+  PanelDeclarationBuilder &translation_panel = b.add_panel("Translation").default_closed(false);
+  translation_panel.add_input<decl::Float>("Amount", "Translation Amount")
+      .default_value(0.0f)
+      .subtype(PROP_FACTOR)
+      .min(-1.0f)
+      .max(1.0f)
+      .description(
+          "The amount of translation that the blur spans in the specified direction relative to "
+          "the size of the image. Negative values indicate translation in the opposite direction");
+  translation_panel.add_input<decl::Float>("Direction", "Translation Direction")
+      .default_value(0.0f)
+      .subtype(PROP_ANGLE)
+      .description("The angle that defines the direction of the translation");
 }
 
 using namespace blender::compositor;
@@ -71,8 +75,10 @@ class DirectionalBlurOperation : public NodeOperation {
 
   void execute() override
   {
-    if (is_identity()) {
-      get_input("Image").pass_through(get_result("Image"));
+    if (this->is_identity()) {
+      const Result &input = this->get_input("Image");
+      Result &output = this->get_result("Image");
+      output.share_data(input);
       return;
     }
 
@@ -86,18 +92,18 @@ class DirectionalBlurOperation : public NodeOperation {
 
   void execute_gpu()
   {
-    GPUShader *shader = context().get_shader("compositor_directional_blur");
+    gpu::Shader *shader = context().get_shader("compositor_directional_blur");
     GPU_shader_bind(shader);
 
     /* The number of iterations does not cover the original image, that is, the image with no
      * transformation. So add an extra iteration for the original image and put that into
      * consideration in the shader. */
-    GPU_shader_uniform_1i(shader, "iterations", get_iterations() + 1);
-    GPU_shader_uniform_2fv(shader, "origin", get_origin());
-    GPU_shader_uniform_2fv(shader, "translation", get_translation());
-    GPU_shader_uniform_1f(shader, "rotation_sin", math::sin(get_rotation()));
-    GPU_shader_uniform_1f(shader, "rotation_cos", math::cos(get_rotation()));
-    GPU_shader_uniform_1f(shader, "scale", get_scale());
+    GPU_shader_uniform_1i(shader, "iterations", this->get_iterations() + 1);
+    GPU_shader_uniform_2fv(shader, "origin", this->get_origin());
+    GPU_shader_uniform_2fv(shader, "delta_translation", this->get_delta_translation());
+    GPU_shader_uniform_1f(shader, "delta_rotation_sin", math::sin(this->get_delta_rotation()));
+    GPU_shader_uniform_1f(shader, "delta_rotation_cos", math::cos(this->get_delta_rotation()));
+    GPU_shader_uniform_1f(shader, "delta_scale", this->get_delta_scale());
 
     const Result &input_image = get_input("Image");
     GPU_texture_filter_mode(input_image, true);
@@ -109,7 +115,7 @@ class DirectionalBlurOperation : public NodeOperation {
     output_image.allocate_texture(domain);
     output_image.bind_as_image(shader, "output_img");
 
-    compute_dispatch_threads_at_least(shader, domain.size);
+    compute_dispatch_threads_at_least(shader, domain.data_size);
 
     GPU_shader_unbind();
     output_image.unbind_as_image();
@@ -123,10 +129,10 @@ class DirectionalBlurOperation : public NodeOperation {
      * consideration in the code. */
     const int iterations = this->get_iterations() + 1;
     const float2 origin = this->get_origin();
-    const float2 translation = this->get_translation();
-    const float rotation_sin = math::sin(this->get_rotation());
-    const float rotation_cos = math::cos(this->get_rotation());
-    const float scale = this->get_scale();
+    const float2 delta_translation = this->get_delta_translation();
+    const float delta_rotation_sin = math::sin(this->get_delta_rotation());
+    const float delta_rotation_cos = math::cos(this->get_delta_rotation());
+    const float delta_scale = this->get_delta_scale();
 
     const Result &input = get_input("Image");
 
@@ -134,7 +140,7 @@ class DirectionalBlurOperation : public NodeOperation {
     Result &output = get_result("Image");
     output.allocate_texture(domain);
 
-    const int2 size = domain.size;
+    const int2 size = domain.data_size;
     parallel_for(size, [&](const int2 texel) {
       float2 coordinates = float2(texel) + float2(0.5f);
 
@@ -161,51 +167,51 @@ class DirectionalBlurOperation : public NodeOperation {
 
         accumulated_color += input.sample_bilinear_zero(transformed_coordinates / float2(size));
 
-        current_scale += scale;
-        current_translation += translation;
+        current_scale += delta_scale;
+        current_translation += delta_translation;
 
         /* Those are the sine and cosine addition identities. Used to avoid computing sine and
          * cosine at each iteration. */
-        float new_sin = current_sin * rotation_cos + current_cos * rotation_sin;
-        current_cos = current_cos * rotation_cos - current_sin * rotation_sin;
+        float new_sin = current_sin * delta_rotation_cos + current_cos * delta_rotation_sin;
+        current_cos = current_cos * delta_rotation_cos - current_sin * delta_rotation_sin;
         current_sin = new_sin;
       }
 
-      output.store_pixel(texel, accumulated_color / iterations);
+      output.store_pixel(texel, Color(accumulated_color / iterations));
     });
   }
 
-  /* Get the amount of translation relative to the image size that will be applied on each
-   * iteration. The translation is in the negative x direction rotated in the clock-wise
-   * direction, hence the negative sign for the rotation and translation vector. */
-  float2 get_translation()
+  /* Get the delta that will be added to the translation on each iteration. The translation is in
+   * the negative x direction rotated in the clock-wise direction, hence the negative sign for the
+   * rotation and translation vector. */
+  float2 get_delta_translation()
   {
-    const float2 input_size = float2(get_input("Image").domain().size);
+    const float2 input_size = float2(get_input("Image").domain().data_size);
     const float diagonal_length = math::length(input_size);
-    const float translation_amount = diagonal_length * node_storage(bnode()).distance;
+    const float translation_amount = diagonal_length * this->get_translation_amount();
     const float2x2 rotation = math::from_rotation<float2x2>(
-        math::AngleRadian(-node_storage(bnode()).angle));
-    const float2 translation = rotation * float2(-translation_amount / get_iterations(), 0.0f);
+        math::AngleRadian(-this->get_translation_direction()));
+    const float2 translation = rotation *
+                               float2(-translation_amount / this->get_iterations(), 0.0f);
     return translation;
   }
 
-  /* Get the amount of rotation that will be applied on each iteration. */
-  float get_rotation()
+  /* Get the delta that will be added to the rotation on each iteration. */
+  float get_delta_rotation()
   {
-    return node_storage(bnode()).spin / get_iterations();
+    return this->get_rotation() / this->get_iterations();
   }
 
-  /* Get the amount of scale that will be applied on each iteration. The scale is identity when
-   * the user supplies 0, so we add 1. */
-  float get_scale()
+  /* Get the delta that will be added to the scale on each iteration. */
+  float get_delta_scale()
   {
-    return node_storage(bnode()).zoom / get_iterations();
+    return (this->get_scale() - 1.0f) / this->get_iterations();
   }
 
   float2 get_origin()
   {
-    const float2 input_size = float2(get_input("Image").domain().size);
-    return float2(node_storage(bnode()).center_x, node_storage(bnode()).center_y) * input_size;
+    const float2 input_size = float2(get_input("Image").domain().data_size);
+    return this->get_center() * input_size;
   }
 
   /* The actual number of iterations is 2 to the power of the user supplied iterations. The power
@@ -213,34 +219,65 @@ class DirectionalBlurOperation : public NodeOperation {
    * is the number of diagonal pixels. */
   int get_iterations()
   {
-    const int iterations = 2 << (node_storage(bnode()).iter - 1);
-    const int upper_limit = math::ceil(math::length(float2(get_input("Image").domain().size)));
+    const int iterations = 2 << (this->get_samples() - 1);
+    const int upper_limit = math::ceil(
+        math::length(float2(get_input("Image").domain().data_size)));
     return math::min(iterations, upper_limit);
   }
 
-  /* Returns true if the operation does nothing and the input can be passed through. */
   bool is_identity()
   {
-    const Result &input = get_input("Image");
-    /* Single value inputs can't be blurred and are returned as is. */
+    const Result &input = this->get_input("Image");
     if (input.is_single_value()) {
       return true;
     }
 
-    /* If any of the following options are non-zero, then the operation is not an identity. */
-    if (node_storage(bnode()).distance != 0.0f) {
+    if (this->get_translation_amount() != 0.0f) {
       return false;
     }
 
-    if (node_storage(bnode()).spin != 0.0f) {
+    if (this->get_rotation() != 0.0f) {
       return false;
     }
 
-    if (node_storage(bnode()).zoom != 0.0f) {
+    if (this->get_scale() != 1.0f) {
       return false;
     }
 
     return true;
+  }
+
+  int get_samples()
+  {
+    return math::clamp(this->get_input("Samples").get_single_value_default(1), 1, 32);
+  }
+
+  float2 get_center()
+  {
+    return math::clamp(this->get_input("Center").get_single_value_default(float2(0.5f)),
+                       float2(0.0f),
+                       float2(1.0f));
+  }
+
+  float get_translation_amount()
+  {
+    return math::clamp(
+        this->get_input("Translation Amount").get_single_value_default(0.0f), -1.0f, 1.0f);
+  }
+
+  float get_translation_direction()
+  {
+    return this->get_input("Translation Direction").get_single_value_default(0.0f);
+  }
+
+  float get_rotation()
+  {
+    return this->get_input("Rotation").get_single_value_default(0.0f);
+  }
+
+  float get_scale()
+  {
+    return math::max(10e-6f, this->get_input("Scale").get_single_value_default(1.0f));
   }
 };
 
@@ -251,7 +288,7 @@ static NodeOperation *get_compositor_operation(Context &context, DNode node)
 
 }  // namespace blender::nodes::node_composite_directionalblur_cc
 
-void register_node_type_cmp_dblur()
+static void register_node_type_cmp_dblur()
 {
   namespace file_ns = blender::nodes::node_composite_directionalblur_cc;
 
@@ -263,11 +300,8 @@ void register_node_type_cmp_dblur()
   ntype.enum_name_legacy = "DBLUR";
   ntype.nclass = NODE_CLASS_OP_FILTER;
   ntype.declare = file_ns::cmp_node_directional_blur_declare;
-  ntype.draw_buttons = file_ns::node_composit_buts_dblur;
-  ntype.initfunc = file_ns::node_composit_init_dblur;
-  blender::bke::node_type_storage(
-      &ntype, "NodeDBlurData", node_free_standard_storage, node_copy_standard_storage);
   ntype.get_compositor_operation = file_ns::get_compositor_operation;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
+NOD_REGISTER_NODE(register_node_type_cmp_dblur)

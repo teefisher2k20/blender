@@ -15,7 +15,6 @@
 #include "BLI_listbase.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
-#include "BLI_utildefines.h"
 
 #include "BKE_customdata.hh"
 #include "BKE_mesh.hh"
@@ -24,7 +23,9 @@
 
 using blender::Array;
 using blender::float3;
+using blender::float4x4;
 using blender::MutableSpan;
+using blender::Span;
 
 const BMAllocTemplate bm_mesh_allocsize_default = {512, 1024, 2048, 512};
 const BMAllocTemplate bm_mesh_chunksize_default = {512, 1024, 2048, 512};
@@ -131,7 +132,7 @@ void BM_mesh_elem_toolflags_clear(BMesh *bm)
 BMesh *BM_mesh_create(const BMAllocTemplate *allocsize, const BMeshCreateParams *params)
 {
   /* allocate the structure */
-  BMesh *bm = static_cast<BMesh *>(MEM_callocN(sizeof(BMesh), __func__));
+  BMesh *bm = MEM_callocN<BMesh>(__func__);
 
   /* allocate the memory pools for the mesh elements */
   bm_mempool_init(bm, allocsize, params->use_toolflags);
@@ -202,10 +203,10 @@ void BM_mesh_data_free(BMesh *bm)
   }
 
   /* free custom data */
-  CustomData_free(&bm->vdata, 0);
-  CustomData_free(&bm->edata, 0);
-  CustomData_free(&bm->ldata, 0);
-  CustomData_free(&bm->pdata, 0);
+  CustomData_free(&bm->vdata);
+  CustomData_free(&bm->edata);
+  CustomData_free(&bm->ldata);
+  CustomData_free(&bm->pdata);
 
   /* destroy element pools */
   BLI_mempool_destroy(bm->vpool);
@@ -247,7 +248,7 @@ void BM_mesh_clear(BMesh *bm)
 
   /* free old mesh */
   BM_mesh_data_free(bm);
-  memset(bm, 0, sizeof(BMesh));
+  *bm = BMesh{};
 
   /* allocate the memory pools for the mesh elements */
   bm_mempool_init(bm, &bm_mesh_allocsize_default, use_toolflags);
@@ -739,7 +740,9 @@ int BM_mesh_elem_count(BMesh *bm, const char htype)
 void BM_mesh_remap(BMesh *bm, const uint *vert_idx, const uint *edge_idx, const uint *face_idx)
 {
   /* Mapping old to new pointers. */
-  GHash *vptr_map = nullptr, *eptr_map = nullptr, *fptr_map = nullptr;
+  blender::Map<BMVert *, BMVert *> *vptr_map = nullptr;
+  blender::Map<BMEdge *, BMEdge *> *eptr_map = nullptr;
+  blender::Map<BMFace *, BMFace *> *fptr_map = nullptr;
   BMIter iter, iterl;
   BMVert *ve;
   BMEdge *ed;
@@ -763,15 +766,13 @@ void BM_mesh_remap(BMesh *bm, const uint *vert_idx, const uint *edge_idx, const 
     const int cd_vert_pyptr = CustomData_get_offset(&bm->vdata, CD_BM_ELEM_PYPTR);
 
     /* Init the old-to-new vert pointers mapping */
-    vptr_map = BLI_ghash_ptr_new_ex("BM_mesh_remap vert pointers mapping", bm->totvert);
+    vptr_map = MEM_new<blender::Map<BMVert *, BMVert *>>("BM_mesh_remap vert pointers mapping");
+    vptr_map->reserve(bm->totvert);
 
     /* Make a copy of all vertices. */
     verts_pool = bm->vtable;
-    verts_copy = static_cast<BMVert *>(
-        MEM_mallocN(sizeof(BMVert) * totvert, "BM_mesh_remap verts copy"));
-    void **pyptrs = (cd_vert_pyptr != -1) ?
-                        static_cast<void **>(MEM_mallocN(sizeof(void *) * totvert, __func__)) :
-                        nullptr;
+    verts_copy = MEM_malloc_arrayN<BMVert>(totvert, "BM_mesh_remap verts copy");
+    void **pyptrs = (cd_vert_pyptr != -1) ? MEM_malloc_arrayN<void *>(totvert, __func__) : nullptr;
     for (i = totvert, ve = verts_copy + totvert - 1, vep = verts_pool + totvert - 1; i--;
          ve--, vep--)
     {
@@ -794,7 +795,7 @@ void BM_mesh_remap(BMesh *bm, const uint *vert_idx, const uint *edge_idx, const 
       printf(
           "mapping vert from %d to %d (%p/%p to %p)\n", i, *new_idx, *vep, verts_pool[i], new_vep);
 #endif
-      BLI_ghash_insert(vptr_map, *vep, new_vep);
+      vptr_map->add(*vep, new_vep);
       if (cd_vert_pyptr != -1) {
         void **pyptr = static_cast<void **>(
             BM_ELEM_CD_GET_VOID_P(((BMElem *)new_vep), cd_vert_pyptr));
@@ -820,15 +821,13 @@ void BM_mesh_remap(BMesh *bm, const uint *vert_idx, const uint *edge_idx, const 
     const int cd_edge_pyptr = CustomData_get_offset(&bm->edata, CD_BM_ELEM_PYPTR);
 
     /* Init the old-to-new vert pointers mapping */
-    eptr_map = BLI_ghash_ptr_new_ex("BM_mesh_remap edge pointers mapping", bm->totedge);
+    eptr_map = MEM_new<blender::Map<BMEdge *, BMEdge *>>("BM_mesh_remap edge pointers mapping");
+    eptr_map->reserve(totedge);
 
     /* Make a copy of all vertices. */
     edges_pool = bm->etable;
-    edges_copy = static_cast<BMEdge *>(
-        MEM_mallocN(sizeof(BMEdge) * totedge, "BM_mesh_remap edges copy"));
-    void **pyptrs = (cd_edge_pyptr != -1) ?
-                        static_cast<void **>(MEM_mallocN(sizeof(void *) * totedge, __func__)) :
-                        nullptr;
+    edges_copy = MEM_malloc_arrayN<BMEdge>(totedge, "BM_mesh_remap edges copy");
+    void **pyptrs = (cd_edge_pyptr != -1) ? MEM_malloc_arrayN<void *>(totedge, __func__) : nullptr;
     for (i = totedge, ed = edges_copy + totedge - 1, edp = edges_pool + totedge - 1; i--;
          ed--, edp--)
     {
@@ -846,7 +845,7 @@ void BM_mesh_remap(BMesh *bm, const uint *vert_idx, const uint *edge_idx, const 
     for (i = totedge; i--; new_idx--, ed--, edp--) {
       BMEdge *new_edp = edges_pool[*new_idx];
       *new_edp = *ed;
-      BLI_ghash_insert(eptr_map, *edp, new_edp);
+      eptr_map->add(*edp, new_edp);
 #if 0
       printf(
           "mapping edge from %d to %d (%p/%p to %p)\n", i, *new_idx, *edp, edges_pool[i], new_edp);
@@ -876,15 +875,13 @@ void BM_mesh_remap(BMesh *bm, const uint *vert_idx, const uint *edge_idx, const 
     const int cd_poly_pyptr = CustomData_get_offset(&bm->pdata, CD_BM_ELEM_PYPTR);
 
     /* Init the old-to-new vert pointers mapping */
-    fptr_map = BLI_ghash_ptr_new_ex("BM_mesh_remap face pointers mapping", bm->totface);
+    fptr_map = MEM_new<blender::Map<BMFace *, BMFace *>>("BM_mesh_remap face pointers mapping");
+    fptr_map->reserve(totface);
 
     /* Make a copy of all vertices. */
     faces_pool = bm->ftable;
-    faces_copy = static_cast<BMFace *>(
-        MEM_mallocN(sizeof(BMFace) * totface, "BM_mesh_remap faces copy"));
-    void **pyptrs = (cd_poly_pyptr != -1) ?
-                        static_cast<void **>(MEM_mallocN(sizeof(void *) * totface, __func__)) :
-                        nullptr;
+    faces_copy = MEM_malloc_arrayN<BMFace>(totface, "BM_mesh_remap faces copy");
+    void **pyptrs = (cd_poly_pyptr != -1) ? MEM_malloc_arrayN<void *>(totface, __func__) : nullptr;
     for (i = totface, fa = faces_copy + totface - 1, fap = faces_pool + totface - 1; i--;
          fa--, fap--)
     {
@@ -902,7 +899,7 @@ void BM_mesh_remap(BMesh *bm, const uint *vert_idx, const uint *edge_idx, const 
     for (i = totface; i--; new_idx--, fa--, fap--) {
       BMFace *new_fap = faces_pool[*new_idx];
       *new_fap = *fa;
-      BLI_ghash_insert(fptr_map, *fap, new_fap);
+      fptr_map->add(*fap, new_fap);
       if (cd_poly_pyptr != -1) {
         void **pyptr = static_cast<void **>(
             BM_ELEM_CD_GET_VOID_P(((BMElem *)new_fap), cd_poly_pyptr));
@@ -925,8 +922,7 @@ void BM_mesh_remap(BMesh *bm, const uint *vert_idx, const uint *edge_idx, const 
     BM_ITER_MESH (ve, &iter, bm, BM_VERTS_OF_MESH) {
       // printf("Vert e: %p -> %p\n", ve->e, BLI_ghash_lookup(eptr_map, ve->e));
       if (ve->e) {
-        ve->e = static_cast<BMEdge *>(BLI_ghash_lookup(eptr_map, ve->e));
-        BLI_assert(ve->e);
+        ve->e = eptr_map->lookup(ve->e);
       }
     }
   }
@@ -941,10 +937,8 @@ void BM_mesh_remap(BMesh *bm, const uint *vert_idx, const uint *edge_idx, const 
         printf("Edge v1: %p -> %p\n", ed->v1, BLI_ghash_lookup(vptr_map, ed->v1));
         printf("Edge v2: %p -> %p\n", ed->v2, BLI_ghash_lookup(vptr_map, ed->v2));
 #endif
-        ed->v1 = static_cast<BMVert *>(BLI_ghash_lookup(vptr_map, ed->v1));
-        ed->v2 = static_cast<BMVert *>(BLI_ghash_lookup(vptr_map, ed->v2));
-        BLI_assert(ed->v1);
-        BLI_assert(ed->v2);
+        ed->v1 = vptr_map->lookup(ed->v1);
+        ed->v2 = vptr_map->lookup(ed->v2);
       }
       if (eptr_map) {
 #if 0
@@ -961,18 +955,10 @@ void BM_mesh_remap(BMesh *bm, const uint *vert_idx, const uint *edge_idx, const 
                ed->v2_disk_link.next,
                BLI_ghash_lookup(eptr_map, ed->v2_disk_link.next));
 #endif
-        ed->v1_disk_link.prev = static_cast<BMEdge *>(
-            BLI_ghash_lookup(eptr_map, ed->v1_disk_link.prev));
-        ed->v1_disk_link.next = static_cast<BMEdge *>(
-            BLI_ghash_lookup(eptr_map, ed->v1_disk_link.next));
-        ed->v2_disk_link.prev = static_cast<BMEdge *>(
-            BLI_ghash_lookup(eptr_map, ed->v2_disk_link.prev));
-        ed->v2_disk_link.next = static_cast<BMEdge *>(
-            BLI_ghash_lookup(eptr_map, ed->v2_disk_link.next));
-        BLI_assert(ed->v1_disk_link.prev);
-        BLI_assert(ed->v1_disk_link.next);
-        BLI_assert(ed->v2_disk_link.prev);
-        BLI_assert(ed->v2_disk_link.next);
+        ed->v1_disk_link.prev = eptr_map->lookup(ed->v1_disk_link.prev);
+        ed->v1_disk_link.next = eptr_map->lookup(ed->v1_disk_link.next);
+        ed->v2_disk_link.prev = eptr_map->lookup(ed->v2_disk_link.prev);
+        ed->v2_disk_link.next = eptr_map->lookup(ed->v2_disk_link.next);
       }
     }
   }
@@ -982,18 +968,15 @@ void BM_mesh_remap(BMesh *bm, const uint *vert_idx, const uint *edge_idx, const 
     BM_ITER_ELEM (lo, &iterl, fa, BM_LOOPS_OF_FACE) {
       if (vptr_map) {
         // printf("Loop v: %p -> %p\n", lo->v, BLI_ghash_lookup(vptr_map, lo->v));
-        lo->v = static_cast<BMVert *>(BLI_ghash_lookup(vptr_map, lo->v));
-        BLI_assert(lo->v);
+        lo->v = vptr_map->lookup(lo->v);
       }
       if (eptr_map) {
         // printf("Loop e: %p -> %p\n", lo->e, BLI_ghash_lookup(eptr_map, lo->e));
-        lo->e = static_cast<BMEdge *>(BLI_ghash_lookup(eptr_map, lo->e));
-        BLI_assert(lo->e);
+        lo->e = eptr_map->lookup(lo->e);
       }
       if (fptr_map) {
         // printf("Loop f: %p -> %p\n", lo->f, BLI_ghash_lookup(fptr_map, lo->f));
-        lo->f = static_cast<BMFace *>(BLI_ghash_lookup(fptr_map, lo->f));
-        BLI_assert(lo->f);
+        lo->f = fptr_map->lookup(lo->f);
       }
     }
   }
@@ -1004,20 +987,20 @@ void BM_mesh_remap(BMesh *bm, const uint *vert_idx, const uint *edge_idx, const 
       switch (ese->htype) {
         case BM_VERT:
           if (vptr_map) {
-            ese->ele = static_cast<BMElem *>(BLI_ghash_lookup(vptr_map, ese->ele));
-            BLI_assert(ese->ele);
+            ese->ele = reinterpret_cast<BMElem *>(
+                vptr_map->lookup(reinterpret_cast<BMVert *>(ese->ele)));
           }
           break;
         case BM_EDGE:
           if (eptr_map) {
-            ese->ele = static_cast<BMElem *>(BLI_ghash_lookup(eptr_map, ese->ele));
-            BLI_assert(ese->ele);
+            ese->ele = reinterpret_cast<BMElem *>(
+                eptr_map->lookup(reinterpret_cast<BMEdge *>(ese->ele)));
           }
           break;
         case BM_FACE:
           if (fptr_map) {
-            ese->ele = static_cast<BMElem *>(BLI_ghash_lookup(fptr_map, ese->ele));
-            BLI_assert(ese->ele);
+            ese->ele = reinterpret_cast<BMElem *>(
+                fptr_map->lookup(reinterpret_cast<BMFace *>(ese->ele)));
           }
           break;
       }
@@ -1026,20 +1009,13 @@ void BM_mesh_remap(BMesh *bm, const uint *vert_idx, const uint *edge_idx, const 
 
   if (fptr_map) {
     if (bm->act_face) {
-      bm->act_face = static_cast<BMFace *>(BLI_ghash_lookup(fptr_map, bm->act_face));
-      BLI_assert(bm->act_face);
+      bm->act_face = fptr_map->lookup(bm->act_face);
     }
   }
 
-  if (vptr_map) {
-    BLI_ghash_free(vptr_map, nullptr, nullptr);
-  }
-  if (eptr_map) {
-    BLI_ghash_free(eptr_map, nullptr, nullptr);
-  }
-  if (fptr_map) {
-    BLI_ghash_free(fptr_map, nullptr, nullptr);
-  }
+  MEM_delete(vptr_map);
+  MEM_delete(eptr_map);
+  MEM_delete(fptr_map);
 }
 
 void BM_mesh_rebuild(BMesh *bm,
@@ -1052,17 +1028,13 @@ void BM_mesh_rebuild(BMesh *bm,
   const char remap = (vpool_dst ? BM_VERT : 0) | (epool_dst ? BM_EDGE : 0) |
                      (lpool_dst ? BM_LOOP : 0) | (fpool_dst ? BM_FACE : 0);
 
-  BMVert **vtable_dst = (remap & BM_VERT) ? static_cast<BMVert **>(MEM_mallocN(
-                                                sizeof(BMVert *) * bm->totvert, __func__)) :
+  BMVert **vtable_dst = (remap & BM_VERT) ? MEM_malloc_arrayN<BMVert *>(bm->totvert, __func__) :
                                             nullptr;
-  BMEdge **etable_dst = (remap & BM_EDGE) ? static_cast<BMEdge **>(MEM_mallocN(
-                                                sizeof(BMEdge *) * bm->totedge, __func__)) :
+  BMEdge **etable_dst = (remap & BM_EDGE) ? MEM_malloc_arrayN<BMEdge *>(bm->totedge, __func__) :
                                             nullptr;
-  BMLoop **ltable_dst = (remap & BM_LOOP) ? static_cast<BMLoop **>(MEM_mallocN(
-                                                sizeof(BMLoop *) * bm->totloop, __func__)) :
+  BMLoop **ltable_dst = (remap & BM_LOOP) ? MEM_malloc_arrayN<BMLoop *>(bm->totloop, __func__) :
                                             nullptr;
-  BMFace **ftable_dst = (remap & BM_FACE) ? static_cast<BMFace **>(MEM_mallocN(
-                                                sizeof(BMFace *) * bm->totface, __func__)) :
+  BMFace **ftable_dst = (remap & BM_FACE) ? MEM_malloc_arrayN<BMFace *>(bm->totface, __func__) :
                                             nullptr;
 
   const bool use_toolflags = params->use_toolflags;
@@ -1362,7 +1334,7 @@ Array<float3> BM_mesh_vert_coords_alloc(BMesh *bm)
   return positions;
 }
 
-void BM_mesh_vert_coords_apply(BMesh *bm, const float (*vert_coords)[3])
+void BM_mesh_vert_coords_apply(BMesh *bm, const Span<float3> vert_coords)
 {
   BMIter iter;
   BMVert *v;
@@ -1373,14 +1345,14 @@ void BM_mesh_vert_coords_apply(BMesh *bm, const float (*vert_coords)[3])
 }
 
 void BM_mesh_vert_coords_apply_with_mat4(BMesh *bm,
-                                         const float (*vert_coords)[3],
-                                         const float mat[4][4])
+                                         const Span<float3> vert_coords,
+                                         const float4x4 &transform)
 {
   BMIter iter;
   BMVert *v;
   int i;
   BM_ITER_MESH_INDEX (v, &iter, bm, BM_VERTS_OF_MESH, i) {
-    mul_v3_m4v3(v->co, mat, vert_coords[i]);
+    mul_v3_m4v3(v->co, transform.ptr(), vert_coords[i]);
   }
 }
 

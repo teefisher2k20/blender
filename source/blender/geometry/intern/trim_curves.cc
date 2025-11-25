@@ -700,8 +700,8 @@ static void trim_bezier_curves(const bke::CurvesGeometry &src_curves,
   const Span<float3> src_positions = src_curves.positions();
   const VArraySpan<int8_t> src_types_l{src_curves.handle_types_left()};
   const VArraySpan<int8_t> src_types_r{src_curves.handle_types_right()};
-  const Span<float3> src_handles_l = src_curves.handle_positions_left();
-  const Span<float3> src_handles_r = src_curves.handle_positions_right();
+  const Span<float3> src_handles_l = *src_curves.handle_positions_left();
+  const Span<float3> src_handles_r = *src_curves.handle_positions_right();
 
   const OffsetIndices dst_points_by_curve = dst_curves.points_by_curve();
   MutableSpan<float3> dst_positions = dst_curves.positions_for_write();
@@ -975,7 +975,7 @@ bke::CurvesGeometry trim_curves(const bke::CurvesGeometry &src_curves,
   Vector<bke::AttributeTransferData> transfer_attributes = bke::retrieve_attributes_for_transfer(
       src_attributes,
       dst_attributes,
-      ATTR_DOMAIN_MASK_POINT,
+      {bke::AttrDomain::Point},
       bke::attribute_filter_with_skip_ref(attribute_filter,
                                           {"position",
                                            "handle_left",
@@ -1070,6 +1070,10 @@ bke::CurvesGeometry trim_curves(const bke::CurvesGeometry &src_curves,
 
   dst_curves.remove_attributes_based_on_types();
   dst_curves.tag_topology_changed();
+  if (src_curves.nurbs_has_custom_knots()) {
+    bke::curves::nurbs::update_custom_knot_modes(
+        dst_curves.curves_range(), NURBS_KNOT_MODE_NORMAL, NURBS_KNOT_MODE_NORMAL, dst_curves);
+  }
   return dst_curves;
 }
 

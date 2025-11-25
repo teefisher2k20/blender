@@ -8,7 +8,6 @@
 
 #include "BLI_hash.h"
 #include "BLI_rand.h"
-#include "BLI_task.h"
 
 #include "BLT_translation.hh"
 
@@ -18,14 +17,14 @@
 #include "DNA_gpencil_modifier_types.h"
 #include "DNA_node_types.h" /* For `GeometryNodeCurveSampleMode` */
 #include "DNA_object_types.h"
+#include "DNA_screen_types.h"
 
 #include "BKE_curves.hh"
 #include "BKE_geometry_set.hh"
 #include "BKE_grease_pencil.hh"
-#include "BKE_lib_query.hh"
 #include "BKE_modifier.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "MOD_grease_pencil_util.hh"
@@ -126,8 +125,8 @@ static void deform_drawing(const ModifierData &md,
   /* Variable for tagging shrinking when values are adjusted after random. */
   std::atomic<bool> needs_additional_shrinking = false;
 
-  VArray<float> use_starts = VArray<float>::ForSingle(mmd.start_fac, curves_num);
-  VArray<float> use_ends = VArray<float>::ForSingle(mmd.end_fac, curves_num);
+  VArray<float> use_starts = VArray<float>::from_single(mmd.start_fac, curves_num);
+  VArray<float> use_ends = VArray<float>::from_single(mmd.end_fac, curves_num);
 
   Array<float> modified_starts;
   Array<float> modified_ends;
@@ -137,8 +136,8 @@ static void deform_drawing(const ModifierData &md,
 
     /* Use random to modify start/end factors. Put the modified values outside the
      * branch so it could be accessed in later stretching/shrinking stages. */
-    use_starts = VArray<float>::ForSpan(modified_starts.as_mutable_span());
-    use_ends = VArray<float>::ForSpan(modified_ends.as_mutable_span());
+    use_starts = VArray<float>::from_span(modified_starts.as_mutable_span());
+    use_ends = VArray<float>::from_span(modified_ends.as_mutable_span());
 
     int seed = mmd.seed;
 
@@ -210,10 +209,11 @@ static void deform_drawing(const ModifierData &md,
     needs_removal.fill(false);
 
     curves.ensure_evaluated_lengths();
+    const VArray<bool> &cyclic = curves.cyclic();
 
     threading::parallel_for(curves.curves_range(), 512, [&](const IndexRange parallel_range) {
       for (const int curve : parallel_range) {
-        float length = curves.evaluated_length_total_for_curve(curve, false);
+        float length = curves.evaluated_length_total_for_curve(curve, cyclic[curve]);
         if (mmd.mode & GP_LENGTH_ABSOLUTE) {
           starts[curve] = -math::min(use_starts[curve], 0.0f);
           ends[curve] = length - -math::min(use_ends[curve], 0.0f);
@@ -229,8 +229,8 @@ static void deform_drawing(const ModifierData &md,
     });
     curves = geometry::trim_curves(curves,
                                    selection,
-                                   VArray<float>::ForSpan(starts.as_span()),
-                                   VArray<float>::ForSpan(ends.as_span()),
+                                   VArray<float>::from_span(starts.as_span()),
+                                   VArray<float>::from_span(ends.as_span()),
                                    GEO_NODE_CURVE_SAMPLE_LENGTH,
                                    {});
 
@@ -276,58 +276,56 @@ static void panel_draw(const bContext *C, Panel *panel)
 
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
 
-  uiLayoutSetPropSep(layout, true);
-  uiItemR(layout, ptr, "mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->use_property_split_set(true);
+  layout->prop(ptr, "mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  uiLayout *col = uiLayoutColumn(layout, true);
+  uiLayout *col = &layout->column(true);
 
   if (RNA_enum_get(ptr, "mode") == GP_LENGTH_RELATIVE) {
-    uiItemR(col, ptr, "start_factor", UI_ITEM_NONE, IFACE_("Start"), ICON_NONE);
-    uiItemR(col, ptr, "end_factor", UI_ITEM_NONE, IFACE_("End"), ICON_NONE);
+    col->prop(ptr, "start_factor", UI_ITEM_NONE, IFACE_("Start"), ICON_NONE);
+    col->prop(ptr, "end_factor", UI_ITEM_NONE, IFACE_("End"), ICON_NONE);
   }
   else {
-    uiItemR(col, ptr, "start_length", UI_ITEM_NONE, IFACE_("Start"), ICON_NONE);
-    uiItemR(col, ptr, "end_length", UI_ITEM_NONE, IFACE_("End"), ICON_NONE);
+    col->prop(ptr, "start_length", UI_ITEM_NONE, IFACE_("Start"), ICON_NONE);
+    col->prop(ptr, "end_length", UI_ITEM_NONE, IFACE_("End"), ICON_NONE);
   }
 
-  uiItemR(layout, ptr, "overshoot_factor", UI_ITEM_R_SLIDER, IFACE_("Used Length"), ICON_NONE);
+  layout->prop(ptr, "overshoot_factor", UI_ITEM_R_SLIDER, IFACE_("Used Length"), ICON_NONE);
+  PanelLayout random_panel_layout = layout->panel_prop_with_bool_header(
+      C, ptr, "open_random_panel", ptr, "use_random", IFACE_("Randomize"));
+  if (uiLayout *random_layout = random_panel_layout.body) {
+    uiLayout *subcol = &random_layout->column(false);
+    subcol->use_property_split_set(true);
+    subcol->active_set(RNA_boolean_get(ptr, "use_random"));
 
-  if (uiLayout *random_layout = uiLayoutPanelPropWithBoolHeader(
-          C, layout, ptr, "open_random_panel", "use_random", IFACE_("Randomize")))
-  {
-    uiLayout *subcol = uiLayoutColumn(random_layout, false);
-    uiLayoutSetPropSep(subcol, true);
-    uiLayoutSetActive(subcol, RNA_boolean_get(ptr, "use_random"));
+    subcol->prop(ptr, "step", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-    uiItemR(subcol, ptr, "step", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    subcol->prop(ptr, "random_start_factor", UI_ITEM_NONE, IFACE_("Offset Start"), ICON_NONE);
+    subcol->prop(ptr, "random_end_factor", UI_ITEM_NONE, IFACE_("End"), ICON_NONE);
+    subcol->prop(ptr, "random_offset", UI_ITEM_NONE, IFACE_("Noise Offset"), ICON_NONE);
+    subcol->prop(ptr, "seed", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  }
+  PanelLayout curvature_panel_layout = layout->panel_prop_with_bool_header(
+      C, ptr, "open_curvature_panel", ptr, "use_curvature", IFACE_("Curvature"));
+  if (uiLayout *curvature_layout = curvature_panel_layout.body) {
+    uiLayout *subcol = &curvature_layout->column(false);
+    subcol->use_property_split_set(true);
+    subcol->active_set(RNA_boolean_get(ptr, "use_curvature"));
 
-    uiItemR(subcol, ptr, "random_start_factor", UI_ITEM_NONE, IFACE_("Offset Start"), ICON_NONE);
-    uiItemR(subcol, ptr, "random_end_factor", UI_ITEM_NONE, IFACE_("End"), ICON_NONE);
-    uiItemR(subcol, ptr, "random_offset", UI_ITEM_NONE, IFACE_("Noise Offset"), ICON_NONE);
-    uiItemR(subcol, ptr, "seed", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    subcol->prop(ptr, "point_density", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    subcol->prop(ptr, "segment_influence", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    subcol->prop(ptr, "max_angle", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    subcol->prop(ptr, "invert_curvature", UI_ITEM_NONE, IFACE_("Invert"), ICON_NONE);
   }
 
-  if (uiLayout *curvature_layout = uiLayoutPanelPropWithBoolHeader(
-          C, layout, ptr, "open_curvature_panel", "use_curvature", IFACE_("Curvature")))
-  {
-    uiLayout *subcol = uiLayoutColumn(curvature_layout, false);
-    uiLayoutSetPropSep(subcol, true);
-    uiLayoutSetActive(subcol, RNA_boolean_get(ptr, "use_curvature"));
-
-    uiItemR(subcol, ptr, "point_density", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(subcol, ptr, "segment_influence", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(subcol, ptr, "max_angle", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(subcol, ptr, "invert_curvature", UI_ITEM_NONE, IFACE_("Invert"), ICON_NONE);
-  }
-
-  if (uiLayout *influence_panel = uiLayoutPanelProp(
-          C, layout, ptr, "open_influence_panel", IFACE_("Influence")))
+  if (uiLayout *influence_panel = layout->panel_prop(
+          C, ptr, "open_influence_panel", IFACE_("Influence")))
   {
     modifier::greasepencil::draw_layer_filter_settings(C, influence_panel, ptr);
     modifier::greasepencil::draw_material_filter_settings(C, influence_panel, ptr);
   }
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void panel_register(ARegionType *region_type)

@@ -13,7 +13,7 @@
 
 #include "BLI_listbase.h"
 #include "BLI_math_rotation.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_string_utils.hh"
 
 #include "BLT_translation.hh"
@@ -23,9 +23,9 @@
 #include "BKE_linestyle.h"
 
 /* Function declarations. */
-static FreestyleLineSet *alloc_lineset(void);
+static FreestyleLineSet *alloc_lineset();
 static void copy_lineset(FreestyleLineSet *new_lineset, FreestyleLineSet *lineset, const int flag);
-static FreestyleModuleConfig *alloc_module(void);
+static FreestyleModuleConfig *alloc_module();
 static void copy_module(FreestyleModuleConfig *new_module, FreestyleModuleConfig *module);
 
 void BKE_freestyle_config_init(FreestyleConfig *config)
@@ -100,7 +100,7 @@ static void copy_lineset(FreestyleLineSet *new_lineset, FreestyleLineSet *linese
   new_lineset->edge_types = lineset->edge_types;
   new_lineset->exclude_edge_types = lineset->exclude_edge_types;
   new_lineset->group = lineset->group;
-  STRNCPY(new_lineset->name, lineset->name);
+  STRNCPY_UTF8(new_lineset->name, lineset->name);
 
   if ((flag & LIB_ID_CREATE_NO_USER_REFCOUNT) == 0) {
     id_us_plus((ID *)new_lineset->linestyle);
@@ -110,8 +110,7 @@ static void copy_lineset(FreestyleLineSet *new_lineset, FreestyleLineSet *linese
 
 static FreestyleModuleConfig *alloc_module()
 {
-  return (FreestyleModuleConfig *)MEM_callocN(sizeof(FreestyleModuleConfig),
-                                              "style module configuration");
+  return MEM_callocN<FreestyleModuleConfig>("style module configuration");
 }
 
 FreestyleModuleConfig *BKE_freestyle_module_add(FreestyleConfig *config)
@@ -158,7 +157,7 @@ void BKE_freestyle_lineset_unique_name(FreestyleConfig *config, FreestyleLineSet
 
 static FreestyleLineSet *alloc_lineset()
 {
-  return (FreestyleLineSet *)MEM_callocN(sizeof(FreestyleLineSet), "Freestyle line set");
+  return MEM_callocN<FreestyleLineSet>("Freestyle line set");
 }
 
 FreestyleLineSet *BKE_freestyle_lineset_add(Main *bmain, FreestyleConfig *config, const char *name)
@@ -180,13 +179,13 @@ FreestyleLineSet *BKE_freestyle_lineset_add(Main *bmain, FreestyleConfig *config
   lineset->exclude_edge_types = 0;
   lineset->group = nullptr;
   if (name) {
-    STRNCPY(lineset->name, name);
+    STRNCPY_UTF8(lineset->name, name);
   }
   else if (lineset_index > 0) {
-    SNPRINTF(lineset->name, DATA_("LineSet %i"), lineset_index + 1);
+    SNPRINTF_UTF8(lineset->name, DATA_("LineSet %i"), lineset_index + 1);
   }
   else {
-    STRNCPY(lineset->name, DATA_("LineSet"));
+    STRNCPY_UTF8(lineset->name, DATA_("LineSet"));
   }
   BKE_freestyle_lineset_unique_name(config, lineset);
 

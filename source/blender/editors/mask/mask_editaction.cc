@@ -8,12 +8,12 @@
 
 #include <cmath>
 #include <cstddef>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 #include "MEM_guardedalloc.h"
 
+#include "BLI_listbase.h"
 #include "BLI_utildefines.h"
 
 #include "DNA_mask_types.h"
@@ -21,7 +21,6 @@
 
 #include "BKE_mask.h"
 
-#include "ED_anim_api.hh"
 #include "ED_keyframes_edit.hh"
 #include "ED_markers.hh"
 #include "ED_mask.hh" /* own include */
@@ -70,7 +69,7 @@ void ED_masklayer_make_cfra_list(MaskLayer *mask_layer, ListBase *elems, bool on
   /* loop through mask-frames, adding */
   LISTBASE_FOREACH (MaskLayerShape *, mask_layer_shape, &mask_layer->splines_shapes) {
     if ((onlysel == false) || (mask_layer_shape->flag & MASK_SHAPE_SELECT)) {
-      CfraElem *ce = MEM_cnew<CfraElem>("CfraElem");
+      CfraElem *ce = MEM_callocN<CfraElem>("CfraElem");
 
       ce->cfra = float(mask_layer_shape->frame);
       ce->sel = (mask_layer_shape->flag & MASK_SHAPE_SELECT) ? 1 : 0;
@@ -272,7 +271,7 @@ static bool snap_mask_layer_nearest(MaskLayerShape *mask_layer_shape, Scene * /*
 
 static bool snap_mask_layer_nearestsec(MaskLayerShape *mask_layer_shape, Scene *scene)
 {
-  float secf = float(FPS);
+  float secf = float(scene->frames_per_second());
   if (mask_layer_shape->flag & MASK_SHAPE_SELECT) {
     mask_layer_shape->frame = int(floorf(mask_layer_shape->frame / secf + 0.5f) * secf);
   }
@@ -282,7 +281,7 @@ static bool snap_mask_layer_nearestsec(MaskLayerShape *mask_layer_shape, Scene *
 static bool snap_mask_layer_cframe(MaskLayerShape *mask_layer_shape, Scene *scene)
 {
   if (mask_layer_shape->flag & MASK_SHAPE_SELECT) {
-    mask_layer_shape->frame = int(scene->r.cfra);
+    mask_layer_shape->frame = scene->r.cfra;
   }
   return false;
 }
@@ -290,8 +289,8 @@ static bool snap_mask_layer_cframe(MaskLayerShape *mask_layer_shape, Scene *scen
 static bool snap_mask_layer_nearmarker(MaskLayerShape *mask_layer_shape, Scene *scene)
 {
   if (mask_layer_shape->flag & MASK_SHAPE_SELECT) {
-    mask_layer_shape->frame = int(
-        ED_markers_find_nearest_marker_time(&scene->markers, float(mask_layer_shape->frame)));
+    mask_layer_shape->frame = ED_markers_find_nearest_marker_time(&scene->markers,
+                                                                  float(mask_layer_shape->frame));
   }
   return false;
 }

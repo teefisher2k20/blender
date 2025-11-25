@@ -65,7 +65,7 @@
  * - Faces around an edge.
  * - Loops around an edge.
  *
- * These are accessible through the iterator api, which is covered later in this document
+ * These are accessible through the iterator API, which is covered later in this document
  *
  * See source/blender/bmesh/bmesh_query.hh for more misc. queries.
  * \section bm_api The BMesh API
@@ -134,7 +134,7 @@
  * - map     - BMO_OP_SLOT_MAPPING - simple hash map.
  * \subsection bm_slot_iter Slot Iterators
  *
- * Access to element buffers or maps must go through the slot iterator api,
+ * Access to element buffers or maps must go through the slot iterator API,
  * defined in bmesh_operators.hh.
  * Use #BMO_ITER where ever possible.
  * \subsection bm_elem_buf Element Buffers
@@ -175,12 +175,7 @@
  * - Use two different iterator types for BMO map/buffer types.
  */
 
-#include "BKE_customdata.hh"
-#include "DNA_customdata_types.h" /* BMesh struct in bmesh_class.hh uses */
-#include "DNA_listBase.h"         /* selection history uses */
-
-#include <stdio.h>
-#include <stdlib.h>
+#include <cstdlib>
 
 #include "bmesh_class.hh"  // IWYU pragma: export
 
@@ -211,6 +206,7 @@
 #include "intern/bmesh_polygon_edgenet.hh"      // IWYU pragma: export
 #include "intern/bmesh_query.hh"                // IWYU pragma: export
 #include "intern/bmesh_query_uv.hh"             // IWYU pragma: export
+#include "intern/bmesh_uvselect.hh"             // IWYU pragma: export
 #include "intern/bmesh_walkers.hh"              // IWYU pragma: export
 
 #include "intern/bmesh_inline.hh"  // IWYU pragma: export

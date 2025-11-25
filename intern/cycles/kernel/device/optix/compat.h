@@ -5,9 +5,6 @@
 
 #pragma once
 
-#define OPTIX_DONT_INCLUDE_CUDA
-#include <optix.h>
-
 #define __KERNEL_GPU__
 #define __KERNEL_CUDA__ /* OptiX kernels are implicitly CUDA kernels too */
 #define __KERNEL_OPTIX__
@@ -40,6 +37,7 @@ typedef unsigned long long uint64_t;
 #define ccl_device_inline ccl_device
 #define ccl_device_forceinline ccl_device
 #define ccl_device_inline_method __device__ __forceinline__
+#define ccl_device_template_spec template<> __device__ __forceinline__
 #define ccl_device_noinline static __device__ __noinline__
 #define ccl_device_noinline_cpu ccl_device
 #define ccl_global
@@ -65,7 +63,6 @@ typedef unsigned long long uint64_t;
 
 typedef unsigned long long CUtexObject;
 typedef CUtexObject ccl_gpu_tex_object_2D;
-typedef CUtexObject ccl_gpu_tex_object_3D;
 
 template<typename T>
 ccl_device_forceinline T ccl_gpu_tex_object_read_2D(const ccl_gpu_tex_object_2D texobj,
@@ -73,15 +70,6 @@ ccl_device_forceinline T ccl_gpu_tex_object_read_2D(const ccl_gpu_tex_object_2D 
                                                     const float y)
 {
   return tex2D<T>(texobj, x, y);
-}
-
-template<typename T>
-ccl_device_forceinline T ccl_gpu_tex_object_read_3D(const ccl_gpu_tex_object_3D texobj,
-                                                    const float x,
-                                                    const float y,
-                                                    const float z)
-{
-  return tex3D<T>(texobj, x, y, z);
 }
 
 /* Half */
@@ -106,3 +94,6 @@ ccl_device_forceinline float __half2float(const half h)
 
 #include "util/half.h"
 #include "util/types.h"
+
+#define OPTIX_DONT_INCLUDE_CUDA
+#include <optix.h>

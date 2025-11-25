@@ -13,7 +13,6 @@
 #include "BLI_math_vector.hh"
 #include "BLI_math_vector_types.hh"
 
-#include "UI_interface.hh"
 #include "UI_resources.hh"
 
 #include "GPU_compute.hh"
@@ -32,38 +31,29 @@
 
 namespace blender::nodes::node_composite_vec_blur_cc {
 
-NODE_STORAGE_FUNCS(NodeBlurData)
-
 static void cmp_node_vec_blur_declare(NodeDeclarationBuilder &b)
 {
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
   b.add_input<decl::Color>("Image")
       .default_value({1.0f, 1.0f, 1.0f, 1.0f})
-      .compositor_domain_priority(0);
-  b.add_input<decl::Float>("Z").default_value(0.0f).min(0.0f).max(1.0f).compositor_domain_priority(
-      2);
+      .hide_value()
+      .structure_type(StructureType::Dynamic);
+  b.add_output<decl::Color>("Image").structure_type(StructureType::Dynamic).align_with_previous();
+
   b.add_input<decl::Vector>("Speed")
+      .dimensions(4)
       .default_value({0.0f, 0.0f, 0.0f})
       .min(0.0f)
       .max(1.0f)
       .subtype(PROP_VELOCITY)
-      .compositor_domain_priority(1);
-  b.add_output<decl::Color>("Image");
-}
-
-/* custom1: iterations, custom2: max_speed (0 = no_limit). */
-static void node_composit_init_vecblur(bNodeTree * /*ntree*/, bNode *node)
-{
-  NodeBlurData *nbd = MEM_cnew<NodeBlurData>(__func__);
-  node->storage = nbd;
-  nbd->samples = 32;
-  nbd->fac = 0.25f;
-}
-
-static void node_composit_buts_vecblur(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
-{
-  uiLayout *col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "samples", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "factor", UI_ITEM_R_SPLIT_EMPTY_NAME, IFACE_("Blur"), ICON_NONE);
+      .structure_type(StructureType::Dynamic);
+  b.add_input<decl::Float>("Z").default_value(0.0f).min(0.0f).structure_type(
+      StructureType::Dynamic);
+  b.add_input<decl::Int>("Samples").default_value(32).min(1).max(256).description(
+      "The number of samples used to approximate the motion blur");
+  b.add_input<decl::Float>("Shutter").default_value(0.5f).min(0.0f).description(
+      "Time between shutter opening and closing in frames");
 }
 
 using namespace blender::compositor;
@@ -105,16 +95,16 @@ static float2 max_velocity_approximate(const float2 &a,
 static Result compute_max_tile_velocity_cpu(Context &context, const Result &velocity_image)
 {
   if (velocity_image.is_single_value()) {
-    Result output = context.create_result(ResultType::Vector);
+    Result output = context.create_result(ResultType::Float4);
     output.allocate_single_value();
     output.set_single_value(velocity_image.get_single_value<float4>());
     return output;
   }
 
   const int2 tile_size = int2(MOTION_BLUR_TILE_SIZE);
-  const int2 velocity_size = velocity_image.domain().size;
+  const int2 velocity_size = velocity_image.domain().data_size;
   const int2 tiles_count = math::divide_ceil(velocity_size, tile_size);
-  Result output = context.create_result(ResultType::Vector);
+  Result output = context.create_result(ResultType::Float4);
   output.allocate_texture(Domain(tiles_count));
 
   parallel_for(tiles_count, [&](const int2 texel) {
@@ -197,14 +187,14 @@ static Result dilate_max_velocity_cpu(Context &context,
                                       const float shutter_speed)
 {
   if (max_tile_velocity.is_single_value()) {
-    Result output = context.create_result(ResultType::Vector);
+    Result output = context.create_result(ResultType::Float4);
     output.allocate_single_value();
     output.set_single_value(max_tile_velocity.get_single_value<float4>());
     return output;
   }
 
-  const int2 size = max_tile_velocity.domain().size;
-  Result output = context.create_result(ResultType::Vector);
+  const int2 size = max_tile_velocity.domain().data_size;
+  Result output = context.create_result(ResultType::Float4);
   output.allocate_texture(Domain(size));
 
   parallel_for(size, [&](const int2 texel) { output.store_pixel(texel, float4(0.0f)); });
@@ -213,13 +203,14 @@ static Result dilate_max_velocity_cpu(Context &context,
     for (const int64_t x : IndexRange(size.x)) {
       const int2 src_tile = int2(x, y);
 
-      float4 max_motion = float4(max_tile_velocity.load_pixel<float4>(src_tile)) *
-                          float4(float2(shutter_speed), float2(-shutter_speed));
+      const float4 max_motion = max_tile_velocity.load_pixel<float4>(src_tile);
+      const float2 max_previous_velocity = max_motion.xy() * shutter_speed;
+      const float2 max_next_velocity = max_motion.zw() * -shutter_speed;
 
       {
         /* Rectangular area (in tiles) where the motion vector spreads. */
-        MotionRect motion_rect = compute_motion_rect(src_tile, max_motion.xy(), size);
-        MotionLine motion_line = compute_motion_line(src_tile, max_motion.xy());
+        MotionRect motion_rect = compute_motion_rect(src_tile, max_previous_velocity, size);
+        MotionLine motion_line = compute_motion_line(src_tile, max_previous_velocity);
         /* Do a conservative rasterization of the line of the motion vector line. */
         for (int j = 0; j < motion_rect.extent.y; j++) {
           for (int i = 0; i < motion_rect.extent.x; i++) {
@@ -227,9 +218,9 @@ static Result dilate_max_velocity_cpu(Context &context,
             if (is_inside_motion_line(tile, motion_line)) {
               const float4 current_max_velocity = output.load_pixel<float4>(tile);
               const float2 new_max_previous_velocity = max_velocity_approximate(
-                  current_max_velocity.xy(), max_motion.xy(), tile, src_tile);
+                  current_max_velocity.xy(), max_previous_velocity, tile, src_tile);
               const float2 new_max_next_velocity = max_velocity_approximate(
-                  current_max_velocity.zw(), max_motion.zw(), tile, src_tile);
+                  current_max_velocity.zw(), max_next_velocity, tile, src_tile);
               output.store_pixel(tile, float4(new_max_previous_velocity, new_max_next_velocity));
             }
           }
@@ -238,8 +229,8 @@ static Result dilate_max_velocity_cpu(Context &context,
 
       {
         /* Rectangular area (in tiles) where the motion vector spreads. */
-        MotionRect motion_rect = compute_motion_rect(src_tile, max_motion.zw(), size);
-        MotionLine motion_line = compute_motion_line(src_tile, max_motion.zw());
+        MotionRect motion_rect = compute_motion_rect(src_tile, max_next_velocity, size);
+        MotionLine motion_line = compute_motion_line(src_tile, max_next_velocity);
         /* Do a conservative rasterization of the line of the motion vector line. */
         for (int j = 0; j < motion_rect.extent.y; j++) {
           for (int i = 0; i < motion_rect.extent.x; i++) {
@@ -247,9 +238,9 @@ static Result dilate_max_velocity_cpu(Context &context,
             if (is_inside_motion_line(tile, motion_line)) {
               const float4 current_max_velocity = output.load_pixel<float4>(tile);
               const float2 new_max_previous_velocity = max_velocity_approximate(
-                  current_max_velocity.xy(), max_motion.xy(), tile, src_tile);
+                  current_max_velocity.xy(), max_previous_velocity, tile, src_tile);
               const float2 new_max_next_velocity = max_velocity_approximate(
-                  current_max_velocity.zw(), max_motion.zw(), tile, src_tile);
+                  current_max_velocity.zw(), max_next_velocity, tile, src_tile);
               output.store_pixel(tile, float4(new_max_previous_velocity, new_max_next_velocity));
             }
           }
@@ -427,7 +418,7 @@ static void motion_blur_cpu(const Result &input_image,
                             const int samples_count,
                             const float shutter_speed)
 {
-  const int2 size = input_image.domain().size;
+  const int2 size = input_image.domain().data_size;
   threading::parallel_for(IndexRange(size.y), 1, [&](const IndexRange sub_y_range) {
     for (const int64_t y : sub_y_range) {
       for (const int64_t x : IndexRange(size.x)) {
@@ -436,9 +427,10 @@ static void motion_blur_cpu(const Result &input_image,
 
         /* Data of the center pixel of the gather (target). */
         float center_depth = input_depth.load_pixel<float, true>(texel);
-        float4 center_motion = float4(input_velocity.load_pixel<float4, true>(texel)) *
-                               float4(float2(shutter_speed), float2(-shutter_speed));
-        float4 center_color = input_image.load_pixel<float4>(texel);
+        float4 center_motion = input_velocity.load_pixel<float4, true>(texel);
+        float2 center_previous_motion = center_motion.xy() * shutter_speed;
+        float2 center_next_motion = center_motion.zw() * -shutter_speed;
+        float4 center_color = float4(input_image.load_pixel<Color>(texel));
 
         /* Randomize tile boundary to avoid ugly discontinuities. Randomize 1/4th of the tile.
          * Note this randomize only in one direction but in practice it's enough. */
@@ -460,7 +452,7 @@ static void motion_blur_cpu(const Result &input_image,
                     input_velocity,
                     size,
                     uv,
-                    center_motion.xy(),
+                    center_previous_motion,
                     center_depth,
                     max_motion.xy(),
                     rand,
@@ -474,7 +466,7 @@ static void motion_blur_cpu(const Result &input_image,
                     input_velocity,
                     size,
                     uv,
-                    center_motion.zw(),
+                    center_next_motion,
                     center_depth,
                     max_motion.zw(),
                     rand,
@@ -502,7 +494,7 @@ static void motion_blur_cpu(const Result &input_image,
         float blend_fac = math::clamp(1.0f - accum.weight.y / accum.weight.z, 0.0f, 1.0f);
         float4 out_color = (accum.fg / accum.weight.z) + center_color * blend_fac;
 
-        output.store_pixel(texel, out_color);
+        output.store_pixel(texel, Color(out_color));
       }
     }
   });
@@ -514,10 +506,10 @@ class VectorBlurOperation : public NodeOperation {
 
   void execute() override
   {
-    Result &input = get_input("Image");
-    Result &output = get_result("Image");
+    const Result &input = this->get_input("Image");
     if (input.is_single_value()) {
-      input.pass_through(output);
+      Result &output = this->get_result("Image");
+      output.share_data(input);
       return;
     }
 
@@ -532,7 +524,7 @@ class VectorBlurOperation : public NodeOperation {
   void execute_gpu()
   {
     Result max_tile_velocity = this->compute_max_tile_velocity();
-    GPUStorageBuf *tile_indirection_buffer = this->dilate_max_velocity(max_tile_velocity);
+    gpu::StorageBuf *tile_indirection_buffer = this->dilate_max_velocity(max_tile_velocity);
     this->compute_motion_blur(max_tile_velocity, tile_indirection_buffer);
     max_tile_velocity.release();
     GPU_storagebuf_free(tile_indirection_buffer);
@@ -542,7 +534,7 @@ class VectorBlurOperation : public NodeOperation {
    * Each of the previous and next velocities are reduces independently. */
   Result compute_max_tile_velocity()
   {
-    GPUShader *shader = context().get_shader("compositor_max_velocity");
+    gpu::Shader *shader = context().get_shader("compositor_max_velocity");
     GPU_shader_bind(shader);
 
     GPU_shader_uniform_1b(shader, "is_initial_reduction", true);
@@ -550,8 +542,8 @@ class VectorBlurOperation : public NodeOperation {
     Result &input = get_input("Speed");
     input.bind_as_texture(shader, "input_tx");
 
-    Result output = context().create_result(ResultType::Vector);
-    const int2 tiles_count = math::divide_ceil(input.domain().size, int2(32));
+    Result output = context().create_result(ResultType::Float4);
+    const int2 tiles_count = math::divide_ceil(input.domain().data_size, int2(32));
     output.allocate_texture(Domain(tiles_count));
     output.bind_as_image(shader, "output_img");
 
@@ -570,12 +562,12 @@ class VectorBlurOperation : public NodeOperation {
    * the output will be an indirection buffer that points to a particular tile in the original max
    * tile velocity image. This is done as a form of performance optimization, see the shader for
    * more information. */
-  GPUStorageBuf *dilate_max_velocity(Result &max_tile_velocity)
+  gpu::StorageBuf *dilate_max_velocity(Result &max_tile_velocity)
   {
-    GPUShader *shader = context().get_shader("compositor_motion_blur_max_velocity_dilate");
+    gpu::Shader *shader = context().get_shader("compositor_motion_blur_max_velocity_dilate");
     GPU_shader_bind(shader);
 
-    GPU_shader_uniform_1f(shader, "shutter_speed", node_storage(bnode()).fac);
+    GPU_shader_uniform_1f(shader, "shutter_speed", this->get_shutter());
 
     max_tile_velocity.bind_as_texture(shader, "input_tx");
 
@@ -583,13 +575,13 @@ class VectorBlurOperation : public NodeOperation {
      * composed of blocks of 32, we get 16k / 32 = 512. So the table is 512x512, but we store two
      * tables for the previous and next velocities, so we double that. */
     const int size = sizeof(uint32_t) * 512 * 512 * 2;
-    GPUStorageBuf *tile_indirection_buffer = GPU_storagebuf_create_ex(
+    gpu::StorageBuf *tile_indirection_buffer = GPU_storagebuf_create_ex(
         size, nullptr, GPU_USAGE_DEVICE_ONLY, __func__);
     GPU_storagebuf_clear_to_zero(tile_indirection_buffer);
     const int slot = GPU_shader_get_ssbo_binding(shader, "tile_indirection_buf");
     GPU_storagebuf_bind(tile_indirection_buffer, slot);
 
-    compute_dispatch_threads_at_least(shader, max_tile_velocity.domain().size);
+    compute_dispatch_threads_at_least(shader, max_tile_velocity.domain().data_size);
 
     GPU_shader_unbind();
     max_tile_velocity.unbind_as_texture();
@@ -598,13 +590,13 @@ class VectorBlurOperation : public NodeOperation {
     return tile_indirection_buffer;
   }
 
-  void compute_motion_blur(Result &max_tile_velocity, GPUStorageBuf *tile_indirection_buffer)
+  void compute_motion_blur(Result &max_tile_velocity, gpu::StorageBuf *tile_indirection_buffer)
   {
-    GPUShader *shader = context().get_shader("compositor_motion_blur");
+    gpu::Shader *shader = context().get_shader("compositor_motion_blur");
     GPU_shader_bind(shader);
 
-    GPU_shader_uniform_1i(shader, "samples_count", node_storage(bnode()).samples);
-    GPU_shader_uniform_1f(shader, "shutter_speed", node_storage(bnode()).fac);
+    GPU_shader_uniform_1i(shader, "samples_count", this->get_samples_count());
+    GPU_shader_uniform_1f(shader, "shutter_speed", this->get_shutter());
 
     Result &input = get_input("Image");
     input.bind_as_texture(shader, "input_tx");
@@ -626,7 +618,7 @@ class VectorBlurOperation : public NodeOperation {
     output.allocate_texture(domain);
     output.bind_as_image(shader, "output_img");
 
-    compute_dispatch_threads_at_least(shader, output.domain().size);
+    compute_dispatch_threads_at_least(shader, output.domain().data_size);
 
     GPU_shader_unbind();
     input.unbind_as_texture();
@@ -638,8 +630,8 @@ class VectorBlurOperation : public NodeOperation {
 
   void execute_cpu()
   {
-    const float shutter_speed = node_storage(bnode()).fac;
-    const int samples_count = node_storage(bnode()).samples;
+    const float shutter_speed = this->get_shutter();
+    const int samples_count = this->get_samples_count();
 
     const Result &input_image = get_input("Image");
     const Result &input_depth = get_input("Z");
@@ -662,6 +654,18 @@ class VectorBlurOperation : public NodeOperation {
                     shutter_speed);
     max_velocity.release();
   }
+
+  int get_samples_count()
+  {
+    return math::clamp(this->get_input("Samples").get_single_value_default(32), 1, 256);
+  }
+
+  float get_shutter()
+  {
+    /* Divide by two since the motion blur algorithm expects shutter per motion step and has two
+     * motion steps, while the user inputs the entire shutter across all steps. */
+    return math::max(0.0f, this->get_input("Shutter").get_single_value_default(0.5f)) / 2.0f;
+  }
 };
 
 static NodeOperation *get_compositor_operation(Context &context, DNode node)
@@ -671,7 +675,7 @@ static NodeOperation *get_compositor_operation(Context &context, DNode node)
 
 }  // namespace blender::nodes::node_composite_vec_blur_cc
 
-void register_node_type_cmp_vecblur()
+static void register_node_type_cmp_vecblur()
 {
   namespace file_ns = blender::nodes::node_composite_vec_blur_cc;
 
@@ -683,11 +687,8 @@ void register_node_type_cmp_vecblur()
   ntype.enum_name_legacy = "VECBLUR";
   ntype.nclass = NODE_CLASS_OP_FILTER;
   ntype.declare = file_ns::cmp_node_vec_blur_declare;
-  ntype.draw_buttons = file_ns::node_composit_buts_vecblur;
-  ntype.initfunc = file_ns::node_composit_init_vecblur;
-  blender::bke::node_type_storage(
-      &ntype, "NodeBlurData", node_free_standard_storage, node_copy_standard_storage);
   ntype.get_compositor_operation = file_ns::get_compositor_operation;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
+NOD_REGISTER_NODE(register_node_type_cmp_vecblur)

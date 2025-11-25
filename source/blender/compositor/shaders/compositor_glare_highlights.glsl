@@ -2,7 +2,16 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "infos/compositor_glare_infos.hh"
+
+COMPUTE_SHADER_CREATE_INFO(compositor_glare_highlights)
+
 #include "gpu_shader_common_color_utils.glsl"
+#include "gpu_shader_compositor_texture_utilities.glsl"
+
+#define CMP_NODE_GLARE_QUALITY_HIGH 0
+#define CMP_NODE_GLARE_QUALITY_MEDIUM 1
+#define CMP_NODE_GLARE_QUALITY_LOW 2
 
 /* A Quadratic Polynomial smooth minimum function *without* normalization, based on:
  *
@@ -13,11 +22,11 @@
  * intentionally not normalized. */
 float smooth_min(float a, float b, float smoothness)
 {
-  if (smoothness == 0.0) {
+  if (smoothness == 0.0f) {
     return min(a, b);
   }
-  float h = max(smoothness - abs(a - b), 0.0) / smoothness;
-  return min(a, b) - h * h * smoothness * (1.0 / 4.0);
+  float h = max(smoothness - abs(a - b), 0.0f) / smoothness;
+  return min(a, b) - h * h * smoothness * (1.0f / 4.0f);
 }
 
 float smooth_max(float a, float b, float smoothness)
@@ -48,8 +57,8 @@ float smooth_clamp(
 float adaptive_smooth_clamp(float x, float min_value, float max_value, float smoothness)
 {
   float range_distance = distance(min_value, max_value);
-  float distance_from_min_to_zero = distance(min_value, 0.0);
-  float distance_from_max_to_zero = distance(max_value, 0.0);
+  float distance_from_min_to_zero = distance(min_value, 0.0f);
+  float distance_from_max_to_zero = distance(max_value, 0.0f);
 
   float max_safe_smoothness_for_min = min(distance_from_min_to_zero, range_distance);
   float max_safe_smoothness_for_max = min(distance_from_max_to_zero, range_distance);
@@ -62,12 +71,54 @@ float adaptive_smooth_clamp(float x, float min_value, float max_value, float smo
 
 void main()
 {
-  ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+  int2 texel = int2(gl_GlobalInvocationID.xy);
 
-  vec2 normalized_coordinates = (vec2(texel) + vec2(0.5)) / vec2(imageSize(output_img));
+  float4 color = float4(0.0f);
 
-  vec4 hsva;
-  rgb_to_hsv(texture(input_tx, normalized_coordinates), hsva);
+  switch (quality) {
+    case CMP_NODE_GLARE_QUALITY_HIGH: {
+      color = texture_load(input_tx, texel);
+      break;
+    }
+
+    /* Down-sample the image 2 times to match the output size by averaging the 2x2 block of
+     * pixels into a single output pixel. This is done due to the bilinear interpolation at the
+     * center of the 2x2 block of pixels. */
+    case CMP_NODE_GLARE_QUALITY_MEDIUM: {
+      float2 normalized_coordinates = (float2(texel) * 2.0f + float2(1.0f)) /
+                                      float2(texture_size(input_tx));
+      color = texture(input_tx, normalized_coordinates);
+      break;
+    }
+
+    /* Down-sample the image 4 times to match the output size by averaging each 4x4 block of
+     * pixels into a single output pixel. This is done by averaging 4 bilinear taps at the
+     * center of each of the corner 2x2 pixel blocks, which are themselves the average of the
+     * 2x2 block due to the bilinear interpolation at the center. */
+    case CMP_NODE_GLARE_QUALITY_LOW: {
+      float2 lower_left_coordinates = (float2(texel) * 4.0f + float2(1.0f)) /
+                                      float2(texture_size(input_tx));
+      float4 lower_left_color = texture(input_tx, lower_left_coordinates);
+
+      float2 lower_right_coordinates = (float2(texel) * 4.0f + float2(3.0f, 1.0f)) /
+                                       float2(texture_size(input_tx));
+      float4 lower_right_color = texture(input_tx, lower_right_coordinates);
+
+      float2 upper_left_coordinates = (float2(texel) * 4.0f + float2(1.0f, 3.0f)) /
+                                      float2(texture_size(input_tx));
+      float4 upper_left_color = texture(input_tx, upper_left_coordinates);
+
+      float2 upper_right_coordinates = (float2(texel) * 4.0f + float2(3.0f)) /
+                                       float2(texture_size(input_tx));
+      float4 upper_right_color = texture(input_tx, upper_right_coordinates);
+
+      color = (upper_left_color + upper_right_color + lower_left_color + lower_right_color) / 4.0f;
+      break;
+    }
+  }
+
+  float4 hsva;
+  rgb_to_hsv(color, hsva);
 
   /* Clamp the brightness of the highlights such that pixels whose brightness are less than the
    * threshold will be equal to the threshold and will become zero once threshold is subtracted
@@ -84,8 +135,8 @@ void main()
   /* The final brightness is relative to the threshold. */
   hsva.z = clamped_brightness - threshold;
 
-  vec4 rgba;
+  float4 rgba;
   hsv_to_rgb(hsva, rgba);
 
-  imageStore(output_img, texel, vec4(rgba.rgb, 1.0));
+  imageStore(output_img, texel, float4(rgba.rgb, 1.0f));
 }

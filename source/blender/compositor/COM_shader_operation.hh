@@ -7,8 +7,6 @@
 #include <memory>
 
 #include "BLI_map.hh"
-#include "BLI_string_ref.hh"
-#include "BLI_vector_set.hh"
 
 #include "GPU_material.hh"
 #include "GPU_shader.hh"
@@ -18,9 +16,10 @@
 #include "NOD_derived_node_tree.hh"
 
 #include "COM_context.hh"
-#include "COM_operation.hh"
+#include "COM_input_descriptor.hh"
 #include "COM_pixel_operation.hh"
 #include "COM_scheduler.hh"
+#include "COM_shader_node.hh"
 
 namespace blender::compositor {
 
@@ -66,6 +65,8 @@ class ShaderOperation : public PixelOperation {
    * the attribute that was created for it. This is used to share the same attribute with all
    * inputs that are linked to the same output socket. */
   Map<DOutputSocket, GPUNodeLink *> output_to_material_attribute_map_;
+  /* A map that associates implicit inputs to the attributes that were created for them. */
+  Map<ImplicitInput, GPUNodeLink *> implicit_input_to_material_attribute_map_;
 
  public:
   /* Construct and compile a GPU material from the given shader compile unit and execution schedule
@@ -73,7 +74,7 @@ class ShaderOperation : public PixelOperation {
   ShaderOperation(Context &context, PixelCompileUnit &compile_unit, const Schedule &schedule);
 
   /* Free the GPU material. */
-  ~ShaderOperation();
+  ~ShaderOperation() override;
 
   /* Allocate the output results, bind the shader and all its needed resources, then dispatch the
    * shader. */
@@ -83,18 +84,18 @@ class ShaderOperation : public PixelOperation {
   /* Bind the uniform buffer of the GPU material as well as any color band textures needed by the
    * GPU material.  The compiled shader of the material is given as an argument and assumed to be
    * bound. */
-  void bind_material_resources(GPUShader *shader);
+  void bind_material_resources(gpu::Shader *shader);
 
   /* Bind the input results of the operation to the appropriate textures in the GPU material. The
    * attributes stored in output_to_material_attribute_map_ have names that match the texture
    * samplers in the shader as well as the identifiers of the operation inputs that they correspond
    * to. The compiled shader of the material is given as an argument and assumed to be bound. */
-  void bind_inputs(GPUShader *shader);
+  void bind_inputs(gpu::Shader *shader);
 
   /* Bind the output results of the operation to the appropriate images in the GPU material. The
    * name of the images in the shader match the identifier of their corresponding outputs. The
    * compiled shader of the material is given as an argument and assumed to be bound. */
-  void bind_outputs(GPUShader *shader);
+  void bind_outputs(gpu::Shader *shader);
 
   /* A static callback method of interface ConstructGPUMaterialFn that is passed to
    * GPU_material_from_callbacks to construct the GPU material graph. The thunk parameter will be a
@@ -111,12 +112,29 @@ class ShaderOperation : public PixelOperation {
    *   operation, they are exposed as outputs to the shader operation itself. */
   static void construct_material(void *thunk, GPUMaterial *material);
 
-  /* Link the inputs of the node if needed. Unlinked inputs are ignored as they will be linked by
-   * the node compile method. If the input is linked to a node that is not part of the shader
-   * operation, the input will be exposed as an input to the shader operation and linked to it.
-   * While if the input is linked to a node that is part of the shader operation, then it is linked
-   * to that node in the GPU material node graph. */
+  /* Link the inputs of the node if needed. Unlinked inputs will be linked to constant values. If
+   * the input is linked to a node that is not part of the shader operation, the input will be
+   * exposed as an input to the shader operation and linked to it. While if the input is linked to
+   * a node that is part of the shader operation, then it is linked to that node in the GPU
+   * material node graph. */
   void link_node_inputs(DNode node);
+
+  /* Link the GPU stack of the given unavailable input to a constant zero value setter GPU node.
+   * The value is ignored since the socket is unavailable, but the GPU Material compiler expects
+   * all inputs to be linked, even unavailable ones. */
+  void link_node_input_unavailable(const DInputSocket input);
+
+  /* Link the GPU stack of the given unlinked input to a constant value setter GPU node that
+   * supplies the value of the unlinked input. The value is taken from the given origin input,
+   * which will be equal to the input in most cases, but can also be an unlinked input of a group
+   * node. */
+  void link_node_input_constant(const DInputSocket input, const DInputSocket origin);
+
+  /* Given an unlinked input with an implicit input. Declare a new input to the operation for that
+   * implicit input if not done already and link it to the input link of the GPU node stack of the
+   * input socket. The implicit input and type are taken from the given origin input, which will
+   * be equal to the input in most cases, but can also be an unlinked input of a group node */
+  void link_node_input_implicit(const DInputSocket input, const DInputSocket origin);
 
   /* Given the input socket of a node that is part of the shader operation which is linked to the
    * given output socket of a node that is also part of the shader operation, just link the output
@@ -165,13 +183,13 @@ class ShaderOperation : public PixelOperation {
   /* Add an image in the shader for each of the declared outputs. Additionally, emit code to define
    * the storer functions that store the given value in the appropriate image identified by the
    * given index. */
-  void generate_code_for_outputs(gpu::shader::ShaderCreateInfo &shader_create_info);
+  std::string generate_code_for_outputs(gpu::shader::ShaderCreateInfo &shader_create_info);
 
   /* Add a texture will in the shader for each of the declared inputs/attributes in the operation,
    * having the same name as the attribute. Additionally, emit code to initialize the attributes by
    * sampling their corresponding textures. */
-  void generate_code_for_inputs(GPUMaterial *material,
-                                gpu::shader::ShaderCreateInfo &shader_create_info);
+  std::string generate_code_for_inputs(GPUMaterial *material,
+                                       gpu::shader::ShaderCreateInfo &shader_create_info);
 };
 
 }  // namespace blender::compositor

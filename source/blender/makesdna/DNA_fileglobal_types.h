@@ -32,8 +32,14 @@ typedef struct FileGlobal {
   uint64_t build_commit_timestamp;
   /** Hash from `buildinfo`. */
   char build_hash[16];
-  /** File path where this was saved, for recover (1024 = FILE_MAX). */
-  char filepath[1024];
+  /** File path where this was saved, for recover. */
+  char filepath[/*FILE_MAX*/ 1024];
+
+  /* Working colorspace, for automatic conversion. Note the matrix is
+   * the source of truth, the name is only for user interface and diagnosis. */
+  char colorspace_scene_linear_name[/*MAX_COLORSPACE_NAME*/ 64];
+  float colorspace_scene_linear_to_xyz[3][3];
+  int _pad2[3];
 } FileGlobal;
 
 /* minversion: in file, the oldest past blender version you can use compliant */

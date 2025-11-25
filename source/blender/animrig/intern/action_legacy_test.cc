@@ -11,7 +11,6 @@
 #include "BKE_object.hh"
 
 #include "DNA_anim_types.h"
-#include "DNA_object_types.h"
 
 #include "BLI_listbase.h"
 
@@ -49,12 +48,12 @@ class ActionLegacyTest : public testing::Test {
 
   bAction *create_empty_action()
   {
-    return static_cast<bAction *>(BKE_id_new(bmain, ID_AC, "ACAction"));
+    return BKE_id_new<bAction>(bmain, "ACAction");
   }
 
   FCurve *fcurve_add_legacy(bAction *action, const StringRefNull rna_path, const int array_index)
   {
-    FCurve *fcurve = static_cast<FCurve *>(MEM_callocN(sizeof(FCurve), __func__));
+    FCurve *fcurve = MEM_callocN<FCurve>(__func__);
     BKE_fcurve_rnapath_set(*fcurve, rna_path);
     fcurve->array_index = array_index;
     BLI_addtail(&action->curves, fcurve);
@@ -78,7 +77,7 @@ TEST_F(ActionLegacyTest, fcurves_all)
   { /* Legacy Action. */
     bAction *action = create_empty_action();
 
-    FCurve *fcurve = static_cast<FCurve *>(MEM_callocN(sizeof(FCurve), __func__));
+    FCurve *fcurve = MEM_callocN<FCurve>(__func__);
     BLI_addtail(&action->curves, fcurve);
 
     Vector<FCurve *> fcurves_expect = {fcurve};
@@ -120,7 +119,7 @@ TEST_F(ActionLegacyTest, fcurves_for_action_slot)
   { /* Legacy Action. */
     bAction *action = create_empty_action();
 
-    FCurve *fcurve = static_cast<FCurve *>(MEM_callocN(sizeof(FCurve), __func__));
+    FCurve *fcurve = MEM_callocN<FCurve>(__func__);
     BLI_addtail(&action->curves, fcurve);
 
     Vector<FCurve *> fcurves_expect = {fcurve};

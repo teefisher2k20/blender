@@ -8,6 +8,7 @@
 
 #include "BKE_material.hh"
 #include "BKE_texture.h"
+#include "BLI_listbase.h"
 #include "BLI_math_vector.h"
 #include "DNA_material_types.h"
 #include "node_texture_util.hh"
@@ -27,10 +28,7 @@ static blender::bke::bNodeSocketTemplate outputs_color_only[] = {{SOCK_RGBA, N_(
 /* Inputs common to all, #defined because nodes will need their own inputs too */
 #define I 2 /* count */
 #define COMMON_INPUTS \
-  {SOCK_RGBA, "Color 1", 0.0f, 0.0f, 0.0f, 1.0f}, \
-  { \
-    SOCK_RGBA, "Color 2", 1.0f, 1.0f, 1.0f, 1.0f \
-  }
+  {SOCK_RGBA, "Color 1", 0.0f, 0.0f, 0.0f, 1.0f}, {SOCK_RGBA, "Color 2", 1.0f, 1.0f, 1.0f, 1.0f}
 
 /* Calls multitex and copies the result to the outputs.
  * Called by xxx_exec, which handles inputs. */
@@ -44,8 +42,7 @@ static void do_proc(float *result,
   TexResult texres;
   int textype;
 
-  textype = multitex_nodes(
-      tex, p->co, p->dxt, p->dyt, p->osatex, &texres, thread, 0, p->mtex, nullptr);
+  textype = multitex_nodes(tex, p->co, &texres, thread, 0, p->mtex, nullptr);
 
   if (textype & TEX_RGB) {
     copy_v4_v4(result, texres.trgba);
@@ -239,7 +236,7 @@ ProcDef(stucci);
 
 static void init(bNodeTree * /*ntree*/, bNode *node)
 {
-  Tex *tex = static_cast<Tex *>(MEM_callocN(sizeof(Tex), "Tex"));
+  Tex *tex = MEM_callocN<Tex>("Tex");
   node->storage = tex;
 
   BKE_texture_default(tex);
@@ -261,14 +258,14 @@ static void init(bNodeTree * /*ntree*/, bNode *node)
     ntype.enum_name_legacy = EnumNameLegacy; \
     ntype.nclass = NODE_CLASS_TEXTURE; \
     blender::bke::node_type_socket_templates(&ntype, name##_inputs, outputs); \
-    blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Middle); \
+    blender::bke::node_type_size_preset(ntype, blender::bke::eNodeSizePreset::Middle); \
     ntype.initfunc = init; \
     blender::bke::node_type_storage( \
-        &ntype, "Tex", node_free_standard_storage, node_copy_standard_storage); \
+        ntype, "Tex", node_free_standard_storage, node_copy_standard_storage); \
     ntype.exec_fn = name##_exec; \
     ntype.flag |= NODE_PREVIEW; \
 \
-    blender::bke::node_register_type(&ntype); \
+    blender::bke::node_register_type(ntype); \
   }
 
 #define C outputs_color_only

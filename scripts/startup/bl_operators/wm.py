@@ -31,7 +31,7 @@ from bpy.app.translations import (
 
 def _rna_path_prop_search_for_context_impl(context, edit_text, unique_attrs):
     # Use the same logic as auto-completing in the Python console to expand the data-path.
-    from bl_console_utils.autocomplete import intellisense
+    from _bl_console_utils.autocomplete import intellisense
     context_prefix = "context."
     line = context_prefix + edit_text
     cursor = len(line)
@@ -46,7 +46,8 @@ def _rna_path_prop_search_for_context_impl(context, edit_text, unique_attrs):
                 ".bl_rna", ".rna_type",
         )):
             continue
-        attr_full = prefix + attr.lstrip()
+        # If we type/paste in complete attributes, intellisense expands with a ".", remove that again (see #134092)
+        attr_full = (prefix + attr.lstrip()).removesuffix(".")
         if attr_full in unique_attrs:
             continue
         unique_attrs.add(attr_full)
@@ -55,7 +56,7 @@ def _rna_path_prop_search_for_context_impl(context, edit_text, unique_attrs):
 
 def rna_path_prop_search_for_context(self, context, edit_text):
     # NOTE(@campbellbarton): Limiting data-path expansion is rather arbitrary.
-    # It's possible for e.g. that someone would want to set a shortcut in the preferences or
+    # It's possible for example that someone would want to set a shortcut in the preferences or
     # in other region types than those currently expanded. Unless there is a reasonable likelihood
     # users might expand these space-type/region-type combinations - exclude them from this search.
     # After all, this list is mainly intended as a hint, users are not prevented from constructing
@@ -68,7 +69,7 @@ def rna_path_prop_search_for_context(self, context, edit_text):
             if area.type == 'PREFERENCES':
                 continue
             # Ignore the same region type multiple times in an area.
-            # Prevents the 3D-viewport quad-view from attempting to expand 3 extra times for e.g.
+            # Prevents the 3D-viewport quad-view from attempting to expand 3 extra times for example
             region_type_unique = set()
             for region in area.regions:
                 if region.type not in {'WINDOW', 'PREVIEW'}:
@@ -147,7 +148,7 @@ def context_path_validate(context, data_path):
 
 
 def context_path_to_rna_property(context, data_path):
-    from bl_rna_utils.data_path import property_definition_from_data_path
+    from _bl_rna_utils.data_path import property_definition_from_data_path
     rna_prop = property_definition_from_data_path(context, "." + data_path)
     if rna_prop is not None:
         return rna_prop
@@ -166,7 +167,7 @@ def context_path_decompose(data_path):
     # Note that the `.` is removed from the start of the first and second values,
     # this is done because `.attr` isn't convenient to use as an argument,
     # also the convention is not to include this within the data paths or the operator logic for `bpy.ops.wm.*`.
-    from bl_rna_utils.data_path import decompose_data_path
+    from _bl_rna_utils.data_path import decompose_data_path
     path_split = decompose_data_path("." + data_path)
 
     # Find the last property that isn't a function call.
@@ -1242,6 +1243,9 @@ def _wm_doc_get_id(doc_id, *, do_url=True, url_prefix="", report=None):
                 rna_class = bpy.types.PropertyGroup.bl_rna_get_subclass_py(class_name)
 
             if rna_class is None:
+                rna_class = bpy.types.AddonPreferences.bl_rna_get_subclass_py(class_name)
+
+            if rna_class is None:
                 if report is not None:
                     report({'ERROR'}, rpt_("Type \"{:s}\" cannot be found").format(class_name))
                 return None
@@ -1338,7 +1342,7 @@ class WM_OT_doc_view_manual(Operator):
             self.report(
                 {'WARNING'},
                 rpt_("No reference available {!r}, "
-                     "Update info in 'rna_manual_reference.py' "
+                     "update info in '_rna_manual_reference.py' "
                      "or callback to bpy.utils.manual_map()").format(self.doc_id)
             )
             return {'CANCELLED'}
@@ -1817,6 +1821,7 @@ class WM_OT_properties_edit(Operator):
         item.property_overridable_library_set('["{:s}"]'.format(escaped_name), self.is_overridable_library)
 
     def _update_blender_for_prop_change(self, context, item, name, prop_type_old, prop_type_new):
+        from bpy_extras import anim_utils
         from rna_prop_ui import (
             rna_idprop_ui_prop_update,
         )
@@ -1837,15 +1842,19 @@ class WM_OT_properties_edit(Operator):
 
             def _update_strips(strips):
                 for st in strips:
-                    if st.type == 'CLIP' and st.action:
-                        _update(st.action.fcurves)
+                    if st.type == 'CLIP':
+                        channelbag = anim_utils.action_get_channelbag_for_slot(st.action, st.action_slot)
+                        if not channelbag:
+                            continue
+                        _update(channelbag.fcurves)
                     elif st.type == 'META':
                         _update_strips(st.strips)
 
             adt = getattr(item, "animation_data", None)
             if adt is not None:
-                if adt.action:
-                    _update(adt.action.fcurves)
+                channelbag = anim_utils.action_get_channelbag_for_slot(adt.action, adt.action_slot)
+                if channelbag:
+                    _update(channelbag.fcurves)
                 if adt.drivers:
                     _update(adt.drivers)
                 if adt.nla_tracks:
@@ -1882,12 +1891,12 @@ class WM_OT_properties_edit(Operator):
             try:
                 new_value = eval(self.eval_string)
             except Exception as ex:
-                self.report({'WARNING'}, "Python evaluation failed: " + str(ex))
+                self.report({'WARNING'}, rpt_("Python evaluation failed: {:s}").format(str(ex)))
                 return {'CANCELLED'}
             try:
                 item[name] = new_value
             except Exception as ex:
-                self.report({'ERROR'}, "Failed to assign value: " + str(ex))
+                self.report({'ERROR'}, rpt_("Failed to assign value: {:s}").format(str(ex)))
                 return {'CANCELLED'}
             if name_old != name:
                 del item[name_old]
@@ -2609,7 +2618,7 @@ class WM_OT_toolbar_prompt(Operator):
         # Pressing entry even again exists, as long as it's not mapped to a key (for convenience).
         if event_type == self._init_event_type:
             if event_value == 'RELEASE':
-                if not (event.ctrl or event.alt or event.shift or event.oskey):
+                if not (event.ctrl or event.alt or event.shift or event.oskey or event.hyper):
                     context.workspace.status_text_set(None)
                     return {'CANCELLED'}
 
@@ -2664,6 +2673,8 @@ class WM_OT_toolbar_prompt(Operator):
 
 
 class BatchRenameAction(bpy.types.PropertyGroup):
+    __slots__ = ()
+
     # category: StringProperty()
     type: EnumProperty(
         name="Operation",
@@ -2760,7 +2771,7 @@ class WM_OT_batch_rename(Operator):
             ('CURVE', "Curves", "", 'CURVE_DATA', 4),
             ('META', "Metaballs", "", 'META_DATA', 5),
             ('VOLUME', "Volumes", "", 'VOLUME_DATA', 6),
-            ('GPENCIL', "Grease Pencils", "", 'OUTLINER_DATA_GREASEPENCIL', 7),
+            ('GREASEPENCIL', "Grease Pencils", "", 'OUTLINER_DATA_GREASEPENCIL', 7),
             ('ARMATURE', "Armatures", "", 'ARMATURE_DATA', 8),
             ('LATTICE', "Lattices", "", 'LATTICE_DATA', 9),
             ('LIGHT', "Lights", "", 'LIGHT_DATA', 10),
@@ -2909,7 +2920,7 @@ class WM_OT_batch_rename(Operator):
             'CURVE': ("curves", iface_("Curve(s)"), bpy.types.Curve),
             'META': ("metaballs", iface_("Metaball(s)"), bpy.types.MetaBall),
             'VOLUME': ("volumes", iface_("Volume(s)"), bpy.types.Volume),
-            'GPENCIL': ("grease_pencils", iface_("Grease Pencil(s)"), bpy.types.GreasePencil),
+            'GREASEPENCIL': ("grease_pencils", iface_("Grease Pencil(s)"), bpy.types.GreasePencil),
             'ARMATURE': ("armatures", iface_("Armature(s)"), bpy.types.Armature),
             'LATTICE': ("lattices", iface_("Lattice(s)"), bpy.types.Lattice),
             'LIGHT': ("lights", iface_("Light(s)"), bpy.types.Light),
@@ -3030,6 +3041,10 @@ class WM_OT_batch_rename(Operator):
                     "name",
                     descr,
                 )
+
+        if data is None:
+            return None
+
         data = ([it for it in data[0] if _is_editable(it)], data[1], data[2])
 
         return data
@@ -3275,14 +3290,14 @@ class WM_OT_batch_rename(Operator):
                 try:
                     re.compile(action.replace_src)
                 except Exception as ex:
-                    self.report({'ERROR'}, "Invalid regular expression (find): " + str(ex))
+                    self.report({'ERROR'}, rpt_("Invalid regular expression (find): {:s}").format(str(ex)))
                     return {'CANCELLED'}
 
                 if action.use_replace_regex_dst:
                     try:
                         re.sub(action.replace_src, action.replace_dst, "")
                     except Exception as ex:
-                        self.report({'ERROR'}, "Invalid regular expression (replace): " + str(ex))
+                        self.report({'ERROR'}, rpt_("Invalid regular expression (replace): {:s}").format(str(ex)))
                         return {'CANCELLED'}
 
         total_len = 0
@@ -3412,21 +3427,29 @@ class WM_MT_splash(Menu):
         col2 = split.column()
         col2_title = col2.row()
 
-        found_recent = col2.template_recent_files()
+        found_recent = col2.template_recent_files(rows=5)
 
         if found_recent:
             col2_title.label(text="Recent Files")
+
+            col_more = col2.column()
+            col_more.operator_context = 'INVOKE_DEFAULT'
+            more_props = col_more.operator("wm.search_single_menu", text="More...", icon='VIEWZOOM')
+            more_props.menu_idname = "TOPBAR_MT_file_open_recent"
         else:
             # Links if no recent files.
             col2_title.label(text="Getting Started")
 
             col2.operator("wm.url_open_preset", text="Manual", icon='URL').type = 'MANUAL'
-            col2.operator("wm.url_open", text="Tutorials", icon='URL').url = "https://www.blender.org/tutorials/"
             col2.operator("wm.url_open", text="Support", icon='URL').url = "https://www.blender.org/support/"
             col2.operator("wm.url_open", text="User Communities", icon='URL').url = "https://www.blender.org/community/"
+            col2.operator("wm.url_open", text="Get Involved", icon='URL').url = "https://www.blender.org/get-involved/"
             col2.operator("wm.url_open_preset", text="Blender Website", icon='URL').type = 'BLENDER'
 
-        layout.separator()
+        col_sep = layout.column()
+        col_sep.separator()
+        col_sep.separator(type='LINE')
+        col_sep.separator()
 
         split = layout.split()
 
@@ -3438,8 +3461,8 @@ class WM_MT_splash(Menu):
 
         col2 = split.column()
 
-        col2.operator("wm.url_open_preset", text="Donate", icon='FUND').type = 'FUND'
         col2.operator("wm.url_open_preset", text="What's New", icon='URL').type = 'RELEASE_NOTES'
+        col2.operator("wm.url_open_preset", text="Donate to Blender", icon='FUND').type = 'FUND'
 
         layout.separator()
 
@@ -3498,7 +3521,7 @@ class WM_MT_region_toggle_pie(Menu):
     bl_label = "Region Toggle"
 
     # Map the `region.type` to the `space_data` attribute & text label.
-    # The order of items defines priority, so in the sequencer for e.g.
+    # The order of items defines priority, so for example in the sequencer
     # when there is both a toolbar and channels, the toolbar gets the
     # axis-aligned pie, and the channels don't.
     _region_info = {
@@ -3539,11 +3562,17 @@ class WM_MT_region_toggle_pie(Menu):
 
         for region in context.area.regions:
             region_type = region.type
+            # If the attribute doesn't exist, the RNA definition is outdated.
+            # See: #134339 and its fix for reference.
             attr = cls._region_info.get(region_type, None)
             if attr is None:
                 continue
             # In some cases channels exists but can't be toggled.
             assert hasattr(space_data, attr)
+
+            if space_data.is_property_readonly(attr):
+                continue
+
             # Technically possible these double-up, in practice this should never happen.
             if region_type in region_by_type:
                 print("{:s}: Unexpected double-up of region types {!r}".format(cls.__name__, region_type))

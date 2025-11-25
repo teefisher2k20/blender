@@ -7,7 +7,6 @@
 #include "NOD_partial_eval.hh"
 
 #include "BKE_compute_contexts.hh"
-#include "BKE_node.hh"
 #include "BKE_node_legacy_types.hh"
 #include "BKE_node_runtime.hh"
 
@@ -34,7 +33,7 @@ static Vector<int> get_global_node_sort_vector_right_to_left(const ComputeContex
   vec.append(initial_node.runtime->toposort_right_to_left_index);
   for (const ComputeContext *context = initial_context; context; context = context->parent()) {
     if (const auto *group_context = dynamic_cast<const bke::GroupNodeComputeContext *>(context)) {
-      const bNode *caller_group_node = group_context->caller_group_node();
+      const bNode *caller_group_node = group_context->node();
       BLI_assert(caller_group_node != nullptr);
       vec.append(caller_group_node->runtime->toposort_right_to_left_index);
     }
@@ -51,7 +50,7 @@ static Vector<int> get_global_node_sort_vector_left_to_right(const ComputeContex
   vec.append(initial_node.runtime->toposort_left_to_right_index);
   for (const ComputeContext *context = initial_context; context; context = context->parent()) {
     if (const auto *group_context = dynamic_cast<const bke::GroupNodeComputeContext *>(context)) {
-      const bNode *caller_group_node = group_context->caller_group_node();
+      const bNode *caller_group_node = group_context->node();
       BLI_assert(caller_group_node != nullptr);
       vec.append(caller_group_node->runtime->toposort_left_to_right_index);
     }
@@ -106,7 +105,7 @@ struct NodeInContextDownstreamComparator {
 
 void eval_downstream(
     const Span<SocketInContext> initial_sockets,
-    ResourceScope &scope,
+    bke::ComputeContextCache &compute_context_cache,
     FunctionRef<void(const NodeInContext &ctx_node,
                      Vector<const bNodeSocket *> &r_outputs_to_propagate)> evaluate_node_fn,
     FunctionRef<bool(const SocketInContext &ctx_from, const SocketInContext &ctx_to)>
@@ -136,8 +135,8 @@ void eval_downstream(
         if (group_tree->has_available_link_cycle()) {
           return;
         }
-        const auto &group_context = scope.construct<bke::GroupNodeComputeContext>(
-            ctx_group_node_input.context, node, node.owner_tree());
+        const auto &group_context = compute_context_cache.for_group_node(
+            ctx_group_node_input.context, node.identifier, &node.owner_tree());
         const int socket_index = ctx_group_node_input.socket->index();
         /* Forward the value to every group input node. */
         for (const bNode *group_input_node : group_tree->group_input_nodes()) {
@@ -219,8 +218,8 @@ void eval_downstream(
       if (!group_output) {
         continue;
       }
-      const ComputeContext &group_context = scope.construct<bke::GroupNodeComputeContext>(
-          context, node, node.owner_tree());
+      const ComputeContext &group_context = compute_context_cache.for_group_node(
+          context, node.identifier, &node.owner_tree());
       /* Propagate the values from the group output node to the outputs of the group node and
        * continue forwarding them from there. */
       for (const int index : group->interface_outputs().index_range()) {
@@ -248,7 +247,7 @@ void eval_downstream(
 
 UpstreamEvalTargets eval_upstream(
     const Span<SocketInContext> initial_sockets,
-    ResourceScope &scope,
+    bke::ComputeContextCache &compute_context_cache,
     FunctionRef<void(const NodeInContext &ctx_node,
                      Vector<const bNodeSocket *> &r_modified_inputs)> evaluate_node_fn,
     FunctionRef<bool(const SocketInContext &ctx_from, const SocketInContext &ctx_to)>
@@ -285,8 +284,8 @@ UpstreamEvalTargets eval_upstream(
     if (!group_output) {
       return;
     }
-    const ComputeContext &group_context = scope.construct<bke::GroupNodeComputeContext>(
-        context, group_node, group_node.owner_tree());
+    const ComputeContext &group_context = compute_context_cache.for_group_node(
+        context, group_node.identifier, &group_node.owner_tree());
     propagate_value_fn(
         ctx_output_socket,
         {&group_context, &group_output->input_socket(ctx_output_socket.socket->index())});
@@ -300,12 +299,12 @@ UpstreamEvalTargets eval_upstream(
       eval_targets.group_inputs.add(ctx_output_socket);
       return;
     }
-    const bNodeTree &caller_tree = *group_context->caller_tree();
+    const bNodeTree &caller_tree = *group_context->tree();
     caller_tree.ensure_topology_cache();
     if (caller_tree.has_available_link_cycle()) {
       return;
     }
-    const bNode &caller_node = *group_context->caller_group_node();
+    const bNode &caller_node = *group_context->node();
     const bNodeSocket &caller_input_socket = caller_node.input_socket(
         ctx_output_socket.socket->index());
     const ComputeContext *parent_context = ctx_output_socket.context->parent();

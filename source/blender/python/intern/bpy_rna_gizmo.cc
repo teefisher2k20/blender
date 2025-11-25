@@ -22,7 +22,7 @@
 #include "bpy_rna_gizmo.hh"
 
 #include "../generic/py_capi_utils.hh"
-#include "../generic/python_compat.hh"
+#include "../generic/python_compat.hh" /* IWYU pragma: keep. */
 
 #include "RNA_access.hh"
 #include "RNA_prototypes.hh"
@@ -187,7 +187,6 @@ static void py_rna_gizmo_handler_get_cb(const wmGizmo * /*gz*/,
 
 fail:
   PyErr_Print();
-  PyErr_Clear();
 
   Py_XDECREF(ret);
 
@@ -237,7 +236,6 @@ static void py_rna_gizmo_handler_set_cb(const wmGizmo * /*gz*/,
 
 fail:
   PyErr_Print();
-  PyErr_Clear();
 
   Py_DECREF(args);
 
@@ -248,10 +246,10 @@ static void py_rna_gizmo_handler_range_get_cb(const wmGizmo * /*gz*/,
                                               wmGizmoProperty *gz_prop,
                                               void *value_p)
 {
+  const PyGILState_STATE gilstate = PyGILState_Ensure();
+
   BPyGizmoHandlerUserData *data = static_cast<BPyGizmoHandlerUserData *>(
       gz_prop->custom_func.user_data);
-
-  const PyGILState_STATE gilstate = PyGILState_Ensure();
 
   PyObject *ret = PyObject_CallObject(data->fn_slots[BPY_GIZMO_FN_SLOT_RANGE_GET], nullptr);
   if (ret == nullptr) {
@@ -293,7 +291,6 @@ static void py_rna_gizmo_handler_range_get_cb(const wmGizmo * /*gz*/,
 
 fail:
   PyErr_Print();
-  PyErr_Clear();
 
   Py_XDECREF(ret);
 
@@ -302,10 +299,11 @@ fail:
 
 static void py_rna_gizmo_handler_free_cb(const wmGizmo * /*gz*/, wmGizmoProperty *gz_prop)
 {
+  const PyGILState_STATE gilstate = PyGILState_Ensure();
+
   BPyGizmoHandlerUserData *data = static_cast<BPyGizmoHandlerUserData *>(
       gz_prop->custom_func.user_data);
 
-  const PyGILState_STATE gilstate = PyGILState_Ensure();
   for (int i = 0; i < BPY_GIZMO_FN_SLOT_LEN; i++) {
     Py_XDECREF(data->fn_slots[i]);
   }
@@ -332,8 +330,6 @@ PyDoc_STRVAR(
     "   :type range: callable\n");
 static PyObject *bpy_gizmo_target_set_handler(PyObject * /*self*/, PyObject *args, PyObject *kw)
 {
-  const PyGILState_STATE gilstate = PyGILState_Ensure();
-
   struct {
     BPyGizmoWithTargetType gz_with_target_type;
     PyObject *py_fn_slots[BPY_GIZMO_FN_SLOT_LEN];
@@ -400,7 +396,7 @@ static PyObject *bpy_gizmo_target_set_handler(PyObject * /*self*/, PyObject *arg
     }
   }
 
-  data = static_cast<BPyGizmoHandlerUserData *>(MEM_callocN(sizeof(*data), __func__));
+  data = MEM_callocN<BPyGizmoHandlerUserData>(__func__);
 
   for (int i = 0; i < BPY_GIZMO_FN_SLOT_LEN; i++) {
     data->fn_slots[i] = params.py_fn_slots[i];
@@ -417,12 +413,9 @@ static PyObject *bpy_gizmo_target_set_handler(PyObject * /*self*/, PyObject *arg
     WM_gizmo_target_property_def_func_ptr(gz, gz_prop_type, &fn_params);
   }
 
-  PyGILState_Release(gilstate);
-
   Py_RETURN_NONE;
 
 fail:
-  PyGILState_Release(gilstate);
   return nullptr;
 }
 
@@ -662,9 +655,14 @@ fail:
 bool BPY_rna_gizmo_module(PyObject *mod_par)
 {
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic push
-#  pragma GCC diagnostic ignored "-Wcast-function-type"
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
 #endif
 
   static PyMethodDef method_def_array[] = {
@@ -689,8 +687,12 @@ bool BPY_rna_gizmo_module(PyObject *mod_par)
       /* no sentinel needed. */
   };
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic pop
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
 #endif
 
   for (int i = 0; i < ARRAY_SIZE(method_def_array); i++) {

@@ -13,10 +13,6 @@
 
 #include "UnaryFunction0D_Nature_EdgeNature/BPy_CurveNatureF0D.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -56,7 +52,6 @@ PyDoc_STRVAR(
     ".. method:: __init__()\n"
     "\n"
     "   Default constructor.\n");
-
 static int UnaryFunction0DEdgeNature___init__(BPy_UnaryFunction0DEdgeNature *self,
                                               PyObject *args,
                                               PyObject *kwds)
@@ -154,7 +149,3 @@ PyTypeObject UnaryFunction0DEdgeNature_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

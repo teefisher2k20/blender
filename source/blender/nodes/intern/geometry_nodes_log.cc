@@ -2,18 +2,30 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "NOD_geometry_nodes_lazy_function.hh"
+#include "BKE_lib_id.hh"
+#include "NOD_geometry_nodes_bundle.hh"
+#include "NOD_geometry_nodes_closure.hh"
 #include "NOD_geometry_nodes_log.hh"
 
+#include "BLI_listbase.h"
+#include "BLI_stack.hh"
+#include "BLI_string_ref.hh"
+#include "BLI_string_utf8.h"
+
 #include "BKE_anonymous_attribute_id.hh"
+#include "BKE_compute_context_cache.hh"
 #include "BKE_compute_contexts.hh"
 #include "BKE_curves.hh"
 #include "BKE_geometry_nodes_gizmos_transforms.hh"
+#include "BKE_grease_pencil.hh"
+#include "BKE_lib_query.hh"
 #include "BKE_node_legacy_types.hh"
 #include "BKE_node_runtime.hh"
 #include "BKE_node_socket_value.hh"
+#include "BKE_report.hh"
 #include "BKE_type_conversions.hh"
 #include "BKE_volume.hh"
+#include "BKE_volume_grid.hh"
 #include "BKE_volume_openvdb.hh"
 
 #include "DNA_grease_pencil_types.h"
@@ -28,6 +40,8 @@
 
 #include "UI_resources.hh"
 
+#include "DEG_depsgraph_query.hh"
+
 namespace blender::nodes::geo_eval_log {
 
 using bke::bNodeTreeZone;
@@ -38,6 +52,19 @@ using fn::FieldInputs;
 GenericValueLog::~GenericValueLog()
 {
   this->value.destruct();
+}
+
+StringLog::StringLog(StringRef string, LinearAllocator<> &allocator)
+{
+  /* Avoid logging the entirety of long strings, to avoid unnecessary memory usage. */
+  if (string.size() <= 100) {
+    this->truncated = false;
+    this->value = allocator.copy_string(string);
+    return;
+  }
+  this->truncated = true;
+  const char *end = BLI_str_find_prev_char_utf8(string.data() + 100, string.data());
+  this->value = allocator.copy_string(StringRef(string.data(), end));
 }
 
 FieldInfoLog::FieldInfoLog(const GField &field) : type(field.cpp_type())
@@ -142,11 +169,17 @@ GeometryInfoLog::GeometryInfoLog(const bke::GeometrySet &geometry_set)
         break;
       }
       case bke::GeometryComponent::Type::Volume: {
+#ifdef WITH_OPENVDB
         const auto &volume_component = *static_cast<const bke::VolumeComponent *>(component);
         if (const Volume *volume = volume_component.get()) {
           VolumeInfo &info = this->volume_info.emplace();
-          info.grids_num = BKE_volume_num_grids(volume);
+          info.grids.resize(BKE_volume_num_grids(volume));
+          for (const int i : IndexRange(BKE_volume_num_grids(volume))) {
+            const bke::VolumeGridData *grid = BKE_volume_grid_get(volume, i);
+            info.grids[i] = {grid->name(), bke::volume_grid::get_type(*grid)};
+          }
         }
+#endif /* WITH_OPENVDB */
         break;
       }
       case bke::GeometryComponent::Type::GreasePencil: {
@@ -155,6 +188,13 @@ GeometryInfoLog::GeometryInfoLog(const bke::GeometrySet &geometry_set)
         if (const GreasePencil *grease_pencil = grease_pencil_component.get()) {
           GreasePencilInfo &info = this->grease_pencil_info.emplace(GreasePencilInfo());
           info.layers_num = grease_pencil->layers().size();
+          Set<StringRef> unique_layer_names;
+          for (const bke::greasepencil::Layer *layer : grease_pencil->layers()) {
+            const StringRefNull layer_name = layer->name();
+            if (unique_layer_names.add(layer_name)) {
+              info.layer_names.append(layer_name);
+            }
+          }
         }
         break;
       }
@@ -175,9 +215,8 @@ struct GridIsEmptyOp {
 };
 #endif /* WITH_OPENVDB */
 
-GeometryInfoLog::GeometryInfoLog(const bke::GVolumeGrid &grid)
+GridInfoLog::GridInfoLog(const bke::GVolumeGrid &grid)
 {
-  GridInfo &info = this->grid_info.emplace();
 #ifdef WITH_OPENVDB
   bke::VolumeTreeAccessToken token;
   const openvdb::GridBase &vdb_grid = grid->grid(token);
@@ -185,20 +224,60 @@ GeometryInfoLog::GeometryInfoLog(const bke::GVolumeGrid &grid)
 
   GridIsEmptyOp is_empty_op{vdb_grid};
   if (BKE_volume_grid_type_operation(grid_type, is_empty_op)) {
-    info.is_empty = is_empty_op.result;
+    this->is_empty = is_empty_op.result;
   }
   else {
-    info.is_empty = true;
+    this->is_empty = true;
   }
 #else
   UNUSED_VARS(grid);
-  info.is_empty = true;
+  this->is_empty = true;
 #endif
 }
 
+BundleValueLog::BundleValueLog(Vector<Item> items) : items(std::move(items)) {}
+
+ClosureValueLog::ClosureValueLog(Vector<Item> inputs,
+                                 Vector<Item> outputs,
+                                 const std::optional<ClosureSourceLocation> &source_location,
+                                 std::shared_ptr<ClosureEvalLog> eval_log)
+    : inputs(std::move(inputs)), outputs(std::move(outputs)), eval_log(std::move(eval_log))
+{
+  if (source_location) {
+    const bNodeTree *tree_eval = source_location->tree;
+    const bNodeTree *tree_orig = reinterpret_cast<const bNodeTree *>(
+        DEG_get_original_id(&tree_eval->id));
+    this->source = Source{tree_orig->id.session_uid,
+                          source_location->closure_output_node_id,
+                          source_location->compute_context_hash};
+  }
+}
+
+ListInfoLog::ListInfoLog(const List *list)
+{
+  if (!list) {
+    this->size = 0;
+    return;
+  }
+  this->size = list->size();
+}
+
+NodeWarning::NodeWarning(const Report &report)
+{
+  switch (report.type) {
+    case RPT_ERROR:
+      this->type = NodeWarningType::Error;
+      break;
+    default:
+      this->type = NodeWarningType::Info;
+      break;
+  }
+  this->message = report.message;
+}
+
 /* Avoid generating these in every translation unit. */
-GeoModifierLog::GeoModifierLog() = default;
-GeoModifierLog::~GeoModifierLog() = default;
+GeoNodesLog::GeoNodesLog() = default;
+GeoNodesLog::~GeoNodesLog() = default;
 
 GeoTreeLogger::GeoTreeLogger() = default;
 GeoTreeLogger::~GeoTreeLogger() = default;
@@ -206,8 +285,8 @@ GeoTreeLogger::~GeoTreeLogger() = default;
 GeoNodeLog::GeoNodeLog() = default;
 GeoNodeLog::~GeoNodeLog() = default;
 
-GeoTreeLog::GeoTreeLog(GeoModifierLog *modifier_log, Vector<GeoTreeLogger *> tree_loggers)
-    : modifier_log_(modifier_log), tree_loggers_(std::move(tree_loggers))
+GeoTreeLog::GeoTreeLog(GeoNodesLog *root_log, Vector<GeoTreeLogger *> tree_loggers)
+    : root_log_(root_log), tree_loggers_(std::move(tree_loggers))
 {
   for (GeoTreeLogger *tree_logger : tree_loggers_) {
     for (const ComputeContextHash &hash : tree_logger->children_hashes) {
@@ -230,31 +309,78 @@ void GeoTreeLogger::log_value(const bNode &node, const bNodeSocket &socket, cons
   };
 
   auto log_generic_value = [&](const CPPType &type, const void *value) {
-    void *buffer = this->allocator->allocate(type.size(), type.alignment());
+    void *buffer = this->allocator->allocate(type);
     type.copy_construct(value, buffer);
     store_logged_value(this->allocator->construct<GenericValueLog>(GMutablePointer{type, buffer}));
   };
 
-  if (type.is<bke::GeometrySet>()) {
-    const bke::GeometrySet &geometry = *value.get<bke::GeometrySet>();
-    store_logged_value(this->allocator->construct<GeometryInfoLog>(geometry));
-  }
-  else if (type.is<bke::SocketValueVariant>()) {
+  if (type.is<bke::SocketValueVariant>()) {
     bke::SocketValueVariant value_variant = *value.get<bke::SocketValueVariant>();
-    if (value_variant.is_context_dependent_field()) {
+    if (value_variant.valid_for_socket(SOCK_GEOMETRY)) {
+      const bke::GeometrySet &geometry = value_variant.get<bke::GeometrySet>();
+      store_logged_value(this->allocator->construct<GeometryInfoLog>(geometry));
+    }
+    else if (value_variant.is_context_dependent_field()) {
       const GField field = value_variant.extract<GField>();
       store_logged_value(this->allocator->construct<FieldInfoLog>(field));
     }
 #ifdef WITH_OPENVDB
     else if (value_variant.is_volume_grid()) {
       const bke::GVolumeGrid grid = value_variant.extract<bke::GVolumeGrid>();
-      store_logged_value(this->allocator->construct<GeometryInfoLog>(grid));
+      store_logged_value(this->allocator->construct<GridInfoLog>(grid));
     }
 #endif
+    else if (value_variant.is_list()) {
+      const ListPtr list = value_variant.extract<ListPtr>();
+      store_logged_value(this->allocator->construct<ListInfoLog>(list.get()));
+    }
+    else if (value_variant.valid_for_socket(SOCK_BUNDLE)) {
+      Vector<BundleValueLog::Item> items;
+      if (const BundlePtr bundle = value_variant.extract<BundlePtr>()) {
+        for (const Bundle::StoredItem &item : bundle->items()) {
+          if (const BundleItemSocketValue *socket_value = std::get_if<BundleItemSocketValue>(
+                  &item.value.value))
+          {
+            items.append({item.key, {socket_value->type}});
+          }
+          if (const BundleItemInternalValue *internal_value = std::get_if<BundleItemInternalValue>(
+                  &item.value.value))
+          {
+            items.append({item.key, {internal_value->value->type_name()}});
+          }
+        }
+      }
+      store_logged_value(this->allocator->construct<BundleValueLog>(std::move(items)));
+    }
+    else if (value_variant.valid_for_socket(SOCK_CLOSURE)) {
+      Vector<ClosureValueLog::Item> inputs;
+      Vector<ClosureValueLog::Item> outputs;
+      std::optional<ClosureSourceLocation> source_location;
+      std::shared_ptr<ClosureEvalLog> eval_log;
+      if (const ClosurePtr closure = value_variant.extract<ClosurePtr>()) {
+        const ClosureSignature &signature = closure->signature();
+        for (const ClosureSignature::Item &item : signature.inputs) {
+          inputs.append({item.key, item.type});
+        }
+        for (const ClosureSignature::Item &item : signature.outputs) {
+          outputs.append({item.key, item.type});
+        }
+        source_location = closure->source_location();
+        eval_log = closure->eval_log_ptr();
+      }
+      store_logged_value(this->allocator->construct<ClosureValueLog>(
+          std::move(inputs), std::move(outputs), source_location, eval_log));
+    }
     else {
       value_variant.convert_to_single();
       const GPointer value = value_variant.get_single_ptr();
-      log_generic_value(*value.type(), value.get());
+      if (value.type()->is<std::string>()) {
+        const std::string &string = *value.get<std::string>();
+        store_logged_value(this->allocator->construct<StringLog>(string, *this->allocator));
+      }
+      else {
+        log_generic_value(*value.type(), value.get());
+      }
     }
   }
   else {
@@ -262,12 +388,27 @@ void GeoTreeLogger::log_value(const bNode &node, const bNodeSocket &socket, cons
   }
 }
 
-void GeoTreeLogger::log_viewer_node(const bNode &viewer_node, bke::GeometrySet geometry)
+const bke::GeometrySet *ViewerNodeLog::main_geometry() const
 {
-  destruct_ptr<ViewerNodeLog> log = this->allocator->construct<ViewerNodeLog>();
-  log->geometry = std::move(geometry);
-  log->geometry.ensure_owns_direct_data();
-  this->viewer_node_logs.append(*this->allocator, {viewer_node.identifier, std::move(log)});
+  main_geometry_cache_mutex_.ensure([&]() {
+    for (const Item &item : this->items) {
+#ifdef WITH_OPENVDB
+      if (item.value.is_volume_grid()) {
+        const bke::GVolumeGrid grid = item.value.get<bke::GVolumeGrid>();
+        Volume *volume = BKE_id_new_nomain<Volume>(nullptr);
+        grid->add_user();
+        BKE_volume_grid_add(volume, grid.get());
+        main_geometry_cache_ = bke::GeometrySet::from_volume(volume);
+        return;
+      }
+#endif
+      if (item.value.is_single() && item.value.get_single_ptr().is_type<bke::GeometrySet>()) {
+        main_geometry_cache_ = *item.value.get_single_ptr().get<bke::GeometrySet>();
+        return;
+      }
+    }
+  });
+  return main_geometry_cache_ ? &*main_geometry_cache_ : nullptr;
 }
 
 static bool warning_is_propagated(const NodeWarningPropagation propagation,
@@ -287,11 +428,58 @@ static bool warning_is_propagated(const NodeWarningPropagation propagation,
   return true;
 }
 
-void GeoTreeLog::ensure_node_warnings(const bNodeTree *tree)
+void GeoTreeLog::ensure_node_warnings(const NodesModifierData &nmd)
 {
   if (reduced_node_warnings_) {
     return;
   }
+  if (!nmd.node_group) {
+    reduced_node_warnings_ = true;
+    return;
+  }
+  Map<uint32_t, const bNodeTree *> map;
+  BKE_library_foreach_ID_link(
+      nullptr,
+      &nmd.node_group->id,
+      [&](LibraryIDLinkCallbackData *cb_data) {
+        if (ID *id = *cb_data->id_pointer) {
+          if (GS(id->name) == ID_NT) {
+            const bNodeTree *tree = reinterpret_cast<const bNodeTree *>(id);
+            map.add(id->session_uid, tree);
+          }
+        }
+        return IDWALK_RET_NOP;
+      },
+      nullptr,
+      IDWALK_READONLY | IDWALK_RECURSE);
+  this->ensure_node_warnings(map);
+}
+
+void GeoTreeLog::ensure_node_warnings(const Main &bmain)
+{
+  if (reduced_node_warnings_) {
+    return;
+  }
+  Map<uint32_t, const bNodeTree *> map;
+  FOREACH_NODETREE_BEGIN (const_cast<Main *>(&bmain), tree, id) {
+    map.add_new(tree->id.session_uid, tree);
+  }
+  FOREACH_NODETREE_END;
+  this->ensure_node_warnings(map);
+}
+
+void GeoTreeLog::ensure_node_warnings(
+    const Map<uint32_t, const bNodeTree *> &orig_tree_by_session_uid)
+{
+  if (reduced_node_warnings_) {
+    return;
+  }
+  if (tree_loggers_.is_empty()) {
+    return;
+  }
+  const std::optional<uint32_t> tree_uid = tree_loggers_[0]->tree_orig_session_uid;
+  const bNodeTree *tree = tree_uid ? orig_tree_by_session_uid.lookup_default(*tree_uid, nullptr) :
+                                     nullptr;
 
   for (GeoTreeLogger *tree_logger : tree_loggers_) {
     for (const GeoTreeLogger::WarningWithNode &warning : tree_logger->node_warnings) {
@@ -308,27 +496,21 @@ void GeoTreeLog::ensure_node_warnings(const bNodeTree *tree)
     }
   }
   for (const ComputeContextHash &child_hash : children_hashes_) {
-    GeoTreeLog &child_log = modifier_log_->get_tree_log(child_hash);
+    GeoTreeLog &child_log = root_log_->get_tree_log(child_hash);
     if (child_log.tree_loggers_.is_empty()) {
       continue;
     }
+    const GeoTreeLogger &first_child_logger = *child_log.tree_loggers_[0];
     NodeWarningPropagation propagation = NODE_WARNING_PROPAGATION_ALL;
-    const bNodeTree *child_tree = nullptr;
-    const std::optional<int32_t> &parent_node_id = child_log.tree_loggers_[0]->parent_node_id;
-    if (tree && parent_node_id) {
-      if (const bNode *node = tree->node_by_id(*parent_node_id)) {
-        propagation = NodeWarningPropagation(node->warning_propagation);
-        if (node->is_group() && node->id) {
-          child_tree = reinterpret_cast<const bNodeTree *>(node->id);
-        }
-        else if (bke::all_zone_output_node_types().contains(node->type_legacy)) {
-          child_tree = tree;
-        }
+    const std::optional<int32_t> &caller_node_id = first_child_logger.parent_node_id;
+    if (tree && caller_node_id) {
+      if (const bNode *caller_node = tree->node_by_id(*caller_node_id)) {
+        propagation = NodeWarningPropagation(caller_node->warning_propagation);
       }
     }
-    child_log.ensure_node_warnings(child_tree);
-    if (parent_node_id.has_value()) {
-      this->nodes.lookup_or_add_default(*parent_node_id)
+    child_log.ensure_node_warnings(orig_tree_by_session_uid);
+    if (caller_node_id.has_value()) {
+      this->nodes.lookup_or_add_default(*caller_node_id)
           .warnings.add_multiple(child_log.all_warnings);
     }
     for (const NodeWarning &warning : child_log.all_warnings) {
@@ -435,7 +617,7 @@ void GeoTreeLog::ensure_used_named_attributes()
     }
   }
   for (const ComputeContextHash &child_hash : children_hashes_) {
-    GeoTreeLog &child_log = modifier_log_->get_tree_log(child_hash);
+    GeoTreeLog &child_log = root_log_->get_tree_log(child_hash);
     if (child_log.tree_loggers_.is_empty()) {
       continue;
     }
@@ -476,13 +658,45 @@ void GeoTreeLog::ensure_evaluated_gizmo_nodes()
       this->evaluated_gizmo_nodes.add(evaluated_gizmo.node_id);
     }
   }
+
+  reduced_evaluated_gizmo_nodes_ = true;
+}
+
+void GeoTreeLog::ensure_layer_names()
+{
+  if (reduced_layer_names_) {
+    return;
+  }
+
+  this->ensure_socket_values();
+
+  auto handle_value_log = [&](const ValueLog &value_log) {
+    const GeometryInfoLog *geo_log = dynamic_cast<const GeometryInfoLog *>(&value_log);
+    if (geo_log == nullptr || !geo_log->grease_pencil_info.has_value()) {
+      return;
+    }
+    for (const std::string &name : geo_log->grease_pencil_info->layer_names) {
+      this->all_layer_names.append(name);
+    }
+  };
+
+  for (const GeoNodeLog &node_log : this->nodes.values()) {
+    for (const ValueLog *value_log : node_log.input_values_.values()) {
+      handle_value_log(*value_log);
+    }
+    for (const ValueLog *value_log : node_log.output_values_.values()) {
+      handle_value_log(*value_log);
+    }
+  }
+
+  reduced_layer_names_ = true;
 }
 
 ValueLog *GeoTreeLog::find_socket_value_log(const bNodeSocket &query_socket)
 {
   /**
    * Geometry nodes does not log values for every socket. That would produce a lot of redundant
-   * data,because often many linked sockets have the same value. To find the logged value for a
+   * data, because often many linked sockets have the same value. To find the logged value for a
    * socket one might have to look at linked sockets as well.
    */
 
@@ -496,6 +710,7 @@ ValueLog *GeoTreeLog::find_socket_value_log(const bNodeSocket &query_socket)
   Stack<const bNodeSocket *> sockets_to_check;
   sockets_to_check.push(&query_socket);
   added_sockets.add(&query_socket);
+  const bNodeTree &tree = query_socket.owner_tree();
 
   while (!sockets_to_check.is_empty()) {
     const bNodeSocket &socket = *sockets_to_check.pop();
@@ -546,6 +761,16 @@ ValueLog *GeoTreeLog::find_socket_value_log(const bNodeSocket &query_socket)
           }
         }
       }
+      else if (node.is_group_input()) {
+        const int index = socket.index();
+        /* Check if the value is stored for any other group input node. */
+        for (const bNode *other_group_input : tree.group_input_nodes()) {
+          const bNodeSocket &other_socket = other_group_input->output_socket(index);
+          if (added_sockets.add(&other_socket)) {
+            sockets_to_check.push(&other_socket);
+          }
+        }
+      }
     }
   }
 
@@ -570,7 +795,21 @@ bool GeoTreeLog::try_convert_primitive_socket_value(const GenericValueLog &value
   return true;
 }
 
-GeoTreeLogger &GeoModifierLog::get_local_tree_logger(const ComputeContext &compute_context)
+static std::optional<uint32_t> get_original_session_uid(const ID *id)
+{
+  if (!id) {
+    return {};
+  }
+  if (DEG_is_original(id)) {
+    return id->session_uid;
+  }
+  if (const ID *id_orig = DEG_get_original(id)) {
+    return id_orig->session_uid;
+  }
+  return {};
+}
+
+GeoTreeLogger &GeoNodesLog::get_local_tree_logger(const ComputeContext &compute_context)
 {
   LocalData &local_data = data_per_thread_.local();
   Map<ComputeContextHash, destruct_ptr<GeoTreeLogger>> &local_tree_loggers =
@@ -584,36 +823,68 @@ GeoTreeLogger &GeoModifierLog::get_local_tree_logger(const ComputeContext &compu
   GeoTreeLogger &tree_logger = *tree_logger_ptr;
   tree_logger.allocator = &local_data.allocator;
   const ComputeContext *parent_compute_context = compute_context.parent();
+  std::optional<uint32_t> parent_tree_session_uid;
   if (parent_compute_context != nullptr) {
     tree_logger.parent_hash = parent_compute_context->hash();
     GeoTreeLogger &parent_logger = this->get_local_tree_logger(*parent_compute_context);
     parent_logger.children_hashes.append(compute_context.hash());
+    parent_tree_session_uid = parent_logger.tree_orig_session_uid;
   }
-  if (const bke::GroupNodeComputeContext *typed_compute_context =
-          dynamic_cast<const bke::GroupNodeComputeContext *>(&compute_context))
+  if (const auto *context = dynamic_cast<const bke::GroupNodeComputeContext *>(&compute_context)) {
+    tree_logger.parent_node_id.emplace(context->node_id());
+    if (const bNode *caller_node = context->node()) {
+      tree_logger.tree_orig_session_uid = get_original_session_uid(caller_node->id);
+    }
+  }
+  else if (const auto *context = dynamic_cast<const bke::RepeatZoneComputeContext *>(
+               &compute_context))
   {
-    tree_logger.parent_node_id.emplace(typed_compute_context->node_id());
+    tree_logger.parent_node_id.emplace(context->output_node_id());
+    tree_logger.tree_orig_session_uid = parent_tree_session_uid;
   }
-  else if (const bke::RepeatZoneComputeContext *typed_compute_context =
-               dynamic_cast<const bke::RepeatZoneComputeContext *>(&compute_context))
-  {
-    tree_logger.parent_node_id.emplace(typed_compute_context->output_node_id());
-  }
-  else if (const bke::ForeachGeometryElementZoneComputeContext *typed_compute_context =
+  else if (const auto *context =
                dynamic_cast<const bke::ForeachGeometryElementZoneComputeContext *>(
                    &compute_context))
   {
-    tree_logger.parent_node_id.emplace(typed_compute_context->output_node_id());
+    tree_logger.parent_node_id.emplace(context->output_node_id());
+    tree_logger.tree_orig_session_uid = parent_tree_session_uid;
   }
-  else if (const bke::SimulationZoneComputeContext *typed_compute_context =
-               dynamic_cast<const bke::SimulationZoneComputeContext *>(&compute_context))
+  else if (const auto *context = dynamic_cast<const bke::SimulationZoneComputeContext *>(
+               &compute_context))
   {
-    tree_logger.parent_node_id.emplace(typed_compute_context->output_node_id());
+    tree_logger.parent_node_id.emplace(context->output_node_id());
+    tree_logger.tree_orig_session_uid = parent_tree_session_uid;
+  }
+  else if (const auto *context = dynamic_cast<const bke::EvaluateClosureComputeContext *>(
+               &compute_context))
+  {
+    tree_logger.parent_node_id.emplace(context->node_id());
+    const std::optional<nodes::ClosureSourceLocation> &location =
+        context->closure_source_location();
+    if (location.has_value()) {
+      BLI_assert(DEG_is_evaluated(location->tree));
+      tree_logger.tree_orig_session_uid = DEG_get_original_id(&location->tree->id)->session_uid;
+    }
+  }
+  else if (const auto *context = dynamic_cast<const bke::ModifierComputeContext *>(
+               &compute_context))
+  {
+    if (const NodesModifierData *nmd = context->nmd()) {
+      tree_logger.tree_orig_session_uid = get_original_session_uid(
+          reinterpret_cast<const ID *>(nmd->node_group));
+    }
+  }
+  else if (const auto *context = dynamic_cast<const bke::OperatorComputeContext *>(
+               &compute_context))
+  {
+    if (const bNodeTree *tree = context->tree()) {
+      tree_logger.tree_orig_session_uid = tree->id.session_uid;
+    }
   }
   return tree_logger;
 }
 
-GeoTreeLog &GeoModifierLog::get_tree_log(const ComputeContextHash &compute_context_hash)
+GeoTreeLog &GeoNodesLog::get_tree_log(const ComputeContextHash &compute_context_hash)
 {
   GeoTreeLog &reduced_tree_log = *tree_logs_.lookup_or_add_cb(compute_context_hash, [&]() {
     Vector<GeoTreeLogger *> tree_logs;
@@ -631,41 +902,27 @@ GeoTreeLog &GeoModifierLog::get_tree_log(const ComputeContextHash &compute_conte
 
 static void find_tree_zone_hash_recursive(
     const bNodeTreeZone &zone,
-    ComputeContextBuilder &compute_context_builder,
+    bke::ComputeContextCache &compute_context_cache,
+    const ComputeContext *current,
     Map<const bNodeTreeZone *, ComputeContextHash> &r_hash_by_zone)
 {
-  switch (zone.output_node->type_legacy) {
-    case GEO_NODE_SIMULATION_OUTPUT: {
-      compute_context_builder.push<bke::SimulationZoneComputeContext>(*zone.output_node);
-      break;
-    }
-    case GEO_NODE_REPEAT_OUTPUT: {
-      const auto &storage = *static_cast<const NodeGeometryRepeatOutput *>(
-          zone.output_node->storage);
-      compute_context_builder.push<bke::RepeatZoneComputeContext>(*zone.output_node,
-                                                                  storage.inspection_index);
-      break;
-    }
-    case GEO_NODE_FOREACH_GEOMETRY_ELEMENT_OUTPUT: {
-      const auto &storage = *static_cast<const NodeGeometryForeachGeometryElementOutput *>(
-          zone.output_node->storage);
-      compute_context_builder.push<bke::ForeachGeometryElementZoneComputeContext>(
-          *zone.output_node, storage.inspection_index);
-      break;
-    }
+  current = ed::space_node::compute_context_for_zone(zone, compute_context_cache, current);
+  if (!current) {
+    return;
   }
-  r_hash_by_zone.add_new(&zone, compute_context_builder.hash());
+  r_hash_by_zone.add_new(&zone, current->hash());
   for (const bNodeTreeZone *child_zone : zone.child_zones) {
-    find_tree_zone_hash_recursive(*child_zone, compute_context_builder, r_hash_by_zone);
+    find_tree_zone_hash_recursive(*child_zone, compute_context_cache, current, r_hash_by_zone);
   }
-  compute_context_builder.pop();
 }
 
-Map<const bNodeTreeZone *, ComputeContextHash> GeoModifierLog::
+Map<const bNodeTreeZone *, ComputeContextHash> GeoNodesLog::
     get_context_hash_by_zone_for_node_editor(const SpaceNode &snode,
-                                             ComputeContextBuilder &compute_context_builder)
+                                             bke::ComputeContextCache &compute_context_cache)
 {
-  if (!ed::space_node::push_compute_context_for_tree_path(snode, compute_context_builder)) {
+  const ComputeContext *current = ed::space_node::compute_context_for_edittree(
+      snode, compute_context_cache);
+  if (!current) {
     return {};
   }
 
@@ -674,68 +931,58 @@ Map<const bNodeTreeZone *, ComputeContextHash> GeoModifierLog::
     return {};
   }
   Map<const bNodeTreeZone *, ComputeContextHash> hash_by_zone;
-  hash_by_zone.add_new(nullptr, compute_context_builder.hash());
+  hash_by_zone.add_new(nullptr, current->hash());
   for (const bNodeTreeZone *zone : tree_zones->root_zones) {
-    find_tree_zone_hash_recursive(*zone, compute_context_builder, hash_by_zone);
+    find_tree_zone_hash_recursive(*zone, compute_context_cache, current, hash_by_zone);
   }
   return hash_by_zone;
 }
 
-Map<const bNodeTreeZone *, ComputeContextHash> GeoModifierLog::
-    get_context_hash_by_zone_for_node_editor(const SpaceNode &snode, StringRefNull modifier_name)
+static GeoNodesLog *get_root_log(const SpaceNode &snode)
 {
-  ComputeContextBuilder compute_context_builder;
-  compute_context_builder.push<bke::ModifierComputeContext>(modifier_name);
-  return get_context_hash_by_zone_for_node_editor(snode, compute_context_builder);
-}
+  if (!ED_node_is_geometry(&snode)) {
+    return nullptr;
+  }
 
-Map<const bNodeTreeZone *, GeoTreeLog *> GeoModifierLog::get_tree_log_by_zone_for_node_editor(
-    const SpaceNode &snode)
-{
-  switch (SpaceNodeGeometryNodesType(snode.geometry_nodes_type)) {
+  switch (SpaceNodeGeometryNodesType(snode.node_tree_sub_type)) {
     case SNODE_GEOMETRY_MODIFIER: {
       std::optional<ed::space_node::ObjectAndModifier> object_and_modifier =
           ed::space_node::get_modifier_for_node_editor(snode);
       if (!object_and_modifier) {
         return {};
       }
-      GeoModifierLog *modifier_log = object_and_modifier->nmd->runtime->eval_log.get();
-      if (modifier_log == nullptr) {
-        return {};
-      }
-      const Map<const bNodeTreeZone *, ComputeContextHash> hash_by_zone =
-          GeoModifierLog::get_context_hash_by_zone_for_node_editor(
-              snode, object_and_modifier->nmd->modifier.name);
-      Map<const bNodeTreeZone *, GeoTreeLog *> log_by_zone;
-      for (const auto item : hash_by_zone.items()) {
-        GeoTreeLog &tree_log = modifier_log->get_tree_log(item.value);
-        log_by_zone.add(item.key, &tree_log);
-      }
-      return log_by_zone;
+      return object_and_modifier->nmd->runtime->eval_log.get();
     }
     case SNODE_GEOMETRY_TOOL: {
       const ed::geometry::GeoOperatorLog &log =
           ed::geometry::node_group_operator_static_eval_log();
-      if (snode.geometry_nodes_tool_tree->id.name + 2 != log.node_group_name) {
+      if (snode.selected_node_group->id.name + 2 != log.node_group_name) {
         return {};
       }
-      ComputeContextBuilder compute_context_builder;
-      compute_context_builder.push<bke::OperatorComputeContext>();
-      const Map<const bNodeTreeZone *, ComputeContextHash> hash_by_zone =
-          GeoModifierLog::get_context_hash_by_zone_for_node_editor(snode, compute_context_builder);
-      Map<const bNodeTreeZone *, GeoTreeLog *> log_by_zone;
-      for (const auto item : hash_by_zone.items()) {
-        GeoTreeLog &tree_log = log.log->get_tree_log(item.value);
-        log_by_zone.add(item.key, &tree_log);
-      }
-      return log_by_zone;
+      return log.log.get();
     }
   }
-  BLI_assert_unreachable();
-  return {};
+  return nullptr;
 }
 
-const ViewerNodeLog *GeoModifierLog::find_viewer_node_log_for_path(const ViewerPath &viewer_path)
+ContextualGeoTreeLogs GeoNodesLog::get_contextual_tree_logs(const SpaceNode &snode)
+{
+  GeoNodesLog *log = get_root_log(snode);
+  if (!log) {
+    return {};
+  }
+  bke::ComputeContextCache compute_context_cache;
+  const Map<const bNodeTreeZone *, ComputeContextHash> hash_by_zone =
+      GeoNodesLog::get_context_hash_by_zone_for_node_editor(snode, compute_context_cache);
+  Map<const bke::bNodeTreeZone *, GeoTreeLog *> tree_logs_by_zone;
+  for (const auto item : hash_by_zone.items()) {
+    GeoTreeLog &tree_log = log->get_tree_log(item.value);
+    tree_logs_by_zone.add(item.key, &tree_log);
+  }
+  return {tree_logs_by_zone};
+}
+
+const ViewerNodeLog *GeoNodesLog::find_viewer_node_log_for_path(const ViewerPath &viewer_path)
 {
   const std::optional<ed::viewer_path::ViewerPathForGeometryNodesViewer> parsed_path =
       ed::viewer_path::parse_geometry_nodes_viewer(viewer_path);
@@ -745,7 +992,7 @@ const ViewerNodeLog *GeoModifierLog::find_viewer_node_log_for_path(const ViewerP
   const Object *object = parsed_path->object;
   NodesModifierData *nmd = nullptr;
   LISTBASE_FOREACH (ModifierData *, md, &object->modifiers) {
-    if (md->name == parsed_path->modifier_name) {
+    if (md->persistent_uid == parsed_path->modifier_uid) {
       if (md->type == eModifierType_Nodes) {
         nmd = reinterpret_cast<NodesModifierData *>(md);
       }
@@ -757,18 +1004,19 @@ const ViewerNodeLog *GeoModifierLog::find_viewer_node_log_for_path(const ViewerP
   if (!nmd->runtime->eval_log) {
     return nullptr;
   }
-  nodes::geo_eval_log::GeoModifierLog *modifier_log = nmd->runtime->eval_log.get();
+  nodes::geo_eval_log::GeoNodesLog *root_log = nmd->runtime->eval_log.get();
 
-  ComputeContextBuilder compute_context_builder;
-  compute_context_builder.push<bke::ModifierComputeContext>(parsed_path->modifier_name);
+  bke::ComputeContextCache compute_context_cache;
+  const ComputeContext *compute_context = &compute_context_cache.for_modifier(nullptr, *nmd);
   for (const ViewerPathElem *elem : parsed_path->node_path) {
-    if (!ed::viewer_path::add_compute_context_for_viewer_path_elem(*elem, compute_context_builder))
-    {
+    compute_context = ed::viewer_path::compute_context_for_viewer_path_elem(
+        *elem, compute_context_cache, compute_context);
+    if (!compute_context) {
       return nullptr;
     }
   }
-  const ComputeContextHash context_hash = compute_context_builder.hash();
-  nodes::geo_eval_log::GeoTreeLog &tree_log = modifier_log->get_tree_log(context_hash);
+  const ComputeContextHash context_hash = compute_context->hash();
+  nodes::geo_eval_log::GeoTreeLog &tree_log = root_log->get_tree_log(context_hash);
   tree_log.ensure_viewer_node_logs();
 
   const ViewerNodeLog *viewer_log = tree_log.viewer_node_logs.lookup_default(
@@ -776,32 +1024,46 @@ const ViewerNodeLog *GeoModifierLog::find_viewer_node_log_for_path(const ViewerP
   return viewer_log;
 }
 
-int node_warning_type_icon(const NodeWarningType type)
+ContextualGeoTreeLogs::ContextualGeoTreeLogs(
+    Map<const bke::bNodeTreeZone *, GeoTreeLog *> tree_logs_by_zone)
+    : tree_logs_by_zone_(std::move(tree_logs_by_zone))
 {
-  switch (type) {
-    case NodeWarningType::Error:
-      return ICON_CANCEL;
-    case NodeWarningType::Warning:
-      return ICON_ERROR;
-    case NodeWarningType::Info:
-      return ICON_INFO;
-  }
-  BLI_assert_unreachable();
-  return ICON_ERROR;
 }
 
-int node_warning_type_severity(const NodeWarningType type)
+GeoTreeLog *ContextualGeoTreeLogs::get_main_tree_log(const bke::bNodeTreeZone *zone) const
 {
-  switch (type) {
-    case NodeWarningType::Error:
-      return 3;
-    case NodeWarningType::Warning:
-      return 2;
-    case NodeWarningType::Info:
-      return 1;
+  return tree_logs_by_zone_.lookup_default(zone, nullptr);
+}
+
+GeoTreeLog *ContextualGeoTreeLogs::get_main_tree_log(const bNode &node) const
+{
+  const bNodeTree &tree = node.owner_tree();
+  const bke::bNodeTreeZones *zones = tree.zones();
+  if (!zones) {
+    return nullptr;
   }
-  BLI_assert_unreachable();
-  return 0;
+  const bke::bNodeTreeZone *zone = zones->get_zone_by_node(node.identifier);
+  return this->get_main_tree_log(zone);
+}
+
+GeoTreeLog *ContextualGeoTreeLogs::get_main_tree_log(const bNodeSocket &socket) const
+{
+  const bNodeTree &tree = socket.owner_tree();
+  const bke::bNodeTreeZones *zones = tree.zones();
+  if (!zones) {
+    return nullptr;
+  }
+  const bke::bNodeTreeZone *zone = zones->get_zone_by_socket(socket);
+  return this->get_main_tree_log(zone);
+}
+
+void ContextualGeoTreeLogs::foreach_tree_log(FunctionRef<void(GeoTreeLog &)> callback) const
+{
+  for (GeoTreeLog *tree_log : tree_logs_by_zone_.values()) {
+    if (tree_log) {
+      callback(*tree_log);
+    }
+  }
 }
 
 }  // namespace blender::nodes::geo_eval_log

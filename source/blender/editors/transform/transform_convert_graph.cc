@@ -11,6 +11,7 @@
 
 #include "MEM_guardedalloc.h"
 
+#include "BLI_listbase.h"
 #include "BLI_map.hh"
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
@@ -30,6 +31,8 @@
 #include "transform_constraints.hh"
 #include "transform_convert.hh"
 #include "transform_snap.hh"
+
+namespace blender::ed::transform {
 
 struct TransDataGraph {
   float unit_scale;
@@ -107,7 +110,6 @@ static void bezt_to_transdata(TransData *td,
   memset(td->axismtx, 0, sizeof(td->axismtx));
   td->axismtx[2][2] = 1.0f;
 
-  td->ext = nullptr;
   td->val = nullptr;
 
   /* Store AnimData info in td->extra, for applying mapping when flushing.
@@ -207,26 +209,28 @@ static void graph_bezt_get_transform_selection(const TransInfo *t,
   *r_right_handle = right;
 }
 
-static void graph_key_shortest_dist(
+static float graph_key_shortest_dist(
     TransInfo *t, FCurve *fcu, TransData *td_start, TransData *td, int cfra, bool use_handle)
 {
   int j = 0;
   TransData *td_iter = td_start;
   bool sel_key, sel_left, sel_right;
 
-  td->dist = FLT_MAX;
+  float dist = FLT_MAX;
   for (; j < fcu->totvert; j++) {
     BezTriple *bezt = fcu->bezt + j;
     if (FrameOnMouseSide(t->frame_side, bezt->vec[1][0], cfra)) {
       graph_bezt_get_transform_selection(t, bezt, use_handle, &sel_left, &sel_key, &sel_right);
 
       if (sel_left || sel_key || sel_right) {
-        td->dist = td->rdist = min_ff(td->dist, fabs(td_iter->center[0] - td->center[0]));
+        dist = min_fff(dist, td->dist, fabs(td_iter->center[0] - td->center[0]));
       }
 
       td_iter += 3;
     }
   }
+
+  return dist;
 }
 
 /**
@@ -287,8 +291,8 @@ static void createTransGraphEditData(bContext *C, TransInfo *t)
 
   /* Loop 1: count how many BezTriples (specifically their verts)
    * are selected (or should be edited). */
-  blender::Set<FCurve *> visited_fcurves;
-  blender::Vector<bAnimListElem *> unique_fcu_anim_list_elements;
+  Set<FCurve *> visited_fcurves;
+  Vector<bAnimListElem *> unique_fcu_anim_list_elements;
   LISTBASE_FOREACH (bAnimListElem *, ale, &anim_data) {
     FCurve *fcu = (FCurve *)ale->key_data;
     /* If 2 or more objects share the same action, multiple bAnimListElem might reference the same
@@ -358,12 +362,10 @@ static void createTransGraphEditData(bContext *C, TransInfo *t)
   /* Allocate memory for data. */
   tc->data_len = count;
 
-  tc->data = static_cast<TransData *>(
-      MEM_callocN(tc->data_len * sizeof(TransData), "TransData (Graph Editor)"));
+  tc->data = MEM_calloc_arrayN<TransData>(tc->data_len, "TransData (Graph Editor)");
   /* For each 2d vert a 3d vector is allocated,
    * so that they can be treated just as if they were 3d verts. */
-  tc->data_2d = static_cast<TransData2D *>(
-      MEM_callocN(tc->data_len * sizeof(TransData2D), "TransData2D (Graph Editor)"));
+  tc->data_2d = MEM_calloc_arrayN<TransData2D>(tc->data_len, "TransData2D (Graph Editor)");
   tc->custom.type.data = MEM_callocN(tc->data_len * sizeof(TransDataGraph), "TransDataGraph");
   tc->custom.type.use_free = true;
 
@@ -579,7 +581,7 @@ static void createTransGraphEditData(bContext *C, TransInfo *t)
   }
 
   if (is_prop_edit) {
-    /* Loop 2: build transdata arrays. */
+    /* Loop 3: build proportional edit distances. */
     td = tc->data;
 
     for (bAnimListElem *ale : unique_fcu_anim_list_elements) {
@@ -602,29 +604,28 @@ static void createTransGraphEditData(bContext *C, TransInfo *t)
         if (FrameOnMouseSide(t->frame_side, bezt->vec[1][0], cfra)) {
           graph_bezt_get_transform_selection(t, bezt, use_handle, &sel_left, &sel_key, &sel_right);
 
-          if (sel_left || sel_key) {
-            td->dist = td->rdist = 0.0f;
-          }
-          else {
-            graph_key_shortest_dist(t, fcu, td_start, td, cfra, use_handle);
-          }
-          td++;
+          /* Now determine to distance for proportional editing for all three TransData
+           * (representing the key as well as both handles). Note though that the way
+           * #bezt_to_transdata sets up the TransData, the td->center[0] will always be based on
+           * the key (bezt->vec[1]) which means that #graph_key_shortest_dist will return the
+           * same for all of them and we can reuse that (expensive) result if needed. Might be
+           * worth looking into using a 2D KDTree in the future as well. */
 
-          if (sel_key) {
-            td->dist = td->rdist = 0.0f;
+          float dist = FLT_MAX;
+          if (sel_left || sel_key || sel_right) {
+            /* If either left handle or key or right handle is selected, all will move fully. */
+            dist = 0.0f;
           }
           else {
-            graph_key_shortest_dist(t, fcu, td_start, td, cfra, use_handle);
+            /* If nothing is selected, left handle and key and right handle will share the same (to
+             * be calculated) distance. */
+            dist = graph_key_shortest_dist(t, fcu, td_start, td, cfra, use_handle);
           }
-          td++;
 
-          if (sel_right || sel_key) {
-            td->dist = td->rdist = 0.0f;
-          }
-          else {
-            graph_key_shortest_dist(t, fcu, td_start, td, cfra, use_handle);
-          }
-          td++;
+          td->dist = td->rdist = dist;
+          (td + 1)->dist = (td + 1)->rdist = dist;
+          (td + 2)->dist = (td + 2)->rdist = dist;
+          td += 3;
         }
       }
     }
@@ -730,13 +731,13 @@ struct BeztMap {
 /**
  * Converts an FCurve's BezTriple array to a BeztMap vector.
  */
-static blender::Vector<BeztMap> bezt_to_beztmaps(BezTriple *bezts, const int totvert)
+static Vector<BeztMap> bezt_to_beztmaps(BezTriple *bezts, const int totvert)
 {
   if (totvert == 0 || bezts == nullptr) {
     return {};
   }
 
-  blender::Vector<BeztMap> bezms = blender::Vector<BeztMap>(totvert);
+  Vector<BeztMap> bezms = Vector<BeztMap>(totvert);
 
   for (const int i : bezms.index_range()) {
     BezTriple *bezt = &bezts[i];
@@ -750,7 +751,7 @@ static blender::Vector<BeztMap> bezt_to_beztmaps(BezTriple *bezts, const int tot
 }
 
 /* This function copies the code of sort_time_ipocurve, but acts on BeztMap structs instead. */
-static void sort_time_beztmaps(const blender::MutableSpan<BeztMap> bezms)
+static void sort_time_beztmaps(const MutableSpan<BeztMap> bezms)
 {
   /* Check if handles need to be swapped. */
   for (BeztMap &bezm : bezms) {
@@ -766,7 +767,7 @@ static void sort_time_beztmaps(const blender::MutableSpan<BeztMap> bezms)
     /* No sorting is needed with only 0 or 1 entries. */
     return;
   }
-  const blender::IndexRange bezm_range = bezms.index_range().drop_back(1);
+  const IndexRange bezm_range = bezms.index_range().drop_back(1);
 
   /* Keep repeating the process until nothing is out of place anymore. */
   while (ok) {
@@ -801,9 +802,9 @@ static inline void update_trans_data(TransData *td,
 
 /* Adjust the pointers that the transdata has to each BezTriple. */
 static void update_transdata_bezt_pointers(TransDataContainer *tc,
-                                           const blender::Map<float *, int> &trans_data_map,
+                                           const Map<float *, int> &trans_data_map,
                                            const FCurve *fcu,
-                                           const blender::Span<BeztMap> bezms)
+                                           const Span<BeztMap> bezms)
 {
   /* At this point, beztmaps are already sorted, so their current index is assumed to be what the
    * BezTriple index will be after sorting. */
@@ -861,7 +862,7 @@ static void update_transdata_bezt_pointers(TransDataContainer *tc,
  * the handles of curves and sort the keyframes so that the curves draw correctly.
  * The Span of FCurves should only contain those that need sorting.
  */
-static void remake_graph_transdata(TransInfo *t, const blender::Span<FCurve *> fcurves)
+static void remake_graph_transdata(TransInfo *t, const Span<FCurve *> fcurves)
 {
   SpaceGraph *sipo = (SpaceGraph *)t->area->spacedata.first;
   const bool use_handle = (sipo->flag & SIPO_NOHANDLES) == 0;
@@ -870,7 +871,7 @@ static void remake_graph_transdata(TransInfo *t, const blender::Span<FCurve *> f
 
   /* Build a map from the data that is being modified to its index. This is used to quickly update
    * the pointers to where the data ends up after sorting. */
-  blender::Map<float *, int> trans_data_map;
+  Map<float *, int> trans_data_map;
   for (int i = 0; i < tc->data_len; i++) {
     trans_data_map.add(tc->data_2d[i].loc2d, i);
   }
@@ -878,7 +879,7 @@ static void remake_graph_transdata(TransInfo *t, const blender::Span<FCurve *> f
   /* The grain size of 8 was chosen based on measured runtimes of this function. While 1 is the
    * fastest, larger grain sizes are generally preferred and the difference between 1 and 8 was
    * only minimal (~330ms to ~336ms). */
-  blender::threading::parallel_for(fcurves.index_range(), 8, [&](const blender::IndexRange range) {
+  threading::parallel_for(fcurves.index_range(), 8, [&](const IndexRange range) {
     for (const int i : range) {
       FCurve *fcu = fcurves[i];
 
@@ -888,7 +889,7 @@ static void remake_graph_transdata(TransInfo *t, const blender::Span<FCurve *> f
 
       /* Adjust transform-data pointers. */
       /* NOTE: none of these functions use 'use_handle', it could be removed. */
-      blender::Vector<BeztMap> bezms = bezt_to_beztmaps(fcu->bezt, fcu->totvert);
+      Vector<BeztMap> bezms = bezt_to_beztmaps(fcu->bezt, fcu->totvert);
       sort_time_beztmaps(bezms);
       update_transdata_bezt_pointers(tc, trans_data_map, fcu, bezms);
 
@@ -935,7 +936,7 @@ static void recalcData_graphedit(TransInfo *t)
   ANIM_animdata_filter(
       &ac, &anim_data, eAnimFilter_Flags(filter), ac.data, eAnimCont_Types(ac.datatype));
 
-  blender::Vector<FCurve *> unsorted_fcurves;
+  Vector<FCurve *> unsorted_fcurves;
   /* Now test if there is a need to re-sort. */
   LISTBASE_FOREACH (bAnimListElem *, ale, &anim_data) {
     FCurve *fcu = (FCurve *)ale->key_data;
@@ -1037,3 +1038,5 @@ TransConvertTypeInfo TransConvertType_Graph = {
     /*recalc_data*/ recalcData_graphedit,
     /*special_aftertrans_update*/ special_aftertrans_update__graph,
 };
+
+}  // namespace blender::ed::transform

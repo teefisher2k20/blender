@@ -35,7 +35,7 @@
 #include "wm.hh"
 #include "wm_window.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 void wm_stereo3d_draw_sidebyside(wmWindow *win, int view)
@@ -43,8 +43,9 @@ void wm_stereo3d_draw_sidebyside(wmWindow *win, int view)
   bool cross_eyed = (win->stereo3d_format->flag & S3D_SIDEBYSIDE_CROSSEYED) != 0;
 
   GPUVertFormat *format = immVertexFormat();
-  uint texcoord = GPU_vertformat_attr_add(format, "texCoord", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
-  uint pos = GPU_vertformat_attr_add(format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+  uint texcoord = GPU_vertformat_attr_add(
+      format, "texCoord", blender::gpu::VertAttrType::SFLOAT_32_32);
+  uint pos = GPU_vertformat_attr_add(format, "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
 
   immBindBuiltinProgram(GPU_SHADER_3D_IMAGE);
 
@@ -90,8 +91,9 @@ void wm_stereo3d_draw_sidebyside(wmWindow *win, int view)
 void wm_stereo3d_draw_topbottom(wmWindow *win, int view)
 {
   GPUVertFormat *format = immVertexFormat();
-  uint texcoord = GPU_vertformat_attr_add(format, "texCoord", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
-  uint pos = GPU_vertformat_attr_add(format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+  uint texcoord = GPU_vertformat_attr_add(
+      format, "texCoord", blender::gpu::VertAttrType::SFLOAT_32_32);
+  uint pos = GPU_vertformat_attr_add(format, "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
 
   immBindBuiltinProgram(GPU_SHADER_3D_IMAGE);
 
@@ -244,14 +246,14 @@ static void wm_stereo3d_set_init(bContext *C, wmOperator *op)
 {
   wmWindow *win = CTX_wm_window(C);
 
-  Stereo3dData *s3dd = static_cast<Stereo3dData *>(MEM_callocN(sizeof(Stereo3dData), __func__));
+  Stereo3dData *s3dd = MEM_callocN<Stereo3dData>(__func__);
   op->customdata = s3dd;
 
   /* Store the original win stereo 3d settings in case of cancel. */
   s3dd->stereo3d_format = *win->stereo3d_format;
 }
 
-int wm_stereo3d_set_exec(bContext *C, wmOperator *op)
+wmOperatorStatus wm_stereo3d_set_exec(bContext *C, wmOperator *op)
 {
   wmWindowManager *wm = CTX_wm_manager(C);
   wmWindow *win_src = CTX_wm_window(C);
@@ -323,7 +325,8 @@ int wm_stereo3d_set_exec(bContext *C, wmOperator *op)
     }
   }
 
-  MEM_freeN(op->customdata);
+  MEM_freeN(s3dd);
+  op->customdata = nullptr;
 
   if (ok) {
     if (win_dst) {
@@ -340,7 +343,7 @@ int wm_stereo3d_set_exec(bContext *C, wmOperator *op)
   return OPERATOR_CANCELLED;
 }
 
-int wm_stereo3d_set_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+wmOperatorStatus wm_stereo3d_set_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
 {
   wm_stereo3d_set_init(C, op);
 
@@ -359,30 +362,25 @@ void wm_stereo3d_set_draw(bContext * /*C*/, wmOperator *op)
   PointerRNA stereo3d_format_ptr = RNA_pointer_create_discrete(
       nullptr, &RNA_Stereo3dDisplay, &s3dd->stereo3d_format);
 
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout->use_property_split_set(true);
+  layout->use_property_decorate_set(false);
 
-  col = uiLayoutColumn(layout, false);
-  uiItemR(col, &stereo3d_format_ptr, "display_mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col = &layout->column(false);
+  col->prop(&stereo3d_format_ptr, "display_mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   switch (s3dd->stereo3d_format.display_mode) {
     case S3D_DISPLAY_ANAGLYPH: {
-      uiItemR(col, &stereo3d_format_ptr, "anaglyph_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+      col->prop(&stereo3d_format_ptr, "anaglyph_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
       break;
     }
     case S3D_DISPLAY_INTERLACE: {
-      uiItemR(col, &stereo3d_format_ptr, "interlace_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-      uiItemR(
-          col, &stereo3d_format_ptr, "use_interlace_swap", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+      col->prop(&stereo3d_format_ptr, "interlace_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+      col->prop(&stereo3d_format_ptr, "use_interlace_swap", UI_ITEM_NONE, std::nullopt, ICON_NONE);
       break;
     }
     case S3D_DISPLAY_SIDEBYSIDE: {
-      uiItemR(col,
-              &stereo3d_format_ptr,
-              "use_sidebyside_crosseyed",
-              UI_ITEM_NONE,
-              std::nullopt,
-              ICON_NONE);
+      col->prop(
+          &stereo3d_format_ptr, "use_sidebyside_crosseyed", UI_ITEM_NONE, std::nullopt, ICON_NONE);
       /* Fall-through. */
     }
     case S3D_DISPLAY_PAGEFLIP:
@@ -403,6 +401,7 @@ bool wm_stereo3d_set_check(bContext * /*C*/, wmOperator * /*op*/)
 
 void wm_stereo3d_set_cancel(bContext * /*C*/, wmOperator *op)
 {
-  MEM_freeN(op->customdata);
+  Stereo3dData *s3dd = static_cast<Stereo3dData *>(op->customdata);
+  MEM_freeN(s3dd);
   op->customdata = nullptr;
 }

@@ -21,8 +21,9 @@
 #include "DNA_space_types.h"
 #include "DNA_windowmanager_types.h"
 
-#include "BLI_blenlib.h"
+#include "BLI_listbase.h"
 #include "BLI_set.hh"
+#include "BLI_string.h"
 #include "BLI_utildefines.h"
 
 #include "BKE_action.hh"
@@ -121,7 +122,7 @@ void ANIM_id_update(Main *bmain, ID *id)
 /* perform syncing updates for Action Groups */
 static void animchan_sync_group(bAnimContext *ac, bAnimListElem *ale, bActionGroup **active_agrp)
 {
-  bActionGroup *agrp = (bActionGroup *)ale->data;
+  bActionGroup *agrp = static_cast<bActionGroup *>(ale->data);
   ID *owner_id = ale->id;
 
   /* major priority is selection status
@@ -133,7 +134,7 @@ static void animchan_sync_group(bAnimContext *ac, bAnimListElem *ale, bActionGro
 
   /* for standard Objects, check if group is the name of some bone */
   if (GS(owner_id->name) == ID_OB) {
-    Object *ob = (Object *)owner_id;
+    Object *ob = reinterpret_cast<Object *>(owner_id);
 
     /* check if there are bones, and whether the name matches any
      * NOTE: this feature will only really work if groups by default contain the F-Curves
@@ -145,7 +146,7 @@ static void animchan_sync_group(bAnimContext *ac, bAnimListElem *ale, bActionGro
 
       if (pchan) {
         /* if one matches, sync the selection status */
-        if ((pchan->bone) && (pchan->bone->flag & BONE_SELECTED)) {
+        if ((pchan->bone) && (pchan->flag & POSE_SELECTED)) {
           agrp->flag |= AGRP_SELECTED;
         }
         else {
@@ -180,8 +181,8 @@ static void animchan_sync_fcurve_scene(bAnimListElem *ale)
 {
   ID *owner_id = ale->id;
   BLI_assert(GS(owner_id->name) == ID_SCE);
-  Scene *scene = (Scene *)owner_id;
-  FCurve *fcu = (FCurve *)ale->data;
+  Scene *scene = reinterpret_cast<Scene *>(owner_id);
+  FCurve *fcu = static_cast<FCurve *>(ale->data);
   Strip *strip = nullptr;
 
   /* Only affect if F-Curve involves sequence_editor.strips. */
@@ -191,8 +192,13 @@ static void animchan_sync_fcurve_scene(bAnimListElem *ale)
   }
 
   /* Check if this strip is selected. */
-  Editing *ed = SEQ_editing_get(scene);
-  strip = SEQ_get_sequence_by_name(ed->seqbasep, strip_name, false);
+  Editing *ed = blender::seq::editing_get(scene);
+  if (ed == nullptr) {
+    /* The existence of the F-Curve doesn't imply the existence of the sequencer
+     * strip, or even the sequencer itself. */
+    return;
+  }
+  strip = blender::seq::get_strip_by_name(ed->current_strips(), strip_name, false);
   if (strip == nullptr) {
     return;
   }
@@ -209,7 +215,7 @@ static void animchan_sync_fcurve_scene(bAnimListElem *ale)
 /* perform syncing updates for F-Curves */
 static void animchan_sync_fcurve(bAnimListElem *ale)
 {
-  FCurve *fcu = (FCurve *)ale->data;
+  FCurve *fcu = static_cast<FCurve *>(ale->data);
   ID *owner_id = ale->id;
 
   /* major priority is selection status, so refer to the checks done in `anim_filter.cc`
@@ -231,10 +237,10 @@ static void animchan_sync_fcurve(bAnimListElem *ale)
 /* perform syncing updates for GPencil Layers */
 static void animchan_sync_gplayer(bAnimListElem *ale)
 {
-  bGPDlayer *gpl = (bGPDlayer *)ale->data;
+  bGPDlayer *gpl = static_cast<bGPDlayer *>(ale->data);
 
   /* Make sure the selection flags agree with the "active" flag.
-   * The selection flags are used in the Dopesheet only, whereas
+   * The selection flags are used in the Dope-sheet only, whereas
    * the active flag is used everywhere else. Hence, we try to
    * sync these here so that it all seems to be have as the user
    * expects - #50184
@@ -330,8 +336,8 @@ void ANIM_sync_animchannels_to_data(const bContext *C)
       case ANIMTYPE_DSHAIR:
       case ANIMTYPE_DSPOINTCLOUD:
       case ANIMTYPE_DSVOLUME:
+      case ANIMTYPE_DSLIGHTPROBE:
       case ANIMTYPE_SHAPEKEY:
-      case ANIMTYPE_GPDATABLOCK:
       case ANIMTYPE_GREASE_PENCIL_DATABLOCK:
       case ANIMTYPE_GREASE_PENCIL_LAYER_GROUP:
       case ANIMTYPE_MASKDATABLOCK:

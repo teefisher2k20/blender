@@ -17,7 +17,8 @@ namespace blender::nodes::node_geo_grease_pencil_to_curves_cc {
 static void node_declare(NodeDeclarationBuilder &b)
 {
   b.add_input<decl::Geometry>("Grease Pencil")
-      .supported_type(bke::GeometryComponent::Type::GreasePencil);
+      .supported_type(bke::GeometryComponent::Type::GreasePencil)
+      .description("Grease Pencil data to convert to curves");
   b.add_input<decl::Bool>("Selection")
       .default_value(true)
       .hide_value()
@@ -84,7 +85,7 @@ static void node_geo_exec(GeoNodeExecParams params)
     if (ELEM(iter.name, "opacity")) {
       return;
     }
-    if (iter.data_type == CD_PROP_STRING) {
+    if (iter.data_type == bke::AttrType::String) {
       return;
     }
     const GAttributeReader src_attribute = iter.get();
@@ -115,24 +116,26 @@ static void node_geo_exec(GeoNodeExecParams params)
   {
     /* Manually propagate "opacity" data, because it's not a layer attribute on grease pencil
      * yet. */
-    SpanAttributeWriter<float> opacity_attribute =
-        instances_attributes.lookup_or_add_for_write_only_span<float>("opacity",
-                                                                      AttrDomain::Instance);
-    layer_selection.foreach_index([&](const int layer_i, const int instance_i) {
-      opacity_attribute.span[instance_i] = grease_pencil->layer(layer_i).opacity;
-    });
-    opacity_attribute.finish();
+    if (SpanAttributeWriter<float> opacity_attribute =
+            instances_attributes.lookup_or_add_for_write_only_span<float>("opacity",
+                                                                          AttrDomain::Instance))
+    {
+      layer_selection.foreach_index([&](const int layer_i, const int instance_i) {
+        opacity_attribute.span[instance_i] = grease_pencil->layer(layer_i).opacity;
+      });
+      opacity_attribute.finish();
+    }
   }
 
   GeometrySet curves_geometry = GeometrySet::from_instances(instances);
   curves_geometry.name = std::move(grease_pencil_geometry.name);
 
-  const bool layers_as_instances = params.get_input<bool>("Layers as Instances");
+  const bool layers_as_instances = params.extract_input<bool>("Layers as Instances");
   if (!layers_as_instances) {
     geometry::RealizeInstancesOptions options;
     const NodeAttributeFilter attribute_filter = params.get_attribute_filter("Curves");
     options.attribute_filter = attribute_filter;
-    curves_geometry = geometry::realize_instances(curves_geometry, options);
+    curves_geometry = geometry::realize_instances(curves_geometry, options).geometry;
   }
 
   params.set_output("Curves", std::move(curves_geometry));
@@ -148,9 +151,9 @@ static void node_register()
   ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
-  bke::node_type_size(&ntype, 160, 100, 320);
+  bke::node_type_size(ntype, 160, 100, 320);
 
-  bke::node_register_type(&ntype);
+  bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

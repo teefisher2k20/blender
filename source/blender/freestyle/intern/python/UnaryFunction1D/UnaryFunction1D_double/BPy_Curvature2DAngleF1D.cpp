@@ -12,10 +12,6 @@
 #include "../../BPy_Convert.h"
 #include "../../BPy_IntegrationType.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -44,7 +40,6 @@ PyDoc_STRVAR(
     "   :type inter: :class:`freestyle.types.Interface1D`\n"
     "   :return: The 2D curvature as an angle.\n"
     "   :rtype: float\n");
-
 static int Curvature2DAngleF1D___init__(BPy_Curvature2DAngleF1D *self,
                                         PyObject *args,
                                         PyObject *kwds)
@@ -105,7 +100,3 @@ PyTypeObject Curvature2DAngleF1D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

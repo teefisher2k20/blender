@@ -20,9 +20,9 @@
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
+#include "BLI_mutex.hh"
 #include "BLI_string_utf8.h"
 #include "BLI_string_utils.hh"
-#include "BLI_threads.h"
 #include "BLI_utildefines.h"
 
 #include "BLT_translation.hh"
@@ -49,13 +49,14 @@
 #  include "BPY_extern.hh"
 #endif
 
+#include <algorithm>
 #include <cstring>
 
 #ifdef WITH_PYTHON
-static ThreadMutex python_driver_lock = BLI_MUTEX_INITIALIZER;
+static blender::Mutex python_driver_lock;
 #endif
 
-static CLG_LogRef LOG = {"bke.fcurve"};
+static CLG_LogRef LOG = {"anim.fcurve"};
 
 /* -------------------------------------------------------------------- */
 /** \name Driver Variables
@@ -432,7 +433,7 @@ static float dvar_eval_rotDiff(const AnimationEvalContext * /*anim_eval_context*
     return 0.0f;
   }
 
-  const float(*mat[2])[4];
+  const float (*mat[2])[4];
 
   /* NOTE: for now, these are all just world-space. */
   for (int i = 0; i < 2; i++) {
@@ -469,7 +470,7 @@ static float dvar_eval_rotDiff(const AnimationEvalContext * /*anim_eval_context*
   angle = 2.0f * safe_acosf(quat[0]);
   angle = fabsf(angle);
 
-  return (angle > float(M_PI)) ? float((2.0f * float(M_PI)) - angle) : float(angle);
+  return (angle > float(M_PI)) ? ((2.0f * float(M_PI)) - angle) : angle;
 }
 
 /**
@@ -1016,17 +1017,16 @@ DriverVar *driver_add_new_variable(ChannelDriver *driver)
   }
 
   /* Make a new variable. */
-  dvar = static_cast<DriverVar *>(MEM_callocN(sizeof(DriverVar), "DriverVar"));
+  dvar = MEM_callocN<DriverVar>("DriverVar");
   BLI_addtail(&driver->variables, dvar);
 
+  /* Don't use translations as this is referenced as a literal in #ChannelDriver::expression. */
+  const char *name_default = "var";
+
   /* Give the variable a 'unique' name. */
-  STRNCPY_UTF8(dvar->name, CTX_DATA_(BLT_I18NCONTEXT_ID_ACTION, "var"));
-  BLI_uniquename(&driver->variables,
-                 dvar,
-                 CTX_DATA_(BLT_I18NCONTEXT_ID_ACTION, "var"),
-                 '_',
-                 offsetof(DriverVar, name),
-                 sizeof(dvar->name));
+  STRNCPY_UTF8(dvar->name, name_default);
+  BLI_uniquename(
+      &driver->variables, dvar, name_default, '_', offsetof(DriverVar, name), sizeof(dvar->name));
 
   /* Set the default type to 'single prop'. */
   driver_change_variable_type(dvar, DVAR_TYPE_SINGLE_PROP);
@@ -1356,15 +1356,11 @@ static void evaluate_driver_min_max(const AnimationEvalContext *anim_eval_contex
       /* Check if greater/smaller than the baseline. */
       if (driver->type == DRIVER_TYPE_MAX) {
         /* Max? */
-        if (tmp_val > value) {
-          value = tmp_val;
-        }
+        value = std::max(tmp_val, value);
       }
       else {
         /* Min? */
-        if (tmp_val < value) {
-          value = tmp_val;
-        }
+        value = std::min(tmp_val, value);
       }
     }
     else {
@@ -1395,11 +1391,10 @@ static void evaluate_driver_python(PathResolvedRNA *anim_rna,
 #ifdef WITH_PYTHON
     /* This evaluates the expression using Python, and returns its result:
      * - on errors it reports, then returns 0.0f. */
-    BLI_mutex_lock(&python_driver_lock);
+    std::scoped_lock lock(python_driver_lock);
 
     driver->curval = BPY_driver_exec(anim_rna, driver, driver_orig, anim_eval_context);
 
-    BLI_mutex_unlock(&python_driver_lock);
 #else  /* WITH_PYTHON */
     UNUSED_VARS(anim_rna, anim_eval_context);
 #endif /* WITH_PYTHON */

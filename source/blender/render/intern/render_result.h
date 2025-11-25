@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "BKE_global.hh" /* IWYU pragma: keep. Used in macro. */
+
 #define PASS_VECTOR_MAX 10000.0f
 
 #define RR_ALL_LAYERS NULL
@@ -15,6 +17,7 @@
 
 struct ColorManagedDisplaySettings;
 struct ColorManagedViewSettings;
+struct ExrHandle;
 struct ImBuf;
 struct ListBase;
 struct Render;
@@ -23,10 +26,6 @@ struct RenderLayer;
 struct RenderResult;
 struct ReportList;
 struct rcti;
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /* New */
 
@@ -48,7 +47,7 @@ void render_result_passes_allocated_ensure(struct RenderResult *rr);
  * it's not a single-layer multi-view we convert this to render result.
  */
 struct RenderResult *render_result_new_from_exr(
-    void *exrhandle, const char *colorspace, bool predivide, int rectx, int recty);
+    ExrHandle *exrhandle, const char *colorspace, bool predivide, int rectx, int recty);
 
 void render_result_view_new(struct RenderResult *rr, const char *viewname);
 void render_result_views_new(struct RenderResult *rr, const struct RenderData *rd);
@@ -161,7 +160,3 @@ void render_result_free_gpu_texture_caches(struct RenderResult *rr);
   } \
   } \
   ((void)0)
-
-#ifdef __cplusplus
-}
-#endif

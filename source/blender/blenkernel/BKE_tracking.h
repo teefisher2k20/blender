@@ -10,10 +10,6 @@
 
 #include "BLI_sys_types.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 struct Camera;
 struct ImBuf;
 struct ListBase;
@@ -217,7 +213,7 @@ bool BKE_tracking_track_has_enabled_marker_at_frame(struct MovieTrackingTrack *t
  * \note frame number should be in clip space, not scene space.
  */
 typedef enum eTrackClearAction {
-  /* Clear path from `ref_frame+1` up to the. */
+  /* Clear path from `ref_frame+1` up to the current frame. */
   TRACK_CLEAR_UPTO,
   /* Clear path from the beginning up to `ref_frame-1`. */
   TRACK_CLEAR_REMAINED,
@@ -486,7 +482,6 @@ void BKE_tracking_distortion_update(struct MovieDistortion *distortion,
                                     struct MovieTracking *tracking,
                                     int calibration_width,
                                     int calibration_height);
-void BKE_tracking_distortion_set_threads(struct MovieDistortion *distortion, int threads);
 struct MovieDistortion *BKE_tracking_distortion_copy(struct MovieDistortion *distortion);
 struct ImBuf *BKE_tracking_distortion_exec(struct MovieDistortion *distortion,
                                            struct MovieTracking *tracking,
@@ -529,8 +524,9 @@ struct ImBuf *BKE_tracking_distort_frame(struct MovieTracking *tracking,
  * number of pixels that the image will grow/shrink by in each of the four bounds of the image as a
  * result of the distortion/undistortion. The deltas for the bounds are positive for expansion and
  * negative for shrinking. */
-void BKE_tracking_distortion_bounds_deltas(MovieTracking *tracking,
+void BKE_tracking_distortion_bounds_deltas(MovieDistortion *distortion,
                                            const int size[2],
+                                           const int calibration_size[2],
                                            const bool undistort,
                                            int *r_right,
                                            int *r_left,
@@ -828,7 +824,3 @@ void BKE_tracking_get_rna_path_prefix_for_plane_track(
 
 #define PLANE_TRACK_VIEW_SELECTED(plane_track) \
   ((((plane_track)->flag & PLANE_TRACK_HIDDEN) == 0) && ((plane_track)->flag & SELECT))
-
-#ifdef __cplusplus
-}
-#endif

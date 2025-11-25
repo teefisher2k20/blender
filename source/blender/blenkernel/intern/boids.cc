@@ -14,7 +14,8 @@
 #include "DNA_object_force_types.h"
 #include "DNA_scene_types.h"
 
-#include "BLI_kdtree.h"
+#include "BLI_kdtree.hh"
+#include "BLI_listbase.h"
 #include "BLI_math_base_safe.h"
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
@@ -1590,31 +1591,41 @@ BoidRule *boid_new_rule(int type)
 
   switch (type) {
     case eBoidRuleType_Goal:
-    case eBoidRuleType_Avoid:
-      rule = static_cast<BoidRule *>(MEM_callocN(sizeof(BoidRuleGoalAvoid), "BoidRuleGoalAvoid"));
+    case eBoidRuleType_Avoid: {
+      BoidRuleGoalAvoid *rule_goal = MEM_callocN<BoidRuleGoalAvoid>("BoidRuleGoalAvoid");
+      rule = reinterpret_cast<BoidRule *>(rule_goal);
       break;
-    case eBoidRuleType_AvoidCollision:
-      rule = static_cast<BoidRule *>(
-          MEM_callocN(sizeof(BoidRuleAvoidCollision), "BoidRuleAvoidCollision"));
-      ((BoidRuleAvoidCollision *)rule)->look_ahead = 2.0f;
+    }
+    case eBoidRuleType_AvoidCollision: {
+      BoidRuleAvoidCollision *rule_avoid = MEM_callocN<BoidRuleAvoidCollision>(
+          "BoidRuleAvoidCollision");
+      rule_avoid->look_ahead = 2.0f;
+      rule = reinterpret_cast<BoidRule *>(rule_avoid);
       break;
-    case eBoidRuleType_FollowLeader:
-      rule = static_cast<BoidRule *>(
-          MEM_callocN(sizeof(BoidRuleFollowLeader), "BoidRuleFollowLeader"));
-      ((BoidRuleFollowLeader *)rule)->distance = 1.0f;
+    }
+    case eBoidRuleType_FollowLeader: {
+      BoidRuleFollowLeader *rule_follow = MEM_callocN<BoidRuleFollowLeader>(
+          "BoidRuleFollowLeader");
+      rule_follow->distance = 1.0f;
+      rule = reinterpret_cast<BoidRule *>(rule_follow);
       break;
-    case eBoidRuleType_AverageSpeed:
-      rule = static_cast<BoidRule *>(
-          MEM_callocN(sizeof(BoidRuleAverageSpeed), "BoidRuleAverageSpeed"));
-      ((BoidRuleAverageSpeed *)rule)->speed = 0.5f;
+    }
+    case eBoidRuleType_AverageSpeed: {
+      BoidRuleAverageSpeed *rule_avgspeed = MEM_callocN<BoidRuleAverageSpeed>(
+          "BoidRuleAverageSpeed");
+      rule_avgspeed->speed = 0.5f;
+      rule = reinterpret_cast<BoidRule *>(rule_avgspeed);
       break;
-    case eBoidRuleType_Fight:
-      rule = static_cast<BoidRule *>(MEM_callocN(sizeof(BoidRuleFight), "BoidRuleFight"));
-      ((BoidRuleFight *)rule)->distance = 100.0f;
-      ((BoidRuleFight *)rule)->flee_distance = 100.0f;
+    }
+    case eBoidRuleType_Fight: {
+      BoidRuleFight *rule_fight = MEM_callocN<BoidRuleFight>("BoidRuleFight");
+      rule_fight->distance = 100.0f;
+      rule_fight->flee_distance = 100.0f;
+      rule = reinterpret_cast<BoidRule *>(rule_fight);
       break;
+    }
     default:
-      rule = static_cast<BoidRule *>(MEM_callocN(sizeof(BoidRule), "BoidRule"));
+      rule = MEM_callocN<BoidRule>("BoidRule");
       break;
   }
 
@@ -1652,14 +1663,14 @@ void boid_default_settings(BoidSettings *boids)
 
 BoidState *boid_new_state(BoidSettings *boids)
 {
-  BoidState *state = static_cast<BoidState *>(MEM_callocN(sizeof(BoidState), "BoidState"));
+  BoidState *state = MEM_callocN<BoidState>("BoidState");
 
   state->id = boids->last_state_id++;
   if (state->id) {
-    SNPRINTF(state->name, "State %i", state->id);
+    SNPRINTF_UTF8(state->name, "State %i", state->id);
   }
   else {
-    STRNCPY(state->name, "State");
+    STRNCPY_UTF8(state->name, "State");
   }
 
   state->rule_fuzziness = 0.5;

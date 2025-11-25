@@ -12,7 +12,6 @@
 #include "BLI_array_utils.hh"
 #include "BLI_easing.h"
 #include "BLI_index_mask.hh"
-#include "BLI_length_parameterize.hh"
 #include "BLI_math_angle_types.hh"
 #include "BLI_math_geom.h"
 #include "BLI_math_rotation.h"
@@ -43,6 +42,7 @@
 #include "RNA_prototypes.hh"
 
 #include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include <climits>
@@ -288,10 +288,10 @@ static bool find_curve_mapping_from_index(const GreasePencil &grease_pencil,
   }
   /* Discard additional elements of the larger selection. */
   if (from_selection.size() > to_selection.size()) {
-    from_selection.slice(0, to_selection.size());
+    from_selection = from_selection.slice(0, to_selection.size());
   }
   else if (to_selection.size() > from_selection.size()) {
-    to_selection.slice(0, from_selection.size());
+    to_selection = to_selection.slice(0, from_selection.size());
   }
 
   /* By default: copy the "from" curve and ignore the "to" curve. */
@@ -322,7 +322,10 @@ InterpolateOpData *InterpolateOpData::from_operator(const bContext &C, const wmO
   const Object &object = *CTX_data_active_object(&C);
   const GreasePencil &grease_pencil = *static_cast<GreasePencil *>(object.data);
 
-  BLI_assert(grease_pencil.has_active_layer());
+  if (!grease_pencil.has_active_layer()) {
+    return nullptr;
+  }
+
   const Layer &active_layer = *grease_pencil.get_active_layer();
 
   InterpolateOpData *data = MEM_new<InterpolateOpData>(__func__);
@@ -454,74 +457,6 @@ static bool compute_auto_flip(const Span<float3> from_positions, const Span<floa
   }
 
   return math::dot(from_last - from_first, to_last - to_first) < 0.0f;
-}
-
-/**
- * Copy existing sample positions and insert new samples in between to reach the final count.
- */
-static void sample_curve_padded(const bke::CurvesGeometry &curves,
-                                const int curve_index,
-                                const bool cyclic,
-                                const bool reverse,
-                                MutableSpan<int> r_segment_indices,
-                                MutableSpan<float> r_factors)
-{
-  const int num_dst_points = r_segment_indices.size();
-  const IndexRange src_points = curves.points_by_curve()[curve_index];
-  /* Extra segment at the end for cyclic curves. */
-  const int num_src_segments = src_points.size() - 1 + cyclic;
-  /* There should be at least one source point for every output sample. */
-  BLI_assert(num_dst_points >= num_src_segments);
-  const Span<float3> src_positions = curves.positions();
-  if (src_points.is_empty()) {
-    return;
-  }
-
-  Array<float> segment_lengths(num_src_segments + 1);
-  segment_lengths[0] = 0.0f;
-  for (const int i : src_points.index_range().drop_front(1)) {
-    segment_lengths[i] = segment_lengths[i - 1] + math::distance(src_positions[src_points[i - 1]],
-                                                                 src_positions[src_points[i]]);
-  }
-  if (cyclic) {
-    const int i = src_points.size();
-    segment_lengths[i] = segment_lengths[i - 1] + math::distance(src_positions[src_points[i - 1]],
-                                                                 src_positions[src_points[0]]);
-  }
-  const float total_length = segment_lengths.last();
-  const int num_free_samples = num_dst_points - num_src_segments;
-  /* Factor for computing the fraction of remaining samples in a segment. */
-  const float length_to_free_sample_count = math::safe_divide(float(num_free_samples),
-                                                              total_length);
-
-  int samples_start = 0;
-  for (const int segment : IndexRange(num_src_segments)) {
-    const int free_samples_start = math::round(segment_lengths[segment] *
-                                               length_to_free_sample_count);
-    const int free_samples_end = math::round(segment_lengths[segment + 1] *
-                                             length_to_free_sample_count);
-    const IndexRange samples = IndexRange::from_begin_size(
-        samples_start, 1 + free_samples_end - free_samples_start);
-    BLI_assert(samples.size() >= 1);
-    samples_start = samples.one_after_last();
-
-    const int point_index = segment < src_points.size() ? segment : 0;
-    r_segment_indices.slice(samples).fill(point_index);
-    for (const int sample_i : samples.index_range()) {
-      const int sample = reverse ? samples[samples.size() - 1 - sample_i] : samples[sample_i];
-      const float factor = float(sample_i) / samples.size();
-      r_factors[sample] = reverse ? 1.0f - factor : factor;
-    }
-  }
-  if (cyclic) {
-    r_segment_indices.last() = 0;
-    r_factors.last() = 0.0f;
-  }
-  else {
-    r_segment_indices.last() = src_points.size() - 1;
-    r_factors.last() = 0.0f;
-  }
-  BLI_assert(samples_start == num_dst_points);
 }
 
 static bke::CurvesGeometry interpolate_between_curves(const GreasePencil &grease_pencil,
@@ -703,22 +638,22 @@ static bke::CurvesGeometry interpolate_between_curves(const GreasePencil &grease
         BLI_assert(from_points.size() == dst_points.size());
         array_utils::fill_index_range(from_sample_indices.as_mutable_span().slice(dst_points));
         from_sample_factors.as_mutable_span().slice(dst_points).fill(0.0f);
-        sample_curve_padded(to_drawing->strokes(),
-                            to_curve,
-                            to_curves_cyclic[to_curve],
-                            dst_curve_flip[pair_index],
-                            to_sample_indices.as_mutable_span().slice(dst_points),
-                            to_sample_factors.as_mutable_span().slice(dst_points));
+        geometry::sample_curve_padded(to_drawing->strokes(),
+                                      to_curve,
+                                      to_curves_cyclic[to_curve],
+                                      dst_curve_flip[pair_index],
+                                      to_sample_indices.as_mutable_span().slice(dst_points),
+                                      to_sample_factors.as_mutable_span().slice(dst_points));
       }
       else {
         /* Target curve samples match 'to' points. */
         BLI_assert(to_points.size() == dst_points.size());
-        sample_curve_padded(from_drawing->strokes(),
-                            from_curve,
-                            from_curves_cyclic[from_curve],
-                            dst_curve_flip[pair_index],
-                            from_sample_indices.as_mutable_span().slice(dst_points),
-                            from_sample_factors.as_mutable_span().slice(dst_points));
+        geometry::sample_curve_padded(from_drawing->strokes(),
+                                      from_curve,
+                                      from_curves_cyclic[from_curve],
+                                      dst_curve_flip[pair_index],
+                                      from_sample_indices.as_mutable_span().slice(dst_points),
+                                      from_sample_factors.as_mutable_span().slice(dst_points));
         array_utils::fill_index_range(to_sample_indices.as_mutable_span().slice(dst_points));
         to_sample_factors.fill(0.0f);
       }
@@ -734,7 +669,8 @@ static bke::CurvesGeometry interpolate_between_curves(const GreasePencil &grease
                                               to_sample_factors,
                                               dst_curve_mask,
                                               mix_factor,
-                                              dst_curves);
+                                              dst_curves,
+                                              memory);
   }
 
   return dst_curves;
@@ -831,7 +767,7 @@ static void grease_pencil_interpolate_update(bContext &C, const wmOperator &op)
       geometry::smooth_curve_attribute(
           interpolated_curves.curves_range(),
           interpolated_curves.points_by_curve(),
-          VArray<bool>::ForSingle(true, interpolated_curves.points_num()),
+          VArray<bool>::from_single(true, interpolated_curves.points_num()),
           interpolated_curves.cyclic(),
           opdata.smooth_steps,
           opdata.smooth_factor,
@@ -951,7 +887,9 @@ static bool grease_pencil_interpolate_poll(bContext *C)
 }
 
 /* Invoke handler: Initialize the operator */
-static int grease_pencil_interpolate_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus grease_pencil_interpolate_invoke(bContext *C,
+                                                         wmOperator *op,
+                                                         const wmEvent * /*event*/)
 {
   wmWindow &win = *CTX_wm_window(C);
 
@@ -981,7 +919,9 @@ enum class InterpolateToolModalEvent : int8_t {
 };
 
 /* Modal handler: Events handling during interactive part */
-static int grease_pencil_interpolate_modal(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus grease_pencil_interpolate_modal(bContext *C,
+                                                        wmOperator *op,
+                                                        const wmEvent *event)
 {
   wmWindow &win = *CTX_wm_window(C);
   const ARegion &region = *CTX_wm_region(C);
@@ -1307,7 +1247,7 @@ static float grease_pencil_interpolate_sequence_easing_calc(const eBezTriple_Eas
   return time;
 }
 
-static int grease_pencil_interpolate_sequence_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus grease_pencil_interpolate_sequence_exec(bContext *C, wmOperator *op)
 {
   using bke::greasepencil::Drawing;
   using bke::greasepencil::Layer;
@@ -1369,7 +1309,7 @@ static int grease_pencil_interpolate_sequence_exec(bContext *C, wmOperator *op)
         geometry::smooth_curve_attribute(
             interpolated_curves.curves_range(),
             interpolated_curves.points_by_curve(),
-            VArray<bool>::ForSingle(true, interpolated_curves.points_num()),
+            VArray<bool>::from_single(true, interpolated_curves.points_num()),
             interpolated_curves.cyclic(),
             opdata.smooth_steps,
             opdata.smooth_factor,
@@ -1396,39 +1336,38 @@ static int grease_pencil_interpolate_sequence_exec(bContext *C, wmOperator *op)
 
 static void grease_pencil_interpolate_sequence_ui(bContext *C, wmOperator *op)
 {
-  uiLayout *layout = op->layout;
-  uiLayout *col, *row;
+  ui::Layout &layout = *op->layout;
 
   const InterpolationType type = InterpolationType(RNA_enum_get(op->ptr, "type"));
 
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
-  row = uiLayoutRow(layout, true);
-  uiItemR(row, op->ptr, "step", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout.use_property_split_set(true);
+  layout.use_property_decorate_set(false);
+  ui::Layout *row = &layout.row(true);
+  row->prop(op->ptr, "step", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  row = uiLayoutRow(layout, true);
-  uiItemR(row, op->ptr, "layers", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  row = &layout.row(true);
+  row->prop(op->ptr, "layers", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   if (CTX_data_mode_enum(C) == CTX_MODE_EDIT_GPENCIL_LEGACY) {
-    row = uiLayoutRow(layout, true);
-    uiItemR(row, op->ptr, "interpolate_selected_only", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    row = &layout.row(true);
+    row->prop(op->ptr, "interpolate_selected_only", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 
-  row = uiLayoutRow(layout, true);
-  uiItemR(row, op->ptr, "exclude_breakdowns", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  row = &layout.row(true);
+  row->prop(op->ptr, "exclude_breakdowns", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  row = uiLayoutRow(layout, true);
-  uiItemR(row, op->ptr, "use_selection", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  row = &layout.row(true);
+  row->prop(op->ptr, "use_selection", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  row = uiLayoutRow(layout, true);
-  uiItemR(row, op->ptr, "flip", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  row = &layout.row(true);
+  row->prop(op->ptr, "flip", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  col = uiLayoutColumn(layout, true);
-  uiItemR(col, op->ptr, "smooth_factor", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, op->ptr, "smooth_steps", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  ui::Layout &col = layout.column(true);
+  col.prop(op->ptr, "smooth_factor", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col.prop(op->ptr, "smooth_steps", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  row = uiLayoutRow(layout, true);
-  uiItemR(row, op->ptr, "type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  row = &layout.row(true);
+  row->prop(op->ptr, "type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   if (type == InterpolationType::CurveMap) {
     /* Get an RNA pointer to ToolSettings to give to the custom curve. */
@@ -1437,20 +1376,20 @@ static void grease_pencil_interpolate_sequence_ui(bContext *C, wmOperator *op)
     PointerRNA gpsettings_ptr = RNA_pointer_create_discrete(
         &scene->id, &RNA_GPencilInterpolateSettings, &ts->gp_interpolate);
     uiTemplateCurveMapping(
-        layout, &gpsettings_ptr, "interpolation_curve", 0, false, true, true, false);
+        &layout, &gpsettings_ptr, "interpolation_curve", 0, false, true, true, false, false);
   }
   else if (type != InterpolationType::Linear) {
-    row = uiLayoutRow(layout, false);
-    uiItemR(row, op->ptr, "easing", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    row = &layout.row(false);
+    row->prop(op->ptr, "easing", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     if (type == InterpolationType::Back) {
-      row = uiLayoutRow(layout, false);
-      uiItemR(row, op->ptr, "back", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+      row = &layout.row(false);
+      row->prop(op->ptr, "back", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     }
     else if (type == InterpolationType::Elastic) {
-      row = uiLayoutRow(layout, false);
-      uiItemR(row, op->ptr, "amplitude", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-      row = uiLayoutRow(layout, false);
-      uiItemR(row, op->ptr, "period", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+      row = &layout.row(false);
+      row->prop(op->ptr, "amplitude", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+      row = &layout.row(false);
+      row->prop(op->ptr, "period", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     }
   }
 }

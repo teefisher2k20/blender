@@ -10,7 +10,7 @@
  *        to store a stack of pointers, using a single linked list
  *        allocated from a mempool.
  *
- * \note These macros follow STACK_* macros defined in 'BLI_utildefines.h'
+ * \note These macros follow STACK_* macros defined in `BLI_utildefines.h`
  *       and should be kept (mostly) interchangeable.
  *
  * \note `_##var##_type` is a dummy variable only used for type-checks.
@@ -37,27 +37,13 @@
 #define BLI_LINKSTACK_SIZE(var) BLI_mempool_len(var##_pool_)
 
 /* Check for `decltype()` or `typeof()` support. */
-#if defined(__cplusplus)
-#  define BLI_LINKSTACK_PUSH(var, ptr) \
-    (CHECK_TYPE_INLINE_NONCONST(ptr, decltype(var##_type_)), \
-     BLI_linklist_prepend_pool(&(var), ptr, var##_pool_))
-#  define BLI_LINKSTACK_POP(var) \
-    (decltype(var##_type_))(var ? BLI_linklist_pop_pool(&(var), var##_pool_) : NULL)
-#  define BLI_LINKSTACK_POP_DEFAULT(var, r) \
-    (decltype(var##_type_))(var ? BLI_linklist_pop_pool(&(var), var##_pool_) : r)
-#elif defined(__GNUC__)
-#  define BLI_LINKSTACK_PUSH(var, ptr) \
-    (CHECK_TYPE_INLINE_NONCONST(ptr, typeof(var##_type_)), \
-     BLI_linklist_prepend_pool(&(var), ptr, var##_pool_))
-#  define BLI_LINKSTACK_POP(var) \
-    (typeof(var##_type_))(var ? BLI_linklist_pop_pool(&(var), var##_pool_) : NULL)
-#  define BLI_LINKSTACK_POP_DEFAULT(var, r) \
-    (typeof(var##_type_))(var ? BLI_linklist_pop_pool(&(var), var##_pool_) : r)
-#else /* Non GCC/C++. */
-#  define BLI_LINKSTACK_PUSH(var, ptr) (BLI_linklist_prepend_pool(&(var), ptr, var##_pool_))
-#  define BLI_LINKSTACK_POP(var) (var ? BLI_linklist_pop_pool(&(var), var##_pool_) : NULL)
-#  define BLI_LINKSTACK_POP_DEFAULT(var, r) (var ? BLI_linklist_pop_pool(&(var), var##_pool_) : r)
-#endif
+#define BLI_LINKSTACK_PUSH(var, ptr) \
+  (CHECK_TYPE_INLINE_NONCONST(ptr, decltype(var##_type_)), \
+   BLI_linklist_prepend_pool(&(var), ptr, var##_pool_))
+#define BLI_LINKSTACK_POP(var) \
+  (decltype(var##_type_))(var ? BLI_linklist_pop_pool(&(var), var##_pool_) : NULL)
+#define BLI_LINKSTACK_POP_DEFAULT(var, r) \
+  (decltype(var##_type_))(var ? BLI_linklist_pop_pool(&(var), var##_pool_) : r)
 
 #define BLI_LINKSTACK_SWAP(var_a, var_b) \
   { \

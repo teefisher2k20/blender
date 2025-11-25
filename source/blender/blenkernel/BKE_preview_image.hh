@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bke
+ */
+
 #pragma once
 
 #include <array>
@@ -12,7 +16,9 @@
 
 struct BlendDataReader;
 struct BlendWriter;
-struct GPUTexture;
+namespace blender::gpu {
+class Texture;
+}
 struct ID;
 struct ImBuf;
 struct PreviewImage;
@@ -28,7 +34,7 @@ struct PreviewImageRuntime {
   int icon_id = 0;
   int16_t tag = 0;
 
-  std::array<GPUTexture *, NUM_ICON_SIZES> gputexture = {};
+  std::array<blender::gpu::Texture *, NUM_ICON_SIZES> gputexture = {};
 
   /** Used to store data to defer the loading of the preview. If empty, loading is not deferred. */
   std::unique_ptr<PreviewDeferredLoadingData> deferred_loading_data;
@@ -41,11 +47,6 @@ struct PreviewImageRuntime {
 
 void BKE_preview_images_init();
 void BKE_preview_images_free();
-
-/**
- * Free the preview image for use in list.
- */
-void BKE_previewimg_freefunc(void *link);
 
 /**
  * Free the preview image.

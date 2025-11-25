@@ -12,7 +12,6 @@
 #include <cctype>
 #include <cfloat>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <optional>
@@ -29,6 +28,7 @@
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 
+#include "BLI_listbase.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
@@ -45,6 +45,7 @@
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_lib_query.hh"
+#include "BKE_library.hh"
 #include "BKE_mball.hh"
 #include "BKE_mball_tessellate.hh"
 #include "BKE_object.hh"
@@ -94,14 +95,8 @@ static void metaball_free_data(ID *id)
 static void metaball_foreach_id(ID *id, LibraryForeachIDData *data)
 {
   MetaBall *metaball = reinterpret_cast<MetaBall *>(id);
-  const int flag = BKE_lib_query_foreachid_process_flags_get(data);
-
   for (int i = 0; i < metaball->totcol; i++) {
     BKE_LIB_FOREACHID_PROCESS_IDSUPER(data, metaball->mat[i], IDWALK_CB_USER);
-  }
-
-  if (flag & IDWALK_DO_DEPRECATED_POINTERS) {
-    BKE_LIB_FOREACHID_PROCESS_ID_NOCHECK(data, metaball->ipo, IDWALK_CB_USER);
   }
 }
 
@@ -143,7 +138,7 @@ static void metaball_blend_read_data(BlendDataReader *reader, ID *id)
 }
 
 IDTypeInfo IDType_ID_MB = {
-    /*id_code*/ ID_MB,
+    /*id_code*/ MetaBall::id_type,
     /*id_filter*/ FILTER_ID_MB,
     /*dependencies_id_types*/ FILTER_ID_MA,
     /*main_listbase_index*/ INDEX_ID_MB,
@@ -161,6 +156,7 @@ IDTypeInfo IDType_ID_MB = {
     /*foreach_id*/ metaball_foreach_id,
     /*foreach_cache*/ nullptr,
     /*foreach_path*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
     /*owner_pointer_get*/ nullptr,
 
     /*blend_write*/ metaball_blend_write,
@@ -176,13 +172,13 @@ IDTypeInfo IDType_ID_MB = {
 
 MetaBall *BKE_mball_add(Main *bmain, const char *name)
 {
-  MetaBall *mb = static_cast<MetaBall *>(BKE_id_new(bmain, ID_MB, name));
+  MetaBall *mb = BKE_id_new<MetaBall>(bmain, name);
   return mb;
 }
 
 MetaElem *BKE_mball_element_add(MetaBall *mb, const int type)
 {
-  MetaElem *ml = MEM_cnew<MetaElem>(__func__);
+  MetaElem *ml = MEM_callocN<MetaElem>(__func__);
 
   unit_qt(ml->quat);
 
@@ -225,6 +221,35 @@ MetaElem *BKE_mball_element_add(MetaBall *mb, const int type)
   BLI_addtail(&mb->elems, ml);
 
   return ml;
+}
+
+blender::float2 BKE_mball_element_display_radius_calc_with_stiffness(const MetaElem *ml)
+{
+  blender::float2 radius_stiffness = {
+      /* Display radius. */
+      ml->rad,
+      /* Display stiffness. */
+      ml->rad * atanf(ml->s) * float(2.0 / blender::math::numbers::pi),
+  };
+
+  if (ml->type == MB_CUBE) {
+    /* Without this additional size, the cube can't be selected in solid mode.
+     * Use the minimum size so this doesn't become too large because of one large axis.
+     * See: #136396. */
+    const float offset = min_fff(ml->expx, ml->expy, ml->expz) * M_SQRT2;
+    radius_stiffness[0] += offset;
+    radius_stiffness[1] += offset;
+  }
+  return radius_stiffness;
+}
+float BKE_mball_element_display_radius_calc(const MetaElem *ml)
+{
+  float radius = ml->rad;
+  if (ml->type == MB_CUBE) {
+    const float offset = min_fff(ml->expx, ml->expy, ml->expz) * M_SQRT2;
+    radius += offset;
+  }
+  return radius;
 }
 
 bool BKE_mball_is_basis(const Object *ob)
@@ -648,7 +673,7 @@ void BKE_mball_data_update(Depsgraph *depsgraph, Scene *scene, Object *ob)
     BKE_lattice_deform_coords(
         ob->parent,
         ob,
-        reinterpret_cast<float(*)[3]>(mesh->vert_positions_for_write().data()),
+        reinterpret_cast<float (*)[3]>(mesh->vert_positions_for_write().data()),
         mesh->verts_num,
         0,
         nullptr,

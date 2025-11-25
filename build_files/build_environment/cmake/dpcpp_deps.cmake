@@ -42,21 +42,11 @@ ExternalProject_Add(external_icdloader
   INSTALL_COMMAND echo .
 )
 
-ExternalProject_Add(external_mp11
-  URL file://${PACKAGE_DIR}/${MP11_FILE}
-  URL_HASH ${MP11_HASH_TYPE}=${MP11_HASH}
+ExternalProject_Add(external_dpcpp_spirvheaders
+  URL file://${PACKAGE_DIR}/${DPCPP_SPIRV_HEADERS_FILE}
+  URL_HASH ${DPCPP_SPIRV_HEADERS_HASH_TYPE}=${DPCPP_SPIRV_HEADERS_HASH}
   DOWNLOAD_DIR ${DOWNLOAD_DIR}
-  PREFIX ${BUILD_DIR}/mp11
-  CONFIGURE_COMMAND echo .
-  BUILD_COMMAND echo .
-  INSTALL_COMMAND echo .
-)
-
-ExternalProject_Add(external_spirvheaders
-  URL file://${PACKAGE_DIR}/${SPIRV_HEADERS_FILE}
-  URL_HASH ${SPIRV_HEADERS_HASH_TYPE}=${SPIRV_HEADERS_HASH}
-  DOWNLOAD_DIR ${DOWNLOAD_DIR}
-  PREFIX ${BUILD_DIR}/spirvheaders
+  PREFIX ${BUILD_DIR}/dpcpp_spirvheaders
   CONFIGURE_COMMAND echo .
   BUILD_COMMAND echo .
   INSTALL_COMMAND echo .
@@ -67,6 +57,9 @@ ExternalProject_Add(external_unifiedruntime
   URL_HASH ${UNIFIED_RUNTIME_HASH_TYPE}=${UNIFIED_RUNTIME_HASH}
   DOWNLOAD_DIR ${DOWNLOAD_DIR}
   PREFIX ${BUILD_DIR}/unifiedruntime
+  PATCH_COMMAND ${PATCH_CMD} -p 1 -d
+    ${BUILD_DIR}/unifiedruntime/src/external_unifiedruntime <
+    ${PATCH_DIR}/unifiedruntime.diff
   CONFIGURE_COMMAND echo .
   BUILD_COMMAND echo .
   INSTALL_COMMAND echo .
@@ -77,6 +70,9 @@ ExternalProject_Add(external_unifiedmemoryframework
   URL_HASH ${UNIFIED_MEMORY_FRAMEWORK_HASH_TYPE}=${UNIFIED_MEMORY_FRAMEWORK_HASH}
   DOWNLOAD_DIR ${DOWNLOAD_DIR}
   PREFIX ${BUILD_DIR}/unifiedmemoryframework
+  PATCH_COMMAND ${PATCH_CMD} -p 1 -d
+    ${BUILD_DIR}/unifiedmemoryframework/src/external_unifiedmemoryframework <
+    ${PATCH_DIR}/unifiedmemoryframework.diff
   CONFIGURE_COMMAND echo .
   BUILD_COMMAND echo .
   INSTALL_COMMAND echo .

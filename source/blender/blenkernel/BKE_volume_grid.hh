@@ -13,13 +13,14 @@
 #ifdef WITH_OPENVDB
 
 #  include <functional>
-#  include <mutex>
 #  include <optional>
 
 #  include "BKE_volume_enums.hh"
 #  include "BKE_volume_grid_type_traits.hh"
 
+#  include "BLI_cache_mutex.hh"
 #  include "BLI_implicit_sharing_ptr.hh"
+#  include "BLI_mutex.hh"
 #  include "BLI_string_ref.hh"
 
 #  include "openvdb_fwd.hh"
@@ -80,7 +81,7 @@ class VolumeGridData : public ImplicitSharingMixin {
   /**
    * A mutex that needs to be locked whenever working with the data members below.
    */
-  mutable std::mutex mutex_;
+  mutable Mutex mutex_;
   /**
    * The actual grid. Depending on the current state, is in one of multiple possible states:
    * - Empty: When the grid is lazy-loaded and no meta-data is provided.
@@ -117,6 +118,18 @@ class VolumeGridData : public ImplicitSharingMixin {
    * An error produced while trying to lazily load the grid.
    */
   mutable std::string error_message_;
+
+  mutable CacheMutex active_voxels_mutex_;
+  mutable int64_t active_voxels_ = 0;
+  mutable CacheMutex active_leaf_voxels_mutex_;
+  mutable int64_t active_leaf_voxels_ = 0;
+  mutable CacheMutex active_tiles_mutex_;
+  mutable int64_t active_tiles_ = 0;
+  mutable CacheMutex size_in_bytes_mutex_;
+  mutable int64_t size_in_bytes_ = 0;
+  mutable CacheMutex active_bounds_mutex_;
+  mutable openvdb::CoordBBox active_bounds_;
+
   /**
    * A token that allows detecting whether some code is currently accessing the tree (not grid) or
    * not. If this variable is the only owner of the `shared_ptr`, no one else has access to the
@@ -155,7 +168,7 @@ class VolumeGridData : public ImplicitSharingMixin {
   explicit VolumeGridData(std::function<LazyLoadedGrid()> lazy_load_grid,
                           std::shared_ptr<openvdb::GridBase> meta_data_and_transform_grid = {});
 
-  ~VolumeGridData();
+  ~VolumeGridData() override;
 
   /**
    * Create a copy of the volume grid. This should generally only be done when the current grid is
@@ -238,6 +251,14 @@ class VolumeGridData : public ImplicitSharingMixin {
    */
   bool is_reloadable() const;
 
+  void tag_tree_modified() const;
+
+  int64_t active_voxels() const;
+  int64_t active_leaf_voxels() const;
+  int64_t active_tiles() const;
+  int64_t size_in_bytes() const;
+  const openvdb::CoordBBox &active_bounds() const;
+
  private:
   /**
    * Unloads the tree data if it's reloadable and no one is using it right now.
@@ -245,7 +266,7 @@ class VolumeGridData : public ImplicitSharingMixin {
   void unload_tree_if_possible() const;
 
   void ensure_grid_loaded() const;
-  void delete_self();
+  void delete_self() override;
 };
 
 /**
@@ -369,6 +390,10 @@ template<typename T> class VolumeGrid : public GVolumeGrid {
 };
 
 /**
+ * Get the volume grid type based on the tree's type.
+ */
+VolumeGridType get_type(const openvdb::tree::TreeBase &tree);
+/**
  * Get the volume grid type based on the tree type in the grid.
  */
 VolumeGridType get_type(const openvdb::GridBase &grid);
@@ -382,7 +407,7 @@ inline GVolumeGrid::GVolumeGrid(const VolumeGridData *data) : data_(data) {}
 inline const VolumeGridData &GVolumeGrid::get() const
 {
   BLI_assert(*this);
-  return *data_.get();
+  return *data_;
 }
 
 inline const VolumeGridData *GVolumeGrid::release()

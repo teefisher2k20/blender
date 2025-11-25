@@ -70,7 +70,8 @@ static void workspace_foreach_id(ID *id, LibraryForeachIDData *data)
 {
   WorkSpace *workspace = (WorkSpace *)id;
 
-  BKE_LIB_FOREACHID_PROCESS_IDSUPER(data, workspace->pin_scene, IDWALK_CB_NOP);
+  BKE_LIB_FOREACHID_PROCESS_IDSUPER(data, workspace->pin_scene, IDWALK_CB_DIRECT_WEAK_LINK);
+  BKE_LIB_FOREACHID_PROCESS_IDSUPER(data, workspace->sequencer_scene, IDWALK_CB_DIRECT_WEAK_LINK);
 
   LISTBASE_FOREACH (WorkSpaceLayout *, layout, &workspace->layouts) {
     BKE_LIB_FOREACHID_PROCESS_IDSUPER(data, layout->screen, IDWALK_CB_USER);
@@ -175,7 +176,7 @@ static void workspace_blend_read_after_liblink(BlendLibReader *reader, ID *id)
 }
 
 IDTypeInfo IDType_ID_WS = {
-    /*id_code*/ ID_WS,
+    /*id_code*/ WorkSpace::id_type,
     /*id_filter*/ FILTER_ID_WS,
     /*dependencies_id_types*/ FILTER_ID_SCE,
     /*main_listbase_index*/ INDEX_ID_WS,
@@ -194,6 +195,7 @@ IDTypeInfo IDType_ID_WS = {
     /*foreach_id*/ workspace_foreach_id,
     /*foreach_cache*/ nullptr,
     /*foreach_path*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
     /*owner_pointer_get*/ nullptr,
 
     /*blend_write*/ workspace_blend_write,
@@ -239,7 +241,7 @@ static void workspace_relation_add(ListBase *relation_list,
                                    const int parentid,
                                    void *data)
 {
-  WorkSpaceDataRelation *relation = MEM_cnew<WorkSpaceDataRelation>(__func__);
+  WorkSpaceDataRelation *relation = MEM_callocN<WorkSpaceDataRelation>(__func__);
   relation->parent = parent;
   relation->parentid = parentid;
   relation->value = data;
@@ -316,7 +318,7 @@ static bool UNUSED_FUNCTION(workspaces_is_screen_used)
 
 WorkSpace *BKE_workspace_add(Main *bmain, const char *name)
 {
-  WorkSpace *new_workspace = static_cast<WorkSpace *>(BKE_id_new(bmain, ID_WS, name));
+  WorkSpace *new_workspace = BKE_id_new<WorkSpace>(bmain, name);
   id_us_ensure_real(&new_workspace->id);
   return new_workspace;
 }
@@ -336,7 +338,7 @@ void BKE_workspace_remove(Main *bmain, WorkSpace *workspace)
 
 WorkSpaceInstanceHook *BKE_workspace_instance_hook_create(const Main *bmain, const int winid)
 {
-  WorkSpaceInstanceHook *hook = MEM_cnew<WorkSpaceInstanceHook>(__func__);
+  WorkSpaceInstanceHook *hook = MEM_callocN<WorkSpaceInstanceHook>(__func__);
 
   /* set an active screen-layout for each possible window/workspace combination */
   for (WorkSpace *workspace = static_cast<WorkSpace *>(bmain->workspaces.first); workspace;
@@ -380,7 +382,7 @@ WorkSpaceLayout *BKE_workspace_layout_add(Main *bmain,
                                           bScreen *screen,
                                           const char *name)
 {
-  WorkSpaceLayout *layout = MEM_cnew<WorkSpaceLayout>(__func__);
+  WorkSpaceLayout *layout = MEM_callocN<WorkSpaceLayout>(__func__);
 
   BLI_assert(!workspaces_is_screen_used(bmain, screen));
 #ifdef NDEBUG
@@ -445,8 +447,6 @@ WorkSpaceLayout *BKE_workspace_layout_find_global(const Main *bmain,
                                                   const bScreen *screen,
                                                   WorkSpace **r_workspace)
 {
-  WorkSpaceLayout *layout;
-
   if (r_workspace) {
     *r_workspace = nullptr;
   }
@@ -454,7 +454,8 @@ WorkSpaceLayout *BKE_workspace_layout_find_global(const Main *bmain,
   for (WorkSpace *workspace = static_cast<WorkSpace *>(bmain->workspaces.first); workspace;
        workspace = static_cast<WorkSpace *>(workspace->id.next))
   {
-    if ((layout = workspace_layout_find_exec(workspace, screen))) {
+    WorkSpaceLayout *layout = workspace_layout_find_exec(workspace, screen);
+    if (layout) {
       if (r_workspace) {
         *r_workspace = workspace;
       }
@@ -515,7 +516,7 @@ void BKE_workspace_tool_id_replace_table(WorkSpace *workspace,
                                          int replace_table_num)
 {
   const size_t idname_prefix_len = idname_prefix_skip ? strlen(idname_prefix_skip) : 0;
-  const size_t idname_suffix_len = sizeof(bToolRef::idname) - idname_prefix_len;
+  const size_t idname_suffix_maxncpy = sizeof(bToolRef::idname) - idname_prefix_len;
 
   LISTBASE_FOREACH (bToolRef *, tref, &workspace->tools) {
     if (!(tref->space_type == space_type && tref->mode == mode)) {
@@ -529,7 +530,7 @@ void BKE_workspace_tool_id_replace_table(WorkSpace *workspace,
       idname_suffix += idname_prefix_len;
     }
     BLI_string_replace_table_exact(
-        idname_suffix, idname_suffix_len, replace_table, replace_table_num);
+        idname_suffix, idname_suffix_maxncpy, replace_table, replace_table_num);
   }
 }
 

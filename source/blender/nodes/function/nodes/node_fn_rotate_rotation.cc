@@ -2,9 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BLI_math_quaternion.hh"
-
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "NOD_rna_define.hh"
@@ -20,15 +18,18 @@ enum class RotationSpace {
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
+  b.add_default_layout();
   b.is_function_node();
   b.add_input<decl::Rotation>("Rotation");
+  b.add_output<decl::Rotation>("Rotation").align_with_previous();
   b.add_input<decl::Rotation>("Rotate By");
-  b.add_output<decl::Rotation>("Rotation");
 };
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "rotation_space", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "rotation_space", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 }
 
 static void node_build_multi_function(NodeMultiFunctionBuilder &builder)
@@ -78,12 +79,13 @@ static void node_register()
   static blender::bke::bNodeType ntype;
   fn_node_type_base(&ntype, "FunctionNodeRotateRotation", FN_NODE_ROTATE_ROTATION);
   ntype.ui_name = "Rotate Rotation";
+  ntype.ui_description = "Apply a secondary rotation to a given rotation value";
   ntype.enum_name_legacy = "ROTATE_ROTATION";
   ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = node_declare;
   ntype.draw_buttons = node_layout;
   ntype.build_multi_function = node_build_multi_function;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

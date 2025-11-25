@@ -6,16 +6,14 @@
  * \ingroup spclip
  */
 
-#include "MEM_guardedalloc.h"
-
 #include "DNA_constraint_types.h"
 #include "DNA_object_types.h" /* SELECT */
 #include "DNA_screen_types.h"
 #include "DNA_space_types.h"
 
+#include "BLI_listbase.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
-#include "BLI_utildefines.h"
 
 #include "BKE_constraint.h"
 #include "BKE_context.hh"
@@ -160,7 +158,7 @@ static Object *object_solver_camera(Scene *scene, Object *ob)
   return nullptr;
 }
 
-static int set_origin_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus set_origin_exec(bContext *C, wmOperator *op)
 {
   SpaceClip *sc = CTX_wm_space_clip(C);
   MovieClip *clip = ED_space_clip_get_clip(sc);
@@ -225,7 +223,7 @@ void CLIP_OT_set_origin(wmOperatorType *ot)
       "Set active marker as origin by moving camera (or its parent if present) in 3D space";
   ot->idname = "CLIP_OT_set_origin";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = set_origin_exec;
   ot->poll = set_orientation_poll;
 
@@ -374,7 +372,7 @@ static void set_axis(Scene *scene,
   BKE_object_apply_mat4(ob, mat, false, false);
 }
 
-static int set_plane_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus set_plane_exec(bContext *C, wmOperator *op)
 {
   SpaceClip *sc = CTX_wm_space_clip(C);
   MovieClip *clip = ED_space_clip_get_clip(sc);
@@ -473,7 +471,7 @@ static int set_plane_exec(bContext *C, wmOperator *op)
 
   Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
   Scene *scene_eval = DEG_get_evaluated_scene(depsgraph);
-  Object *object_eval = DEG_get_evaluated_object(depsgraph, object);
+  Object *object_eval = DEG_get_evaluated(depsgraph, object);
   BKE_object_transform_copy(object_eval, object);
   BKE_object_where_is_calc(depsgraph, scene_eval, object_eval);
   BKE_object_transform_copy(object, object_eval);
@@ -504,7 +502,7 @@ void CLIP_OT_set_plane(wmOperatorType *ot)
       "(or its parent if present) in 3D space";
   ot->idname = "CLIP_OT_set_plane";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = set_plane_exec;
   ot->poll = set_orientation_poll;
 
@@ -517,7 +515,7 @@ void CLIP_OT_set_plane(wmOperatorType *ot)
 
 /********************** set axis operator *********************/
 
-static int set_axis_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus set_axis_exec(bContext *C, wmOperator *op)
 {
   SpaceClip *sc = CTX_wm_space_clip(C);
   MovieClip *clip = ED_space_clip_get_clip(sc);
@@ -575,7 +573,7 @@ void CLIP_OT_set_axis(wmOperatorType *ot)
       "track lies on a real axis connecting it to the origin";
   ot->idname = "CLIP_OT_set_axis";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = set_axis_exec;
   ot->poll = set_orientation_poll;
 
@@ -588,7 +586,10 @@ void CLIP_OT_set_axis(wmOperatorType *ot)
 
 /********************** set scale operator *********************/
 
-static int do_set_scale(bContext *C, wmOperator *op, bool scale_solution, bool apply_scale)
+static wmOperatorStatus do_set_scale(bContext *C,
+                                     wmOperator *op,
+                                     bool scale_solution,
+                                     bool apply_scale)
 {
   SpaceClip *sc = CTX_wm_space_clip(C);
   MovieClip *clip = ED_space_clip_get_clip(sc);
@@ -681,12 +682,12 @@ static int do_set_scale(bContext *C, wmOperator *op, bool scale_solution, bool a
   return OPERATOR_FINISHED;
 }
 
-static int set_scale_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus set_scale_exec(bContext *C, wmOperator *op)
 {
   return do_set_scale(C, op, false, false);
 }
 
-static int set_scale_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus set_scale_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
 {
   SpaceClip *sc = CTX_wm_space_clip(C);
   MovieClip *clip = ED_space_clip_get_clip(sc);
@@ -705,7 +706,7 @@ void CLIP_OT_set_scale(wmOperatorType *ot)
   ot->description = "Set scale of scene by scaling camera (or its parent if present)";
   ot->idname = "CLIP_OT_set_scale";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = set_scale_exec;
   ot->invoke = set_scale_invoke;
   ot->poll = set_orientation_poll;
@@ -741,12 +742,14 @@ static bool set_solution_scale_poll(bContext *C)
   return false;
 }
 
-static int set_solution_scale_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus set_solution_scale_exec(bContext *C, wmOperator *op)
 {
   return do_set_scale(C, op, true, false);
 }
 
-static int set_solution_scale_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus set_solution_scale_invoke(bContext *C,
+                                                  wmOperator *op,
+                                                  const wmEvent * /*event*/)
 {
   SpaceClip *sc = CTX_wm_space_clip(C);
   MovieClip *clip = ED_space_clip_get_clip(sc);
@@ -767,7 +770,7 @@ void CLIP_OT_set_solution_scale(wmOperatorType *ot)
       "two selected tracks";
   ot->idname = "CLIP_OT_set_solution_scale";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = set_solution_scale_exec;
   ot->invoke = set_solution_scale_invoke;
   ot->poll = set_solution_scale_poll;
@@ -803,12 +806,14 @@ static bool apply_solution_scale_poll(bContext *C)
   return false;
 }
 
-static int apply_solution_scale_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus apply_solution_scale_exec(bContext *C, wmOperator *op)
 {
   return do_set_scale(C, op, false, true);
 }
 
-static int apply_solution_scale_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus apply_solution_scale_invoke(bContext *C,
+                                                    wmOperator *op,
+                                                    const wmEvent * /*event*/)
 {
   SpaceClip *sc = CTX_wm_space_clip(C);
   MovieClip *clip = ED_space_clip_get_clip(sc);
@@ -827,7 +832,7 @@ void CLIP_OT_apply_solution_scale(wmOperatorType *ot)
       "selected tracks equals to desired";
   ot->idname = "CLIP_OT_apply_solution_scale";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = apply_solution_scale_exec;
   ot->invoke = apply_solution_scale_invoke;
   ot->poll = apply_solution_scale_poll;

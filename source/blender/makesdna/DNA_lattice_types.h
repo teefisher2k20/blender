@@ -13,7 +13,6 @@
 
 struct AnimData;
 struct BPoint;
-struct Ipo;
 struct Key;
 struct MDeformVert;
 
@@ -34,7 +33,11 @@ typedef struct EditLatt {
 } EditLatt;
 
 typedef struct Lattice {
+#ifdef __cplusplus
   DNA_DEFINE_CXX_METHODS(Lattice)
+  /** See #ID_Type comment for why this is here. */
+  static constexpr ID_Type id_type = ID_LT;
+#endif
 
   ID id;
   struct AnimData *adt;
@@ -42,6 +45,7 @@ typedef struct Lattice {
   short pntsu, pntsv, pntsw, flag;
   short opntsu, opntsv, opntsw;
   char _pad2[3];
+  /* KeyInterpolationType */
   char typeu, typev, typew;
   /** Active element index, unset with LT_ACTBP_NONE. */
   int actbp;
@@ -50,13 +54,11 @@ typedef struct Lattice {
 
   struct BPoint *def;
 
-  /** Old animation system, deprecated for 2.5. */
-  struct Ipo *ipo DNA_DEPRECATED;
   struct Key *key;
 
   struct MDeformVert *dvert;
-  /** Multiply the influence, MAX_VGROUP_NAME. */
-  char vgroup[64];
+  /** Multiply the influence. */
+  char vgroup[/*MAX_VGROUP_NAME*/ 64];
   /** List of bDeformGroup names and flag only. */
   ListBase vertex_group_names;
   int vertex_group_active_index;

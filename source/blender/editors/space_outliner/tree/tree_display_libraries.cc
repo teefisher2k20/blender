@@ -10,6 +10,7 @@
 #include "BLI_listbase_wrapper.hh"
 
 #include "BKE_collection.hh"
+#include "BKE_library.hh"
 #include "BKE_main.hh"
 
 #include "DNA_collection_types.h"
@@ -56,8 +57,12 @@ ListBase TreeDisplayLibraries::build_tree(const TreeSourceData &source_data)
     }
   }
 
-  /* make hierarchy */
-  for (TreeElement *ten : List<TreeElement>(tree)) {
+  /* Make hierarchy.
+   *
+   * Note: `List<T>` template is similar to `LISTBASE_FOREACH`, _not_ `LISTBASE_FOREACH_MUTABLE`,
+   * so we need to iterate over an actual copy of the original list here, to avoid missing some
+   * items. */
+  for (TreeElement *ten : listbase_to_vector<TreeElement>(tree)) {
     if (ten == tree.first) {
       /* First item is main, skip. */
       continue;
@@ -66,25 +71,17 @@ ListBase TreeDisplayLibraries::build_tree(const TreeSourceData &source_data)
     TreeStoreElem *tselem = TREESTORE(ten);
     Library *lib = (Library *)tselem->id;
     BLI_assert(!lib || (GS(lib->id.name) == ID_LI));
-    if (!lib || !lib->runtime.parent) {
+    if (!lib || !(lib->runtime->parent || lib->archive_parent_library)) {
       continue;
     }
 
-    TreeElement *parent = (TreeElement *)lib->runtime.parent->id.newid;
-
-    if (tselem->id->tag & ID_TAG_INDIRECT) {
-      /* Only remove from 'first level' if lib is not also directly used. */
-      BLI_remlink(&tree, ten);
-      BLI_addtail(&parent->subtree, ten);
-      ten->parent = parent;
-    }
-    else {
-      /* Else, make a new copy of the libtree for our parent. */
-      TreeElement *dupten = add_library_contents(*source_data.bmain, parent->subtree, lib);
-      if (dupten) {
-        dupten->parent = parent;
-      }
-    }
+    /* A library with a non-null `parent` is always strictly indirectly linked. */
+    TreeElement *parent = reinterpret_cast<TreeElement *>(
+        (lib->archive_parent_library ? lib->archive_parent_library : lib->runtime->parent)
+            ->id.newid);
+    BLI_remlink(&tree, ten);
+    BLI_addtail(&parent->subtree, ten);
+    ten->parent = parent;
   }
   /* restore newid pointers */
   for (ID *library_id : List<ID>(source_data.bmain->libraries)) {
@@ -98,18 +95,16 @@ TreeElement *TreeDisplayLibraries::add_library_contents(Main &mainvar, ListBase 
 {
   const short filter_id_type = id_filter_get();
 
-  ListBase *lbarray[INDEX_ID_MAX];
-  int tot;
+  Vector<ListBase *> lbarray;
   if (filter_id_type) {
-    lbarray[0] = which_libbase(&mainvar, space_outliner_.filter_id_type);
-    tot = 1;
+    lbarray.append(which_libbase(&mainvar, space_outliner_.filter_id_type));
   }
   else {
-    tot = set_listbasepointers(&mainvar, lbarray);
+    lbarray.extend(BKE_main_lists_get(mainvar));
   }
 
   TreeElement *tenlib = nullptr;
-  for (int a = 0; a < tot; a++) {
+  for (int a = 0; a < lbarray.size(); a++) {
     if (!lbarray[a] || !lbarray[a]->first) {
       continue;
     }
@@ -151,7 +146,7 @@ TreeElement *TreeDisplayLibraries::add_library_contents(Main &mainvar, ListBase 
         if (filter_id_type) {
           ten = tenlib;
         }
-        else {
+        else if (id->lib == lib) {
           ten = add_element(
               &tenlib->subtree, reinterpret_cast<ID *>(lib), nullptr, nullptr, TSE_ID_BASE, a);
           ten->directdata = lbarray[a];
@@ -190,7 +185,7 @@ bool TreeDisplayLibraries::library_id_filter_poll(const Library *lib, ID *id) co
     Collection *collection = (Collection *)id;
     bool has_non_scene_parent = false;
 
-    for (CollectionParent *cparent : List<CollectionParent>(collection->runtime.parents)) {
+    for (CollectionParent *cparent : List<CollectionParent>(collection->runtime->parents)) {
       if (!(cparent->collection->flag & COLLECTION_IS_MASTER)) {
         has_non_scene_parent = true;
       }

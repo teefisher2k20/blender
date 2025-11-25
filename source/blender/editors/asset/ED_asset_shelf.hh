@@ -29,6 +29,9 @@ struct wmWindowManager;
 namespace blender {
 class StringRef;
 class StringRefNull;
+namespace asset_system {
+class AssetRepresentation;
+}
 }  // namespace blender
 
 namespace blender::ed::asset::shelf {
@@ -83,7 +86,9 @@ void type_unregister(const AssetShelfType &shelf_type);
  * Permanent/non-popup asset shelf regions should use #type_poll_for_space_type() instead.
  */
 bool type_poll_for_popup(const bContext &C, const AssetShelfType *shelf_type);
-AssetShelfType *type_find_from_idname(const StringRef idname);
+bool type_asset_poll(const AssetShelfType &shelf_type,
+                     const blender::asset_system::AssetRepresentation &asset);
+AssetShelfType *type_find_from_idname(StringRef idname);
 
 /** \} */
 

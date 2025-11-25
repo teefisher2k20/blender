@@ -8,7 +8,11 @@
 
 #pragma once
 
+#include "BLI_math_vector_types.hh"
+
 struct bContext;
+
+namespace blender::ed::transform {
 
 /* Callbacks for #WM_paint_cursor_activate. */
 
@@ -21,4 +25,9 @@ bool transform_draw_cursor_poll(bContext *C);
  * Cursor and help-line drawing, callback for:
  * #WM_paint_cursor_activate
  */
-void transform_draw_cursor_draw(bContext *C, int x, int y, void *customdata);
+void transform_draw_cursor_draw(bContext *C,
+                                const blender::int2 &xy,
+                                const blender::float2 &tilt,
+                                void *customdata);
+
+}  // namespace blender::ed::transform

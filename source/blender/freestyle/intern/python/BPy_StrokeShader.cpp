@@ -30,10 +30,6 @@
 #include "StrokeShader/BPy_ThicknessNoiseShader.h"
 #include "StrokeShader/BPy_TipRemoverShader.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -172,7 +168,6 @@ PyDoc_STRVAR(
     ".. method:: __init__()\n"
     "\n"
     "   Default constructor.\n");
-
 static int StrokeShader___init__(BPy_StrokeShader *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {nullptr};
@@ -205,7 +200,6 @@ PyDoc_STRVAR(
     "\n"
     "   :arg stroke: A Stroke object.\n"
     "   :type stroke: :class:`Stroke`\n");
-
 static PyObject *StrokeShader_shade(BPy_StrokeShader *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"stroke", nullptr};
@@ -229,6 +223,16 @@ static PyObject *StrokeShader_shade(BPy_StrokeShader *self, PyObject *args, PyOb
   Py_RETURN_NONE;
 }
 
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
+#endif
+
 static PyMethodDef BPy_StrokeShader_methods[] = {
     {"shade",
      (PyCFunction)StrokeShader_shade,
@@ -237,6 +241,14 @@ static PyMethodDef BPy_StrokeShader_methods[] = {
     {nullptr, nullptr, 0, nullptr},
 };
 
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
+#endif
+
 /*----------------------StrokeShader get/setters ----------------------------*/
 
 PyDoc_STRVAR(
@@ -244,8 +256,7 @@ PyDoc_STRVAR(
     StrokeShader_name_doc,
     "The name of the stroke shader.\n"
     "\n"
-    ":type: str");
-
+    ":type: str\n");
 static PyObject *StrokeShader_name_get(BPy_StrokeShader *self, void * /*closure*/)
 {
   return PyUnicode_FromString(Py_TYPE(self)->tp_name);
@@ -300,7 +311,3 @@ PyTypeObject StrokeShader_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

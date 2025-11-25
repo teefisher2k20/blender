@@ -16,7 +16,7 @@
 #include "BKE_idprop.hh"
 
 #include "BLI_listbase.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "MEM_guardedalloc.h"
 
@@ -44,9 +44,8 @@ XrActionMapBinding *WM_xr_actionmap_binding_new(XrActionMapItem *ami,
     return amb_prev;
   }
 
-  XrActionMapBinding *amb = static_cast<XrActionMapBinding *>(
-      MEM_callocN(sizeof(XrActionMapBinding), __func__));
-  STRNCPY(amb->name, name);
+  XrActionMapBinding *amb = MEM_callocN<XrActionMapBinding>(__func__);
+  STRNCPY_UTF8(amb->name, name);
   if (amb_prev) {
     WM_xr_actionmap_binding_ensure_unique(ami, amb);
   }
@@ -78,24 +77,22 @@ void WM_xr_actionmap_binding_ensure_unique(XrActionMapItem *ami, XrActionMapBind
   size_t baselen;
   size_t idx = 0;
 
-  STRNCPY(name, amb->name);
-  baselen = BLI_strnlen(name, MAX_NAME);
+  baselen = STRNCPY_UTF8_RLEN(name, amb->name);
   suffix = &name[baselen];
 
   while (wm_xr_actionmap_binding_find_except(ami, name, amb)) {
     if ((baselen + 1) + (log10(++idx) + 1) > MAX_NAME) {
       /* Use default base name. */
-      STRNCPY(name, WM_XR_ACTIONMAP_BINDING_STR_DEFAULT);
-      baselen = BLI_strnlen(name, MAX_NAME);
+      baselen = STRNCPY_UTF8_RLEN(name, WM_XR_ACTIONMAP_BINDING_STR_DEFAULT);
       suffix = &name[baselen];
       idx = 0;
     }
     else {
-      BLI_snprintf(suffix, MAX_NAME, "%zu", idx);
+      BLI_snprintf_utf8(suffix, MAX_NAME, "%zu", idx);
     }
   }
 
-  STRNCPY(amb->name, name);
+  STRNCPY_UTF8(amb->name, name);
 }
 
 static XrActionMapBinding *wm_xr_actionmap_binding_copy(XrActionMapBinding *amb_src)
@@ -249,9 +246,8 @@ XrActionMapItem *WM_xr_actionmap_item_new(XrActionMap *actionmap,
     return ami_prev;
   }
 
-  XrActionMapItem *ami = static_cast<XrActionMapItem *>(
-      MEM_callocN(sizeof(XrActionMapItem), __func__));
-  STRNCPY(ami->name, name);
+  XrActionMapItem *ami = MEM_callocN<XrActionMapItem>(__func__);
+  STRNCPY_UTF8(ami->name, name);
   if (ami_prev) {
     WM_xr_actionmap_item_ensure_unique(actionmap, ami);
   }
@@ -283,24 +279,22 @@ void WM_xr_actionmap_item_ensure_unique(XrActionMap *actionmap, XrActionMapItem 
   size_t baselen;
   size_t idx = 0;
 
-  STRNCPY(name, ami->name);
-  baselen = BLI_strnlen(name, MAX_NAME);
+  baselen = STRNCPY_UTF8_RLEN(name, ami->name);
   suffix = &name[baselen];
 
   while (wm_xr_actionmap_item_find_except(actionmap, name, ami)) {
     if ((baselen + 1) + (log10(++idx) + 1) > MAX_NAME) {
       /* Use default base name. */
-      STRNCPY(name, WM_XR_ACTIONMAP_ITEM_STR_DEFAULT);
-      baselen = BLI_strnlen(name, MAX_NAME);
+      baselen = STRNCPY_UTF8_RLEN(name, WM_XR_ACTIONMAP_ITEM_STR_DEFAULT);
       suffix = &name[baselen];
       idx = 0;
     }
     else {
-      BLI_snprintf(suffix, MAX_NAME, "%zu", idx);
+      BLI_snprintf_utf8(suffix, MAX_NAME, "%zu", idx);
     }
   }
 
-  STRNCPY(ami->name, name);
+  STRNCPY_UTF8(ami->name, name);
 }
 
 static XrActionMapItem *wm_xr_actionmap_item_copy(XrActionMapItem *ami_src)
@@ -391,8 +385,8 @@ XrActionMap *WM_xr_actionmap_new(wmXrRuntimeData *runtime, const char *name, boo
     return am_prev;
   }
 
-  XrActionMap *am = static_cast<XrActionMap *>(MEM_callocN(sizeof(XrActionMap), __func__));
-  STRNCPY(am->name, name);
+  XrActionMap *am = MEM_callocN<XrActionMap>(__func__);
+  STRNCPY_UTF8(am->name, name);
   if (am_prev) {
     WM_xr_actionmap_ensure_unique(runtime, am);
   }
@@ -422,24 +416,22 @@ void WM_xr_actionmap_ensure_unique(wmXrRuntimeData *runtime, XrActionMap *action
   size_t baselen;
   size_t idx = 0;
 
-  STRNCPY(name, actionmap->name);
-  baselen = BLI_strnlen(name, MAX_NAME);
+  baselen = STRNCPY_UTF8_RLEN(name, actionmap->name);
   suffix = &name[baselen];
 
   while (wm_xr_actionmap_find_except(runtime, name, actionmap)) {
     if ((baselen + 1) + (log10(++idx) + 1) > MAX_NAME) {
       /* Use default base name. */
-      STRNCPY(name, WM_XR_ACTIONMAP_STR_DEFAULT);
-      baselen = BLI_strnlen(name, MAX_NAME);
+      baselen = STRNCPY_UTF8_RLEN(name, WM_XR_ACTIONMAP_STR_DEFAULT);
       suffix = &name[baselen];
       idx = 0;
     }
     else {
-      BLI_snprintf(suffix, MAX_NAME, "%zu", idx);
+      BLI_snprintf_utf8(suffix, MAX_NAME, "%zu", idx);
     }
   }
 
-  STRNCPY(actionmap->name, name);
+  STRNCPY_UTF8(actionmap->name, name);
 }
 
 static XrActionMap *wm_xr_actionmap_copy(XrActionMap *am_src)

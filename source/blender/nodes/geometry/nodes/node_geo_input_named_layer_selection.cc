@@ -4,15 +4,13 @@
 
 #include "BKE_geometry_fields.hh"
 
-#include "NOD_socket_search_link.hh"
-
 #include "node_geometry_util.hh"
 
 namespace blender::nodes::node_geo_input_named_layer_selection__cc {
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::String>("Name").hide_label();
+  b.add_input<decl::String>("Name").is_layer_name().optional_label();
   b.add_output<decl::Bool>("Selection").field_source_reference_all();
 }
 
@@ -39,9 +37,10 @@ static void node_register()
   ntype.ui_description = "Output a selection of a Grease Pencil layer";
   ntype.enum_name_legacy = "INPUT_NAMED_LAYER_SELECTION";
   ntype.nclass = NODE_CLASS_INPUT;
+  blender::bke::node_type_size(ntype, 160, 140, NODE_DEFAULT_MAX_WIDTH);
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

@@ -10,10 +10,13 @@ namespace blender::nodes::node_fn_invert_matrix_cc {
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
   b.is_function_node();
   b.add_input<decl::Matrix>("Matrix");
-  b.add_output<decl::Matrix>("Matrix").description(
-      "The inverted matrix or the identity matrix if the input is not invertible");
+  b.add_output<decl::Matrix>("Matrix")
+      .description("The inverted matrix or the identity matrix if the input is not invertible")
+      .align_with_previous();
   b.add_output<decl::Bool>("Invertible").description("True if the input matrix is invertible");
 }
 
@@ -64,11 +67,12 @@ static void node_register()
   static blender::bke::bNodeType ntype;
   fn_node_type_base(&ntype, "FunctionNodeInvertMatrix", FN_NODE_INVERT_MATRIX);
   ntype.ui_name = "Invert Matrix";
+  ntype.ui_description = "Compute the inverse of the given matrix, if one exists";
   ntype.enum_name_legacy = "INVERT_MATRIX";
   ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = node_declare;
   ntype.build_multi_function = node_build_multi_function;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

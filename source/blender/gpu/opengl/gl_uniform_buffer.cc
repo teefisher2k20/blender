@@ -8,6 +8,8 @@
 
 #include "BLI_string.h"
 
+#include "GPU_capabilities.hh"
+
 #include "gpu_context_private.hh"
 
 #include "gl_debug.hh"
@@ -23,12 +25,12 @@ namespace blender::gpu {
 GLUniformBuf::GLUniformBuf(size_t size, const char *name) : UniformBuf(size, name)
 {
   /* Do not create ubo GL buffer here to allow allocation from any thread. */
-  BLI_assert(size <= GLContext::max_ubo_size);
+  BLI_assert(size <= GPU_max_uniform_buffer_size());
 }
 
 GLUniformBuf::~GLUniformBuf()
 {
-  GLContext::buf_free(ubo_id_);
+  GLContext::buffer_free(ubo_id_);
 }
 
 /** \} */
@@ -65,7 +67,7 @@ void GLUniformBuf::clear_to_zero()
   }
 
   uint32_t data = 0;
-  eGPUTextureFormat internal_format = GPU_R32UI;
+  TextureFormat internal_format = TextureFormat::UINT_32;
   eGPUDataFormat data_format = GPU_DATA_UINT;
 
   if (GLContext::direct_state_access_support) {

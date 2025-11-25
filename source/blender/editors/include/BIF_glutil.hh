@@ -16,10 +16,12 @@ struct ColorManagedDisplaySettings;
 struct ColorManagedViewSettings;
 struct ImBuf;
 struct bContext;
-struct GPUShader;
+namespace blender::gpu {
+class Shader;
+}  // namespace blender::gpu
 
 struct IMMDrawPixelsTexState {
-  GPUShader *shader;
+  blender::gpu::Shader *shader;
   unsigned int pos;
   unsigned int texco;
   bool do_shader_unbind;
@@ -57,7 +59,7 @@ void immDrawPixelsTexScaledFullSize(const IMMDrawPixelsTexState *state,
                                     float y,
                                     int img_w,
                                     int img_h,
-                                    eGPUTextureFormat gpu_format,
+                                    blender::gpu::TextureFormat gpu_format,
                                     bool use_filter,
                                     const void *rect,
                                     float scaleX,
@@ -85,7 +87,7 @@ void immDrawPixelsTexTiled(IMMDrawPixelsTexState *state,
                            float y,
                            int img_w,
                            int img_h,
-                           eGPUTextureFormat gpu_format,
+                           blender::gpu::TextureFormat gpu_format,
                            bool use_filter,
                            const void *rect,
                            float xzoom,
@@ -96,7 +98,7 @@ void immDrawPixelsTexTiled_clipping(IMMDrawPixelsTexState *state,
                                     float y,
                                     int img_w,
                                     int img_h,
-                                    eGPUTextureFormat gpu_format,
+                                    blender::gpu::TextureFormat gpu_format,
                                     bool use_filter,
                                     const void *rect,
                                     float clip_min_x,
@@ -111,7 +113,7 @@ void immDrawPixelsTexTiled_scaling(IMMDrawPixelsTexState *state,
                                    float y,
                                    int img_w,
                                    int img_h,
-                                   eGPUTextureFormat gpu_format,
+                                   blender::gpu::TextureFormat gpu_format,
                                    bool use_filter,
                                    const void *rect,
                                    float scaleX,
@@ -138,7 +140,7 @@ void immDrawPixelsTexTiled_scaling_clipping(IMMDrawPixelsTexState *state,
                                             float y,
                                             int img_w,
                                             int img_h,
-                                            eGPUTextureFormat gpu_format,
+                                            blender::gpu::TextureFormat gpu_format,
                                             bool use_filter,
                                             const void *rect,
                                             float scaleX,

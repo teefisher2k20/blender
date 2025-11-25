@@ -31,7 +31,7 @@ class AssetLibrary;
  */
 typedef struct AssetTag {
   struct AssetTag *next, *prev;
-  char name[64]; /* MAX_NAME */
+  char name[/*MAX_NAME*/ 64];
 } AssetTag;
 
 /**
@@ -60,7 +60,7 @@ typedef struct AssetMetaData {
    * reconstruction of asset catalogs in the unfortunate case that the mapping from catalog UUID to
    * catalog path is lost. The catalog's simple name is copied to #catalog_simple_name whenever
    * #catalog_id is updated. */
-  char catalog_simple_name[64]; /* MAX_NAME */
+  char catalog_simple_name[/*MAX_NAME*/ 64];
 
   /** Optional name of the author for display in the UI. Dynamic length. */
   char *author;
@@ -118,7 +118,16 @@ typedef enum eAssetImportMethod {
    * heavy data dependencies (e.g. the image data-blocks of a material, the mesh of an object) may
    * be reused from an earlier append. */
   ASSET_IMPORT_APPEND_REUSE = 2,
+  /** Link data-block, but also pack it as read-only data. */
+  ASSET_IMPORT_PACK = 3,
 } eAssetImportMethod;
+
+#
+#
+typedef struct AssetImportSettings {
+  eAssetImportMethod method;
+  bool use_instance_collections;
+} AssetImportSettings;
 
 typedef enum eAssetLibrary_Flag {
   ASSET_LIBRARY_RELATIVE_PATH = (1 << 0),
@@ -189,23 +198,6 @@ typedef struct AssetWeakReference {
                                            blender::StringRef library_relative_identifier);
 #endif
 } AssetWeakReference;
-
-/**
- * To be replaced by #AssetRepresentation!
- *
- * Not part of the core design, we should try to get rid of it. Only needed to wrap FileDirEntry
- * into a type with PropertyGroup as base, so we can have an RNA collection of #AssetHandle's to
- * pass to the UI.
- *
- * \warning Never store this! When using #blender::ed::asset::list::iterate(), only access it
- * within the iterator function. The contained file data can be freed since the file cache has a
- * maximum number of items.
- */
-#
-#
-typedef struct AssetHandle {
-  const struct FileDirEntry *file_data;
-} AssetHandle;
 
 struct AssetCatalogPathLink {
   struct AssetCatalogPathLink *next, *prev;

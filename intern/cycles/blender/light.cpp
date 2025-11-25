@@ -4,41 +4,19 @@
 
 #include "scene/light.h"
 
-#include "blender/light_linking.h"
+#include "DNA_light_types.h"
+
+#include "IMB_colormanagement.hh"
+
 #include "blender/sync.h"
 #include "blender/util.h"
-
-#include "util/hash.h"
+#include "scene/object.h"
 
 CCL_NAMESPACE_BEGIN
 
-void BlenderSync::sync_light(BL::Object &b_parent,
-                             int persistent_id[OBJECT_PERSISTENT_ID_SIZE],
-                             BObjectInfo &b_ob_info,
-                             const int random_id,
-                             Transform &tfm,
-                             bool *use_portal)
+void BlenderSync::sync_light(BObjectInfo &b_ob_info, Light *light)
 {
-  /* test if we need to sync */
-  const ObjectKey key(b_parent, persistent_id, b_ob_info.real_object, false);
   BL::Light b_light(b_ob_info.object_data);
-
-  Light *light = light_map.find(key);
-
-  /* Check if the transform was modified, in case a linked collection is moved we do not get a
-   * specific depsgraph update (#88515). This also mimics the behavior for Objects. */
-  const bool tfm_updated = (light && light->get_tfm() != tfm);
-
-  /* Update if either object or light data changed. */
-  if (!light_map.add_or_update(&light, b_ob_info.real_object, b_parent, key) && !tfm_updated) {
-    Shader *shader;
-    if (!shader_map.add_or_update(&shader, b_light)) {
-      if (light->get_is_portal()) {
-        *use_portal = true;
-      }
-      return;
-    }
-  }
 
   light->name = b_light.name().c_str();
 
@@ -100,17 +78,18 @@ void BlenderSync::sync_light(BL::Object &b_parent,
     }
   }
 
-  /* strength */
-  const float3 strength = get_float3(b_light.color()) * BL::PointLight(b_light).energy();
+  /* Color and strength. */
+  float3 light_color = get_float3(b_light.color());
+  if (b_light.use_temperature()) {
+    light_color *= get_float3(b_light.temperature_color());
+  }
+
+  const float3 strength = light_color * BL::PointLight(b_light).energy() *
+                          exp2f(b_light.exposure());
   light->set_strength(strength);
 
-  /* location and (inverted!) direction */
-  light->set_tfm(tfm);
-
-  /* shader */
-  array<Node *> used_shaders;
-  find_shader(b_light, used_shaders, scene->default_light);
-  light->set_shader(static_cast<Shader *>(used_shaders[0]));
+  /* normalize */
+  light->set_normalize(b_light.normalize());
 
   /* shadow */
   PointerRNA clight = RNA_pointer_get(&b_light.ptr, "cycles");
@@ -122,13 +101,6 @@ void BlenderSync::sync_light(BL::Object &b_parent,
 
   light->set_max_bounces(get_int(clight, "max_bounces"));
 
-  if (b_ob_info.real_object != b_ob_info.iter_object) {
-    light->set_random_id(random_id);
-  }
-  else {
-    light->set_random_id(hash_uint2(hash_string(b_ob_info.real_object.name().c_str()), 0));
-  }
-
   if (light->get_light_type() == LIGHT_AREA) {
     light->set_is_portal(get_boolean(clight, "is_portal"));
   }
@@ -136,35 +108,11 @@ void BlenderSync::sync_light(BL::Object &b_parent,
     light->set_is_portal(false);
   }
 
-  if (light->get_is_portal()) {
-    *use_portal = true;
-  }
-
-  /* visibility */
-  const uint visibility = object_ray_visibility(b_ob_info.real_object);
-  light->set_use_camera((visibility & PATH_RAY_CAMERA) != 0);
-  light->set_use_diffuse((visibility & PATH_RAY_DIFFUSE) != 0);
-  light->set_use_glossy((visibility & PATH_RAY_GLOSSY) != 0);
-  light->set_use_transmission((visibility & PATH_RAY_TRANSMIT) != 0);
-  light->set_use_scatter((visibility & PATH_RAY_VOLUME_SCATTER) != 0);
-  light->set_is_shadow_catcher(b_ob_info.real_object.is_shadow_catcher());
-
-  /* Light group and linking. */
-  string lightgroup = b_ob_info.real_object.lightgroup();
-  if (lightgroup.empty()) {
-    lightgroup = b_parent.lightgroup();
-  }
-  light->set_lightgroup(ustring(lightgroup));
-  light->set_light_set_membership(
-      BlenderLightLink::get_light_set_membership(PointerRNA_NULL, b_ob_info.real_object));
-  light->set_shadow_set_membership(
-      BlenderLightLink::get_shadow_set_membership(PointerRNA_NULL, b_ob_info.real_object));
-
   /* tag */
   light->tag_update(scene);
 }
 
-void BlenderSync::sync_background_light(BL::SpaceView3D &b_v3d, bool use_portal)
+void BlenderSync::sync_background_light(BL::SpaceView3D &b_v3d)
 {
   BL::World b_world = view_layer.world_override ? view_layer.world_override : b_scene.world();
 
@@ -176,34 +124,57 @@ void BlenderSync::sync_background_light(BL::SpaceView3D &b_v3d, bool use_portal)
         cworld, "sampling_method", SAMPLING_NUM, SAMPLING_AUTOMATIC);
     const bool sample_as_light = (sampling_method != SAMPLING_NONE);
 
-    if (sample_as_light || use_portal) {
-      /* test if we need to sync */
-      Light *light;
-      const ObjectKey key(b_world, nullptr, b_world, false);
+    /* Create object. */
+    Object *object;
+    const ObjectKey object_key(b_world, nullptr, b_world, false);
+    bool update = object_map.add_or_update(&object, b_world, b_world, object_key);
+    if (update) {
+      /* Lights should be shadow catchers by default. */
+      object->set_is_shadow_catcher(true);
+      object->set_lightgroup(ustring(b_world ? b_world.lightgroup() : ""));
+    }
 
-      if (light_map.add_or_update(&light, b_world, b_world, key) || world_recalc ||
-          b_world.ptr.data != world_map)
-      {
-        light->set_light_type(LIGHT_BACKGROUND);
-        if (sampling_method == SAMPLING_MANUAL) {
-          light->set_map_resolution(get_int(cworld, "sample_map_resolution"));
-        }
-        else {
-          light->set_map_resolution(0);
-        }
-        light->set_shader(scene->default_background);
-        light->set_use_mis(sample_as_light);
-        light->set_max_bounces(get_int(cworld, "max_bounces"));
+    object->set_asset_name(ustring(b_world.name()));
 
-        /* force enable light again when world is resynced */
-        light->set_is_enabled(true);
+    /* Create geometry. */
+    const GeometryKey geom_key{b_world.ptr.data, Geometry::LIGHT};
+    Geometry *geom = geometry_map.find(geom_key);
+    if (geom) {
+      update |= geometry_map.update(geom, b_world);
+    }
+    else {
+      geom = scene->create_node<Light>();
+      geometry_map.add(geom_key, geom);
+      object->set_geometry(geom);
+      update = true;
+    }
 
-        /* caustic light */
-        light->set_use_caustics(get_boolean(cworld, "is_caustics_light"));
+    if (update || world_recalc || b_world.ptr.data != world_map) {
+      /* Initialize light geometry. */
+      Light *light = static_cast<Light *>(geom);
 
-        light->tag_update(scene);
-        light_map.set_recalc(b_world);
+      array<Node *> used_shaders;
+      used_shaders.push_back_slow(scene->default_background);
+      light->set_used_shaders(used_shaders);
+
+      light->set_light_type(LIGHT_BACKGROUND);
+
+      if (sampling_method == SAMPLING_MANUAL) {
+        light->set_map_resolution(get_int(cworld, "sample_map_resolution"));
       }
+      else {
+        light->set_map_resolution(0);
+      }
+
+      light->set_use_mis(sample_as_light);
+      light->set_max_bounces(get_int(cworld, "max_bounces"));
+
+      /* Caustic light. */
+      light->set_use_caustics(get_boolean(cworld, "is_caustics_light"));
+
+      light->tag_update(scene);
+
+      geometry_map.set_recalc(b_world);
     }
   }
 

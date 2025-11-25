@@ -9,11 +9,6 @@
 #include "intern/node/deg_node_component.hh"
 
 #include <cstdio>
-#include <cstring> /* required for STREQ later on. */
-
-#include "BLI_ghash.h"
-#include "BLI_hash.hh"
-#include "BLI_utildefines.h"
 
 #include "DNA_object_types.h"
 
@@ -32,39 +27,10 @@ namespace blender::deg {
 /** \name Standard Component Methods
  * \{ */
 
-ComponentNode::OperationIDKey::OperationIDKey()
-    : opcode(OperationCode::OPERATION), name(""), name_tag(-1)
+std::string ComponentNode::OperationIDKey::identifier() const
 {
-}
-
-ComponentNode::OperationIDKey::OperationIDKey(OperationCode opcode)
-    : opcode(opcode), name(""), name_tag(-1)
-{
-}
-
-ComponentNode::OperationIDKey::OperationIDKey(OperationCode opcode, const char *name, int name_tag)
-    : opcode(opcode), name(name), name_tag(name_tag)
-{
-}
-
-string ComponentNode::OperationIDKey::identifier() const
-{
-  const string codebuf = to_string(int(opcode));
+  const std::string codebuf = std::to_string(int(opcode));
   return "OperationIDKey(" + codebuf + ", " + name + ")";
-}
-
-bool ComponentNode::OperationIDKey::operator==(const OperationIDKey &other) const
-{
-  return (opcode == other.opcode) && STREQ(name, other.name) && (name_tag == other.name_tag);
-}
-
-uint64_t ComponentNode::OperationIDKey::hash() const
-{
-  const int opcode_as_int = int(opcode);
-  return BLI_ghashutil_combine_hash(
-      name_tag,
-      BLI_ghashutil_combine_hash(BLI_ghashutil_uinthash(opcode_as_int),
-                                 BLI_ghashutil_strhash_p(name)));
 }
 
 ComponentNode::ComponentNode()
@@ -89,10 +55,10 @@ ComponentNode::~ComponentNode()
   delete operations_map;
 }
 
-string ComponentNode::identifier() const
+std::string ComponentNode::identifier() const
 {
-  const string type_name = type_get_factory(type)->type_name();
-  const string name_part = name[0] ? (string(" '") + name + "'") : "";
+  const std::string type_name = type_get_factory(type)->type_name();
+  const std::string name_part = name[0] ? (std::string(" '") + name + "'") : "";
 
   return "[" + type_name + "]" + name_part + " : " +
          "(affects_visible_id: " + (affects_visible_id ? "true" : "false") + ")";
@@ -107,7 +73,7 @@ OperationNode *ComponentNode::find_operation(OperationIDKey key) const
   else {
     for (OperationNode *op_node : operations) {
       if (op_node->opcode == key.opcode && op_node->name_tag == key.name_tag &&
-          STREQ(op_node->name.c_str(), key.name))
+          op_node->name == key.name)
       {
         node = op_node;
         break;
@@ -118,7 +84,7 @@ OperationNode *ComponentNode::find_operation(OperationIDKey key) const
 }
 
 OperationNode *ComponentNode::find_operation(OperationCode opcode,
-                                             const char *name,
+                                             const StringRef name,
                                              int name_tag) const
 {
   OperationIDKey key(opcode, name, name_tag);
@@ -140,7 +106,7 @@ OperationNode *ComponentNode::get_operation(OperationIDKey key) const
 }
 
 OperationNode *ComponentNode::get_operation(OperationCode opcode,
-                                            const char *name,
+                                            const StringRef name,
                                             int name_tag) const
 {
   OperationIDKey key(opcode, name, name_tag);
@@ -152,7 +118,7 @@ bool ComponentNode::has_operation(OperationIDKey key) const
   return find_operation(key) != nullptr;
 }
 
-bool ComponentNode::has_operation(OperationCode opcode, const char *name, int name_tag) const
+bool ComponentNode::has_operation(OperationCode opcode, const StringRef name, int name_tag) const
 {
   OperationIDKey key(opcode, name, name_tag);
   return has_operation(key);
@@ -160,7 +126,7 @@ bool ComponentNode::has_operation(OperationCode opcode, const char *name, int na
 
 OperationNode *ComponentNode::add_operation(const DepsEvalOperationCb &op,
                                             OperationCode opcode,
-                                            const char *name,
+                                            const StringRef name,
                                             int name_tag)
 {
   OperationNode *op_node = find_operation(opcode, name, name_tag);
@@ -169,7 +135,7 @@ OperationNode *ComponentNode::add_operation(const DepsEvalOperationCb &op,
     op_node = (OperationNode *)factory->create_node(this->owner->id_orig, "", name);
 
     /* register opnode in this component's operation set */
-    OperationIDKey key(opcode, op_node->name.c_str(), name_tag);
+    OperationIDKey key(opcode, op_node->name, name_tag);
     operations_map->add(key, op_node);
 
     /* Set back-link. */

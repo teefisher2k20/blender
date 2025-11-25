@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "editors/sculpt_paint/brushes/types.hh"
+#include "editors/sculpt_paint/brushes/brushes.hh"
 
 #include "DNA_brush_types.h"
 #include "DNA_mesh_types.h"
@@ -21,7 +21,7 @@
 
 #include "bmesh.hh"
 
-namespace blender::ed::sculpt_paint {
+namespace blender::ed::sculpt_paint::brushes {
 
 inline namespace relax_cc {
 
@@ -93,8 +93,10 @@ static std::array<float, 4> iteration_strengths(const float strength, const int 
     return {strength, strength, strength, strength};
   }
 
-  /* This operations needs a strength tweak as the relax deformation is too weak by default. */
-  const float modified_strength = strength * 1.5f;
+  /* This operation needs a strength tweak as the relax deformation is too weak by default.
+   * We cap the strength at 1.0 to avoid ripping the mesh in cases where this modified value is
+   * too strong. */
+  const float modified_strength = std::min(strength * 1.5f, 1.0f);
   return {modified_strength, modified_strength, strength, strength};
 }
 
@@ -191,7 +193,8 @@ static void do_relax_face_sets_brush_mesh(const Depsgraph &depsgraph,
         faces,
         corner_verts,
         vert_to_face_map,
-        ss.vertex_info.boundary,
+        ss.boundary_info_cache->verts,
+        ss.boundary_info_cache->edges,
         attribute_data.face_sets,
         attribute_data.hide_poly,
         relax_face_sets,
@@ -209,7 +212,7 @@ static void do_relax_face_sets_brush_mesh(const Depsgraph &depsgraph,
     bke::pbvh::update_node_bounds_mesh(position_data.eval, nodes[i]);
   });
   pbvh.tag_positions_changed(node_mask);
-  bke::pbvh::flush_bounds_to_parents(pbvh);
+  pbvh.flush_bounds_to_parents();
 }
 
 BLI_NOINLINE static void calc_factors_grids(const Depsgraph &depsgraph,
@@ -321,7 +324,8 @@ static void do_relax_face_sets_brush_grids(const Depsgraph &depsgraph,
         corner_verts,
         face_sets,
         vert_to_face_map,
-        ss.vertex_info.boundary,
+        ss.boundary_info_cache->verts,
+        ss.boundary_info_cache->edges,
         nodes[i].grids(),
         relax_face_sets,
         factors.as_span().slice(node_vert_offsets[pos]),
@@ -337,7 +341,7 @@ static void do_relax_face_sets_brush_grids(const Depsgraph &depsgraph,
     bke::pbvh::update_node_bounds_grids(subdiv_ccg.grid_area, positions, nodes[i]);
   });
   pbvh.tag_positions_changed(node_mask);
-  bke::pbvh::flush_bounds_to_parents(pbvh);
+  pbvh.flush_bounds_to_parents();
 }
 
 static void calc_factors_bmesh(const Depsgraph &depsgraph,
@@ -435,7 +439,7 @@ static void do_relax_face_sets_brush_bmesh(const Depsgraph &depsgraph,
     bke::pbvh::update_node_bounds_bmesh(nodes[i]);
   });
   pbvh.tag_positions_changed(node_mask);
-  bke::pbvh::flush_bounds_to_parents(pbvh);
+  pbvh.flush_bounds_to_parents();
 }
 
 /** \} */
@@ -524,7 +528,8 @@ static void do_topology_relax_brush_mesh(const Depsgraph &depsgraph,
         faces,
         corner_verts,
         vert_to_face_map,
-        ss.vertex_info.boundary,
+        ss.boundary_info_cache->verts,
+        ss.boundary_info_cache->edges,
         attribute_data.face_sets,
         attribute_data.hide_poly,
         false,
@@ -542,7 +547,7 @@ static void do_topology_relax_brush_mesh(const Depsgraph &depsgraph,
     bke::pbvh::update_node_bounds_mesh(position_data.eval, nodes[i]);
   });
   pbvh.tag_positions_changed(node_mask);
-  bke::pbvh::flush_bounds_to_parents(pbvh);
+  pbvh.flush_bounds_to_parents();
 }
 
 BLI_NOINLINE static void calc_topology_relax_factors_grids(const Depsgraph &depsgraph,
@@ -637,7 +642,8 @@ static void do_topology_relax_brush_grids(const Depsgraph &depsgraph,
         corner_verts,
         face_sets,
         vert_to_face_map,
-        ss.vertex_info.boundary,
+        ss.boundary_info_cache->verts,
+        ss.boundary_info_cache->edges,
         nodes[i].grids(),
         false,
         factors.as_span().slice(node_vert_offsets[pos]),
@@ -653,7 +659,7 @@ static void do_topology_relax_brush_grids(const Depsgraph &depsgraph,
     bke::pbvh::update_node_bounds_grids(subdiv_ccg.grid_area, positions, nodes[i]);
   });
   pbvh.tag_positions_changed(node_mask);
-  bke::pbvh::flush_bounds_to_parents(pbvh);
+  pbvh.flush_bounds_to_parents();
 }
 
 static void calc_topology_relax_factors_bmesh(const Depsgraph &depsgraph,
@@ -749,7 +755,7 @@ static void do_topology_relax_brush_bmesh(const Depsgraph &depsgraph,
     bke::pbvh::update_node_bounds_bmesh(nodes[i]);
   });
   pbvh.tag_positions_changed(node_mask);
-  bke::pbvh::flush_bounds_to_parents(pbvh);
+  pbvh.flush_bounds_to_parents();
 }
 /** \} */
 
@@ -819,4 +825,4 @@ void do_topology_relax_brush(const Depsgraph &depsgraph,
     }
   }
 }
-}  // namespace blender::ed::sculpt_paint
+}  // namespace blender::ed::sculpt_paint::brushes

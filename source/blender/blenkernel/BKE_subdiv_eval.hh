@@ -24,72 +24,73 @@ enum eSubdivEvaluatorType {
   SUBDIV_EVALUATOR_TYPE_GPU,
 };
 
-/* Returns true if evaluator is ready for use. */
+/** Returns true if evaluator is ready for use. */
 bool eval_begin(Subdiv *subdiv,
                 eSubdivEvaluatorType evaluator_type,
                 OpenSubdiv_EvaluatorCache *evaluator_cache,
                 const OpenSubdiv_EvaluatorSettings *settings);
 
-/* coarse_vertex_cos is an optional argument which allows to override coordinates of the coarse
- * mesh. */
+/**
+ * \param coarse_vert_positions: optional span of positions to override the mesh positions.
+ */
 bool eval_begin_from_mesh(Subdiv *subdiv,
                           const Mesh *mesh,
-                          Span<float3> coarse_vert_positions,
                           eSubdivEvaluatorType evaluator_type,
-                          OpenSubdiv_EvaluatorCache *evaluator_cache);
+                          Span<float3> coarse_vert_positions = {},
+                          OpenSubdiv_EvaluatorCache *evaluator_cache = nullptr);
 bool eval_refine_from_mesh(Subdiv *subdiv, const Mesh *mesh, Span<float3> coarse_vert_positions);
 
-/* Makes sure displacement evaluator is initialized.
+/**
+ * Makes sure displacement evaluator is initialized.
  *
- * NOTE: This function must be called once before evaluating displacement or
- * final surface position. */
+ * \note This function must be called once before evaluating displacement or
+ * final surface position.
+ */
 void eval_init_displacement(Subdiv *subdiv);
 
 /* Single point queries. */
 
 /* Evaluate point at a limit surface, with optional derivatives and normal. */
 
-void eval_limit_point(Subdiv *subdiv, int ptex_face_index, float u, float v, float r_P[3]);
+float3 eval_limit_point(Subdiv *subdiv, int ptex_face_index, float u, float v);
 void eval_limit_point_and_derivatives(Subdiv *subdiv,
                                       int ptex_face_index,
                                       float u,
                                       float v,
-                                      float r_P[3],
-                                      float r_dPdu[3],
-                                      float r_dPdv[3]);
+                                      float3 &r_P,
+                                      float3 &r_dPdu,
+                                      float3 &r_dPdv);
 void eval_limit_point_and_normal(
-    Subdiv *subdiv, int ptex_face_index, float u, float v, float r_P[3], float r_N[3]);
+    Subdiv *subdiv, int ptex_face_index, float u, float v, float3 &r_P, float3 &r_N);
 
-/* Evaluate smoothly interpolated vertex data (such as ORCO). */
-void eval_vertex_data(Subdiv *subdiv,
-                      const int ptex_face_index,
-                      const float u,
-                      const float v,
-                      float r_vertex_data[]);
+/** Evaluate smoothly interpolated vertex data (such as ORCO). */
+void eval_vert_data(Subdiv *subdiv, int ptex_face_index, float u, float v, float r_vert_data[]);
 
-/* Evaluate face-varying layer (such as UV). */
+/** Evaluate face-varying layer (such as UV). */
 void eval_face_varying(Subdiv *subdiv,
                        int face_varying_channel,
                        int ptex_face_index,
                        float u,
                        float v,
-                       float r_face_varying[2]);
+                       float2 &r_face_varying);
 
-/* NOTE: Expects derivatives to be correct.
+/**
+ * \note Expects derivatives to be correct.
  *
  * TODO(sergey): This is currently used together with
  * eval_final_point() which can easily evaluate derivatives.
  * Would be nice to have displacement evaluation function which does not require
- * knowing derivatives ahead of a time. */
+ * knowing derivatives ahead of a time.
+ */
 void eval_displacement(Subdiv *subdiv,
                        int ptex_face_index,
                        float u,
                        float v,
-                       const float dPdu[3],
-                       const float dPdv[3],
-                       float r_D[3]);
+                       const float3 &dPdu,
+                       const float3 &dPdv,
+                       float3 &r_D);
 
-/* Evaluate point on a limit surface with displacement applied to it. */
-void eval_final_point(Subdiv *subdiv, int ptex_face_index, float u, float v, float r_P[3]);
+/** Evaluate point on a limit surface with displacement applied to it. */
+float3 eval_final_point(Subdiv *subdiv, int ptex_face_index, float u, float v);
 
 }  // namespace blender::bke::subdiv

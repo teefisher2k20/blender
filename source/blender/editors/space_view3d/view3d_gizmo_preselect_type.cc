@@ -33,6 +33,7 @@
 #include "RNA_define.hh"
 
 #include "WM_api.hh"
+#include "WM_toolsystem.hh"
 #include "WM_types.hh"
 
 #include "bmesh.hh"
@@ -186,7 +187,7 @@ static int gizmo_preselect_elem_test_select(bContext *C, wmGizmo *gz, const int 
       /* Re-topology should always prioritize edge pre-selection.
        * Only pre-select a vertex when the cursor is really close to it. */
       if (eve_test) {
-        BMVert *vert = (BMVert *)eve_test;
+        BMVert *vert = eve_test;
         float vert_p_co[2], vert_co[3];
         const float mval_f[2] = {float(vc.mval[0]), float(vc.mval[1])};
         mul_v3_m4v3(
@@ -241,7 +242,7 @@ static int gizmo_preselect_elem_test_select(bContext *C, wmGizmo *gz, const int 
     {
       Object *ob = gz_ele->bases[gz_ele->base_index]->object;
       const Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
-      const Object *ob_eval = DEG_get_evaluated_object(depsgraph, ob);
+      const Object *ob_eval = DEG_get_evaluated(depsgraph, ob);
       const Mesh *mesh_eval = BKE_object_get_editmesh_eval_cage(ob_eval);
       if (BKE_mesh_wrapper_vert_len(mesh_eval) == bm->totvert) {
         vert_positions = BKE_mesh_wrapper_vert_coords(mesh_eval);
@@ -290,9 +291,9 @@ static void gizmo_preselect_elem_free(wmGizmo *gz)
   gz_ele->bases.~Vector();
 }
 
-static int gizmo_preselect_elem_invoke(bContext * /*C*/,
-                                       wmGizmo * /*gz*/,
-                                       const wmEvent * /*event*/)
+static wmOperatorStatus gizmo_preselect_elem_invoke(bContext * /*C*/,
+                                                    wmGizmo * /*gz*/,
+                                                    const wmEvent * /*event*/)
 {
   return OPERATOR_PASS_THROUGH;
 }
@@ -302,7 +303,7 @@ static void GIZMO_GT_mesh_preselect_elem_3d(wmGizmoType *gzt)
   /* identifiers */
   gzt->idname = "GIZMO_GT_mesh_preselect_elem_3d";
 
-  /* api callbacks */
+  /* API callbacks. */
   gzt->invoke = gizmo_preselect_elem_invoke;
   gzt->draw = gizmo_preselect_elem_draw;
   gzt->test_select = gizmo_preselect_elem_test_select;
@@ -342,6 +343,33 @@ static void gizmo_preselect_edgering_draw(const bContext *C, wmGizmo *gz)
     Object *ob = gz_ring->bases[gz_ring->base_index]->object;
     EDBM_preselect_edgering_draw(gz_ring->psel, ob->object_to_world().ptr());
   }
+}
+
+static int loopcut_tool_preview_cuts_from_toolsettings(const bContext *C)
+{
+  const int default_cuts = 1;
+
+  bToolRef *tref = WM_toolsystem_ref_from_context(C);
+  if (tref == nullptr) {
+    return default_cuts;
+  }
+
+  wmOperatorType *ot_slide = WM_operatortype_find("MESH_OT_loopcut_slide", false);
+  if (ot_slide == nullptr) {
+    return default_cuts;
+  }
+
+  PointerRNA tool_props;
+  if (!WM_toolsystem_ref_properties_get_from_operator(tref, ot_slide, &tool_props)) {
+    return default_cuts;
+  }
+
+  PointerRNA loopcut_ptr = RNA_pointer_get(&tool_props, "MESH_OT_loopcut");
+  if (loopcut_ptr.data == nullptr) {
+    return default_cuts;
+  }
+
+  return RNA_int_get(&loopcut_ptr, "number_cuts");
 }
 
 static int gizmo_preselect_edgering_test_select(bContext *C, wmGizmo *gz, const int mval[2])
@@ -405,15 +433,17 @@ static int gizmo_preselect_edgering_test_select(bContext *C, wmGizmo *gz, const 
   else {
     if (best.eed) {
       Object *ob = gz_ring->bases[gz_ring->base_index]->object;
-      Scene *scene_eval = (Scene *)DEG_get_evaluated_id(vc.depsgraph, &vc.scene->id);
-      Object *ob_eval = DEG_get_evaluated_object(vc.depsgraph, ob);
+      Scene *scene_eval = DEG_get_evaluated(vc.depsgraph, vc.scene);
+      Object *ob_eval = DEG_get_evaluated(vc.depsgraph, ob);
       BMEditMesh *em_eval = BKE_editmesh_from_object(ob_eval);
       /* Re-allocate coords each update isn't ideal, however we can't be sure
        * the mesh hasn't been edited since last update. */
       Array<float3> storage;
       const Span<float3> vert_positions = BKE_editmesh_vert_coords_when_deformed(
           vc.depsgraph, em_eval, scene_eval, ob_eval, storage);
-      EDBM_preselect_edgering_update_from_edge(gz_ring->psel, bm, best.eed, 1, vert_positions);
+      const int preview_cuts = loopcut_tool_preview_cuts_from_toolsettings(C);
+      EDBM_preselect_edgering_update_from_edge(
+          gz_ring->psel, bm, best.eed, preview_cuts, vert_positions);
     }
     else {
       EDBM_preselect_edgering_clear(gz_ring->psel);
@@ -451,9 +481,9 @@ static void gizmo_preselect_edgering_free(wmGizmo *gz)
   gz_ring->bases.~Vector();
 }
 
-static int gizmo_preselect_edgering_invoke(bContext * /*C*/,
-                                           wmGizmo * /*gz*/,
-                                           const wmEvent * /*event*/)
+static wmOperatorStatus gizmo_preselect_edgering_invoke(bContext * /*C*/,
+                                                        wmGizmo * /*gz*/,
+                                                        const wmEvent * /*event*/)
 {
   return OPERATOR_PASS_THROUGH;
 }
@@ -463,7 +493,7 @@ static void GIZMO_GT_mesh_preselect_edgering_3d(wmGizmoType *gzt)
   /* identifiers */
   gzt->idname = "GIZMO_GT_mesh_preselect_edgering_3d";
 
-  /* api callbacks */
+  /* API callbacks. */
   gzt->invoke = gizmo_preselect_edgering_invoke;
   gzt->draw = gizmo_preselect_edgering_draw;
   gzt->test_select = gizmo_preselect_edgering_test_select;

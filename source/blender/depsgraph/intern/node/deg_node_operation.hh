@@ -8,6 +8,9 @@
 
 #pragma once
 
+#include <functional>
+#include <string>
+
 #include "intern/node/deg_node.hh"
 
 #include "intern/depsgraph_type.hh"
@@ -20,7 +23,7 @@ struct ComponentNode;
 
 /* Evaluation Operation for atomic operation */
 /* XXX: move this to another header that can be exposed? */
-using DepsEvalOperationCb = function<void(::Depsgraph *)>;
+using DepsEvalOperationCb = std::function<void(::Depsgraph *)>;
 
 /* Identifiers for common operations (as an enum). */
 enum class OperationCode {
@@ -46,6 +49,8 @@ enum class OperationCode {
   ANIMATION_EXIT,
   /* Driver */
   DRIVER,
+  /* Writes to RNA properties to ensure implicitly-shared data is un-shared. */
+  DRIVER_UNSHARE,
 
   /* Scene related. ------------------------------------------------------- */
   SCENE_EVAL,
@@ -245,25 +250,25 @@ enum OperationFlag {
 struct OperationNode : public Node {
   OperationNode();
 
-  virtual string identifier() const override;
+  std::string identifier() const override;
   /**
    * Full node identifier, including owner name.
    * used for logging and debug prints.
    */
-  string full_identifier() const;
+  std::string full_identifier() const;
 
-  virtual void tag_update(Depsgraph *graph, eUpdateSource source) override;
+  void tag_update(Depsgraph *graph, eUpdateSource source) override;
 
   bool is_noop() const
   {
     return (bool)evaluate == false;
   }
 
-  virtual OperationNode *get_entry_operation() override
+  OperationNode *get_entry_operation() override
   {
     return this;
   }
-  virtual OperationNode *get_exit_operation() override
+  OperationNode *get_exit_operation() override
   {
     return this;
   }

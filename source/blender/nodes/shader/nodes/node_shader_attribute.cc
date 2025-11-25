@@ -6,7 +6,7 @@
 
 #include "node_util.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "RNA_access.hh"
@@ -17,27 +17,26 @@ static void node_declare(NodeDeclarationBuilder &b)
 {
   b.add_output<decl::Color>("Color");
   b.add_output<decl::Vector>("Vector");
-  b.add_output<decl::Float>("Fac");
+  b.add_output<decl::Float>("Factor", "Fac");
   b.add_output<decl::Float>("Alpha");
 }
 
 static void node_shader_buts_attribute(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "attribute_type", UI_ITEM_NONE, "", ICON_NONE);
-  uiItemFullR(layout,
-              ptr,
-              RNA_struct_find_property(ptr, "attribute_name"),
-              -1,
-              0,
-              UI_ITEM_NONE,
-              "",
-              ICON_NONE,
-              "Name");
+  layout->prop(ptr, "attribute_type", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr,
+               RNA_struct_find_property(ptr, "attribute_name"),
+               -1,
+               0,
+               UI_ITEM_NONE,
+               "",
+               ICON_NONE,
+               IFACE_("Name"));
 }
 
 static void node_shader_init_attribute(bNodeTree * /*ntree*/, bNode *node)
 {
-  NodeShaderAttribute *attr = MEM_cnew<NodeShaderAttribute>("NodeShaderAttribute");
+  NodeShaderAttribute *attr = MEM_callocN<NodeShaderAttribute>("NodeShaderAttribute");
   node->storage = attr;
 }
 
@@ -92,7 +91,7 @@ NODE_SHADER_MATERIALX_BEGIN
 {
   /* TODO: some outputs expected be implemented within the next iteration
    * (see node-definition `<geompropvalue>`). */
-  return get_output_default(socket_out_->name, NodeItem::Type::Any);
+  return get_output_default(socket_out_->identifier, NodeItem::Type::Any);
 }
 #endif
 NODE_SHADER_MATERIALX_END
@@ -115,9 +114,9 @@ void register_node_type_sh_attribute()
   ntype.draw_buttons = file_ns::node_shader_buts_attribute;
   ntype.initfunc = file_ns::node_shader_init_attribute;
   blender::bke::node_type_storage(
-      &ntype, "NodeShaderAttribute", node_free_standard_storage, node_copy_standard_storage);
+      ntype, "NodeShaderAttribute", node_free_standard_storage, node_copy_standard_storage);
   ntype.gpu_fn = file_ns::node_shader_gpu_attribute;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

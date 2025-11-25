@@ -13,6 +13,8 @@
 #include "BLI_any.hh"
 #include "BLI_generic_pointer.hh"
 
+#include "BKE_node_socket_value_fwd.hh"
+
 namespace blender::bke {
 
 /**
@@ -56,6 +58,8 @@ class SocketValueVariant {
      * Indicates that there is a `GVolumeGrid` stored.
      */
     Grid,
+    /** Indicates that there is a `ListPtr` stored. */
+    List,
   };
 
   /**
@@ -81,12 +85,30 @@ class SocketValueVariant {
    * Create an empty variant. This is not valid for any socket type yet.
    */
   SocketValueVariant() = default;
+  SocketValueVariant(const SocketValueVariant &other) = default;
+  SocketValueVariant(SocketValueVariant &&other) = default;
+  SocketValueVariant &operator=(const SocketValueVariant &other) = default;
+  SocketValueVariant &operator=(SocketValueVariant &&other) = default;
+  ~SocketValueVariant() = default;
 
   /**
-   * Create a variant based on the given value. This works for primitive types, #GField and
-   * #Field<T>.
+   * Create a variant based on the given value. This works for primitive types. For more complex
+   * types use #set explicitly. Alternatively, one can use the #From or #ConstructIn utilities.
    */
-  template<typename T> explicit SocketValueVariant(T &&value);
+  template<typename T,
+           /* The enable-if is necessary to avoid overriding the copy/moveconstructors. */
+           BLI_ENABLE_IF((std::is_trivial_v<std::decay_t<T>> ||
+                          is_same_any_v<std::decay_t<T>, std::string>))>
+  explicit SocketValueVariant(T &&value)
+  {
+    this->set(std::forward<T>(value));
+  }
+
+  /** Construct a #SocketValueVariant at the given pointer from the given value. */
+  template<typename T> static SocketValueVariant &ConstructIn(void *ptr, T &&value);
+
+  /** Create a new #SocketValueVariant from the given value. */
+  template<typename T> static SocketValueVariant From(T &&value);
 
   /**
    * \return True if the stored value is valid for a specific socket type. This is mainly meant to
@@ -131,8 +153,13 @@ class SocketValueVariant {
   bool is_single() const;
 
   /**
+   * The stored value is a list.
+   */
+  bool is_list() const;
+
+  /**
    * Convert the stored value into a single value. For simple value access, this is not necessary,
-   * because #get` does the conversion implicitly. However, it is necessary if one wants to use
+   * because #get does the conversion implicitly. However, it is necessary if one wants to use
    * #get_single_ptr. Context-dependent fields or grids will just result in a fallback value.
    *
    * The caller has to make sure that the stored value is a single value, field or grid.
@@ -174,13 +201,24 @@ class SocketValueVariant {
   template<typename T> void store_impl(T value);
 };
 
-template<typename T> inline SocketValueVariant::SocketValueVariant(T &&value)
+template<typename T>
+inline SocketValueVariant &SocketValueVariant::ConstructIn(void *ptr, T &&value)
 {
-  this->set(std::forward<T>(value));
+  SocketValueVariant *value_variant = new (ptr) SocketValueVariant();
+  value_variant->set(std::forward<T>(value));
+  return *value_variant;
+}
+
+template<typename T> inline SocketValueVariant SocketValueVariant::From(T &&value)
+{
+  SocketValueVariant value_variant;
+  value_variant.set(std::forward<T>(value));
+  return value_variant;
 }
 
 template<typename T> inline void SocketValueVariant::set(T &&value)
 {
+  static_assert(!is_same_any_v<std::decay_t<T>, SocketValueVariant, bke::SocketValueVariant *>);
   this->store_impl<std::decay_t<T>>(std::forward<T>(value));
 }
 

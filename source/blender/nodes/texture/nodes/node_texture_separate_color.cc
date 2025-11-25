@@ -6,12 +6,9 @@
  * \ingroup texnodes
  */
 
-#include "BLI_listbase.h"
 #include "BLI_math_color.h"
-#include "NOD_texture.h"
 #include "node_texture_util.hh"
 #include "node_util.hh"
-#include <cmath>
 
 static blender::bke::bNodeSocketTemplate inputs[] = {
     {SOCK_RGBA, N_("Color"), 0.0f, 0.0f, 0.0f, 1.0f},
@@ -105,5 +102,5 @@ void register_node_type_tex_separate_color()
   ntype.exec_fn = exec;
   ntype.updatefunc = update;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

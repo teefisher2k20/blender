@@ -15,8 +15,9 @@ if "bpy" in locals():
         importlib.reload(fbx_utils)
 
 import bpy
-from bpy.app.translations import pgettext_tip as tip_
+from bpy.app.translations import pgettext_rpt as rpt_
 from mathutils import Matrix, Euler, Vector, Quaternion
+from bpy_extras import anim_utils
 
 # Also imported in .fbx_utils, so importing here is unlikely to further affect Blender startup time.
 import numpy as np
@@ -893,10 +894,10 @@ def blen_store_keyframes_multi(fbx_key_times, fcurve_and_key_values_pairs, blen_
         blen_fcurve.update()
 
 
-def blen_read_animations_action_item(action, item, cnodes, fps, anim_offset, global_scale, shape_key_deforms,
+def blen_read_animations_action_item(channelbag, item, cnodes, fps, anim_offset, global_scale, shape_key_deforms,
                                      fbx_ktime):
     """
-    'Bake' loc/rot/scale into the action,
+    'Bake' loc/rot/scale into the channelbag,
     taking any pre_ and post_ matrix into account to transform from fbx into blender space.
     """
     from bpy.types import ShapeKey, Material, Camera
@@ -948,7 +949,7 @@ def blen_read_animations_action_item(action, item, cnodes, fps, anim_offset, glo
         else:  # Euler
             props[1] = (bl_obj.path_from_id("rotation_euler"), 3, grpname or "Euler Rotation")
 
-    blen_curves = [action.fcurves.new(prop, index=channel, action_group=grpname)
+    blen_curves = [channelbag.fcurves.new(prop, index=channel, group_name=grpname)
                    for prop, nbr_channels, grpname in props for channel in range(nbr_channels)]
 
     if isinstance(item, Material):
@@ -1098,8 +1099,14 @@ def blen_read_animations(fbx_tmpl_astack, fbx_tmpl_alayer, stacks, scene, anim_o
                     actions[key] = action = bpy.data.actions.new(action_name)
                     action.use_fake_user = True
 
-                    # Create an Action Slot. Curves created via action.fcurves will automatically be assigned to it.
-                    action.slots.new(id_data.id_type, action_name)
+                    # Always use the same name for the slot. It should be simple
+                    # to switch between imported Actions while keeping Slot
+                    # auto-assignment, which means that all Actions should use
+                    # the same slot name. As long as there's no separate
+                    # indicator for the "intended object name" for this FBX
+                    # animation, this is the best Blender can do. Maybe the
+                    # 'stack name' would be a better choice?
+                    action.slots.new(id_data.id_type, "Slot")
 
                 # If none yet assigned, assign this action to id_data.
                 if not id_data.animation_data:
@@ -1109,7 +1116,8 @@ def blen_read_animations(fbx_tmpl_astack, fbx_tmpl_alayer, stacks, scene, anim_o
                     id_data.animation_data.action_slot = action.slots[0]
 
                 # And actually populate the action!
-                blen_read_animations_action_item(action, item, cnodes, scene.render.fps, anim_offset, global_scale,
+                channelbag = anim_utils.action_ensure_channelbag_for_slot(action, action.slots[0])
+                blen_read_animations_action_item(channelbag, item, cnodes, scene.render.fps, anim_offset, global_scale,
                                                  shape_key_values, fbx_ktime)
 
     # If the minimum/maximum animated value is outside the slider range of the shape key, attempt to expand the slider
@@ -2009,6 +2017,7 @@ def blen_read_shapes(fbx_tmpl, fbx_data, objects, me, scene):
         if me.shape_keys is None:
             objects[0].shape_key_add(name="Basis", from_mix=False)
         kb = objects[0].shape_key_add(name=elem_name_utf8, from_mix=False)
+        kb.value = 0.0
         me.shape_keys.use_relative = True  # Should already be set as such.
 
         # Only need to set the shape key co if there are any non-zero dvcos.
@@ -2049,6 +2058,10 @@ def blen_read_material(fbx_tmpl, fbx_obj, settings):
 
     elem_name_utf8 = elem_name_ensure_class(fbx_obj, b'Material')
 
+    if settings.mtl_name_collision_mode == "REFERENCE_EXISTING":
+        if (ma := bpy.data.materials.get(elem_name_utf8)):
+            return ma
+
     nodal_material_wrap_map = settings.nodal_material_wrap_map
     ma = bpy.data.materials.new(name=elem_name_utf8)
 
@@ -2059,7 +2072,7 @@ def blen_read_material(fbx_tmpl, fbx_obj, settings):
                  elem_find_first(fbx_tmpl, b'Properties70', fbx_elem_nil))
     fbx_props_no_template = (fbx_props[0], fbx_elem_nil)
 
-    ma_wrap = node_shader_utils.PrincipledBSDFWrapper(ma, is_readonly=False, use_nodes=True)
+    ma_wrap = node_shader_utils.PrincipledBSDFWrapper(ma, is_readonly=False)
     ma_wrap.base_color = elem_props_get_color_rgb(fbx_props, b'DiffuseColor', const_color_white)
     # No specular color in Principled BSDF shader, assumed to be either white or take some tint from diffuse one...
     # TODO: add way to handle tint option (guesstimate from spec color + intensity...)?
@@ -2236,6 +2249,7 @@ def blen_read_light(fbx_tmpl, fbx_obj, settings):
     # TODO, cycles nodes???
     lamp.color = elem_props_get_color_rgb(fbx_props, b'Color', (1.0, 1.0, 1.0))
     lamp.energy = elem_props_get_number(fbx_props, b'Intensity', 100.0) / 100.0
+    lamp.exposure = elem_props_get_number(fbx_props, b'Exposure', 0.0)
     lamp.use_shadow = elem_props_get_bool(fbx_props, b'CastShadow', True)
     if hasattr(lamp, "cycles"):
         lamp.cycles.cast_shadow = lamp.use_shadow
@@ -3041,7 +3055,8 @@ def load(operator, context, filepath="",
          primary_bone_axis='Y',
          secondary_bone_axis='X',
          use_prepost_rot=True,
-         colors_type='SRGB'):
+         colors_type='SRGB',
+         mtl_name_collision_mode="MAKE_UNIQUE"):
 
     global fbx_elem_nil
     fbx_elem_nil = FBXElem('', (), (), ())
@@ -3075,7 +3090,7 @@ def load(operator, context, filepath="",
         is_ascii = False
 
     if is_ascii:
-        operator.report({'ERROR'}, tip_("ASCII FBX files are not supported %r") % filepath)
+        operator.report({'ERROR'}, rpt_("ASCII FBX files are not supported %r") % filepath)
         return {'CANCELLED'}
     del is_ascii
     # End ascii detection.
@@ -3086,11 +3101,11 @@ def load(operator, context, filepath="",
         import traceback
         traceback.print_exc()
 
-        operator.report({'ERROR'}, tip_("Couldn't open file %r (%s)") % (filepath, e))
+        operator.report({'ERROR'}, rpt_("Couldn't open file %r (%s)") % (filepath, e))
         return {'CANCELLED'}
 
     if version < 7100:
-        operator.report({'ERROR'}, tip_("Version %r unsupported, must be %r or later") % (version, 7100))
+        operator.report({'ERROR'}, rpt_("Version %r unsupported, must be %r or later") % (version, 7100))
         return {'CANCELLED'}
 
     print("FBX version: %r" % version)
@@ -3125,7 +3140,7 @@ def load(operator, context, filepath="",
     fbx_settings = elem_find_first(elem_root, b'GlobalSettings')
     fbx_settings_props = elem_find_first(fbx_settings, b'Properties70')
     if fbx_settings is None or fbx_settings_props is None:
-        operator.report({'ERROR'}, tip_("No 'GlobalSettings' found in file %r") % filepath)
+        operator.report({'ERROR'}, rpt_("No 'GlobalSettings' found in file %r") % filepath)
         return {'CANCELLED'}
 
     # FBX default base unit seems to be the centimeter, while raw Blender Unit is equivalent to the meter...
@@ -3180,7 +3195,7 @@ def load(operator, context, filepath="",
         use_custom_props, use_custom_props_enum_as_string,
         nodal_material_wrap_map, image_cache,
         ignore_leaf_bones, force_connect_children, automatic_bone_orientation, bone_correction_matrix,
-        use_prepost_rot, colors_type,
+        use_prepost_rot, colors_type, mtl_name_collision_mode,
     )
 
     # #### And now, the "real" data.
@@ -3192,10 +3207,10 @@ def load(operator, context, filepath="",
     fbx_connections = elem_find_first(elem_root, b'Connections')
 
     if fbx_nodes is None:
-        operator.report({'ERROR'}, tip_("No 'Objects' found in file %r") % filepath)
+        operator.report({'ERROR'}, rpt_("No 'Objects' found in file %r") % filepath)
         return {'CANCELLED'}
     if fbx_connections is None:
-        operator.report({'ERROR'}, tip_("No 'Connections' found in file %r") % filepath)
+        operator.report({'ERROR'}, rpt_("No 'Connections' found in file %r") % filepath)
         return {'CANCELLED'}
 
     # ----

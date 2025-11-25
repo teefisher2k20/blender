@@ -9,21 +9,23 @@
 #include <cstdlib>
 
 #include "BLI_math_vector.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "BKE_unit.hh"
 
 #include "ED_screen.hh"
 
-#include "UI_interface.hh"
-
 #include "BLT_translation.hh"
+
+#include "UI_interface_types.hh"
 
 #include "transform.hh"
 #include "transform_convert.hh"
 #include "transform_snap.hh"
 
 #include "transform_mode.hh"
+
+namespace blender::ed::transform {
 
 /* -------------------------------------------------------------------- */
 /** \name Transform (Bake-Time)
@@ -62,25 +64,26 @@ static void applyBakeTime(TransInfo *t)
     outputNumInput(&(t->num), c, t->scene->unit);
 
     if (time >= 0.0f) {
-      SNPRINTF(str, IFACE_("Time: +%s %s"), c, t->proptext);
+      SNPRINTF_UTF8(str, IFACE_("Time: +%s %s"), c, t->proptext);
     }
     else {
-      SNPRINTF(str, IFACE_("Time: %s %s"), c, t->proptext);
+      SNPRINTF_UTF8(str, IFACE_("Time: %s %s"), c, t->proptext);
     }
   }
   else {
     /* Default header print. */
     if (time >= 0.0f) {
-      SNPRINTF(str, IFACE_("Time: +%.3f %s"), time, t->proptext);
+      SNPRINTF_UTF8(str, IFACE_("Time: +%.3f %s"), time, t->proptext);
     }
     else {
-      SNPRINTF(str, IFACE_("Time: %.3f %s"), time, t->proptext);
+      SNPRINTF_UTF8(str, IFACE_("Time: %.3f %s"), time, t->proptext);
     }
   }
 
   FOREACH_TRANS_DATA_CONTAINER (t, tc) {
     TransData *td = tc->data;
-    for (i = 0; i < tc->data_len; i++, td++) {
+    TransDataExtension *td_ext = tc->data_ext;
+    for (i = 0; i < tc->data_len; i++, td++, td_ext++) {
       if (td->flag & TD_SKIP) {
         continue;
       }
@@ -96,11 +99,11 @@ static void applyBakeTime(TransInfo *t)
       }
 
       *dst = ival + time * td->factor;
-      if (td->ext->size && *dst < *td->ext->size) {
-        *dst = *td->ext->size;
+      if (td_ext->scale && *dst < *td_ext->scale) {
+        *dst = *td_ext->scale;
       }
-      if (td->ext->quat && *dst > *td->ext->quat) {
-        *dst = *td->ext->quat;
+      if (td_ext->quat && *dst > *td_ext->quat) {
+        *dst = *td_ext->quat;
       }
     }
   }
@@ -116,10 +119,10 @@ static void initBakeTime(TransInfo *t, wmOperator * /*op*/)
 
   t->idx_max = 0;
   t->num.idx_max = 0;
-  t->snap[0] = 1.0f;
-  t->snap[1] = t->snap[0] * 0.1f;
+  t->increment[0] = 1.0f;
+  t->increment_precision = 0.1f;
 
-  copy_v3_fl(t->num.val_inc, t->snap[0]);
+  copy_v3_fl(t->num.val_inc, t->increment[0]);
   t->num.unit_sys = t->scene->unit.system;
   t->num.unit_type[0] = B_UNIT_NONE; /* Don't think this uses units? */
 }
@@ -136,3 +139,5 @@ TransModeInfo TransMode_baketime = {
     /*snap_apply_fn*/ nullptr,
     /*draw_fn*/ nullptr,
 };
+
+}  // namespace blender::ed::transform

@@ -4,7 +4,7 @@
 
 #include "NOD_rna_define.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "RNA_enum_types.hh"
@@ -15,7 +15,10 @@ namespace blender::nodes::node_geo_attribute_domain_size_cc {
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Geometry>("Geometry");
+  b.add_input<decl::Geometry>("Geometry")
+      .description(
+          "Geometry to get the domain sizes of. Only the root geometry is considered, not nested "
+          "instances");
   auto &total_points = b.add_output<decl::Int>("Point Count")
                            .make_available([](bNode &node) {
                              node.custom1 = int16_t(GeometryComponent::Type::Mesh);
@@ -82,7 +85,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "component", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "component", UI_ITEM_NONE, "", ICON_NONE);
 }
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
@@ -182,7 +185,7 @@ static void node_register()
   ntype.draw_buttons = node_layout;
   ntype.initfunc = node_init;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

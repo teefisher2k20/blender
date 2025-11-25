@@ -56,6 +56,16 @@ long_description = """# Blender
 
 This package provides Blender as a Python module for use in studio pipelines, web services, scientific research, and more.
 
+### Archived Versions
+
+Blender versions outside the current LTS window are removed from PyPI but are available at [https://download.blender.org/pypi/bpy/](https://download.blender.org/pypi/bpy/).
+
+These versions can still be installed manually. For example, to install version 3.6.0:
+
+```bash
+pip install bpy==3.6.0 --extra-index-url https://download.blender.org/pypi/
+```
+
 ## Documentation
 
 * [Blender Python API](https://docs.blender.org/api/current/)
@@ -200,7 +210,16 @@ def main() -> None:
         machine = cmake_cache_var_or_exit(filepath_cmake_cache, "CMAKE_OSX_ARCHITECTURES")
         platform_tag = "macosx_%d_%d_%s" % (target_major, target_minor, machine)
     elif sys.platform == "win32":
-        platform_tag = "win_%s" % (platform.machine().lower())
+        # Workaround for Python process running in a virtualized environment on Windows-on-Arm:
+        # use the actual processor architecture instead of the virtualized one.
+        #
+        # The win_arm64 matches the behavior when native WoA Python is used, and also matches
+        # sysconfig.get_platform() from a native Python build (although it returns win-arm64 with a
+        # dash and not underscore).
+        if "ARM" in os.environ.get("PROCESSOR_IDENTIFIER", ""):
+            platform_tag = "win_arm64"
+        else:
+            platform_tag = "win_%s" % (platform.machine().lower())
     elif sys.platform == "linux":
         glibc = os.confstr("CS_GNU_LIBC_VERSION")
         if glibc is None:
@@ -236,7 +255,12 @@ def main() -> None:
     setuptools.setup(
         name="bpy",
         version=blender_version_str,
-        install_requires=["cython", "numpy", "requests", "zstandard"],
+
+        # `bpy` is not compatible with `numpy` 2+, as the VFX reference platform uses
+        # 1.26 at the moment. This fix amended the install requirement package to specify
+        # `numpy>=1.26,<2.0` to mitigate this issue.
+        install_requires=["cython", "numpy>=1.26,<2.0", "requests", "zstandard"],
+
         python_requires="==%d.%d.*" % (python_version_number[0], python_version_number[1]),
         packages=["bpy"],
         package_data={"": package_files("bpy")},

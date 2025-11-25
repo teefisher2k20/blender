@@ -15,6 +15,7 @@
 #include "BKE_bvhutils.hh"
 #include "BKE_editmesh.hh"
 #include "BKE_mesh.hh"
+#include "BKE_pointcloud.hh"
 
 namespace blender::bke {
 
@@ -247,7 +248,6 @@ static void mesh_verts_spherecast_do(int index,
                                      const BVHTreeRay *ray,
                                      BVHTreeRayHit *hit)
 {
-  float dist;
   const float *r1;
   float r2[3], i1[3];
   r1 = ray->origin;
@@ -256,10 +256,13 @@ static void mesh_verts_spherecast_do(int index,
   closest_to_line_segment_v3(i1, v, r1, r2);
 
   /* No hit if closest point is 'behind' the origin of the ray, or too far away from it. */
-  if ((dot_v3v3v3(r1, i1, r2) >= 0.0f) && ((dist = len_v3v3(r1, i1)) < hit->dist)) {
-    hit->index = index;
-    hit->dist = dist;
-    copy_v3_v3(hit->co, i1);
+  if (dot_v3v3v3(r1, i1, r2) >= 0.0f) {
+    const float dist = len_v3v3(r1, i1);
+    if (dist < hit->dist) {
+      hit->index = index;
+      hit->dist = dist;
+      copy_v3_v3(hit->co, i1);
+    }
   }
 }
 
@@ -296,7 +299,6 @@ static void mesh_edges_spherecast(void *userdata,
   const int2 edge = data->edges[index];
 
   const float radius_sq = square_f(ray->radius);
-  float dist;
   const float *v1, *v2, *r1;
   float r2[3], i1[3], i2[3];
   v1 = positions[edge[0]];
@@ -313,19 +315,22 @@ static void mesh_edges_spherecast(void *userdata,
 
   if (isect_line_line_v3(v1, v2, r1, r2, i1, i2)) {
     /* No hit if intersection point is 'behind' the origin of the ray, or too far away from it. */
-    if ((dot_v3v3v3(r1, i2, r2) >= 0.0f) && ((dist = len_v3v3(r1, i2)) < hit->dist)) {
-      const float e_fac = line_point_factor_v3(i1, v1, v2);
-      if (e_fac < 0.0f) {
-        copy_v3_v3(i1, v1);
-      }
-      else if (e_fac > 1.0f) {
-        copy_v3_v3(i1, v2);
-      }
-      /* Ensure ray is really close enough from edge! */
-      if (len_squared_v3v3(i1, i2) <= radius_sq) {
-        hit->index = index;
-        hit->dist = dist;
-        copy_v3_v3(hit->co, i2);
+    if (dot_v3v3v3(r1, i2, r2) >= 0.0f) {
+      const float dist = len_v3v3(r1, i2);
+      if (dist < hit->dist) {
+        const float e_fac = line_point_factor_v3(i1, v1, v2);
+        if (e_fac < 0.0f) {
+          copy_v3_v3(i1, v1);
+        }
+        else if (e_fac > 1.0f) {
+          copy_v3_v3(i1, v2);
+        }
+        /* Ensure ray is really close enough from edge! */
+        if (len_squared_v3v3(i1, i2) <= radius_sq) {
+          hit->index = index;
+          hit->dist = dist;
+          copy_v3_v3(hit->co, i2);
+        }
       }
     }
   }
@@ -807,21 +812,54 @@ BVHTreeFromMesh bvhtree_from_mesh_verts_init(const Mesh &mesh, const IndexMask &
 /** \name Point Cloud BVH Building
  * \{ */
 
-BVHTreeFromPointCloud bvhtree_from_pointcloud_get(const PointCloud &pointcloud,
-                                                  const IndexMask &points_mask)
+static BVHTreeFromPointCloud create_points_tree_data(const BVHTree *tree,
+                                                     const Span<float3> positions)
 {
-  const Span<float3> positions = pointcloud.positions();
-  std::unique_ptr<BVHTree, BVHTreeDeleter> tree = create_tree_from_verts(positions, points_mask);
-  if (!tree) {
-    return {};
-  }
   BVHTreeFromPointCloud data{};
-  data.tree = std::move(tree);
+  data.tree = tree;
+  data.positions = positions;
   data.nearest_callback = nullptr;
-  data.coords = (const float(*)[3])positions.data();
   return data;
 }
 
-/** \} */
+static BVHTreeFromPointCloud create_pointcloud_tree_data(const BVHTree *tree,
+                                                         const Span<float3> positions)
+{
+  BVHTreeFromPointCloud data{};
+  data.tree = tree;
+  data.positions = positions;
+  return data;
+}
+
+static BVHTreeFromPointCloud create_pointcloud_tree_data(
+    std::unique_ptr<BVHTree, BVHTreeDeleter> tree, const Span<float3> positions)
+{
+  BVHTreeFromPointCloud data = create_points_tree_data(tree.get(), positions);
+  data.owned_tree = std::move(tree);
+  return data;
+}
+
+BVHTreeFromPointCloud bvhtree_from_pointcloud_get(const PointCloud &pointcloud,
+                                                  const IndexMask &points_mask)
+{
+  if (points_mask.size() == pointcloud.totpoint) {
+    return pointcloud.bvh_tree();
+  }
+  const Span<float3> positions = pointcloud.positions();
+  return create_pointcloud_tree_data(create_tree_from_verts(positions, points_mask), positions);
+}
 
 }  // namespace blender::bke
+
+blender::bke::BVHTreeFromPointCloud PointCloud::bvh_tree() const
+{
+  using namespace blender;
+  using namespace blender::bke;
+  const Span<float3> positions = this->positions();
+  this->runtime->bvh_cache.ensure([&](std::unique_ptr<BVHTree, BVHTreeDeleter> &data) {
+    data = create_tree_from_verts(positions, positions.index_range());
+  });
+  return create_pointcloud_tree_data(this->runtime->bvh_cache.data().get(), positions);
+}
+
+/** \} */

@@ -11,6 +11,8 @@
 #include "BLI_compiler_attrs.h"
 #include "BLI_span.hh"
 
+#include "DNA_windowmanager_enums.h"
+
 struct Base;
 struct Bone;
 struct Depsgraph;
@@ -38,11 +40,8 @@ struct wmOperator;
 #define BONESEL_BONE (1u << 31)
 #define BONESEL_ANY (BONESEL_TIP | BONESEL_ROOT | BONESEL_BONE)
 
-/* useful macros, be sure to #include "ANIM_bone_collections.hh". */
-#define EBONE_VISIBLE(arm, ebone) ANIM_bone_is_visible_editbone(arm, ebone)
-
 #define EBONE_SELECTABLE(arm, ebone) \
-  (EBONE_VISIBLE(arm, ebone) && !((ebone)->flag & BONE_UNSELECTABLE))
+  (blender::animrig::bone_is_visible(arm, ebone) && !((ebone)->flag & BONE_UNSELECTABLE))
 
 #define EBONE_EDITABLE(ebone) \
   (CHECK_TYPE_INLINE(ebone, EditBone *), \
@@ -132,7 +131,7 @@ void ED_keymap_armature(wmKeyConfig *keyconf);
 /**
  * Join armature exec is exported for use in object->join objects operator.
  */
-int ED_armature_join_objects_exec(bContext *C, wmOperator *op);
+wmOperatorStatus ED_armature_join_objects_exec(bContext *C, wmOperator *op);
 
 /* `armature_select.cc` */
 
@@ -160,11 +159,11 @@ bool ED_armature_edit_deselect_all_visible_multi(bContext *C);
  * \return True when pick finds an element or the selection changed.
  */
 bool ED_armature_edit_select_pick_bone(
-    bContext *C, Base *basact, EditBone *ebone, int selmask, const SelectPick_Params *params);
+    bContext *C, Base *basact, EditBone *ebone, int selmask, const SelectPick_Params &params);
 /**
  * Bone selection picking for armature edit-mode in the view3d.
  */
-bool ED_armature_edit_select_pick(bContext *C, const int mval[2], const SelectPick_Params *params);
+bool ED_armature_edit_select_pick(bContext *C, const int mval[2], const SelectPick_Params &params);
 /**
  * Perform a selection operation on elements which have been 'touched',
  * use for lasso & border select but can be used elsewhere too.
@@ -285,9 +284,8 @@ bool ED_armature_pose_select_pick_bone(const Scene *scene,
                                        ViewLayer *view_layer,
                                        View3D *v3d,
                                        Object *ob,
-                                       Bone *bone,
-                                       const SelectPick_Params *params)
-    ATTR_NONNULL(1, 2, 3, 4, 6);
+                                       bPoseChannel *pchan,
+                                       const SelectPick_Params &params) ATTR_NONNULL(1, 2, 3, 4);
 /**
  * Called for mode-less pose selection.
  * assumes the active object is still on old situation.
@@ -300,8 +298,8 @@ bool ED_armature_pose_select_pick_with_buffer(const Scene *scene,
                                               Base *base,
                                               const GPUSelectResult *hit_results,
                                               int hits,
-                                              const SelectPick_Params *params,
-                                              bool do_nearest) ATTR_NONNULL(1, 2, 3, 4, 5, 7);
+                                              const SelectPick_Params &params,
+                                              bool do_nearest) ATTR_NONNULL(1, 2, 3, 4, 5);
 /**
  * While in weight-paint mode, a single pose may be active as well.
  * While not common, it's possible we have multiple armatures deforming a mesh.

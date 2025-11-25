@@ -4,11 +4,13 @@
 
 #include "BKE_bake_geometry_nodes_modifier.hh"
 #include "BKE_bake_geometry_nodes_modifier_pack.hh"
+#include "BKE_library.hh"
 #include "BKE_main.hh"
 #include "BKE_packedFile.hh"
 #include "BKE_report.hh"
 
 #include "DNA_modifier_types.h"
+#include "DNA_object_types.h"
 
 #include "MOD_nodes.hh"
 
@@ -37,6 +39,9 @@ static Vector<NodesModifierBakeFile> pack_files_from_directory(const StringRefNu
     const direntry &dir_entry = dir_entries[i];
     const StringRefNull dir_entry_path = dir_entry.path;
     const StringRefNull name = dir_entry.relname;
+    if (FILENAME_IS_CURRPAR(name.c_str())) {
+      continue;
+    }
     NodesModifierBakeFile bake_file;
     bake_file.name = BLI_strdup_null(name.c_str());
     bake_file.packed_file = BKE_packedfile_new(reports, dir_entry_path.c_str(), "");
@@ -59,14 +64,14 @@ NodesModifierPackedBake *pack_bake_from_disk(const BakePath &bake_path, ReportLi
   const Vector<NodesModifierBakeFile> blob_bake_files = pack_files_from_directory(
       bake_path.blobs_dir, reports);
 
-  NodesModifierPackedBake *packed_bake = MEM_cnew<NodesModifierPackedBake>(__func__);
+  NodesModifierPackedBake *packed_bake = MEM_callocN<NodesModifierPackedBake>(__func__);
   packed_bake->meta_files_num = meta_bake_files.size();
   packed_bake->blob_files_num = blob_bake_files.size();
 
-  packed_bake->meta_files = MEM_cnew_array<NodesModifierBakeFile>(packed_bake->meta_files_num,
-                                                                  __func__);
-  packed_bake->blob_files = MEM_cnew_array<NodesModifierBakeFile>(packed_bake->blob_files_num,
-                                                                  __func__);
+  packed_bake->meta_files = MEM_calloc_arrayN<NodesModifierBakeFile>(packed_bake->meta_files_num,
+                                                                     __func__);
+  packed_bake->blob_files = MEM_calloc_arrayN<NodesModifierBakeFile>(packed_bake->blob_files_num,
+                                                                     __func__);
 
   uninitialized_copy_n(meta_bake_files.data(), meta_bake_files.size(), packed_bake->meta_files);
   uninitialized_copy_n(blob_bake_files.data(), blob_bake_files.size(), packed_bake->blob_files);
@@ -138,8 +143,15 @@ static bool directory_is_empty(const blender::StringRefNull path)
 {
   direntry *entries = nullptr;
   const int entries_num = BLI_filelist_dir_contents(path.c_str(), &entries);
-  BLI_filelist_free(entries, entries_num);
-  return entries_num == 0;
+  BLI_SCOPED_DEFER([&]() { BLI_filelist_free(entries, entries_num); });
+  for (const int i : IndexRange(entries_num)) {
+    const direntry &entry = entries[i];
+    if (FILENAME_IS_CURRPAR(entry.relname)) {
+      continue;
+    }
+    return false;
+  }
+  return true;
 }
 
 static bool disk_bake_exists(const blender::bke::bake::BakePath &path)

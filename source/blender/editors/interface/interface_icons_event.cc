@@ -12,13 +12,11 @@
  */
 
 #include "BLI_rect.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "BLF_api.hh"
 
 #include "BLT_translation.hh"
-
-#include "UI_interface.hh"
 
 #include "interface_intern.hh"
 
@@ -85,7 +83,12 @@ static void icon_draw_rect_input_text(const rctf *rect,
 {
   icon_draw_icon(rect, icon_bg, aspect, alpha, inverted);
 
-  const float available_width = BLI_rctf_size_x(rect) - (2.0f * UI_SCALE_FAC);
+  /* Margin to allow room between outer icon and text. */
+  const float margin = BLI_rctf_size_y(rect) * 0.12f;
+
+  const float available_height = BLI_rctf_size_y(rect) - (2.0f * margin);
+  const float available_width = BLI_rctf_size_x(rect) - (2.0f * margin);
+
   const int font_id = BLF_default();
   float color[4];
   UI_GetThemeColor4fv(inverted ? TH_BACK : TH_TEXT, color);
@@ -94,26 +97,36 @@ static void icon_draw_rect_input_text(const rctf *rect,
   }
   BLF_color4fv(font_id, color);
 
-  const uiFontStyle *fstyle = UI_FSTYLE_WIDGET;
-  float font_size = std::min(15.0f, fstyle->points) * UI_SCALE_FAC;
+  float font_size = available_height;
   BLF_size(font_id, font_size);
 
   rcti str_bounds;
   BLF_boundbox(font_id, str, BLF_DRAW_STR_DUMMY_MAX, &str_bounds);
   float width = float(BLI_rcti_size_x(&str_bounds));
   float height = float(BLI_rcti_size_y(&str_bounds));
-  if (width > (available_width - (2.0f * UI_SCALE_FAC))) {
-    font_size *= (available_width - (2.0f * UI_SCALE_FAC)) / width;
+  if (width > available_width) {
+    font_size *= available_width / width;
     BLF_size(font_id, font_size);
     BLF_boundbox(font_id, str, BLF_DRAW_STR_DUMMY_MAX, &str_bounds);
     width = float(BLI_rcti_size_x(&str_bounds));
     height = float(BLI_rcti_size_y(&str_bounds));
   }
 
-  const float x = rect->xmin + UI_SCALE_FAC + ((available_width - width) / 2.0f);
-  const float v_offset = (BLI_rctf_size_y(rect) - height) * 0.5f - str_bounds.ymin;
+  const float x = rect->xmin + margin + ((available_width - width) / 2.0f);
+  const float v_offset = ((available_height - height) / 2.0f) - str_bounds.ymin + margin;
   BLF_position(font_id, x, rect->ymin + v_offset, 0.0f);
   BLF_draw(font_id, str, BLF_DRAW_STR_DUMMY_MAX);
+}
+
+static void icon_draw_rect_input_icon(const rctf *rect,
+                                      const int icon,
+                                      const float aspect,
+                                      const float alpha,
+                                      const bool inverted,
+                                      const int icon_bg = ICON_KEY_EMPTY1)
+{
+  icon_draw_icon(rect, icon_bg, aspect, alpha, inverted);
+  icon_draw_icon(rect, icon, aspect, alpha, false);
 }
 
 float ui_event_icon_offset(const int icon_id)
@@ -138,29 +151,32 @@ float ui_event_icon_offset(const int icon_id)
            ICON_EVENT_DEL,
            ICON_EVENT_HOME,
            ICON_EVENT_END,
+           ICON_EVENT_PAGEUP,
+           ICON_EVENT_PAGEDOWN,
            ICON_EVENT_BACKSPACE,
            ICON_EVENT_PAUSE,
            ICON_EVENT_INSERT,
+           ICON_EVENT_HYPER,
            ICON_EVENT_APP))
   {
-    return 1.5f;
+    return 1.07f;
   }
   if (icon_id >= ICON_EVENT_PAD0 && icon_id <= ICON_EVENT_PADPERIOD) {
-    return 1.5f;
+    return 1.07f;
   }
   if (icon_id >= ICON_EVENT_F10 && icon_id <= ICON_EVENT_F24) {
-    return 1.5f;
+    return 1.07f;
   }
   if (platform != MACOS && ELEM(icon_id, ICON_EVENT_CTRL, ICON_EVENT_ALT, ICON_EVENT_OS)) {
-    return 1.5f;
+    return 1.07f;
   }
   if (icon_id == ICON_EVENT_OS && platform != MACOS && platform != MSWIN) {
-    return 1.5f;
+    return 1.07f;
   }
   if (icon_id == ICON_EVENT_SPACEKEY) {
-    return 3.0f;
+    return 2.42f;
   }
-  return 0.0f;
+  return -0.4f;
 }
 
 void icon_draw_rect_input(const float x,
@@ -194,10 +210,10 @@ void icon_draw_rect_input(const float x,
       ;
 
   const float offset = ui_event_icon_offset(icon_id);
-  if (offset >= 3.0f) {
+  if (offset >= 2.0f) {
     rect.xmax = rect.xmin + BLI_rctf_size_x(&rect) * 2.0f;
   }
-  else if (offset >= 1.5f) {
+  else if (offset >= 1.0f) {
     rect.xmax = rect.xmin + BLI_rctf_size_x(&rect) * 1.5f;
   }
 
@@ -211,7 +227,7 @@ void icon_draw_rect_input(const float x,
   }
   else if ((icon_id >= ICON_EVENT_F1) && (icon_id <= ICON_EVENT_F24)) {
     char str[4];
-    SNPRINTF(str, "F%d", 1 + (icon_id - ICON_EVENT_F1));
+    SNPRINTF_UTF8(str, "F%d", 1 + (icon_id - ICON_EVENT_F1));
     icon_draw_rect_input_text(&rect,
                               str,
                               aspect,
@@ -249,6 +265,9 @@ void icon_draw_rect_input(const float x,
       icon_draw_rect_input_text(&rect, IFACE_("OS"), aspect, alpha, inverted, ICON_KEY_EMPTY2);
     }
   }
+  else if (icon_id == ICON_EVENT_HYPER) {
+    icon_draw_rect_input_text(&rect, IFACE_("Hyp"), aspect, alpha, inverted, ICON_KEY_EMPTY2);
+  }
   else if (icon_id == ICON_EVENT_DEL) {
     icon_draw_rect_input_text(&rect, IFACE_("Del"), aspect, alpha, inverted, ICON_KEY_EMPTY2);
   }
@@ -256,7 +275,12 @@ void icon_draw_rect_input(const float x,
     icon_draw_icon(&rect, ICON_KEY_TAB, aspect, alpha, inverted);
   }
   else if (icon_id == ICON_EVENT_HOME) {
-    icon_draw_rect_input_text(&rect, IFACE_("Home"), aspect, alpha, inverted, ICON_KEY_EMPTY2);
+    icon_draw_rect_input_text(&rect,
+                              CTX_IFACE_(BLT_I18NCONTEXT_UI_EVENTS, "Home"),
+                              aspect,
+                              alpha,
+                              inverted,
+                              ICON_KEY_EMPTY2);
   }
   else if (icon_id == ICON_EVENT_END) {
     icon_draw_rect_input_text(&rect, IFACE_("End"), aspect, alpha, inverted, ICON_KEY_EMPTY2);
@@ -268,10 +292,12 @@ void icon_draw_rect_input(const float x,
     icon_draw_rect_input_text(&rect, IFACE_("Esc"), aspect, alpha, inverted, ICON_KEY_EMPTY2);
   }
   else if (icon_id == ICON_EVENT_PAGEUP) {
-    icon_draw_rect_input_text(&rect, "P" BLI_STR_UTF8_UPWARDS_ARROW, aspect, alpha, inverted);
+    icon_draw_rect_input_text(
+        &rect, "Pg" BLI_STR_UTF8_UPWARDS_ARROW, aspect, alpha, inverted, ICON_KEY_EMPTY2);
   }
   else if (icon_id == ICON_EVENT_PAGEDOWN) {
-    icon_draw_rect_input_text(&rect, "P" BLI_STR_UTF8_DOWNWARDS_ARROW, aspect, alpha, inverted);
+    icon_draw_rect_input_text(
+        &rect, "Pg" BLI_STR_UTF8_DOWNWARDS_ARROW, aspect, alpha, inverted, ICON_KEY_EMPTY2);
   }
   else if (icon_id == ICON_EVENT_LEFT_ARROW) {
     icon_draw_rect_input_text(&rect, BLI_STR_UTF8_LEFTWARDS_ARROW, aspect, alpha, inverted);
@@ -317,7 +343,7 @@ void icon_draw_rect_input(const float x,
   }
   else if ((icon_id >= ICON_EVENT_PAD0) && (icon_id <= ICON_EVENT_PAD9)) {
     char str[5];
-    SNPRINTF(
+    SNPRINTF_UTF8(
         str, "%s%i", BLI_STR_UTF8_SQUARE_WITH_ORTHOGONAL_CROSSHATCH, icon_id - ICON_EVENT_PAD0);
     icon_draw_rect_input_text(&rect, str, aspect, alpha, inverted, ICON_KEY_EMPTY2);
   }
@@ -453,21 +479,30 @@ void icon_draw_rect_input(const float x,
   else if (icon_id == ICON_EVENT_RIGHTBRACKET) {
     icon_draw_rect_input_text(&rect, "]", aspect, alpha, inverted);
   }
+  else if (icon_id == ICON_EVENT_PAD_PAN) {
+    icon_draw_rect_input_icon(&rect, ICON_GESTURE_PAN, aspect, alpha, inverted);
+  }
+  else if (icon_id == ICON_EVENT_PAD_ROTATE) {
+    icon_draw_rect_input_icon(&rect, ICON_GESTURE_ROTATE, aspect, alpha, inverted);
+  }
+  else if (icon_id == ICON_EVENT_PAD_ZOOM) {
+    icon_draw_rect_input_icon(&rect, ICON_GESTURE_ZOOM, aspect, alpha, inverted);
+  }
   else if (icon_id >= ICON_EVENT_NDOF_BUTTON_V1 && icon_id <= ICON_EVENT_NDOF_BUTTON_MINUS) {
     if (/* `(icon_id >= ICON_EVENT_NDOF_BUTTON_V1) &&` */ (icon_id <= ICON_EVENT_NDOF_BUTTON_V3)) {
       char str[7];
-      SNPRINTF(str, "v%i", (icon_id + 1) - ICON_EVENT_NDOF_BUTTON_V1);
+      SNPRINTF_UTF8(str, "v%i", (icon_id + 1) - ICON_EVENT_NDOF_BUTTON_V1);
       icon_draw_rect_input_text(&rect, str, aspect, alpha, inverted, ICON_KEY_RING);
     }
     if ((icon_id >= ICON_EVENT_NDOF_BUTTON_SAVE_V1) && (icon_id <= ICON_EVENT_NDOF_BUTTON_SAVE_V3))
     {
       char str[7];
-      SNPRINTF(str, "s%i", (icon_id + 1) - ICON_EVENT_NDOF_BUTTON_SAVE_V1);
+      SNPRINTF_UTF8(str, "s%i", (icon_id + 1) - ICON_EVENT_NDOF_BUTTON_SAVE_V1);
       icon_draw_rect_input_text(&rect, str, aspect, alpha, inverted, ICON_KEY_RING);
     }
     else if ((icon_id >= ICON_EVENT_NDOF_BUTTON_1) && (icon_id <= ICON_EVENT_NDOF_BUTTON_12)) {
       char str[7];
-      SNPRINTF(str, "%i", (1 + icon_id) - ICON_EVENT_NDOF_BUTTON_1);
+      SNPRINTF_UTF8(str, "%i", (1 + icon_id) - ICON_EVENT_NDOF_BUTTON_1);
       icon_draw_rect_input_text(&rect, str, aspect, alpha, inverted, ICON_KEY_RING);
     }
     else if (icon_id == ICON_EVENT_NDOF_BUTTON_MENU) {

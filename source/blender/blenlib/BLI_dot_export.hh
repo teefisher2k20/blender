@@ -2,14 +2,16 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#pragma once
-
-/**
+/** \file
+ * \ingroup bli
+ *
  * Language grammar: https://www.graphviz.org/doc/info/lang.html
  * Attributes: https://www.graphviz.org/doc/info/attrs.html
  * Node Shapes: https://www.graphviz.org/doc/info/shapes.html
  * Preview: https://dreampuf.github.io/GraphvizOnline
  */
+
+#pragma once
 
 #include "BLI_map.hh"
 #include "BLI_set.hh"
@@ -21,7 +23,7 @@
 #include <iosfwd>
 #include <optional>
 
-namespace blender::dot {
+namespace blender::dot_export {
 
 class Graph;
 class DirectedGraph;
@@ -64,7 +66,6 @@ class Graph {
  public:
   Attributes attributes;
 
- public:
   Node &new_node(StringRef label);
   Cluster &new_cluster(StringRef label = "");
 
@@ -93,7 +94,6 @@ class Cluster {
 
   Cluster(Graph &graph) : graph_(graph) {}
 
- public:
   void export__declare_nodes_and_clusters(std::stringstream &ss) const;
 
   std::string name() const
@@ -129,7 +129,6 @@ class Node {
 
   Node(Graph &graph) : graph_(graph) {}
 
- public:
   void set_parent_cluster(Cluster *cluster);
   void set_parent_cluster(Cluster &cluster)
   {
@@ -203,7 +202,6 @@ class Edge : blender::NonCopyable, blender::NonMovable {
  public:
   Attributes attributes;
 
- public:
   Edge(NodePort a, NodePort b) : a_(std::move(a)), b_(std::move(b)) {}
 
   void set_arrowhead(Attr_arrowType type)
@@ -297,4 +295,4 @@ class NodeWithSocketsRef {
   }
 };
 
-}  // namespace blender::dot
+}  // namespace blender::dot_export

@@ -6,16 +6,13 @@
  * \ingroup edphys
  */
 
-#include <cmath>
-#include <cstdio>
 #include <cstring>
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
-#include "BLI_string.h"
+#include "BLI_path_utils.hh"
+#include "BLI_string_utf8.h"
 #include "BLI_time.h"
-#include "BLI_utildefines.h"
 
 #include "BLT_translation.hh"
 
@@ -24,6 +21,7 @@
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 
+#include "BKE_attribute.h"
 #include "BKE_attribute.hh"
 #include "BKE_context.hh"
 #include "BKE_deform.hh"
@@ -52,10 +50,10 @@
 
 #include "physics_intern.hh" /* own include */
 
-static int surface_slot_add_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus surface_slot_add_exec(bContext *C, wmOperator * /*op*/)
 {
   DynamicPaintModifierData *pmd = nullptr;
-  Object *cObject = blender::ed::object::context_object(C);
+  Object *cObject = blender::ed::object::context_active_object(C);
   DynamicPaintCanvasSettings *canvas;
   DynamicPaintSurface *surface;
 
@@ -87,7 +85,7 @@ void DPAINT_OT_surface_slot_add(wmOperatorType *ot)
   ot->idname = "DPAINT_OT_surface_slot_add";
   ot->description = "Add a new Dynamic Paint surface slot";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = surface_slot_add_exec;
   ot->poll = ED_operator_object_active_local_editable;
 
@@ -95,10 +93,10 @@ void DPAINT_OT_surface_slot_add(wmOperatorType *ot)
   ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
 }
 
-static int surface_slot_remove_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus surface_slot_remove_exec(bContext *C, wmOperator * /*op*/)
 {
   DynamicPaintModifierData *pmd = nullptr;
-  Object *obj_ctx = blender::ed::object::context_object(C);
+  Object *obj_ctx = blender::ed::object::context_active_object(C);
   DynamicPaintCanvasSettings *canvas;
   DynamicPaintSurface *surface;
   int id = 0;
@@ -135,7 +133,7 @@ void DPAINT_OT_surface_slot_remove(wmOperatorType *ot)
   ot->idname = "DPAINT_OT_surface_slot_remove";
   ot->description = "Remove the selected surface slot";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = surface_slot_remove_exec;
   ot->poll = ED_operator_object_active_local_editable;
 
@@ -143,10 +141,10 @@ void DPAINT_OT_surface_slot_remove(wmOperatorType *ot)
   ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
 }
 
-static int type_toggle_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus type_toggle_exec(bContext *C, wmOperator *op)
 {
 
-  Object *cObject = blender::ed::object::context_object(C);
+  Object *cObject = blender::ed::object::context_active_object(C);
   Scene *scene = CTX_data_scene(C);
   DynamicPaintModifierData *pmd = (DynamicPaintModifierData *)BKE_modifiers_findby_type(
       cObject, eModifierType_DynamicPaint);
@@ -187,7 +185,7 @@ void DPAINT_OT_type_toggle(wmOperatorType *ot)
   ot->idname = "DPAINT_OT_type_toggle";
   ot->description = "Toggle whether given type is active or not";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = type_toggle_exec;
   ot->poll = ED_operator_object_active_local_editable;
 
@@ -205,9 +203,9 @@ void DPAINT_OT_type_toggle(wmOperatorType *ot)
   ot->prop = prop;
 }
 
-static int output_toggle_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus output_toggle_exec(bContext *C, wmOperator *op)
 {
-  Object *ob = blender::ed::object::context_object(C);
+  Object *ob = blender::ed::object::context_active_object(C);
   DynamicPaintSurface *surface;
   DynamicPaintModifierData *pmd = (DynamicPaintModifierData *)BKE_modifiers_findby_type(
       ob, eModifierType_DynamicPaint);
@@ -272,7 +270,7 @@ void DPAINT_OT_output_toggle(wmOperatorType *ot)
   ot->idname = "DPAINT_OT_output_toggle";
   ot->description = "Add or remove Dynamic Paint output data layer";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = output_toggle_exec;
   ot->poll = ED_operator_object_active_local_editable;
 
@@ -319,23 +317,22 @@ static void dpaint_bake_endjob(void *customdata)
   dynamicPaint_freeSurfaceData(job->surface);
 
   G.is_rendering = false;
-  BKE_spacedata_draw_locks(false);
 
-  WM_set_locked_interface(static_cast<wmWindowManager *>(G_MAIN->wm.first), false);
+  WM_locked_interface_set(static_cast<wmWindowManager *>(G_MAIN->wm.first), false);
 
   /* Bake was successful:
    * Report for ended bake and how long it took */
   if (job->success) {
     /* Show bake info */
-    WM_reportf(
+    WM_global_reportf(
         RPT_INFO, "DynamicPaint: Bake complete! (%.2f)", BLI_time_now_seconds() - job->start);
   }
   else {
     if (strlen(canvas->error)) { /* If an error occurred */
-      WM_reportf(RPT_ERROR, "DynamicPaint: Bake failed: %s", canvas->error);
+      WM_global_reportf(RPT_ERROR, "DynamicPaint: Bake failed: %s", canvas->error);
     }
     else { /* User canceled the bake */
-      WM_report(RPT_WARNING, "Baking canceled!");
+      WM_global_report(RPT_WARNING, "Baking canceled!");
     }
   }
 }
@@ -356,7 +353,7 @@ static void dynamicPaint_bakeImageSequence(DynamicPaintBakeJob *job)
 
   frames = surface->end_frame - surface->start_frame + 1;
   if (frames <= 0) {
-    STRNCPY(canvas->error, N_("No frames to bake"));
+    STRNCPY_UTF8(canvas->error, N_("No frames to bake"));
     return;
   }
 
@@ -366,7 +363,7 @@ static void dynamicPaint_bakeImageSequence(DynamicPaintBakeJob *job)
   /* Set frame to start point (also initializes modifier data). */
   frame = surface->start_frame;
   orig_frame = input_scene->r.cfra;
-  input_scene->r.cfra = int(frame);
+  input_scene->r.cfra = frame;
   ED_update_for_newframe(job->bmain, job->depsgraph);
 
   /* Init surface */
@@ -392,7 +389,7 @@ static void dynamicPaint_bakeImageSequence(DynamicPaintBakeJob *job)
     *(job->progress) = progress;
 
     /* calculate a frame */
-    input_scene->r.cfra = int(frame);
+    input_scene->r.cfra = frame;
     ED_update_for_newframe(job->bmain, job->depsgraph);
     if (!dynamicPaint_calculateFrame(surface, job->depsgraph, scene, cObject, frame)) {
       job->success = 0;
@@ -448,7 +445,7 @@ static void dpaint_bake_startjob(void *customdata, wmJobWorkerStatus *worker_sta
    * scene frame in separate threads
    */
   G.is_rendering = true;
-  BKE_spacedata_draw_locks(true);
+  BKE_spacedata_draw_locks(REGION_DRAW_LOCK_BAKING);
 
   dynamicPaint_bakeImageSequence(job);
 
@@ -459,11 +456,11 @@ static void dpaint_bake_startjob(void *customdata, wmJobWorkerStatus *worker_sta
 /*
  * Bake Dynamic Paint image sequence surface
  */
-static int dynamicpaint_bake_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus dynamicpaint_bake_exec(bContext *C, wmOperator *op)
 {
   Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
-  Object *ob_ = blender::ed::object::context_object(C);
-  Object *object_eval = DEG_get_evaluated_object(depsgraph, ob_);
+  Object *ob_ = blender::ed::object::context_active_object(C);
+  Object *object_eval = DEG_get_evaluated(depsgraph, ob_);
   Scene *scene_eval = DEG_get_evaluated_scene(depsgraph);
 
   DynamicPaintSurface *surface;
@@ -490,8 +487,7 @@ static int dynamicpaint_bake_exec(bContext *C, wmOperator *op)
   canvas->error[0] = '\0';
   canvas->flags |= MOD_DPAINT_BAKING;
 
-  DynamicPaintBakeJob *job = static_cast<DynamicPaintBakeJob *>(
-      MEM_mallocN(sizeof(DynamicPaintBakeJob), "DynamicPaintBakeJob"));
+  DynamicPaintBakeJob *job = MEM_mallocN<DynamicPaintBakeJob>("DynamicPaintBakeJob");
   job->bmain = CTX_data_main(C);
   job->scene = scene_eval;
   job->depsgraph = depsgraph;
@@ -502,7 +498,7 @@ static int dynamicpaint_bake_exec(bContext *C, wmOperator *op)
   wmJob *wm_job = WM_jobs_get(CTX_wm_manager(C),
                               CTX_wm_window(C),
                               CTX_data_scene(C),
-                              "Dynamic Paint Bake",
+                              "Baking Dynamic Paint...",
                               WM_JOB_PROGRESS,
                               WM_JOB_TYPE_DPAINT_BAKE);
 
@@ -510,7 +506,7 @@ static int dynamicpaint_bake_exec(bContext *C, wmOperator *op)
   WM_jobs_timer(wm_job, 0.1, NC_OBJECT | ND_MODIFIER, NC_OBJECT | ND_MODIFIER);
   WM_jobs_callbacks(wm_job, dpaint_bake_startjob, nullptr, nullptr, dpaint_bake_endjob);
 
-  WM_set_locked_interface(CTX_wm_manager(C), true);
+  WM_locked_interface_set_with_flags(CTX_wm_manager(C), REGION_DRAW_LOCK_BAKING);
 
   /* Bake Dynamic Paint */
   WM_jobs_start(CTX_wm_manager(C), wm_job);
@@ -525,7 +521,7 @@ void DPAINT_OT_bake(wmOperatorType *ot)
   ot->description = "Bake dynamic paint image sequence surface";
   ot->idname = "DPAINT_OT_bake";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = dynamicpaint_bake_exec;
   ot->poll = ED_operator_object_active_local_editable;
 }

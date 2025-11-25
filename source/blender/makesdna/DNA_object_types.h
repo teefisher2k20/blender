@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include "BLI_utildefines.h"
+#include "BLI_enum_flags.hh"
 
 #include "DNA_object_enums.h"
 
@@ -42,7 +42,7 @@ struct BoundBox;
 struct Collection;
 struct Curve;
 struct FluidsimSettings;
-struct Ipo;
+struct ImageUser;
 struct LightgroupMembership;
 struct Material;
 struct Object;
@@ -56,8 +56,7 @@ struct bGPdata;
 /** Vertex Groups - Name Info */
 typedef struct bDeformGroup {
   struct bDeformGroup *next, *prev;
-  /** MAX_VGROUP_NAME. */
-  char name[64];
+  char name[/*MAX_VGROUP_NAME*/ 64];
   /* need this flag for locking weights */
   char flag, _pad0[7];
 } bDeformGroup;
@@ -65,8 +64,7 @@ typedef struct bDeformGroup {
 #ifdef DNA_DEPRECATED_ALLOW
 typedef struct bFaceMap {
   struct bFaceMap *next, *prev;
-  /** MAX_VGROUP_NAME. */
-  char name[64];
+  char name[/*MAX_VGROUP_NAME*/ 64];
   char flag;
   char _pad0[7];
 } bFaceMap;
@@ -128,7 +126,7 @@ enum eObjectLineArt_Usage {
   OBJECT_LRT_NO_INTERSECTION = (1 << 4),
   OBJECT_LRT_FORCE_INTERSECTION = (1 << 5),
 };
-ENUM_OPERATORS(eObjectLineArt_Usage, OBJECT_LRT_FORCE_INTERSECTION);
+ENUM_OPERATORS(eObjectLineArt_Usage);
 
 enum eObjectLineArt_Flags {
   OBJECT_LRT_OWN_CREASE = (1 << 0),
@@ -191,16 +189,15 @@ typedef struct LightLinking {
 } LightLinking;
 
 typedef struct Object {
+#ifdef __cplusplus
   DNA_DEFINE_CXX_METHODS(Object)
+  /** See #ID_Type comment for why this is here. */
+  static constexpr ID_Type id_type = ID_OB;
+#endif
 
   ID id;
   /** Animation data (must be immediately after id for utilities to use it). */
   struct AnimData *adt;
-  /**
-   * Engines draw data, must be immediately after AnimData. See IdDdtTemplate and
-   * DRW_drawdatalist_from_id to understand this requirement.
-   */
-  struct DrawDataList drawdata;
 
   struct SculptSession *sculpt;
 
@@ -208,17 +205,14 @@ typedef struct Object {
   short partype;
   /** Can be vertex indices. */
   int par1, par2, par3;
-  /** String describing sub-object info, `MAX_ID_NAME - 2`. */
-  char parsubstr[64];
+  /** String describing sub-object info. */
+  char parsubstr[/*MAX_NAME*/ 64];
   struct Object *parent, *track;
   /* Proxy pointer are deprecated, only kept for conversion to liboverrides. */
   struct Object *proxy DNA_DEPRECATED;
   struct Object *proxy_group DNA_DEPRECATED;
   struct Object *proxy_from DNA_DEPRECATED;
-  /** Old animation system, deprecated for 2.5. */
-  struct Ipo *ipo DNA_DEPRECATED;
   // struct Path *path;
-  struct bAction *action DNA_DEPRECATED;  /* XXX deprecated... old animation system */
   struct bAction *poselib DNA_DEPRECATED; /* Pre-Blender 3.0 pose library, deprecated in 3.5. */
   /** Pose data, armature objects only. */
   struct bPose *pose;
@@ -233,12 +227,10 @@ typedef struct Object {
   bAnimVizSettings avs;
   /** Motion path cache for this object. */
   bMotionPath *mpath;
-  void *_pad0;
 
-  ListBase constraintChannels DNA_DEPRECATED; /* XXX deprecated... old animation system */
-  ListBase effect DNA_DEPRECATED;             /* XXX deprecated... keep for readfile */
-  ListBase defbase DNA_DEPRECATED;            /* Only for versioning, moved to object data. */
-  ListBase fmaps DNA_DEPRECATED;              /* For versioning, moved to generic attributes. */
+  ListBase effect DNA_DEPRECATED;  /* XXX deprecated... keep for readfile */
+  ListBase defbase DNA_DEPRECATED; /* Only for versioning, moved to object data. */
+  ListBase fmaps DNA_DEPRECATED;   /* For versioning, moved to generic attributes. */
   /** List of ModifierData structures. */
   ListBase modifiers;
   /** List of GpencilModifierData structures. */
@@ -257,7 +249,7 @@ typedef struct Object {
   char *matbits;
   /** Copy of mesh, curve & meta struct member of same name (keep in sync). */
   int totcol;
-  /** Currently selected material in the UI. */
+  /** Currently selected material in the UI (one-based). */
   int actcol;
 
   /* rot en drot have to be together! (transform('r' en 's')) */
@@ -349,8 +341,7 @@ typedef struct Object {
 
   /** Object constraints. */
   ListBase constraints;
-  ListBase nlastrips DNA_DEPRECATED; /* XXX deprecated... old animation system */
-  ListBase hooks DNA_DEPRECATED;     /* XXX deprecated... old animation system */
+  ListBase hooks DNA_DEPRECATED;
   /** Particle systems. */
   ListBase particlesystem;
 
@@ -382,7 +373,10 @@ typedef struct Object {
 
   /** ObjectModifierFlag */
   uint8_t modifier_flag;
-  char _pad8[4];
+
+  float shadow_terminator_normal_offset;
+  float shadow_terminator_geometry_offset;
+  float shadow_terminator_shading_offset;
 
   struct PreviewImage *preview;
 
@@ -419,8 +413,7 @@ typedef struct ObHook {
   /** If not zero, falloff is distance where influence zero. */
   float falloff;
 
-  /** MAX_NAME. */
-  char name[64];
+  char name[/*MAX_NAME*/ 64];
 
   int *indexar;
   /** Curindex is cache for fast lookup. */
@@ -478,7 +471,7 @@ typedef enum ObjectType {
 /* check if the object type supports materials */
 #define OB_TYPE_SUPPORT_MATERIAL(_type) \
   (((_type) >= OB_MESH && (_type) <= OB_MBALL) || \
-   ((_type) >= OB_GPENCIL_LEGACY && (_type) <= OB_GREASE_PENCIL))
+   ((_type) >= OB_CURVES && (_type) <= OB_GREASE_PENCIL))
 /**
  * Does the object have some render-able geometry (unlike empties, cameras, etc.). True for
  * #OB_CURVES_LEGACY, since these often evaluate to objects with geometry.
@@ -489,14 +482,12 @@ typedef enum ObjectType {
         OB_SURF, \
         OB_FONT, \
         OB_MBALL, \
-        OB_GPENCIL_LEGACY, \
         OB_CURVES_LEGACY, \
         OB_CURVES, \
         OB_POINTCLOUD, \
         OB_VOLUME, \
         OB_GREASE_PENCIL))
-#define OB_TYPE_SUPPORT_VGROUP(_type) \
-  (ELEM(_type, OB_MESH, OB_LATTICE, OB_GPENCIL_LEGACY, OB_GREASE_PENCIL))
+#define OB_TYPE_SUPPORT_VGROUP(_type) (ELEM(_type, OB_MESH, OB_LATTICE, OB_GREASE_PENCIL))
 #define OB_TYPE_SUPPORT_EDITMODE(_type) \
   (ELEM(_type, \
         OB_MESH, \
@@ -579,6 +570,8 @@ enum {
   OB_TRANSFLAG_UNUSED_12 = 1 << 12, /* cleared */
   /* runtime constraints disable */
   OB_NO_CONSTRAINTS = 1 << 13,
+  /* when calculating vertex parent position, ignore CD_ORIGINDEX layer */
+  OB_PARENT_USE_FINAL_INDICES = 1 << 14,
 
   OB_DUPLI = OB_DUPLIVERTS | OB_DUPLICOLLECTION | OB_DUPLIFACES | OB_DUPLIPARTS,
 };
@@ -677,9 +670,8 @@ enum {
   /** Unknown state, clear before use. */
   OB_DONE = 1 << 10,
   OB_FLAG_USE_SIMULATION_CACHE = 1 << 11,
-#ifdef DNA_DEPRECATED_ALLOW
-  OB_FLAG_UNUSED_12 = 1 << 12, /* cleared */
-#endif
+  /** Used for the clipboard to mark the active object. */
+  OB_FLAG_ACTIVE_CLIPBOARD = 1 << 12,
 };
 
 /** #Object.visibility_flag */
@@ -698,6 +690,7 @@ enum {
   OB_HIDE_PROBE_VOLUME = 1 << 11,
   OB_HIDE_PROBE_CUBEMAP = 1 << 12,
   OB_HIDE_PROBE_PLANAR = 1 << 13,
+  OB_HIDE_SURFACE_PICK = 1 << 14,
 };
 
 /** #Object.shapeflag */

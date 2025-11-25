@@ -13,29 +13,62 @@
 
 namespace blender::bke::curves::poly {
 
-static float3 direction_bisect(const float3 &prev,
-                               const float3 &middle,
-                               const float3 &next,
-                               bool &r_used_fallback)
+static bool delta_dir(const float3 &pos, const float3 &next, float3 &r_delta_dir)
 {
-  const float epsilon = 1e-6f;
-  const bool prev_equal = math::almost_equal_relative(prev, middle, epsilon);
-  const bool next_equal = math::almost_equal_relative(middle, next, epsilon);
-  if (prev_equal && next_equal) {
-    r_used_fallback = true;
-    return {0.0f, 0.0f, 0.0f};
+  const float epsilon = 1.0e-9f;
+
+  const float3 delta = next - pos;
+  const float norm = math::length(delta);
+  if (UNLIKELY(norm < epsilon)) {
+    return false;
   }
-  if (prev_equal) {
-    return math::normalize(next - middle);
-  }
-  if (next_equal) {
-    return math::normalize(middle - prev);
+  r_delta_dir = delta / norm;
+  return true;
+}
+
+/**
+ * Computes an approximate tangent from the normalized sum from
+ * the direction vectors to neighboring points on the curve.
+ */
+static float3 direction_bisect(const float3 &pos,
+                               const float3 &next,
+                               float3 &other_dir,
+                               bool &is_equal)
+{
+  const float epsilon = 1.0e-9f;
+  const bool prev_equal = is_equal;
+
+  const float3 next_delta = next - pos;
+  const float next_norm = math::length(next_delta);
+  is_equal = next_norm < epsilon;
+  if (UNLIKELY(is_equal)) {
+    /* Return the direction relative the 'previous' point. If 'prev_equal' is true, this
+     * will return the direction of the last non-zero segment.
+     */
+    return other_dir;
   }
 
-  const float3 dir_prev = math::normalize(middle - prev);
-  const float3 dir_next = math::normalize(next - middle);
-  const float3 result = math::normalize(dir_prev + dir_next);
-  return result;
+  const float3 prev_dir = other_dir;
+  other_dir = next_delta / next_norm;
+  if (UNLIKELY(prev_equal)) {
+    /* Return the direction of the next segment as previous direction is not an adjacent segment!
+     */
+    return other_dir;
+  }
+  const float3 tangent = prev_dir + other_dir;
+  const float norm = math::length(tangent);
+  if (norm < 0.6627619f) { /* Approximates angle between segments < 45°) */
+    if (norm < 2e-7) {     /* Approximately < sin(1e-5) */
+      return other_dir;
+    }
+    /* Compute using the cross product, as catastrophic cancellation occurs in `tangent`
+     * when the sum approaches 0, leading to significant numerical errors (see #146332).
+     */
+    const float3 binormal = math::cross(other_dir, prev_dir);
+    const float3 normal = other_dir - prev_dir;
+    return math::normalize(math::cross(binormal, normal));
+  }
+  return tangent / norm;
 }
 
 void calculate_tangents(const Span<float3> positions,
@@ -44,75 +77,49 @@ void calculate_tangents(const Span<float3> positions,
 {
   BLI_assert(positions.size() == tangents.size());
 
+  if (positions.is_empty()) {
+    return;
+  }
+
   if (positions.size() == 1) {
     tangents.first() = float3(0.0f, 0.0f, 1.0f);
     return;
   }
 
-  bool used_fallback = false;
-
-  for (const int i : IndexRange(1, positions.size() - 2)) {
-    tangents[i] = direction_bisect(
-        positions[i - 1], positions[i], positions[i + 1], used_fallback);
-  }
-
-  if (is_cyclic) {
-    const float3 &second_to_last = positions[positions.size() - 2];
-    const float3 &last = positions.last();
-    const float3 &first = positions.first();
-    const float3 &second = positions[1];
-    tangents.first() = direction_bisect(last, first, second, used_fallback);
-    tangents.last() = direction_bisect(second_to_last, last, first, used_fallback);
-  }
-  else {
-    const float epsilon = 1e-6f;
-    if (math::almost_equal_relative(positions[0], positions[1], epsilon)) {
-      tangents.first() = {0.0f, 0.0f, 0.0f};
-      used_fallback = true;
-    }
-    else {
-      tangents.first() = math::normalize(positions[1] - positions[0]);
-    }
-    if (math::almost_equal_relative(positions.last(0), positions.last(1), epsilon)) {
-      tangents.last() = {0.0f, 0.0f, 0.0f};
-      used_fallback = true;
-    }
-    else {
-      tangents.last() = math::normalize(positions.last(0) - positions.last(1));
-    }
-  }
-
-  if (!used_fallback) {
-    return;
-  }
-
-  /* Find the first tangent that does not use the fallback. */
-  int first_valid_tangent_index = -1;
-  for (const int i : tangents.index_range()) {
-    if (!math::is_zero(tangents[i])) {
-      first_valid_tangent_index = i;
+  /* Find an initial valid tangent. */
+  int first_valid_index = -1;
+  for (const int i : IndexRange(0, positions.size() - 1)) {
+    if (delta_dir(positions[i], positions[i + 1], tangents[i])) {
+      first_valid_index = i;
       break;
     }
   }
-  if (first_valid_tangent_index == -1) {
+
+  if (first_valid_index == -1) {
     /* If all tangents used the fallback, it means that all positions are (almost) the same. Just
      * use the up-vector as default tangent. */
     const float3 up_vector{0.0f, 0.0f, 1.0f};
     tangents.fill(up_vector);
+    return;
   }
-  else {
-    const float3 &first_valid_tangent = tangents[first_valid_tangent_index];
-    /* If the first few tangents are invalid, use the tangent from the first point with a valid
-     * tangent. */
-    tangents.take_front(first_valid_tangent_index).fill(first_valid_tangent);
-    /* Use the previous valid tangent for points that had no valid tangent. */
-    for (const int i : tangents.index_range().drop_front(first_valid_tangent_index + 1)) {
-      float3 &tangent = tangents[i];
-      if (math::is_zero(tangent)) {
-        const float3 &prev_tangent = tangents[i - 1];
-        tangent = prev_tangent;
-      }
-    }
+  if (first_valid_index > 0) {
+    tangents.slice(0, first_valid_index).fill(tangents[first_valid_index]);
+  }
+
+  /* Calculate curve tangents using the delta from previous iteration(s). */
+  float3 prev_delta = tangents[first_valid_index];
+  bool prev_equal = false;
+  for (const int i : positions.index_range().drop_front(first_valid_index + 1).drop_back(1)) {
+    tangents[i] = direction_bisect(positions[i], positions[i + 1], prev_delta, prev_equal);
+  }
+
+  if (is_cyclic) {
+    const float3 &first = positions.first();
+    tangents.last() = direction_bisect(positions.last(), first, prev_delta, prev_equal);
+    tangents.first() = direction_bisect(first, positions[1], prev_delta, prev_equal);
+  }
+  else if (!delta_dir(positions.last(1), positions.last(), tangents.last())) {
+    tangents.last() = prev_delta;
   }
 }
 
@@ -149,7 +156,7 @@ static float3 calculate_next_normal(const float3 &last_normal,
     if (LIKELY(!math::is_zero(axis))) {
       /* The iterative process here (computing the current normal by rotating the previous one) can
        * accumulate small floating point errors, leading to 'not enough' normalized results at some
-       * point (see #121169).  */
+       * point (see #121169). */
       return math::normalize(math::rotate_direction_around_axis(last_normal, axis, angle));
     }
   }

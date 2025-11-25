@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bli
+ */
+
 #include "BLI_color.hh"
 
 #include <ostream>
@@ -54,11 +58,15 @@ template std::ostream &operator<<(
     std::ostream &stream, const ColorRGBA<float, eSpace::SceneLinear, eAlpha::Premultiplied> &c);
 template std::ostream &operator<<(
     std::ostream &stream, const ColorRGBA<float, eSpace::SceneLinear, eAlpha::Straight> &c);
+template std::ostream &operator<<(std::ostream &stream,
+                                  const ColorRGBA<float, eSpace::Theme, eAlpha::Straight> &c);
 template std::ostream &operator<<(
     std::ostream &stream,
     const ColorRGBA<uint8_t, eSpace::SceneLinearByteEncoded, eAlpha::Premultiplied> &c);
 template std::ostream &operator<<(
     std::ostream &stream,
     const ColorRGBA<uint8_t, eSpace::SceneLinearByteEncoded, eAlpha::Straight> &c);
+template std::ostream &operator<<(std::ostream &stream,
+                                  const ColorRGBA<uint8_t, eSpace::Theme, eAlpha::Straight> &c);
 
 }  // namespace blender

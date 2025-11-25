@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "BKE_curves.hh"
-#include "NOD_rna_define.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
+#include "NOD_rna_define.hh"
 #include "NOD_socket_search_link.hh"
 
 #include "node_geometry_util.hh"
@@ -22,7 +22,8 @@ static void node_declare(NodeDeclarationBuilder &b)
                     .default_value(2.0f)
                     .min(0.0f)
                     .subtype(PROP_DISTANCE)
-                    .description("The X axis size of the shape");
+                    .description("The X axis size of the shape")
+                    .available(false);
   auto &height = b.add_input<decl::Float>("Height")
                      .default_value(2.0f)
                      .min(0.0f)
@@ -118,12 +119,12 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "mode", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "mode", UI_ITEM_NONE, "", ICON_NONE);
 }
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
 {
-  NodeGeometryCurvePrimitiveQuad *data = MEM_cnew<NodeGeometryCurvePrimitiveQuad>(__func__);
+  NodeGeometryCurvePrimitiveQuad *data = MEM_callocN<NodeGeometryCurvePrimitiveQuad>(__func__);
   data->mode = GEO_NODE_CURVE_PRIMITIVE_QUAD_MODE_RECTANGLE;
   node->storage = data;
 }
@@ -320,12 +321,12 @@ static void node_register()
   ntype.geometry_node_execute = node_geo_exec;
   ntype.draw_buttons = node_layout;
   ntype.initfunc = node_init;
-  blender::bke::node_type_storage(&ntype,
+  blender::bke::node_type_storage(ntype,
                                   "NodeGeometryCurvePrimitiveQuad",
                                   node_free_standard_storage,
                                   node_copy_standard_storage);
   ntype.gather_link_search_ops = node_gather_link_searches;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

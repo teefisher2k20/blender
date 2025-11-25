@@ -7,9 +7,9 @@ set(SHADERC_EXTRA_ARGS
   -DSHADERC_SPIRV_TOOLS_DIR=${BUILD_DIR}/shaderc_spirv_tools/src/external_shaderc_spirv_tools
   -DSHADERC_SPIRV_HEADERS_DIR=${BUILD_DIR}/shaderc_spirv_headers/src/external_shaderc_spirv_headers
   -DSHADERC_GLSLANG_DIR=${BUILD_DIR}/shaderc_glslang/src/external_shaderc_glslang
-  -DCMAKE_DEBUG_POSTFIX=_d
   -DPython_EXECUTABLE=${PYTHON_BINARY}
   -DPython3_EXECUTABLE=${PYTHON_BINARY}
+  -DSHADERC_ENABLE_SHARED_CRT=ON
 )
 
 ExternalProject_Add(external_shaderc
@@ -17,6 +17,7 @@ ExternalProject_Add(external_shaderc
   URL_HASH ${SHADERC_HASH_TYPE}=${SHADERC_HASH}
   DOWNLOAD_DIR ${DOWNLOAD_DIR}
   PREFIX ${BUILD_DIR}/shaderc
+  CMAKE_GENERATOR ${PLATFORM_ALT_GENERATOR}
 
   CMAKE_ARGS
     -DCMAKE_INSTALL_PREFIX=${LIBDIR}/shaderc
@@ -47,18 +48,6 @@ if(WIN32)
       COMMAND ${CMAKE_COMMAND} -E copy
         ${LIBDIR}/shaderc/lib/shaderc_shared.lib
         ${HARVEST_TARGET}/shaderc/lib/shaderc_shared.lib
-
-      DEPENDEES install
-    )
-  endif()
-  if(BUILD_MODE STREQUAL Debug)
-    ExternalProject_Add_Step(external_shaderc after_install
-      COMMAND ${CMAKE_COMMAND} -E copy
-        ${LIBDIR}/shaderc/bin/shaderc_shared_d.dll
-        ${HARVEST_TARGET}/shaderc/bin/shaderc_shared_d.dll
-      COMMAND ${CMAKE_COMMAND} -E copy
-        ${LIBDIR}/shaderc/lib/shaderc_shared_d.lib
-        ${HARVEST_TARGET}/shaderc/lib/shaderc_shared_d.lib
 
       DEPENDEES install
     )

@@ -20,6 +20,11 @@ ccl_device_inline float2 one_float2()
   return make_float2(1.0f, 1.0f);
 }
 
+ccl_device_template_spec float2 make_zero()
+{
+  return zero_float2();
+}
+
 #if !defined(__KERNEL_METAL__)
 ccl_device_inline float2 operator-(const float2 &a)
 {
@@ -113,6 +118,11 @@ ccl_device_inline bool operator!=(const float2 a, const float2 b)
   return !(a == b);
 }
 
+ccl_device_inline int2 operator>=(const float2 a, const float2 b)
+{
+  return make_int2(a.x >= b.x, a.y >= b.y);
+}
+
 ccl_device_inline bool is_zero(const float2 a)
 {
   return (a.x == 0.0f && a.y == 0.0f);
@@ -136,6 +146,18 @@ ccl_device_inline bool isequal(const float2 a, const float2 b)
 #else
   return a == b;
 #endif
+}
+
+template<class MaskType>
+ccl_device_inline float2 select(const MaskType mask, const float2 a, const float2 b)
+{
+  return make_float2((mask.x) ? a.x : b.x, (mask.y) ? a.y : b.y);
+}
+
+template<class MaskType> ccl_device_inline float2 mask(const MaskType mask, const float2 a)
+{
+  /* Replace elements of x with zero where mask isn't set. */
+  return select(mask, a, zero_float2());
 }
 
 ccl_device_inline float len(const float2 a)

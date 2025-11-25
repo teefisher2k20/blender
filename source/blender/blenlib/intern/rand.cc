@@ -23,7 +23,7 @@
 #include "BLI_sys_types.h"
 #include "BLI_threads.h"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 #define hash BLI_noise_hash_uchar_512
 
@@ -172,14 +172,13 @@ void BLI_bitmap_randomize(BLI_bitmap *bitmap, uint bits_num, uint seed)
 /* ********* for threaded random ************** */
 
 struct RNG_THREAD_ARRAY {
-  RNG rng_tab[BLENDER_MAX_THREADS];
+  std::array<RNG, BLENDER_MAX_THREADS> rng_tab;
 };
 
 RNG_THREAD_ARRAY *BLI_rng_threaded_new()
 {
   uint i;
-  RNG_THREAD_ARRAY *rngarr = (RNG_THREAD_ARRAY *)MEM_mallocN(sizeof(RNG_THREAD_ARRAY),
-                                                             "random_array");
+  RNG_THREAD_ARRAY *rngarr = MEM_new<RNG_THREAD_ARRAY>("random_array");
 
   for (i = 0; i < BLENDER_MAX_THREADS; i++) {
     BLI_rng_srandom(&rngarr->rng_tab[i], uint(clock()));
@@ -190,12 +189,12 @@ RNG_THREAD_ARRAY *BLI_rng_threaded_new()
 
 void BLI_rng_threaded_free(RNG_THREAD_ARRAY *rngarr)
 {
-  MEM_freeN(rngarr);
+  MEM_delete(rngarr);
 }
 
 int BLI_rng_thread_rand(RNG_THREAD_ARRAY *rngarr, int thread)
 {
-  return BLI_rng_get_int(&rngarr->rng_tab[thread]);
+  return BLI_rng_get_int(&rngarr->rng_tab[size_t(thread)]);
 }
 
 /* ********* Low-discrepancy sequences ************** */
@@ -392,12 +391,9 @@ void RandomNumberGenerator::get_bytes(MutableSpan<char> r_bytes)
   int64_t i = 0;
   while (i != trim_len) {
     BLI_assert(i < trim_len);
-#ifdef __BIG_ENDIAN__
-    for (int64_t j = (rand_stride + mask_bytes) - 1; j != mask_bytes - 1; j--)
-#else
-    for (int64_t j = 0; j != rand_stride; j++)
-#endif
-    {
+    /* NOTE: this is endianness-sensitive.
+     * Big Endian needs to iterate in reverse, with a `mask_bytes - 1` offset. */
+    for (int64_t j = 0; j != rand_stride; j++) {
       r_bytes[i++] = data_src[j];
     }
     this->step();

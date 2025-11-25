@@ -6,6 +6,8 @@
  * \ingroup bli
  */
 
+#include <algorithm>
+
 #include "BLI_array.hh"
 #include "BLI_math_base.h"
 #include "BLI_math_base.hh"
@@ -17,7 +19,7 @@
 #include "BLI_math_vector.h"
 #include "BLI_utildefines.h"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 /********************************** Polygons *********************************/
 
@@ -2311,7 +2313,7 @@ bool isect_tri_tri_v3_ex(const float tri_a[3][3],
   double isect_dir[3];
   cross_v3_v3v3_db(isect_dir, plane_a, plane_b);
   for (int i = 0; i < 2; i++) {
-    const float(*tri)[3] = i == 0 ? tri_a : tri_b;
+    const float (*tri)[3] = i == 0 ? tri_a : tri_b;
     /* Rearrange the triangle so that the vertex that is alone on one side
      * of the plane is located at index 1. */
     int tri_i[3];
@@ -3118,13 +3120,8 @@ bool isect_ray_aabb_v3(const IsectRayAABB_Precalc *data,
     return false;
   }
 
-  if (tymin > tmin) {
-    tmin = tymin;
-  }
-
-  if (tymax < tmax) {
-    tmax = tymax;
-  }
+  tmin = std::max(tymin, tmin);
+  tmax = std::min(tymax, tmax);
 
   const float tzmin = (bbox[data->sign[2]][2] - data->ray_origin[2]) * data->ray_inv_dir[2];
   const float tzmax = (bbox[1 - data->sign[2]][2] - data->ray_origin[2]) * data->ray_inv_dir[2];
@@ -3133,9 +3130,7 @@ bool isect_ray_aabb_v3(const IsectRayAABB_Precalc *data,
     return false;
   }
 
-  if (tzmin > tmin) {
-    tmin = tzmin;
-  }
+  tmin = std::max(tzmin, tmin);
 
   /* NOTE(jwilkins): tmax does not need to be updated since we don't use it
    * keeping this here for future reference. */

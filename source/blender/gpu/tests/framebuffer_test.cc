@@ -4,9 +4,14 @@
 
 #include "testing/testing.h"
 
+#include "GPU_batch.hh"
 #include "GPU_context.hh"
 #include "GPU_framebuffer.hh"
 #include "GPU_shader.hh"
+#include "GPU_state.hh"
+#include "GPU_vertex_buffer.hh"
+#include "GPU_vertex_format.hh"
+
 #include "gpu_testing.hh"
 
 #include "BLI_math_vector.hh"
@@ -19,10 +24,10 @@ static void test_framebuffer_clear_color_single_attachment()
 {
   const int2 size(1, 1);
   eGPUTextureUsage usage = GPU_TEXTURE_USAGE_ATTACHMENT | GPU_TEXTURE_USAGE_HOST_READ;
-  GPUTexture *texture = GPU_texture_create_2d(
-      __func__, UNPACK2(size), 1, GPU_RGBA32F, usage, nullptr);
+  blender::gpu::Texture *texture = GPU_texture_create_2d(
+      __func__, UNPACK2(size), 1, TextureFormat::SFLOAT_32_32_32_32, usage, nullptr);
 
-  GPUFrameBuffer *framebuffer = GPU_framebuffer_create(__func__);
+  gpu::FrameBuffer *framebuffer = GPU_framebuffer_create(__func__);
   GPU_framebuffer_ensure_config(&framebuffer,
                                 {GPU_ATTACHMENT_NONE, GPU_ATTACHMENT_TEXTURE(texture)});
   GPU_framebuffer_bind(framebuffer);
@@ -46,12 +51,12 @@ static void test_framebuffer_clear_color_multiple_attachments()
 {
   const int2 size(1, 1);
   eGPUTextureUsage usage = GPU_TEXTURE_USAGE_ATTACHMENT | GPU_TEXTURE_USAGE_HOST_READ;
-  GPUTexture *texture1 = GPU_texture_create_2d(
-      __func__, UNPACK2(size), 1, GPU_RGBA32F, usage, nullptr);
-  GPUTexture *texture2 = GPU_texture_create_2d(
-      __func__, UNPACK2(size), 1, GPU_RGBA32UI, usage, nullptr);
+  blender::gpu::Texture *texture1 = GPU_texture_create_2d(
+      __func__, UNPACK2(size), 1, TextureFormat::SFLOAT_32_32_32_32, usage, nullptr);
+  blender::gpu::Texture *texture2 = GPU_texture_create_2d(
+      __func__, UNPACK2(size), 1, TextureFormat::UINT_32_32_32_32, usage, nullptr);
 
-  GPUFrameBuffer *framebuffer = GPU_framebuffer_create(__func__);
+  gpu::FrameBuffer *framebuffer = GPU_framebuffer_create(__func__);
   GPU_framebuffer_ensure_config(
       &framebuffer,
       {GPU_ATTACHMENT_NONE, GPU_ATTACHMENT_TEXTURE(texture1), GPU_ATTACHMENT_TEXTURE(texture2)});
@@ -67,8 +72,8 @@ static void test_framebuffer_clear_color_multiple_attachments()
   }
   MEM_freeN(read_data1);
 
-#ifndef __APPLE__ /* FIXME: Behavior is not the same on all backend. Current expected value is \
-                     broken. */
+#ifndef __APPLE__ /* FIXME: Behavior is not the same on all backend. \
+                   * Current expected value is broken. */
   uint4 *read_data2 = static_cast<uint4 *>(GPU_texture_read(texture2, GPU_DATA_UINT, 0));
   uint4 clear_color_uint(1036831949, 1045220557, 1056964608, 1065353216);
   for (uint4 pixel_color : Span<uint4>(read_data2, size.x * size.y)) {
@@ -87,12 +92,12 @@ static void test_framebuffer_clear_multiple_color_multiple_attachments()
 {
   const int2 size(1, 1);
   eGPUTextureUsage usage = GPU_TEXTURE_USAGE_ATTACHMENT | GPU_TEXTURE_USAGE_HOST_READ;
-  GPUTexture *texture1 = GPU_texture_create_2d(
-      __func__, UNPACK2(size), 1, GPU_RGBA32F, usage, nullptr);
-  GPUTexture *texture2 = GPU_texture_create_2d(
-      __func__, UNPACK2(size), 1, GPU_RGBA32F, usage, nullptr);
+  blender::gpu::Texture *texture1 = GPU_texture_create_2d(
+      __func__, UNPACK2(size), 1, TextureFormat::SFLOAT_32_32_32_32, usage, nullptr);
+  blender::gpu::Texture *texture2 = GPU_texture_create_2d(
+      __func__, UNPACK2(size), 1, TextureFormat::SFLOAT_32_32_32_32, usage, nullptr);
 
-  GPUFrameBuffer *framebuffer = GPU_framebuffer_create(__func__);
+  gpu::FrameBuffer *framebuffer = GPU_framebuffer_create(__func__);
   GPU_framebuffer_ensure_config(
       &framebuffer,
       {GPU_ATTACHMENT_NONE, GPU_ATTACHMENT_TEXTURE(texture1), GPU_ATTACHMENT_TEXTURE(texture2)});
@@ -100,7 +105,7 @@ static void test_framebuffer_clear_multiple_color_multiple_attachments()
 
   const float4 clear_color[2] = {float4(0.1f, 0.2f, 0.5f, 1.0f), float4(0.5f, 0.2f, 0.1f, 1.0f)};
   GPU_framebuffer_multi_clear(
-      framebuffer, static_cast<const float(*)[4]>(static_cast<const void *>(clear_color)));
+      framebuffer, static_cast<const float (*)[4]>(static_cast<const void *>(clear_color)));
   GPU_finish();
 
   float4 *read_data1 = static_cast<float4 *>(GPU_texture_read(texture1, GPU_DATA_FLOAT, 0));
@@ -125,10 +130,10 @@ static void test_framebuffer_clear_depth()
 {
   const int2 size(1, 1);
   eGPUTextureUsage usage = GPU_TEXTURE_USAGE_ATTACHMENT | GPU_TEXTURE_USAGE_HOST_READ;
-  GPUTexture *texture = GPU_texture_create_2d(
-      __func__, UNPACK2(size), 1, GPU_DEPTH_COMPONENT32F, usage, nullptr);
+  blender::gpu::Texture *texture = GPU_texture_create_2d(
+      __func__, UNPACK2(size), 1, TextureFormat::SFLOAT_32_DEPTH, usage, nullptr);
 
-  GPUFrameBuffer *framebuffer = GPU_framebuffer_create(__func__);
+  gpu::FrameBuffer *framebuffer = GPU_framebuffer_create(__func__);
   GPU_framebuffer_ensure_config(&framebuffer, {GPU_ATTACHMENT_TEXTURE(texture)});
   GPU_framebuffer_bind(framebuffer);
 
@@ -153,10 +158,10 @@ static void test_framebuffer_scissor_test()
 {
   const int2 size(2, 2);
   eGPUTextureUsage usage = GPU_TEXTURE_USAGE_ATTACHMENT | GPU_TEXTURE_USAGE_HOST_READ;
-  GPUTexture *texture = GPU_texture_create_2d(
-      __func__, UNPACK2(size), 1, GPU_RGBA32F, usage, nullptr);
+  blender::gpu::Texture *texture = GPU_texture_create_2d(
+      __func__, UNPACK2(size), 1, TextureFormat::SFLOAT_32_32_32_32, usage, nullptr);
 
-  GPUFrameBuffer *framebuffer = GPU_framebuffer_create(__func__);
+  gpu::FrameBuffer *framebuffer = GPU_framebuffer_create(__func__);
   GPU_framebuffer_ensure_config(&framebuffer,
                                 {GPU_ATTACHMENT_NONE, GPU_ATTACHMENT_TEXTURE(texture)});
   GPU_framebuffer_bind(framebuffer);
@@ -196,7 +201,8 @@ static void test_framebuffer_cube()
   GPU_render_begin();
 
   eGPUTextureUsage usage = GPU_TEXTURE_USAGE_ATTACHMENT | GPU_TEXTURE_USAGE_HOST_READ;
-  GPUTexture *tex = GPU_texture_create_cube("tex", SIZE, 1, GPU_RGBA32F, usage, nullptr);
+  blender::gpu::Texture *tex = GPU_texture_create_cube(
+      "tex", SIZE, 1, TextureFormat::SFLOAT_32_32_32_32, usage, nullptr);
 
   const float4 clear_colors[6] = {
       {0.5f, 0.0f, 0.0f, 1.0f},
@@ -206,7 +212,7 @@ static void test_framebuffer_cube()
       {0.0f, 0.0f, 0.5f, 1.0f},
       {0.0f, 0.0f, 1.0f, 1.0f},
   };
-  GPUFrameBuffer *framebuffers[6] = {nullptr};
+  gpu::FrameBuffer *framebuffers[6] = {nullptr};
 
   for (int i : IndexRange(6)) {
     GPU_framebuffer_ensure_config(&framebuffers[i],
@@ -254,10 +260,10 @@ static void test_framebuffer_multi_viewport()
   const int2 size(4, 4);
   const int layers = 256;
   eGPUTextureUsage usage = GPU_TEXTURE_USAGE_ATTACHMENT | GPU_TEXTURE_USAGE_HOST_READ;
-  GPUTexture *texture = GPU_texture_create_2d_array(
-      __func__, UNPACK2(size), layers, 1, GPU_RG32I, usage, nullptr);
+  blender::gpu::Texture *texture = GPU_texture_create_2d_array(
+      __func__, UNPACK2(size), layers, 1, TextureFormat::SINT_32_32, usage, nullptr);
 
-  GPUFrameBuffer *framebuffer = GPU_framebuffer_create(__func__);
+  gpu::FrameBuffer *framebuffer = GPU_framebuffer_create(__func__);
   GPU_framebuffer_ensure_config(&framebuffer,
                                 {GPU_ATTACHMENT_NONE, GPU_ATTACHMENT_TEXTURE(texture)});
   GPU_framebuffer_bind(framebuffer);
@@ -274,26 +280,22 @@ static void test_framebuffer_multi_viewport()
   const float4 clear_color(0.0f);
   GPU_framebuffer_clear_color(framebuffer, clear_color);
 
-  ShaderCreateInfo create_info("");
+  ShaderCreateInfo create_info("gpu_framebuffer_layer_viewport_test");
   create_info.vertex_source("gpu_framebuffer_layer_viewport_test.glsl");
   create_info.fragment_source("gpu_framebuffer_layer_viewport_test.glsl");
-  create_info.builtins(BuiltinBits::VIEWPORT_INDEX | BuiltinBits::LAYER);
-  create_info.fragment_out(0, Type::IVEC2, "out_value");
+  create_info.builtins(BuiltinBits::VIEWPORT_INDEX | BuiltinBits::LAYER | BuiltinBits::VERTEX_ID);
+  create_info.fragment_out(0, Type::int2_t, "out_value");
 
-  GPUShader *shader = GPU_shader_create_from_info(
+  gpu::Shader *shader = GPU_shader_create_from_info(
       reinterpret_cast<GPUShaderCreateInfo *>(&create_info));
 
-  /* TODO(fclem): remove this boilerplate. */
-  GPUVertFormat format{};
-  GPU_vertformat_attr_add(&format, "dummy", GPU_COMP_U32, 1, GPU_FETCH_INT);
-  VertBuf *verts = GPU_vertbuf_create_with_format(format);
-  GPU_vertbuf_data_alloc(*verts, 3);
-  Batch *batch = GPU_batch_create_ex(GPU_PRIM_TRIS, verts, nullptr, GPU_BATCH_OWNS_VBO);
+  int tri_count = size.x * size.y * layers;
+
+  Batch *batch = GPU_batch_create_procedural(GPU_PRIM_TRIS, tri_count * 3);
 
   GPU_batch_set_shader(batch, shader);
 
-  int tri_count = size.x * size.y * layers;
-  GPU_batch_draw_advanced(batch, 0, tri_count * 3, 0, 1);
+  GPU_batch_draw(batch);
 
   GPU_batch_discard(batch);
 
@@ -308,6 +310,8 @@ static void test_framebuffer_multi_viewport()
     }
   }
   MEM_freeN(read_data);
+
+  GPU_shader_unbind();
 
   GPU_framebuffer_free(framebuffer);
   GPU_texture_free(texture);
@@ -329,12 +333,12 @@ static void test_framebuffer_subpass_input()
 
   const int2 size(1, 1);
   eGPUTextureUsage usage = GPU_TEXTURE_USAGE_ATTACHMENT | GPU_TEXTURE_USAGE_HOST_READ;
-  GPUTexture *texture_a = GPU_texture_create_2d(
-      __func__, UNPACK2(size), 1, GPU_R32I, usage, nullptr);
-  GPUTexture *texture_b = GPU_texture_create_2d(
-      __func__, UNPACK2(size), 1, GPU_R32I, usage, nullptr);
+  blender::gpu::Texture *texture_a = GPU_texture_create_2d(
+      __func__, UNPACK2(size), 1, TextureFormat::SINT_32, usage, nullptr);
+  blender::gpu::Texture *texture_b = GPU_texture_create_2d(
+      __func__, UNPACK2(size), 1, TextureFormat::SINT_32, usage, nullptr);
 
-  GPUFrameBuffer *framebuffer = GPU_framebuffer_create(__func__);
+  gpu::FrameBuffer *framebuffer = GPU_framebuffer_create(__func__);
   GPU_framebuffer_ensure_config(
       &framebuffer,
       {GPU_ATTACHMENT_NONE, GPU_ATTACHMENT_TEXTURE(texture_a), GPU_ATTACHMENT_TEXTURE(texture_b)});
@@ -343,31 +347,28 @@ static void test_framebuffer_subpass_input()
   const float4 clear_color(0.0f);
   GPU_framebuffer_clear_color(framebuffer, clear_color);
 
-  ShaderCreateInfo create_info_write("");
+  ShaderCreateInfo create_info_write("gpu_framebuffer_subpass_input_test");
   create_info_write.define("WRITE");
+  create_info_write.builtins(BuiltinBits::VERTEX_ID);
   create_info_write.vertex_source("gpu_framebuffer_subpass_input_test.glsl");
   create_info_write.fragment_source("gpu_framebuffer_subpass_input_test.glsl");
-  create_info_write.fragment_out(0, Type::INT, "out_value", DualBlend::NONE, 0);
+  create_info_write.fragment_out(0, Type::int_t, "out_value", DualBlend::NONE, 0);
 
-  GPUShader *shader_write = GPU_shader_create_from_info(
+  gpu::Shader *shader_write = GPU_shader_create_from_info(
       reinterpret_cast<GPUShaderCreateInfo *>(&create_info_write));
 
-  ShaderCreateInfo create_info_read("");
+  ShaderCreateInfo create_info_read("gpu_framebuffer_subpass_input_test");
   create_info_read.define("READ");
+  create_info_read.builtins(BuiltinBits::VERTEX_ID);
   create_info_read.vertex_source("gpu_framebuffer_subpass_input_test.glsl");
   create_info_read.fragment_source("gpu_framebuffer_subpass_input_test.glsl");
-  create_info_read.subpass_in(0, Type::INT, "in_value", 0);
-  create_info_read.fragment_out(1, Type::INT, "out_value");
+  create_info_read.subpass_in(0, Type::int_t, ImageType::Int2D, "in_value", 0);
+  create_info_read.fragment_out(1, Type::int_t, "out_value");
 
-  GPUShader *shader_read = GPU_shader_create_from_info(
+  gpu::Shader *shader_read = GPU_shader_create_from_info(
       reinterpret_cast<GPUShaderCreateInfo *>(&create_info_read));
 
-  /* TODO(fclem): remove this boilerplate. */
-  GPUVertFormat format{};
-  GPU_vertformat_attr_add(&format, "dummy", GPU_COMP_U32, 1, GPU_FETCH_INT);
-  VertBuf *verts = GPU_vertbuf_create_with_format(format);
-  GPU_vertbuf_data_alloc(*verts, 3);
-  Batch *batch = GPU_batch_create_ex(GPU_PRIM_TRIS, verts, nullptr, GPU_BATCH_OWNS_VBO);
+  Batch *batch = GPU_batch_create_procedural(GPU_PRIM_TRIS, 3);
 
   /* Metal Raster Order Group does not need that. */
   GPU_framebuffer_subpass_transition(
@@ -394,6 +395,8 @@ static void test_framebuffer_subpass_input()
   int *read_data_b = static_cast<int *>(GPU_texture_read(texture_b, GPU_DATA_INT, 0));
   EXPECT_EQ(*read_data_b, 0xDEADC0DE);
   MEM_freeN(read_data_b);
+
+  GPU_shader_unbind();
 
   GPU_framebuffer_free(framebuffer);
   GPU_texture_free(texture_a);

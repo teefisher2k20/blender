@@ -14,13 +14,19 @@
 
 class GHOST_ContextNone : public GHOST_Context {
  public:
-  GHOST_ContextNone(bool stereoVisual) : GHOST_Context(stereoVisual), m_swapInterval(1) {}
+  GHOST_ContextNone(const GHOST_ContextParams &context_params) : GHOST_Context(context_params) {}
+
+  /** \copydoc #GHOST_IContext::swapBuffersAcquire */
+  GHOST_TSuccess swapBufferAcquire() override
+  {
+    return GHOST_kSuccess;
+  }
 
   /**
    * Dummy function
    * \return Always succeeds
    */
-  GHOST_TSuccess swapBuffers() override;
+  GHOST_TSuccess swapBufferRelease() override;
 
   /**
    * Dummy function
@@ -60,11 +66,11 @@ class GHOST_ContextNone : public GHOST_Context {
 
   /**
    * Dummy function
-   * \param intervalOut: Gets whatever was set by #setSwapInterval.
+   * \param interval_out: Gets whatever was set by #setSwapInterval.
    * \return Always succeeds.
    */
-  GHOST_TSuccess getSwapInterval(int &intervalOut) override;
+  GHOST_TSuccess getSwapInterval(int &interval_out) override;
 
  private:
-  int m_swapInterval;
+  int swap_interval_ = 1;
 };

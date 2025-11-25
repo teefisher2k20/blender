@@ -20,7 +20,7 @@
 
 #include "intern/bmesh_operators_private.hh" /* own include */
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 #define EDGE_MARK 4
 #define FACE_OUT 16
@@ -141,7 +141,7 @@ static void bm_loop_interp_from_grid_boundary_4(BMesh *bm,
   const void *l_cdata[4] = {
       l_bound[0]->head.data, l_bound[1]->head.data, l_bound[2]->head.data, l_bound[3]->head.data};
 
-  CustomData_bmesh_interp(&bm->ldata, l_cdata, w, nullptr, 4, l->head.data);
+  CustomData_bmesh_interp(&bm->ldata, l_cdata, w, 4, l->head.data);
 }
 
 static void bm_loop_interp_from_grid_boundary_2(BMesh *bm,
@@ -153,7 +153,7 @@ static void bm_loop_interp_from_grid_boundary_2(BMesh *bm,
 
   const float w[2] = {1.0f - t, t};
 
-  CustomData_bmesh_interp(&bm->ldata, l_cdata, w, nullptr, 2, l->head.data);
+  CustomData_bmesh_interp(&bm->ldata, l_cdata, w, 2, l->head.data);
 }
 
 /** \} */
@@ -205,7 +205,7 @@ static void bm_grid_fill_array(BMesh *bm,
   /* for use_loop_interp */
   BMLoop *(*larr_x_a)[2], *(*larr_x_b)[2], *(*larr_y_a)[2], *(*larr_y_b)[2];
 
-  float(*weight_table)[4];
+  float (*weight_table)[4];
 
 #define XY(_x, _y) ((_x) + ((_y) * (xtot)))
 
@@ -234,7 +234,7 @@ static void bm_grid_fill_array(BMesh *bm,
 #endif
 
   if (use_interp_simple || use_vert_interp || use_loop_interp) {
-    weight_table = static_cast<float(*)[4]>(
+    weight_table = static_cast<float (*)[4]>(
         MEM_mallocN(sizeof(*weight_table) * size_t(xtot * ytot), __func__));
     barycentric_weights_v2_grid_cache(xtot, ytot, weight_table);
   }
@@ -245,11 +245,11 @@ static void bm_grid_fill_array(BMesh *bm,
   /* Store loops */
   if (use_loop_interp) {
     /* x2 because each edge connects 2 loops */
-    larr_x_a = static_cast<BMLoop *(*)[2]>(MEM_mallocN(sizeof(*larr_x_a) * (xtot - 1), __func__));
-    larr_x_b = static_cast<BMLoop *(*)[2]>(MEM_mallocN(sizeof(*larr_x_b) * (xtot - 1), __func__));
+    larr_x_a = MEM_malloc_arrayN<BMLoop *[2]>((xtot - 1), __func__);
+    larr_x_b = MEM_malloc_arrayN<BMLoop *[2]>((xtot - 1), __func__);
 
-    larr_y_a = static_cast<BMLoop *(*)[2]>(MEM_mallocN(sizeof(*larr_y_a) * (ytot - 1), __func__));
-    larr_y_b = static_cast<BMLoop *(*)[2]>(MEM_mallocN(sizeof(*larr_y_b) * (ytot - 1), __func__));
+    larr_y_a = MEM_malloc_arrayN<BMLoop *[2]>((ytot - 1), __func__);
+    larr_y_b = MEM_malloc_arrayN<BMLoop *[2]>((ytot - 1), __func__);
 
     /* fill in the loops */
     for (x = 0; x < xtot - 1; x++) {
@@ -328,7 +328,7 @@ static void bm_grid_fill_array(BMesh *bm,
             v_grid[XY(xtot - 1, y)]->head.data,
         };
 
-        CustomData_bmesh_interp(&bm->vdata, v_cdata, w, nullptr, 4, v->head.data);
+        CustomData_bmesh_interp(&bm->vdata, v_cdata, w, 4, v->head.data);
       }
     }
   }
@@ -487,8 +487,7 @@ static void bm_grid_fill(BMesh *bm,
   ListBase *lb_rail_a = BM_edgeloop_verts_get(estore_rail_a);
   ListBase *lb_rail_b = BM_edgeloop_verts_get(estore_rail_b);
 
-  BMVert **v_grid = static_cast<BMVert **>(
-      MEM_callocN(sizeof(BMVert *) * size_t(xtot * ytot), __func__));
+  BMVert **v_grid = MEM_calloc_arrayN<BMVert *>(size_t(xtot * ytot), __func__);
   /**
    * <pre>
    *           estore_b
@@ -600,7 +599,7 @@ void bmo_grid_fill_exec(BMesh *bm, BMOperator *op)
   const short mat_nr = short(BMO_slot_int_get(op->slots_in, "mat_nr"));
   const bool use_smooth = BMO_slot_bool_get(op->slots_in, "use_smooth");
   const bool use_interp_simple = BMO_slot_bool_get(op->slots_in, "use_interp_simple");
-  GSet *split_edges = nullptr;
+  std::unique_ptr<blender::Set<BMEdge *>> split_edges;
 
   int count;
   bool changed = false;
@@ -610,7 +609,7 @@ void bmo_grid_fill_exec(BMesh *bm, BMOperator *op)
 
   if (count != 2) {
     /* Note that this error message has been adjusted to make sense when called
-     * from the operator 'MESH_OT_fill_grid' which has a 'prepare' pass which can
+     * from the operator `MESH_OT_fill_grid` which has a 'prepare' pass which can
      * extract two 'rail' loops from a single edge loop, see #72075. */
     BMO_error_raise(bm,
                     op,
@@ -693,14 +692,14 @@ void bmo_grid_fill_exec(BMesh *bm, BMOperator *op)
       const int len_b = BM_edgeloop_length_get(estore_pairs[i][1]);
       if (len_a != len_b) {
         if (split_edges == nullptr) {
-          split_edges = BLI_gset_ptr_new(__func__);
+          split_edges = std::make_unique<blender::Set<BMEdge *>>();
         }
 
         if (len_a < len_b) {
-          BM_edgeloop_expand(bm, estore_pairs[i][0], len_b, true, split_edges);
+          BM_edgeloop_expand(bm, estore_pairs[i][0], len_b, true, split_edges.get());
         }
         else {
-          BM_edgeloop_expand(bm, estore_pairs[i][1], len_a, true, split_edges);
+          BM_edgeloop_expand(bm, estore_pairs[i][1], len_a, true, split_edges.get());
         }
       }
     }
@@ -713,12 +712,9 @@ void bmo_grid_fill_exec(BMesh *bm, BMOperator *op)
   changed = true;
 
   if (split_edges) {
-    GSetIterator gs_iter;
-    GSET_ITER (gs_iter, split_edges) {
-      BMEdge *e = static_cast<BMEdge *>(BLI_gsetIterator_getKey(&gs_iter));
+    for (BMEdge *e : *split_edges) {
       BM_edge_collapse(bm, e, e->v2, true, true);
     }
-    BLI_gset_free(split_edges, nullptr);
   }
 
 cleanup:

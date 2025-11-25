@@ -45,7 +45,9 @@ void ANIM_OT_keyframe_delete_by_name(wmOperatorType *ot);
 void ANIM_OT_keyframe_insert_menu(wmOperatorType *ot);
 
 void ANIM_OT_keyframe_delete_v3d(wmOperatorType *ot);
+void ANIM_OT_keyframe_delete_vse(wmOperatorType *ot);
 void ANIM_OT_keyframe_clear_v3d(wmOperatorType *ot);
+void ANIM_OT_keyframe_clear_vse(wmOperatorType *ot);
 
 /** \} */
 
@@ -96,5 +98,19 @@ void ANIM_OT_driver_button_remove(wmOperatorType *ot);
 void ANIM_OT_driver_button_edit(wmOperatorType *ot);
 void ANIM_OT_copy_driver_button(wmOperatorType *ot);
 void ANIM_OT_paste_driver_button(wmOperatorType *ot);
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Pose Asset operators
+ * \{ */
+
+namespace blender::ed::animrig {
+
+void POSELIB_OT_create_pose_asset(wmOperatorType *ot);
+void POSELIB_OT_asset_modify(wmOperatorType *ot);
+void POSELIB_OT_asset_delete(wmOperatorType *ot);
+void POSELIB_OT_screenshot_preview(wmOperatorType *ot);
+}  // namespace blender::ed::animrig
 
 /** \} */

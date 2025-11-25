@@ -4,10 +4,8 @@
 
 #include "node_shader_util.hh"
 #include "node_util.hh"
-#include "sky_model.h"
-
-#include "BLI_math_rotation.h"
-#include "BLI_task.hh"
+#include "sky_hosek.h"
+#include "sky_nishita.h"
 
 #include "BKE_context.hh"
 #include "BKE_scene.hh"
@@ -15,7 +13,7 @@
 
 #include "RNA_access.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "NOD_socket_search_link.hh"
@@ -30,47 +28,47 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_shader_buts_tex_sky(uiLayout *layout, bContext *C, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "sky_type", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
+  layout->prop(ptr, "sky_type", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
 
   if (RNA_enum_get(ptr, "sky_type") == SHD_SKY_PREETHAM) {
-    uiItemR(layout, ptr, "sun_direction", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
-    uiItemR(layout, ptr, "turbidity", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+    layout->prop(ptr, "sun_direction", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
+    layout->prop(ptr, "turbidity", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
   }
-  if (RNA_enum_get(ptr, "sky_type") == SHD_SKY_HOSEK) {
-    uiItemR(layout, ptr, "sun_direction", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
-    uiItemR(layout, ptr, "turbidity", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
-    uiItemR(layout, ptr, "ground_albedo", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+  else if (RNA_enum_get(ptr, "sky_type") == SHD_SKY_HOSEK) {
+    layout->prop(ptr, "sun_direction", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
+    layout->prop(ptr, "turbidity", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+    layout->prop(ptr, "ground_albedo", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
   }
-  if (RNA_enum_get(ptr, "sky_type") == SHD_SKY_NISHITA) {
+  else {
     Scene *scene = CTX_data_scene(C);
     if (BKE_scene_uses_blender_eevee(scene)) {
-      uiItemL(layout, RPT_("Sun disc not available in EEVEE"), ICON_ERROR);
+      layout->label(RPT_("Sun disc not available in EEVEE"), ICON_ERROR);
     }
-    uiItemR(layout, ptr, "sun_disc", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+    layout->prop(ptr, "sun_disc", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
 
     uiLayout *col;
     if (RNA_boolean_get(ptr, "sun_disc")) {
-      col = uiLayoutColumn(layout, true);
-      uiItemR(col, ptr, "sun_size", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
-      uiItemR(col, ptr, "sun_intensity", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+      col = &layout->column(true);
+      col->prop(ptr, "sun_size", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+      col->prop(ptr, "sun_intensity", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
     }
 
-    col = uiLayoutColumn(layout, true);
-    uiItemR(col, ptr, "sun_elevation", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "sun_rotation", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+    col = &layout->column(true);
+    col->prop(ptr, "sun_elevation", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+    col->prop(ptr, "sun_rotation", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
 
-    uiItemR(layout, ptr, "altitude", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+    layout->prop(ptr, "altitude", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
 
-    col = uiLayoutColumn(layout, true);
-    uiItemR(col, ptr, "air_density", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "dust_density", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "ozone_density", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+    col = &layout->column(true);
+    col->prop(ptr, "air_density", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+    col->prop(ptr, "aerosol_density", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+    col->prop(ptr, "ozone_density", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
   }
 }
 
 static void node_shader_init_tex_sky(bNodeTree * /*ntree*/, bNode *node)
 {
-  NodeTexSky *tex = MEM_cnew<NodeTexSky>("NodeTexSky");
+  NodeTexSky *tex = MEM_callocN<NodeTexSky>("NodeTexSky");
   BKE_texture_mapping_default(&tex->base.tex_mapping, TEXMAP_TYPE_POINT);
   BKE_texture_colormapping_default(&tex->base.color_mapping);
   tex->sun_direction[0] = 0.0f;
@@ -83,11 +81,11 @@ static void node_shader_init_tex_sky(bNodeTree * /*ntree*/, bNode *node)
   tex->sun_intensity = 1.0f;
   tex->sun_elevation = DEG2RADF(15.0f);
   tex->sun_rotation = 0.0f;
-  tex->altitude = 0.0f;
+  tex->altitude = 100.0f;
   tex->air_density = 1.0f;
-  tex->dust_density = 1.0f;
+  tex->aerosol_density = 1.0f;
   tex->ozone_density = 1.0f;
-  tex->sky_model = SHD_SKY_NISHITA;
+  tex->sky_model = SHD_SKY_MULTIPLE_SCATTERING;
   node->storage = tex;
 }
 
@@ -150,6 +148,38 @@ static void sky_precompute_old(SkyModelPreetham *sunsky, const float sun_angles[
   sunsky->radiance[2] /= sky_perez_function(sunsky->config_y, 0, theta);
 }
 
+static void sky_simplify_multiscatter_elevation_rotation(float &sun_elevation, float &sun_rotation)
+{
+  /* Patch Sun position so users are able to animate the daylight cycle while keeping the shading
+   * code simple. */
+  float new_sun_elevation = sun_elevation;
+  float new_sun_rotation = sun_rotation;
+
+  /* Wrap `new_sun_elevation` into [-2PI..2PI] range. */
+  new_sun_elevation = fmodf(new_sun_elevation, 2.0f * M_PI);
+  /* Wrap `new_sun_elevation` into [-PI..PI] range. */
+  if (fabsf(new_sun_elevation) >= M_PI) {
+    new_sun_elevation -= copysignf(2.0f, new_sun_elevation) * M_PI;
+  }
+  /* Wrap `new_sun_elevation` into [-PI/2..PI/2] range while keeping the same absolute position.
+   */
+  if (new_sun_elevation >= M_PI / 2.0f || new_sun_elevation <= -M_PI / 2.0f) {
+    new_sun_elevation = copysignf(M_PI, new_sun_elevation) - new_sun_elevation;
+    new_sun_rotation += M_PI;
+  }
+
+  /* Wrap `new_sun_rotation` into [-2PI..2PI] range. */
+  new_sun_rotation = fmodf(new_sun_rotation, 2.0f * M_PI);
+  /* Wrap `new_sun_rotation` into [0..2PI] range. */
+  if (new_sun_rotation < 0.0f) {
+    new_sun_rotation += 2.0f * M_PI;
+  }
+  new_sun_rotation = 2.0f * M_PI - new_sun_rotation;
+
+  sun_elevation = new_sun_elevation;
+  sun_rotation = new_sun_rotation;
+}
+
 static int node_shader_gpu_tex_sky(GPUMaterial *mat,
                                    bNode *node,
                                    bNodeExecData * /*execdata*/,
@@ -163,7 +193,7 @@ static int node_shader_gpu_tex_sky(GPUMaterial *mat,
   sun_angles[0] = acosf(tex->sun_direction[2]);
   sun_angles[1] = atan2f(tex->sun_direction[0], tex->sun_direction[1]);
 
-  if (tex->sky_model == 0) {
+  if (tex->sky_model == SHD_SKY_PREETHAM) {
     /* Preetham */
     SkyModelPreetham sunsky;
     sky_precompute_old(&sunsky, sun_angles, tex->turbidity);
@@ -187,7 +217,7 @@ static int node_shader_gpu_tex_sky(GPUMaterial *mat,
                           GPU_uniform(xyz_to_rgb.g),
                           GPU_uniform(xyz_to_rgb.b));
   }
-  else if (tex->sky_model == 1) {
+  if (tex->sky_model == SHD_SKY_HOSEK) {
     /* Hosek / Wilkie */
     sun_angles[0] = fmin(M_PI_2, sun_angles[0]); /* clamp to horizon */
     SKY_ArHosekSkyModelState *sky_state = SKY_arhosek_xyz_skymodelstate_alloc_init(
@@ -227,62 +257,79 @@ static int node_shader_gpu_tex_sky(GPUMaterial *mat,
                           GPU_uniform(xyz_to_rgb.g),
                           GPU_uniform(xyz_to_rgb.b));
   }
-  else {
-    /* Nishita */
 
-    Array<float> pixels(4 * GPU_SKY_WIDTH * GPU_SKY_HEIGHT);
+  /* Nishita */
+  Array<float> pixels(4 * GPU_SKY_WIDTH * GPU_SKY_HEIGHT);
 
-    threading::parallel_for(IndexRange(GPU_SKY_HEIGHT), 2, [&](IndexRange range) {
-      SKY_nishita_skymodel_precompute_texture(pixels.data(),
-                                              4,
-                                              range.first(),
-                                              range.one_after_last(),
-                                              GPU_SKY_WIDTH,
-                                              GPU_SKY_HEIGHT,
-                                              tex->sun_elevation,
-                                              tex->altitude,
-                                              tex->air_density,
-                                              tex->dust_density,
-                                              tex->ozone_density);
-    });
+  float sun_rotation = tex->sun_rotation;
+  if (tex->sky_model == SHD_SKY_SINGLE_SCATTERING) {
+    SKY_single_scattering_precompute_texture(pixels.data(),
+                                             4,
+                                             GPU_SKY_WIDTH,
+                                             GPU_SKY_HEIGHT,
+                                             tex->sun_elevation,
+                                             tex->altitude,
+                                             tex->air_density,
+                                             tex->aerosol_density,
+                                             tex->ozone_density);
 
-    float sun_rotation = fmodf(tex->sun_rotation, 2.0f * M_PI);
+    /* The multi-scatter case takes care of rotation wrapping in the
+     * sky_simplify_multiscatter_elevation_rotation(). */
+    sun_rotation = fmodf(sun_rotation, 2.0f * M_PI);
     if (sun_rotation < 0.0f) {
       sun_rotation += 2.0f * M_PI;
     }
     sun_rotation = 2.0f * M_PI - sun_rotation;
-
-    XYZ_to_RGB xyz_to_rgb;
-    get_XYZ_to_RGB_for_gpu(&xyz_to_rgb);
-
-    /* To fix pole issue we clamp the v coordinate. */
-    GPUSamplerState sampler = {GPU_SAMPLER_FILTERING_LINEAR,
-                               GPU_SAMPLER_EXTEND_MODE_REPEAT,
-                               GPU_SAMPLER_EXTEND_MODE_EXTEND};
-    float layer;
-    GPUNodeLink *sky_texture = GPU_image_sky(
-        mat, GPU_SKY_WIDTH, GPU_SKY_HEIGHT, pixels.data(), &layer, sampler);
-    return GPU_stack_link(mat,
-                          node,
-                          "node_tex_sky_nishita",
-                          in,
-                          out,
-                          GPU_constant(&sun_rotation),
-                          GPU_uniform(xyz_to_rgb.r),
-                          GPU_uniform(xyz_to_rgb.g),
-                          GPU_uniform(xyz_to_rgb.b),
-                          sky_texture,
-                          GPU_constant(&layer));
   }
+  else {
+    float sun_elevation = tex->sun_elevation;
+    sky_simplify_multiscatter_elevation_rotation(sun_elevation, sun_rotation);
+    SKY_multiple_scattering_precompute_texture(pixels.data(),
+                                               4,
+                                               GPU_SKY_WIDTH,
+                                               GPU_SKY_HEIGHT,
+                                               sun_elevation,
+                                               tex->altitude,
+                                               tex->air_density,
+                                               tex->aerosol_density,
+                                               tex->ozone_density);
+  }
+
+  XYZ_to_RGB xyz_to_rgb;
+  get_XYZ_to_RGB_for_gpu(&xyz_to_rgb);
+
+  /* To fix pole issue we clamp the v coordinate. */
+  GPUSamplerState sampler = {GPU_SAMPLER_FILTERING_LINEAR,
+                             GPU_SAMPLER_EXTEND_MODE_REPEAT,
+                             GPU_SAMPLER_EXTEND_MODE_EXTEND};
+  float layer;
+  float sky_type = (tex->sky_model == SHD_SKY_SINGLE_SCATTERING) ? 0.0f : 1.0f;
+  GPUNodeLink *sky_texture = GPU_image_sky(
+      mat, GPU_SKY_WIDTH, GPU_SKY_HEIGHT, pixels.data(), &layer, sampler);
+  return GPU_stack_link(mat,
+                        node,
+                        "node_tex_sky_nishita",
+                        in,
+                        out,
+                        GPU_constant(&sky_type),
+                        GPU_constant(&sun_rotation),
+                        GPU_uniform(xyz_to_rgb.r),
+                        GPU_uniform(xyz_to_rgb.g),
+                        GPU_uniform(xyz_to_rgb.b),
+                        sky_texture,
+                        GPU_constant(&layer));
 }
 
 static void node_shader_update_sky(bNodeTree *ntree, bNode *node)
 {
-  bNodeSocket *sockVector = bke::node_find_socket(node, SOCK_IN, "Vector");
+  bNodeSocket *sockVector = bke::node_find_socket(*node, SOCK_IN, "Vector");
 
   NodeTexSky *tex = (NodeTexSky *)node->storage;
   bke::node_set_socket_availability(
-      ntree, sockVector, !(tex->sky_model == 2 && tex->sun_disc == 1));
+      *ntree,
+      *sockVector,
+      !(ELEM(tex->sky_model, SHD_SKY_SINGLE_SCATTERING, SHD_SKY_MULTIPLE_SCATTERING) &&
+        tex->sun_disc == 1));
 }
 
 static void node_gather_link_searches(GatherLinkSearchOpParams &params)
@@ -292,8 +339,8 @@ static void node_gather_link_searches(GatherLinkSearchOpParams &params)
     search_link_ops_for_declarations(params, declaration.outputs);
     return;
   }
-  if (params.node_tree().typeinfo->validate_link(
-          static_cast<eNodeSocketDatatype>(params.other_socket().type), SOCK_FLOAT))
+  if (params.node_tree().typeinfo->validate_link(eNodeSocketDatatype(params.other_socket().type),
+                                                 SOCK_FLOAT))
   {
     params.add_item(IFACE_("Vector"), [](LinkSearchOpParams &params) {
       bNode &node = params.add_node("ShaderNodeTexSky");
@@ -320,14 +367,13 @@ void register_node_type_sh_tex_sky()
   ntype.nclass = NODE_CLASS_TEXTURE;
   ntype.declare = file_ns::node_declare;
   ntype.draw_buttons = file_ns::node_shader_buts_tex_sky;
-  blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Middle);
+  blender::bke::node_type_size_preset(ntype, blender::bke::eNodeSizePreset::Default);
   ntype.initfunc = file_ns::node_shader_init_tex_sky;
   blender::bke::node_type_storage(
-      &ntype, "NodeTexSky", node_free_standard_storage, node_copy_standard_storage);
+      ntype, "NodeTexSky", node_free_standard_storage, node_copy_standard_storage);
   ntype.gpu_fn = file_ns::node_shader_gpu_tex_sky;
-  /* Remove vector input for Nishita sky model. */
   ntype.updatefunc = file_ns::node_shader_update_sky;
   ntype.gather_link_search_ops = file_ns::node_gather_link_searches;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

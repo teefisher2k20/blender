@@ -9,21 +9,18 @@
  * so they don't share any vertices/edges with other faces.
  */
 
-#include <climits>
+#include "bmesh_separate.hh" /* own include */
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_buffer.h"
-#include "BLI_utildefines.h"
+#include "BLI_vector.hh"
 
 #include "bmesh.hh"
-#include "bmesh_separate.hh" /* own include */
-#include "intern/bmesh_private.hh"
+#include "intern/bmesh_structure.hh"
 
 void BM_mesh_separate_faces(BMesh *bm, BMFaceFilterFunc filter_fn, void *user_data)
 {
-  BMFace **faces_array_all = static_cast<BMFace **>(
-      MEM_mallocN(bm->totface * sizeof(BMFace *), __func__));
+  BMFace **faces_array_all = MEM_malloc_arrayN<BMFace *>(bm->totface, __func__);
   /*
    * - Create an array of faces based on 'filter_fn'.
    *   First part of array for match, for non-match.
@@ -64,7 +61,7 @@ void BM_mesh_separate_faces(BMesh *bm, BMFaceFilterFunc filter_fn, void *user_da
     } while ((l_iter = l_iter->next) != l_first);
   }
 
-  BLI_buffer_declare_static(BMLoop **, loop_split, 0, 128);
+  blender::Vector<BMLoop *, 128> loop_split;
 
   /* Check shared verts ('faces_a' tag and disable) */
   for (uint i = 0; i < faces_a_len; i++) {
@@ -89,7 +86,7 @@ void BM_mesh_separate_faces(BMesh *bm, BMFaceFilterFunc filter_fn, void *user_da
               do {
                 if (l_radial_iter->v == v) {
                   if (filter_fn(l_radial_iter->f, user_data)) {
-                    BLI_buffer_append(&loop_split, BMLoop *, l_radial_iter);
+                    loop_split.append(l_radial_iter);
                   }
                 }
               } while ((l_radial_iter = l_radial_iter->radial_next) != l_radial_first);
@@ -98,14 +95,12 @@ void BM_mesh_separate_faces(BMesh *bm, BMFaceFilterFunc filter_fn, void *user_da
         }
 
         /* Perform the split */
-        BM_face_loop_separate_multi(bm, static_cast<BMLoop **>(loop_split.data), loop_split.count);
+        BM_face_loop_separate_multi(bm, loop_split.data(), loop_split.size());
 
-        BLI_buffer_clear(&loop_split);
+        loop_split.clear();
       }
     } while ((l_iter = l_iter->next) != l_first);
   }
-
-  BLI_buffer_free(&loop_split);
 
   MEM_freeN(faces_array_all);
 }

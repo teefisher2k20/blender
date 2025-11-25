@@ -33,8 +33,8 @@ def node_mid_pt(node, axis):
 
 
 def autolink(node1, node2, links):
-    available_inputs = [inp for inp in node2.inputs if inp.enabled]
-    available_outputs = [outp for outp in node1.outputs if outp.enabled]
+    available_inputs = [inp for inp in node2.inputs if inp.enabled and not inp.hide]
+    available_outputs = [outp for outp in node1.outputs if outp.enabled and not outp.hide]
     for outp in available_outputs:
         for inp in available_inputs:
             if not inp.is_linked and inp.name == outp.name:
@@ -183,6 +183,14 @@ def get_output_location(tree):
     return loc_x, loc_y
 
 
+def get_viewer_image():
+    for img in bpy.data.images:
+        if (img.source == 'VIEWER'
+                and len(img.render_slots) == 0
+                and sum(img.size) > 0):
+            return img
+
+
 def nw_check(cls, context):
     space = context.space_data
     if space.type != 'NODE_EDITOR':
@@ -258,14 +266,10 @@ def nw_check_visible_outputs(cls, context):
 
 
 def nw_check_viewer_node(cls):
-    for img in bpy.data.images:
-        # False if not connected or connected but no image
-        if (img.source == 'VIEWER'
-                and len(img.render_slots) == 0
-                and sum(img.size) > 0):
-            return True
-    cls.poll_message_set("Viewer image not found.")
-    return False
+    if get_viewer_image() is None:
+        cls.poll_message_set("Viewer image not found.")
+        return False
+    return True
 
 
 def get_first_enabled_output(node):

@@ -45,8 +45,14 @@ class VKStagingBuffer {
    */
   VKBuffer host_buffer_;
 
+  VkDeviceSize device_buffer_offset_;
+  VkDeviceSize region_size_;
+
  public:
-  VKStagingBuffer(const VKBuffer &device_buffer, Direction direction);
+  VKStagingBuffer(const VKBuffer &device_buffer,
+                  Direction direction,
+                  VkDeviceSize device_buffer_offset = 0,
+                  VkDeviceSize region_size = UINT64_MAX);
 
   /**
    * Copy the content of the host buffer to the device buffer.
@@ -61,7 +67,7 @@ class VKStagingBuffer {
   /**
    * Get the reference to the host buffer to update/load the data.
    */
-  const VKBuffer &host_buffer_get() const
+  VKBuffer &host_buffer_get()
   {
     return host_buffer_;
   }
@@ -72,5 +78,10 @@ class VKStagingBuffer {
    * In case a reference of the staging buffer is kept, but the host resource isn't needed anymore.
    */
   void free();
+
+  VkDeviceSize size_in_bytes_get() const
+  {
+    return region_size_;
+  }
 };
 }  // namespace blender::gpu

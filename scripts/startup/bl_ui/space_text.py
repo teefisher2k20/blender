@@ -34,9 +34,9 @@ class TEXT_HT_header(Header):
         row.template_ID(st, "text", new="text.new", unlink="text.unlink", open="text.open")
 
         if text:
-            is_osl = text.name.endswith((".osl", ".osl"))
+            is_osl = text.name.endswith((".osl", ".oso"))
             if is_osl:
-                row.operator("node.shader_script_update", text="", icon='FILE_REFRESH')
+                row.operator("text.update_shader", text="", icon='FILE_REFRESH')
             else:
                 row = layout.row()
                 row.active = is_syntax_highlight_supported
@@ -289,6 +289,7 @@ class TEXT_MT_templates_py(Menu):
             "text.open",
             props_default={"internal": True},
             filter_ext=lambda ext: (ext.lower() == ".py"),
+            translate=False,
         )
 
 
@@ -329,7 +330,7 @@ class TEXT_MT_select(Menu):
         layout = self.layout
 
         layout.operator("text.select_all", text="All")
-        layout.operator("text.select_line", text="Line")
+        layout.operator("text.select_line", text="Line", text_ctxt=i18n_contexts.id_text)
         layout.operator("text.select_word", text="Word")
 
         layout.separator()
@@ -391,8 +392,8 @@ class TEXT_MT_edit(Menu):
     def draw(self, _context):
         layout = self.layout
 
-        layout.operator("ed.undo")
-        layout.operator("ed.redo")
+        layout.operator("ed.undo", icon='LOOP_BACK')
+        layout.operator("ed.redo", icon='LOOP_FORWARDS')
 
         layout.separator()
 

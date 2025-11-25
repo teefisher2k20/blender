@@ -6,8 +6,6 @@
  * \ingroup blenloader
  */
 
-#include <cerrno>
-#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -24,7 +22,6 @@
 
 #include "DNA_listBase.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_implicit_sharing.hh"
 
 #include "BLO_readfile.hh"
@@ -34,7 +31,7 @@
 #include "BKE_main.hh"
 #include "BKE_undo_system.hh"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 /* **************** support for memory-write, for undo buffers *************** */
 
@@ -42,7 +39,7 @@ void BLO_memfile_free(MemFile *memfile)
 {
   while (MemFileChunk *chunk = static_cast<MemFileChunk *>(BLI_pophead(&memfile->chunks))) {
     if (chunk->is_identical == false) {
-      MEM_freeN((void *)chunk->buf);
+      MEM_freeN(chunk->buf);
     }
     MEM_freeN(chunk);
   }
@@ -53,9 +50,9 @@ void BLO_memfile_free(MemFile *memfile)
 
 MemFileSharedStorage::~MemFileSharedStorage()
 {
-  for (const blender::ImplicitSharingInfo *sharing_info : map.values()) {
+  for (const blender::ImplicitSharingInfoAndData &data : sharing_info_by_address_id.values()) {
     /* Removing the user makes sure shared data is freed when the undo step was its last owner. */
-    sharing_info->remove_user_and_delete_if_last();
+    data.sharing_info->remove_user_and_delete_if_last();
   }
 }
 
@@ -133,8 +130,7 @@ void BLO_memfile_chunk_add(MemFileWriteData *mem_data, const char *buf, size_t s
   MemFile *memfile = mem_data->written_memfile;
   MemFileChunk **compchunk_step = &mem_data->reference_current_chunk;
 
-  MemFileChunk *curchunk = static_cast<MemFileChunk *>(
-      MEM_mallocN(sizeof(MemFileChunk), "MemFileChunk"));
+  MemFileChunk *curchunk = MEM_mallocN<MemFileChunk>("MemFileChunk");
   curchunk->size = size;
   curchunk->buf = nullptr;
   curchunk->is_identical = false;
@@ -160,7 +156,7 @@ void BLO_memfile_chunk_add(MemFileWriteData *mem_data, const char *buf, size_t s
 
   /* not equal... */
   if (curchunk->buf == nullptr) {
-    char *buf_new = static_cast<char *>(MEM_mallocN(size, "Chunk buffer"));
+    char *buf_new = MEM_malloc_arrayN<char>(size, "Chunk buffer");
     memcpy(buf_new, buf, size);
     curchunk->buf = buf_new;
     memfile->size += size;
@@ -268,7 +264,7 @@ static void undo_close(FileReader *reader)
 
 FileReader *BLO_memfile_new_filereader(MemFile *memfile, int undo_direction)
 {
-  UndoReader *undo = static_cast<UndoReader *>(MEM_callocN(sizeof(UndoReader), __func__));
+  UndoReader *undo = MEM_callocN<UndoReader>(__func__);
 
   undo->memfile = memfile;
   undo->undo_direction = undo_direction;

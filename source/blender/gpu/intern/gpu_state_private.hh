@@ -22,24 +22,25 @@ namespace blender::gpu {
  * Try to keep small to reduce validation time. */
 union GPUState {
   struct {
-    /** eGPUWriteMask */
+    /** GPUWriteMask */
     uint32_t write_mask : 13;
-    /** eGPUBlend */
+    /** GPUBlend */
     uint32_t blend : 4;
-    /** eGPUFaceCullTest */
+    /** GPUFaceCullTest */
     uint32_t culling_test : 2;
-    /** eGPUDepthTest */
+    /** GPUDepthTest */
     uint32_t depth_test : 3;
-    /** eGPUStencilTest */
+    /** GPUStencilTest */
     uint32_t stencil_test : 3;
-    /** eGPUStencilOp */
+    /** GPUStencilOp */
     uint32_t stencil_op : 3;
-    /** eGPUProvokingVertex */
+    /** GPUProvokingVertex */
     uint32_t provoking_vert : 1;
     /** Enable bits. */
     uint32_t logic_op_xor : 1;
     uint32_t invert_facing : 1;
-    uint32_t shadow_bias : 1;
+    /** Clip range of 0..1 on OpenGL. */
+    uint32_t clip_control : 1;
     /** Number of clip distances enabled. */
     /* TODO(fclem): This should be a shader property. */
     uint32_t clip_distances : 3;
@@ -81,8 +82,6 @@ inline GPUState operator~(const GPUState &a)
 union GPUStateMutable {
   struct {
     /* Viewport State */
-    /** TODO: remove. */
-    float depth_range[2];
     /** Positive if using program point size. */
     /* TODO(fclem): should be passed as uniform to all shaders. */
     float point_size;
@@ -96,7 +95,7 @@ union GPUStateMutable {
     /* IMPORTANT: ensure x64 struct alignment. */
   };
   /* Here to allow fast bit-wise ops. */
-  uint64_t data[3];
+  uint64_t data[2];
 };
 
 BLI_STATIC_ASSERT(sizeof(GPUStateMutable) == sizeof(GPUStateMutable::data),
@@ -104,7 +103,7 @@ BLI_STATIC_ASSERT(sizeof(GPUStateMutable) == sizeof(GPUStateMutable::data),
 
 inline bool operator==(const GPUStateMutable &a, const GPUStateMutable &b)
 {
-  return a.data[0] == b.data[0] && a.data[1] == b.data[1] && a.data[2] == b.data[2];
+  return a.data[0] == b.data[0] && a.data[1] == b.data[1];
 }
 
 inline bool operator!=(const GPUStateMutable &a, const GPUStateMutable &b)
@@ -138,7 +137,9 @@ class StateManager {
  public:
   GPUState state;
   GPUStateMutable mutable_state;
-  bool use_bgl = false;
+
+  /* Formats of all image units. */
+  std::array<TextureWriteFormat, GPU_MAX_IMAGE> image_formats;
 
   StateManager();
   virtual ~StateManager() = default;
@@ -146,7 +147,7 @@ class StateManager {
   virtual void apply_state() = 0;
   virtual void force_state() = 0;
 
-  virtual void issue_barrier(eGPUBarrier barrier_bits) = 0;
+  virtual void issue_barrier(GPUBarrier barrier_bits) = 0;
 
   virtual void texture_bind(Texture *tex, GPUSamplerState sampler, int unit) = 0;
   virtual void texture_unbind(Texture *tex) = 0;
@@ -175,17 +176,17 @@ class Fence {
 };
 
 /* Syntactic sugar. */
-static inline GPUFence *wrap(Fence *pixbuf)
+static inline GPUFence *wrap(Fence *fence)
 {
-  return reinterpret_cast<GPUFence *>(pixbuf);
+  return reinterpret_cast<GPUFence *>(fence);
 }
-static inline Fence *unwrap(GPUFence *pixbuf)
+static inline Fence *unwrap(GPUFence *fence)
 {
-  return reinterpret_cast<Fence *>(pixbuf);
+  return reinterpret_cast<Fence *>(fence);
 }
-static inline const Fence *unwrap(const GPUFence *pixbuf)
+static inline const Fence *unwrap(const GPUFence *fence)
 {
-  return reinterpret_cast<const Fence *>(pixbuf);
+  return reinterpret_cast<const Fence *>(fence);
 }
 
 }  // namespace blender::gpu

@@ -20,7 +20,7 @@ namespace blender::bke::volume_grid::file_cache {
  */
 struct GridCache {
   /**
-   * Grid returned by #readAllGridMetadata. This only contains a the meta-data and transform of
+   * Grid returned by #readAllGridMetadata. This only contains the meta-data and transform of
    * the grid, but not the tree.
    */
   openvdb::GridBase::Ptr meta_data_grid;
@@ -62,7 +62,7 @@ struct FileCache {
  * Singleton cache that's shared throughout the application.
  */
 struct GlobalCache {
-  std::mutex mutex;
+  Mutex mutex;
   Map<std::string, FileCache> file_map;
 };
 

@@ -9,12 +9,10 @@
 
 #include "usd.hh"
 #include "usd_hash_types.hh"
+#include "usd_reader_domelight.hh"
 #include "usd_reader_prim.hh"
 
 #include <pxr/usd/usdGeom/imageable.h>
-#include <pxr/usd/usdLux/domeLight.h>
-
-#include <string>
 
 struct Collection;
 struct ImportSettings;
@@ -44,11 +42,11 @@ class USDStageReader {
 
   /* USD dome lights are converted to a world material,
    * rather than light objects, so are handled differently */
-  blender::Vector<pxr::UsdLuxDomeLight> dome_lights_;
+  blender::Vector<USDDomeLightReader *> dome_light_readers_;
 
   /* USD material prim paths encountered during stage
    * traversal, for importing unused materials. */
-  blender::Vector<std::string> material_paths_;
+  blender::Vector<pxr::SdfPath> material_paths_;
 
   /* Readers for scene-graph instance prototypes. */
   ProtoReaderMap proto_readers_;
@@ -130,9 +128,9 @@ class USDStageReader {
     return readers_;
   };
 
-  const blender::Vector<pxr::UsdLuxDomeLight> &dome_lights() const
+  const blender::Vector<USDDomeLightReader *> &dome_light_readers() const
   {
-    return dome_lights_;
+    return dome_light_readers_;
   };
 
   void sort_readers();

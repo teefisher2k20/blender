@@ -20,7 +20,9 @@
 #include "DNA_userdef_types.h"
 #include "DNA_windowmanager_types.h"
 
-#include "BLI_blenlib.h"
+#include "BLI_listbase.h"
+#include "BLI_math_base.h"
+#include "BLI_path_utils.hh"
 #include "BLI_utildefines.h"
 
 #include "BKE_appdir.hh"
@@ -40,6 +42,7 @@
 
 #include "UI_interface.hh"
 #include "UI_interface_icons.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "WM_api.hh"
@@ -63,10 +66,10 @@ static void wm_block_splash_add_label(uiBlock *block, const char *label, int x, 
     return;
   }
 
-  UI_block_emboss_set(block, UI_EMBOSS_NONE);
+  UI_block_emboss_set(block, blender::ui::EmbossType::None);
 
   uiBut *but = uiDefBut(
-      block, UI_BTYPE_LABEL, 0, label, 0, y, x, UI_UNIT_Y, nullptr, 0, 0, nullptr);
+      block, ButType::Label, label, 0, y, x, UI_UNIT_Y, nullptr, 0, 0, std::nullopt);
   UI_but_drawflag_disable(but, UI_BUT_TEXT_LEFT);
   UI_but_drawflag_enable(but, UI_BUT_TEXT_RIGHT);
 
@@ -74,7 +77,7 @@ static void wm_block_splash_add_label(uiBlock *block, const char *label, int x, 
   uchar color[4] = {255, 255, 255, 255};
   UI_but_color_set(but, color);
 
-  UI_block_emboss_set(block, UI_EMBOSS);
+  UI_block_emboss_set(block, blender::ui::EmbossType::Emboss);
 }
 
 #ifndef WITH_HEADLESS
@@ -143,22 +146,22 @@ static ImBuf *wm_block_splash_image(int width, int *r_height)
             U.app_template, template_directory, sizeof(template_directory)))
     {
       BLI_path_join(splash_filepath, sizeof(splash_filepath), template_directory, "splash.png");
-      ibuf = IMB_loadiffname(splash_filepath, IB_rect, nullptr);
+      ibuf = IMB_load_image_from_filepath(splash_filepath, IB_byte_data);
     }
   }
 
   if (ibuf == nullptr) {
     const char *custom_splash_path = BLI_getenv("BLENDER_CUSTOM_SPLASH");
     if (custom_splash_path) {
-      ibuf = IMB_loadiffname(custom_splash_path, IB_rect, nullptr);
+      ibuf = IMB_load_image_from_filepath(custom_splash_path, IB_byte_data);
     }
   }
 
   if (ibuf == nullptr) {
     const uchar *splash_data = (const uchar *)datatoc_splash_png;
     size_t splash_data_size = datatoc_splash_png_size;
-    ibuf = IMB_ibImageFromMemory(
-        splash_data, splash_data_size, IB_rect, nullptr, "<splash screen>");
+    ibuf = IMB_load_image_from_memory(
+        splash_data, splash_data_size, IB_byte_data, "<splash screen>");
   }
 
   if (ibuf) {
@@ -191,7 +194,7 @@ static ImBuf *wm_block_splash_banner_image(int *r_width,
 
   const char *custom_splash_path = BLI_getenv("BLENDER_CUSTOM_SPLASH_BANNER");
   if (custom_splash_path) {
-    ibuf = IMB_loadiffname(custom_splash_path, IB_rect, nullptr);
+    ibuf = IMB_load_image_from_filepath(custom_splash_path, IB_byte_data);
   }
 
   if (!ibuf) {
@@ -228,7 +231,7 @@ static ImBuf *wm_block_splash_banner_image(int *r_width,
   IMB_premultiply_alpha(ibuf);
 
 #else
-  UNUSED_VARS(width);
+  UNUSED_VARS(max_height);
 #endif
   *r_height = height;
   *r_width = width;
@@ -247,7 +250,7 @@ static void wm_block_splash_close_on_fileselect(bContext *C, void *arg1, void * 
 
   /* Check for the event as this will run before the new window/area has been created. */
   bool has_fileselect = false;
-  LISTBASE_FOREACH (const wmEvent *, event, &win->event_queue) {
+  LISTBASE_FOREACH (const wmEvent *, event, &win->runtime->event_queue) {
     if (event->type == EVT_FILESELECT) {
       has_fileselect = true;
       break;
@@ -286,7 +289,7 @@ static uiBlock *wm_block_splash_create(bContext *C, ARegion *region, void * /*ar
 {
   const uiStyle *style = UI_style_get_dpi();
 
-  uiBlock *block = UI_block_begin(C, region, "splash", UI_EMBOSS);
+  uiBlock *block = UI_block_begin(C, region, "splash", blender::ui::EmbossType::Emboss);
 
   /* Note on #UI_BLOCK_NO_WIN_CLIP, the window size is not always synchronized
    * with the OS when the splash shows, window clipping in this case gives
@@ -295,7 +298,7 @@ static uiBlock *wm_block_splash_create(bContext *C, ARegion *region, void * /*ar
   UI_block_theme_style_set(block, UI_BLOCK_THEME_STYLE_POPUP);
 
   int splash_width = style->widget.points * 45 * UI_SCALE_FAC;
-  CLAMP_MAX(splash_width, CTX_wm_window(C)->sizex * 0.7f);
+  CLAMP_MAX(splash_width, WM_window_native_pixel_x(CTX_wm_window(C)) * 0.7f);
   int splash_height;
 
   /* Would be nice to support caching this, so it only has to be re-read (and likely resized) on
@@ -329,15 +332,15 @@ static uiBlock *wm_block_splash_create(bContext *C, ARegion *region, void * /*ar
   }
 
   const int layout_margin_x = UI_SCALE_FAC * 26;
-  uiLayout *layout = UI_block_layout(block,
-                                     UI_LAYOUT_VERTICAL,
-                                     UI_LAYOUT_PANEL,
-                                     layout_margin_x,
-                                     0,
-                                     splash_width - (layout_margin_x * 2),
-                                     UI_SCALE_FAC * 110,
-                                     0,
-                                     style);
+  uiLayout &layout = blender::ui::block_layout(block,
+                                               blender::ui::LayoutDirection::Vertical,
+                                               blender::ui::LayoutType::Panel,
+                                               layout_margin_x,
+                                               0,
+                                               splash_width - (layout_margin_x * 2),
+                                               UI_SCALE_FAC * 110,
+                                               0,
+                                               style);
 
   MenuType *mt;
 
@@ -356,7 +359,7 @@ static uiBlock *wm_block_splash_create(bContext *C, ARegion *region, void * /*ar
   UI_block_func_set(block, wm_block_splash_close_on_fileselect, block, nullptr);
 
   if (mt) {
-    UI_menutype_draw(C, mt, layout);
+    UI_menutype_draw(C, mt, &layout);
   }
 
 /* Displays a warning if blender is being emulated via Rosetta (macOS) or XTA (Windows) */
@@ -364,26 +367,23 @@ static uiBlock *wm_block_splash_create(bContext *C, ARegion *region, void * /*ar
 #  if defined(__APPLE__)
   if (is_using_macos_rosetta() > 0)
 #  elif defined(_M_X64)
-  if (strncmp(BLI_getenv("PROCESSOR_IDENTIFIER"), "ARM", 3) == 0)
+  const char *proc_id = BLI_getenv("PROCESSOR_IDENTIFIER");
+  if (proc_id && strncmp(proc_id, "ARM", 3) == 0)
 #  endif
   {
-    uiItemS_ex(layout, 2.0f, LayoutSeparatorType::Line);
+    layout.separator(2.0f, LayoutSeparatorType::Line);
 
-    uiLayout *split = uiLayoutSplit(layout, 0.725, true);
-    uiLayout *row1 = uiLayoutRow(split, true);
-    uiLayout *row2 = uiLayoutRow(split, true);
+    uiLayout *split = &layout.split(0.725, true);
+    uiLayout *row1 = &split->row(true);
+    uiLayout *row2 = &split->row(true);
 
-    uiItemL(row1, RPT_("Intel binary detected. Expect reduced performance."), ICON_ERROR);
+    row1->label(RPT_("Intel binary detected. Expect reduced performance."), ICON_ERROR);
 
-    PointerRNA op_ptr;
-    uiItemFullO(row2,
-                "WM_OT_url_open",
-                CTX_IFACE_(BLT_I18NCONTEXT_OPERATOR_DEFAULT, "Learn More"),
-                ICON_URL,
-                nullptr,
-                WM_OP_INVOKE_DEFAULT,
-                UI_ITEM_NONE,
-                &op_ptr);
+    PointerRNA op_ptr = row2->op("WM_OT_url_open",
+                                 CTX_IFACE_(BLT_I18NCONTEXT_OPERATOR_DEFAULT, "Learn More"),
+                                 ICON_URL,
+                                 blender::wm::OpCallContext::InvokeDefault,
+                                 UI_ITEM_NONE);
 #  if defined(__APPLE__)
     RNA_string_set(
         &op_ptr,
@@ -396,7 +396,7 @@ static uiBlock *wm_block_splash_create(bContext *C, ARegion *region, void * /*ar
         "https://docs.blender.org/manual/en/latest/getting_started/installing/windows.html");
 #  endif
 
-    uiItemS(layout);
+    layout.separator();
   }
 #endif
 
@@ -405,7 +405,9 @@ static uiBlock *wm_block_splash_create(bContext *C, ARegion *region, void * /*ar
   return block;
 }
 
-static int wm_splash_invoke(bContext *C, wmOperator * /*op*/, const wmEvent * /*event*/)
+static wmOperatorStatus wm_splash_invoke(bContext *C,
+                                         wmOperator * /*op*/,
+                                         const wmEvent * /*event*/)
 {
   UI_popup_block_invoke(C, wm_block_splash_create, nullptr, nullptr);
 
@@ -430,22 +432,28 @@ void WM_OT_splash(wmOperatorType *ot)
 
 static uiBlock *wm_block_about_create(bContext *C, ARegion *region, void * /*arg*/)
 {
-  constexpr bool show_color = false;
   const uiStyle *style = UI_style_get_dpi();
   const int dialog_width = style->widget.points * 42 * UI_SCALE_FAC;
 
-  uiBlock *block = UI_block_begin(C, region, "about", UI_EMBOSS);
+  uiBlock *block = UI_block_begin(C, region, "about", blender::ui::EmbossType::Emboss);
 
   UI_block_flag_enable(block, UI_BLOCK_KEEP_OPEN | UI_BLOCK_LOOP | UI_BLOCK_NO_WIN_CLIP);
   UI_block_theme_style_set(block, UI_BLOCK_THEME_STYLE_POPUP);
 
-  uiLayout *layout = UI_block_layout(
-      block, UI_LAYOUT_VERTICAL, UI_LAYOUT_PANEL, 0, 0, dialog_width, 0, 0, style);
+  uiLayout &layout = blender::ui::block_layout(block,
+                                               blender::ui::LayoutDirection::Vertical,
+                                               blender::ui::LayoutType::Panel,
+                                               0,
+                                               0,
+                                               dialog_width,
+                                               0,
+                                               0,
+                                               style);
 
 /* Blender logo. */
 #ifndef WITH_HEADLESS
-
-  float size = 0.2f * dialog_width;
+  constexpr bool show_color = false;
+  const float size = 0.2f * dialog_width;
 
   ImBuf *ibuf = UI_svg_icon_bitmap(ICON_BLENDER_LOGO_LARGE, size, show_color);
 
@@ -454,21 +462,21 @@ static uiBlock *wm_block_about_create(bContext *C, ARegion *region, void * /*arg
     const uchar *color = btheme->tui.wcol_menu_back.text_sel;
 
     /* The top margin. */
-    uiLayout *row = uiLayoutRow(layout, false);
-    uiItemS_ex(row, 0.2f);
+    uiLayout *row = &layout.row(false);
+    row->separator(0.2f);
 
     /* The logo image. */
-    row = uiLayoutRow(layout, false);
-    uiLayoutSetAlignment(row, UI_LAYOUT_ALIGN_LEFT);
+    row = &layout.row(false);
+    row->alignment_set(blender::ui::LayoutAlign::Left);
     uiDefButImage(block, ibuf, 0, U.widget_unit, ibuf->x, ibuf->y, show_color ? nullptr : color);
 
     /* Padding below the logo. */
-    row = uiLayoutRow(layout, false);
-    uiItemS_ex(row, 2.7f);
+    row = &layout.row(false);
+    row->separator(2.7f);
   }
 #endif /* !WITH_HEADLESS */
 
-  uiLayout *col = uiLayoutColumn(layout, true);
+  uiLayout *col = &layout.column(true);
 
   uiItemL_ex(col, IFACE_("Blender"), ICON_NONE, true, false);
 
@@ -482,7 +490,9 @@ static uiBlock *wm_block_about_create(bContext *C, ARegion *region, void * /*arg
   return block;
 }
 
-static int wm_splash_about_invoke(bContext *C, wmOperator * /*op*/, const wmEvent * /*event*/)
+static wmOperatorStatus wm_splash_about_invoke(bContext *C,
+                                               wmOperator * /*op*/,
+                                               const wmEvent * /*event*/)
 {
   UI_popup_block_invoke(C, wm_block_about_create, nullptr, nullptr);
 

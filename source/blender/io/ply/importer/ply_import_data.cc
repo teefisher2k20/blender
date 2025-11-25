@@ -134,7 +134,7 @@ static const char *parse_row_ascii(PlyReadBuffer &file, Vector<float> &r_values)
 {
   Span<char> line = file.read_line();
   if (line.is_empty()) {
-    return "Could not read row of ascii property";
+    return "Could not read row of ASCII property";
   }
 
   /* Parse whole line as floats. */
@@ -261,8 +261,9 @@ static const char *load_vertex_element(PlyReadBuffer &file,
     const PlyProperty &prop = element.properties[prop_idx];
     bool is_standard = ELEM(
         prop.name, "x", "y", "z", "nx", "ny", "nz", "red", "green", "blue", "alpha", "s", "t");
-    if (is_standard)
+    if (is_standard) {
       continue;
+    }
 
     custom_attr_indices.append(prop_idx);
     PlyCustomAttribute attr(prop.name, element.count);

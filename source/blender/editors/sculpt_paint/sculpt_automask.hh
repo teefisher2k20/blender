@@ -10,10 +10,8 @@
 #include <memory>
 
 #include "BLI_array.hh"
-#include "BLI_bit_vector.hh"
 #include "BLI_offset_indices.hh"
 #include "BLI_set.hh"
-#include "BLI_sys_types.h"
 
 #include "DNA_brush_enums.h"
 
@@ -105,23 +103,28 @@ const Cache *active_cache_get(const SculptSession &ss);
  * For auto-masking modes that cannot be calculated in real time,
  * data is also stored at the vertex level prior to the stroke starting.
  */
-std::unique_ptr<Cache> cache_init(const Depsgraph &depsgraph, const Sculpt &sd, Object &ob);
 std::unique_ptr<Cache> cache_init(const Depsgraph &depsgraph,
                                   const Sculpt &sd,
                                   const Brush *brush,
                                   Object &ob);
 
+/** If the FilterCache#automask cache doesn't exist, create and return it. */
+Cache &filter_cache_ensure(const Depsgraph &depsgraph, const Sculpt &sd, Object &ob);
+/** If the StrokeCache#automask cache doesn't exist, create and return it. */
+Cache &stroke_cache_ensure(const Depsgraph &depsgraph,
+                           const Sculpt &sd,
+                           const Brush *brush,
+                           Object &ob);
+
 bool mode_enabled(const Sculpt &sd, const Brush *br, eAutomasking_flag mode);
 bool is_enabled(const Sculpt &sd, const Object &object, const Brush *br);
-
-bool needs_normal(const SculptSession &ss, const Sculpt &sd, const Brush *brush);
 
 /**
  * Calculate all auto-masking influence on each vertex.
  */
 void calc_vert_factors(const Depsgraph &depsgraph,
                        const Object &object,
-                       const Cache &cache,
+                       const Cache &automasking,
                        const bke::pbvh::MeshNode &node,
                        Span<int> verts,
                        MutableSpan<float> factors);
@@ -138,7 +141,7 @@ inline void calc_vert_factors(const Depsgraph &depsgraph,
 }
 void calc_grids_factors(const Depsgraph &depsgraph,
                         const Object &object,
-                        const Cache &cache,
+                        const Cache &automasking,
                         const bke::pbvh::GridsNode &node,
                         Span<int> grids,
                         MutableSpan<float> factors);
@@ -155,7 +158,7 @@ inline void calc_grids_factors(const Depsgraph &depsgraph,
 }
 void calc_vert_factors(const Depsgraph &depsgraph,
                        const Object &object,
-                       const Cache &cache,
+                       const Cache &automasking,
                        const bke::pbvh::BMeshNode &node,
                        const Set<BMVert *, 0> &verts,
                        MutableSpan<float> factors);
@@ -178,7 +181,7 @@ void calc_face_factors(const Depsgraph &depsgraph,
                        const Object &object,
                        OffsetIndices<int> faces,
                        Span<int> corner_verts,
-                       const Cache &cache,
+                       const Cache &automasking,
                        const bke::pbvh::MeshNode &node,
                        Span<int> face_indices,
                        MutableSpan<float> factors);

@@ -3,18 +3,18 @@ Advanced UIList Example - Filtering and Reordering
 ++++++++++++++++++++++++++++++++++++++++++++++++++
 
 This script is an extended version of the ``UIList`` subclass used to show vertex groups. It is not used 'as is',
-because iterating over all vertices in a 'draw' function is a very bad idea for UI performances! However, it's a good
+because iterating over all vertices in a 'draw' function is a very bad idea for UI performance! However, it's a good
 example of how to create/use filtering/reordering callbacks.
 """
 import bpy
 
 
 class MESH_UL_vgroups_slow(bpy.types.UIList):
-    # Constants (flags)
+    # Constants (flags).
     # Be careful not to shadow FILTER_ITEM!
     VGROUP_EMPTY = 1 << 0
 
-    # Custom properties, saved with .blend file.
+    # Custom properties, saved with `.blend` file.
     use_filter_empty: bpy.props.BoolProperty(
         name="Filter Empty",
         default=False,
@@ -32,6 +32,12 @@ class MESH_UL_vgroups_slow(bpy.types.UIList):
         default=False,
         options=set(),
         description="Reverse name filtering",
+    )
+    use_filter_orderby_invert: bpy.props.BoolProperty(
+        name="Reverse Order",
+        default=False,
+        options=set(),
+        description="Reverse order filtering",
     )
 
     # This allows us to have mutually exclusive options, which are also all disable-able!
@@ -60,24 +66,18 @@ class MESH_UL_vgroups_slow(bpy.types.UIList):
 
         # assert(isinstance(item, bpy.types.VertexGroup)
         vgroup = item
-        if self.layout_type in {'DEFAULT', 'COMPACT'}:
-            # Here we use one feature of new filtering feature: it can pass data to draw_item, through flt_flag
-            # parameter, which contains exactly what filter_items set in its filter list for this item!
-            # In this case, we show empty groups grayed out.
-            if flt_flag & self.VGROUP_EMPTY:
-                col = layout.column()
-                col.enabled = False
-                col.alignment = 'LEFT'
-                col.prop(vgroup, "name", text="", emboss=False, icon_value=icon)
-            else:
-                layout.prop(vgroup, "name", text="", emboss=False, icon_value=icon)
-            icon = 'LOCKED' if vgroup.lock_weight else 'UNLOCKED'
-            layout.prop(vgroup, "lock_weight", text="", icon=icon, emboss=False)
-        elif self.layout_type == 'GRID':
-            layout.alignment = 'CENTER'
-            if flt_flag & self.VGROUP_EMPTY:
-                layout.enabled = False
-            layout.label(text="", icon_value=icon)
+        # Here we use one feature of new filtering feature: it can pass data to draw_item, through flt_flag
+        # parameter, which contains exactly what filter_items set in its filter list for this item!
+        # In this case, we show empty groups grayed out.
+        if flt_flag & self.VGROUP_EMPTY:
+            col = layout.column()
+            col.enabled = False
+            col.alignment = 'LEFT'
+            col.prop(vgroup, "name", text="", emboss=False, icon_value=icon)
+        else:
+            layout.prop(vgroup, "name", text="", emboss=False, icon_value=icon)
+        icon = 'LOCKED' if vgroup.lock_weight else 'UNLOCKED'
+        layout.prop(vgroup, "lock_weight", text="", icon=icon, emboss=False)
 
     def draw_filter(self, context, layout):
         # Nothing much to say here, it's usual UI code...
@@ -102,8 +102,8 @@ class MESH_UL_vgroups_slow(bpy.types.UIList):
 
     def filter_items_empty_vgroups(self, context, vgroups):
         # This helper function checks vgroups to find out whether they are empty, and what's their average weights.
-        # TODO: This should be RNA helper actually (a vgroup prop like "raw_data: ((vidx, vweight), etc.)").
-        #       Too slow for python!
+        # TODO: This should be RNA helper actually (a vgroup prop like `"raw_data: ((vidx, vweight), etc.)"`).
+        #       Too slow for Python!
         obj_data = context.active_object.data
         ret = {vg.index: [True, 0.0] for vg in vgroups}
         if hasattr(obj_data, "vertices"):  # Mesh data
@@ -125,7 +125,7 @@ class MESH_UL_vgroups_slow(bpy.types.UIList):
                         ret[vg.group][0] = False
                         ret[vg.group][1] += vg.weight * fact
         elif hasattr(obj_data, "points"):  # Lattice data
-            # XXX no access to lattice editdata?
+            # XXX: no access to lattice edit-data?
             fact = 1 / len(obj_data.points)
             for v in obj_data.points:
                 for vg in v.groups:
@@ -136,11 +136,11 @@ class MESH_UL_vgroups_slow(bpy.types.UIList):
     def filter_items(self, context, data, propname):
         # This function gets the collection property (as the usual tuple (data, propname)), and must return two lists:
         # * The first one is for filtering, it must contain 32bit integers were self.bitflag_filter_item marks the
-        #   matching item as filtered (i.e. to be shown). The upper 16 bits (including self.bitflag_filter_item) are
+        #   matching item as filtered (i.e. to be shown). The upper 16 bits (including `self.bitflag_filter_item`) are
         #   reserved for internal use, the lower 16 bits are free for custom use. Here we use the first bit to mark
         #   VGROUP_EMPTY.
         # * The second one is for reordering, it must return a list containing the new indices of the items (which
-        #   gives us a mapping org_idx -> new_idx).
+        #   gives us a mapping `org_idx -> new_idx`).
         # Please note that the default UI_UL_list defines helper functions for common tasks (see its doc for more info).
         # If you do not make filtering and/or ordering, return empty list(s) (this will be more efficient than
         # returning full lists doing nothing!).
@@ -151,10 +151,10 @@ class MESH_UL_vgroups_slow(bpy.types.UIList):
         flt_flags = []
         flt_neworder = []
 
-        # Pre-compute of vgroups data, CPU-intensive. :/
+        # Pre-compute of vertex-groups data, unfortunately this is CPU-intensive.
         vgroups_empty = self.filter_items_empty_vgroups(context, vgroups)
 
-        # Filtering by name
+        # Filtering by name.
         if self.filter_name:
             flt_flags = helper_funcs.filter_items_by_name(self.filter_name, self.bitflag_filter_item, vgroups, "name",
                                                           reverse=self.use_filter_name_reverse)
@@ -173,9 +173,12 @@ class MESH_UL_vgroups_slow(bpy.types.UIList):
         # Reorder by name or average weight.
         if self.use_order_name:
             flt_neworder = helper_funcs.sort_items_by_name(vgroups, "name")
+            if self.use_filter_orderby_invert:
+                flt_neworder.reverse()
         elif self.use_order_importance:
             _sort = [(idx, vgroups_empty[vg.index][1]) for idx, vg in enumerate(vgroups)]
-            flt_neworder = helper_funcs.sort_items_helper(_sort, lambda e: e[1], True)
+            highest_first = not self.use_filter_orderby_invert
+            flt_neworder = helper_funcs.sort_items_helper(_sort, lambda e: e[1], highest_first)
 
         return flt_flags, flt_neworder
 
@@ -193,7 +196,7 @@ class UIListPanelExample2(bpy.types.Panel):
         layout = self.layout
         obj = context.object
 
-        # template_list now takes two new args.
+        # `template_list` now takes two new arguments.
         # The first one is the identifier of the registered UIList to use (if you want only the default list,
         # with no custom draw code, use "UI_UL_list").
         layout.template_list("MESH_UL_vgroups_slow", "", obj, "vertex_groups", obj.vertex_groups, "active_index")

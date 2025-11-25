@@ -12,6 +12,8 @@
 #include "BKE_curves.hh"
 #include "BKE_grease_pencil.hh"
 
+#include "BLI_math_color.h"
+
 #include "BLT_translation.hh"
 
 #include "DNA_material_types.h"
@@ -1144,6 +1146,8 @@ static bke::CurvesGeometry create_drawing_data(const Span<float3> positions,
 
   curves.transform(matrix);
 
+  /* Note: We expect this function to run on a newly created drawing. Otherwise these
+   * `lookup_or_add_for_write_span` function calls could fail. */
   SpanAttributeWriter<float> point_radii = attributes.lookup_or_add_for_write_only_span<float>(
       "radius", AttrDomain::Point);
   point_radii.span.copy_from(radii);

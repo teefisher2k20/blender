@@ -4,13 +4,11 @@
 
 #include <cmath>
 
-#include "BLI_noise.hh"
-#include "BLI_string.h"
 #include "BLI_string_utf8.h"
 
 #include "RNA_enum_types.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "node_function_util.hh"
@@ -26,7 +24,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "rounding_mode", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "rounding_mode", UI_ITEM_NONE, "", ICON_NONE);
 }
 
 static void node_label(const bNodeTree * /*tree*/,
@@ -81,13 +79,15 @@ static void node_register()
 
   fn_node_type_base(&ntype, "FunctionNodeFloatToInt", FN_NODE_FLOAT_TO_INT);
   ntype.ui_name = "Float to Integer";
+  ntype.ui_description =
+      "Convert the given floating-point number to an integer, with a choice of methods";
   ntype.enum_name_legacy = "FLOAT_TO_INT";
   ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = node_declare;
   ntype.labelfunc = node_label;
   ntype.build_multi_function = node_build_multi_function;
   ntype.draw_buttons = node_layout;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

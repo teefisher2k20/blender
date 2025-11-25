@@ -14,7 +14,7 @@
 #include "GPU_vertex_buffer.hh"
 
 #include "../generic/py_capi_utils.hh"
-#include "../generic/python_compat.hh"
+#include "../generic/python_compat.hh" /* IWYU pragma: keep. */
 
 #include "gpu_py.hh"
 #include "gpu_py_vertex_buffer.hh" /* own include */
@@ -25,7 +25,7 @@
  * \{ */
 
 #define PYGPU_AS_NATIVE_SWITCH(attr) \
-  switch (attr->comp_type) { \
+  switch (attr->type.comp_type()) { \
     case GPU_COMP_I8: { \
       PY_AS_NATIVE(int8_t, PyC_Long_AsI8); \
       break; \
@@ -80,7 +80,7 @@ static void pygpu_fill_format_sequence(void *data_dst_void,
                                        PyObject *py_seq_fast,
                                        const GPUVertAttr *attr)
 {
-  const uint len = attr->comp_len;
+  const uint len = attr->type.comp_len();
   PyObject **value_fast_items = PySequence_Fast_ITEMS(py_seq_fast);
 
 /**
@@ -128,8 +128,9 @@ static bool pygpu_vertbuf_fill_impl(blender::gpu::VertBuf *vbo,
           PyExc_ValueError, exc_str_size_mismatch, "sequence", vert_len, pybuffer.shape[0]);
       ok = false;
     }
-    else if (comp_len != attr->comp_len) {
-      PyErr_Format(PyExc_ValueError, exc_str_size_mismatch, "component", attr->comp_len, comp_len);
+    else if (comp_len != attr->type.comp_len()) {
+      PyErr_Format(
+          PyExc_ValueError, exc_str_size_mismatch, "component", attr->type.comp_len(), comp_len);
       ok = false;
     }
     else {
@@ -155,7 +156,7 @@ static bool pygpu_vertbuf_fill_impl(blender::gpu::VertBuf *vbo,
 
     PyObject **seq_items = PySequence_Fast_ITEMS(seq_fast);
 
-    if (attr->comp_len == 1) {
+    if (attr->type.comp_len() == 1) {
       for (uint i = 0; i < seq_len; i++) {
         uchar *data = (uchar *)GPU_vertbuf_raw_step(&data_step);
         PyObject *item = seq_items[i];
@@ -171,11 +172,11 @@ static bool pygpu_vertbuf_fill_impl(blender::gpu::VertBuf *vbo,
           ok = false;
           goto finally;
         }
-        if (PySequence_Fast_GET_SIZE(seq_fast_item) != attr->comp_len) {
+        if (PySequence_Fast_GET_SIZE(seq_fast_item) != attr->type.comp_len()) {
           PyErr_Format(PyExc_ValueError,
                        exc_str_size_mismatch,
                        "sequence",
-                       attr->comp_len,
+                       attr->type.comp_len(),
                        PySequence_Fast_GET_SIZE(seq_fast_item));
           ok = false;
           Py_DECREF(seq_fast_item);
@@ -315,9 +316,14 @@ static PyObject *pygpu_vertbuf_attr_fill(BPyGPUVertBuf *self, PyObject *args, Py
   Py_RETURN_NONE;
 }
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic push
-#  pragma GCC diagnostic ignored "-Wcast-function-type"
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
 #endif
 
 static PyMethodDef pygpu_vertbuf__tp_methods[] = {
@@ -328,8 +334,12 @@ static PyMethodDef pygpu_vertbuf__tp_methods[] = {
     {nullptr, nullptr, 0, nullptr},
 };
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic pop
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
 #endif
 
 static void pygpu_vertbuf__tp_dealloc(BPyGPUVertBuf *self)

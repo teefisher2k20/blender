@@ -47,7 +47,7 @@ class GHOST_SystemWin32 : public GHOST_System {
   /**
    * Destructor.
    */
-  ~GHOST_SystemWin32();
+  ~GHOST_SystemWin32() override;
 
   /***************************************************************************************
    ** Time(r) functionality
@@ -66,7 +66,7 @@ class GHOST_SystemWin32 : public GHOST_System {
    * This overloaded method uses the high frequency timer if available.
    * \return The number of milliseconds.
    */
-  uint64_t getMilliSeconds() const;
+  uint64_t getMilliSeconds() const override;
 
   /***************************************************************************************
    ** Display/window management functionality
@@ -76,19 +76,19 @@ class GHOST_SystemWin32 : public GHOST_System {
    * Returns the number of displays on this system.
    * \return The number of displays.
    */
-  uint8_t getNumDisplays() const;
+  uint8_t getNumDisplays() const override;
 
   /**
    * Returns the dimensions of the main display on this system.
    * \return The dimension of the main display.
    */
-  void getMainDisplayDimensions(uint32_t &width, uint32_t &height) const;
+  void getMainDisplayDimensions(uint32_t &width, uint32_t &height) const override;
 
   /**
    * Returns the dimensions of all displays on this system.
    * \return The dimension of the main display.
    */
-  void getAllDisplayDimensions(uint32_t &width, uint32_t &height) const;
+  void getAllDisplayDimensions(uint32_t &width, uint32_t &height) const override;
 
   /**
    * Create a new window.
@@ -101,9 +101,9 @@ class GHOST_SystemWin32 : public GHOST_System {
    * \param width: The width the window.
    * \param height: The height the window.
    * \param state: The state of the window when opened.
-   * \param gpuSettings: Misc GPU settings.
+   * \param gpu_settings: Misc GPU settings.
    * \param exclusive: Use to show the window on top and ignore others (used full-screen).
-   * \param parentWindow: Parent window.
+   * \param parent_window: Parent window.
    * \return The new window (or 0 if creation failed).
    */
   GHOST_IWindow *createWindow(const char *title,
@@ -112,24 +112,24 @@ class GHOST_SystemWin32 : public GHOST_System {
                               uint32_t width,
                               uint32_t height,
                               GHOST_TWindowState state,
-                              GHOST_GPUSettings gpuSettings,
+                              GHOST_GPUSettings gpu_settings,
                               const bool exclusive = false,
                               const bool is_dialog = false,
-                              const GHOST_IWindow *parentWindow = 0);
+                              const GHOST_IWindow *parent_window = nullptr) override;
 
   /**
    * Create a new off-screen context.
    * Never explicitly delete the window, use #disposeContext() instead.
    * \return The new context (or 0 if creation failed).
    */
-  GHOST_IContext *createOffscreenContext(GHOST_GPUSettings gpuSettings);
+  GHOST_IContext *createOffscreenContext(GHOST_GPUSettings gpu_settings) override;
 
   /**
    * Dispose of a context.
    * \param context: Pointer to the context to be disposed.
    * \return Indication of success.
    */
-  GHOST_TSuccess disposeContext(GHOST_IContext *context);
+  GHOST_TSuccess disposeContext(GHOST_IContext *context) override;
 
   /**
    * Create a new off-screen DirectX context.
@@ -152,7 +152,7 @@ class GHOST_SystemWin32 : public GHOST_System {
    * Get the Window under the mouse cursor. Location obtained from the OS.
    * \return The window under the cursor or nullptr if none.
    */
-  GHOST_IWindow *getWindowUnderCursor(int32_t /*x*/, int32_t /*y*/);
+  GHOST_IWindow *getWindowUnderCursor(int32_t /*x*/, int32_t /*y*/) override;
 
   /***************************************************************************************
    ** Event management functionality
@@ -163,7 +163,7 @@ class GHOST_SystemWin32 : public GHOST_System {
    * \param waitForEvent: Flag to wait for an event (or return immediately).
    * \return Indication of the presence of events.
    */
-  bool processEvents(bool waitForEvent);
+  bool processEvents(bool waitForEvent) override;
 
   /***************************************************************************************
    ** Cursor management functionality
@@ -175,7 +175,7 @@ class GHOST_SystemWin32 : public GHOST_System {
    * \param y: The y-coordinate of the cursor.
    * \return Indication of success.
    */
-  GHOST_TSuccess getCursorPosition(int32_t &x, int32_t &y) const;
+  GHOST_TSuccess getCursorPosition(int32_t &x, int32_t &y) const override;
 
   /**
    * Updates the location of the cursor (location in screen coordinates).
@@ -183,14 +183,16 @@ class GHOST_SystemWin32 : public GHOST_System {
    * \param y: The y-coordinate of the cursor.
    * \return Indication of success.
    */
-  GHOST_TSuccess setCursorPosition(int32_t x, int32_t y);
+  GHOST_TSuccess setCursorPosition(int32_t x, int32_t y) override;
 
   /**
    * Get the color of the pixel at the current mouse cursor location
    * \param r_color: returned sRGB float colors
    * \return Success value (true == successful and supported by platform)
    */
-  GHOST_TSuccess getPixelAtCursor(float r_color[3]) const;
+  GHOST_TSuccess getPixelAtCursor(float r_color[3]) const override;
+
+  uint32_t getCursorPreferredLogicalSize() const override;
 
   /***************************************************************************************
    ** Access to mouse button and keyboard states.
@@ -201,35 +203,35 @@ class GHOST_SystemWin32 : public GHOST_System {
    * \param keys: The state of all modifier keys (true == pressed).
    * \return Indication of success.
    */
-  GHOST_TSuccess getModifierKeys(GHOST_ModifierKeys &keys) const;
+  GHOST_TSuccess getModifierKeys(GHOST_ModifierKeys &keys) const override;
 
   /**
    * Returns the state of the mouse buttons (outside the message queue).
    * \param buttons: The state of the buttons.
    * \return Indication of success.
    */
-  GHOST_TSuccess getButtons(GHOST_Buttons &buttons) const;
+  GHOST_TSuccess getButtons(GHOST_Buttons &buttons) const override;
 
-  GHOST_TCapabilityFlag getCapabilities() const;
+  GHOST_TCapabilityFlag getCapabilities() const override;
 
   /**
    * Returns unsigned char from CUT_BUFFER0
    * \param selection: Used by X11 only.
    * \return Returns the Clipboard.
    */
-  char *getClipboard(bool selection) const;
+  char *getClipboard(bool selection) const override;
 
   /**
    * Puts buffer to system clipboard.
    * \param selection: Used by X11 only.
    * \return No return.
    */
-  void putClipboard(const char *buffer, bool selection) const;
+  void putClipboard(const char *buffer, bool selection) const override;
 
   /**
    * Returns GHOST_kSuccess if the clipboard contains an image.
    */
-  GHOST_TSuccess hasClipboardImage() const;
+  GHOST_TSuccess hasClipboardImage() const override;
 
   /**
    * Get image data from the Clipboard
@@ -237,7 +239,7 @@ class GHOST_SystemWin32 : public GHOST_System {
    * \param r_height: the returned image height in pixels.
    * \return pointer uint array in RGBA byte order. Caller must free.
    */
-  uint *getClipboardImage(int *r_width, int *r_height) const;
+  uint *getClipboardImage(int *r_width, int *r_height) const override;
 
   /**
    * Put image data to the Clipboard
@@ -245,7 +247,7 @@ class GHOST_SystemWin32 : public GHOST_System {
    * \param width: the image width in pixels.
    * \param height: the image height in pixels.
    */
-  GHOST_TSuccess putClipboardImage(uint *rgba, int width, int height) const;
+  GHOST_TSuccess putClipboardImage(uint *rgba, int width, int height) const override;
 
   /**
    * Show a system message box
@@ -261,7 +263,7 @@ class GHOST_SystemWin32 : public GHOST_System {
                                 const char *help_label,
                                 const char *continue_label,
                                 const char *link,
-                                GHOST_DialogOptions dialog_options) const;
+                                GHOST_DialogOptions dialog_options) const override;
 
   /**
    * Creates a drag & drop event and pushes it immediately onto the event queue.
@@ -307,13 +309,13 @@ class GHOST_SystemWin32 : public GHOST_System {
    * For now, it just registers the window class (WNDCLASS).
    * \return A success value.
    */
-  GHOST_TSuccess init();
+  GHOST_TSuccess init() override;
 
   /**
    * Closes the system down.
    * \return A success value.
    */
-  GHOST_TSuccess exit();
+  GHOST_TSuccess exit() override;
 
   /**
    * Converts raw WIN32 key codes from the `wndproc` to GHOST keys.
@@ -369,15 +371,23 @@ class GHOST_SystemWin32 : public GHOST_System {
                                                const int32_t screen_co[2]);
 
   /**
-   * Handles a mouse wheel event.
+   * Handles a vertical mouse wheel event.
    * \param window: The window receiving the event (the active window).
    * \param wParam: The wParam from the `wndproc`.
    * \param lParam: The lParam from the `wndproc`.
    */
-  static void processWheelEvent(GHOST_WindowWin32 *window, WPARAM wParam, LPARAM lParam);
+  static void processWheelEventVertical(GHOST_WindowWin32 *window, WPARAM wParam, LPARAM lParam);
 
   /**
-   * Creates a key event and updates the key data stored locally (m_modifierKeys).
+   * Handles a horizontal mouse wheel event.
+   * \param window: The window receiving the event (the active window).
+   * \param wParam: The wParam from the `wndproc`.
+   * \param lParam: The lParam from the `wndproc`.
+   */
+  static void processWheelEventHorizontal(GHOST_WindowWin32 *window, WPARAM wParam, LPARAM lParam);
+
+  /**
+   * Creates a key event and updates the key data stored locally (modifier_keys_).
    * In most cases this is a straightforward conversion of key codes.
    * For the modifier keys however, we want to distinguish left and right keys.
    * \param window: The window receiving the event (the active window).
@@ -418,7 +428,7 @@ class GHOST_SystemWin32 : public GHOST_System {
    */
   static GHOST_Event *processImeEvent(GHOST_TEventType type,
                                       GHOST_WindowWin32 *window,
-                                      GHOST_TEventImeData *data);
+                                      const GHOST_TEventImeData *data);
 #endif /* WITH_INPUT_IME */
 
   /**
@@ -463,42 +473,43 @@ class GHOST_SystemWin32 : public GHOST_System {
    * \param action: console state
    * \return current status (1 -visible, 0 - hidden)
    */
-  bool setConsoleWindowState(GHOST_TConsoleWindowState action);
+  bool setConsoleWindowState(GHOST_TConsoleWindowState action) override;
 
   /** State variable set at initialization. */
-  bool m_hasPerformanceCounter;
+  bool has_performance_counter_;
   /** High frequency timer variable. */
-  __int64 m_freq;
+  __int64 freq_;
   /** AltGr on current keyboard layout. */
-  bool m_hasAltGr;
+  bool has_alt_gr_;
   /** Language identifier. */
-  WORD m_langId;
+  WORD lang_id_;
   /** Stores keyboard layout. */
-  HKL m_keylayout;
+  HKL keylayout_;
 
   /** Console status. */
-  bool m_consoleStatus;
+  bool console_status_;
 
-  /** Wheel delta accumulator. */
-  int m_wheelDeltaAccum;
+  /** Wheel delta accumulators. */
+  int wheel_delta_accum_vertical_;
+  int wheel_delta_accum_horizontal_;
 };
 
 inline void GHOST_SystemWin32::handleKeyboardChange()
 {
-  m_keylayout = GetKeyboardLayout(0); /* Get keylayout for current thread. */
+  keylayout_ = GetKeyboardLayout(0); /* Get keylayout for current thread. */
   int i;
   SHORT s;
 
   /* Save the language identifier. */
-  m_langId = LOWORD(m_keylayout);
+  lang_id_ = LOWORD(keylayout_);
 
-  for (m_hasAltGr = false, i = 32; i < 256; ++i) {
-    s = VkKeyScanEx((char)i, m_keylayout);
+  for (has_alt_gr_ = false, i = 32; i < 256; ++i) {
+    s = VkKeyScanEx((char)i, keylayout_);
     /* `s == -1` means no key that translates passed char code high byte contains shift state.
      * bit 2 Control pressed, bit 4 `Alt` pressed if both are pressed,
      * we have `AltGr` key-combination on key-layout. */
     if (s != -1 && (s & 0x600) == 0x600) {
-      m_hasAltGr = true;
+      has_alt_gr_ = true;
       break;
     }
   }

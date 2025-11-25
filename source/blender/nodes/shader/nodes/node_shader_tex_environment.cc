@@ -23,7 +23,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_shader_init_tex_environment(bNodeTree * /*ntree*/, bNode *node)
 {
-  NodeTexEnvironment *tex = MEM_cnew<NodeTexEnvironment>("NodeTexEnvironment");
+  NodeTexEnvironment *tex = MEM_callocN<NodeTexEnvironment>("NodeTexEnvironment");
   BKE_texture_mapping_default(&tex->base.tex_mapping, TEXMAP_TYPE_POINT);
   BKE_texture_colormapping_default(&tex->base.color_mapping);
   tex->projection = SHD_PROJ_EQUIRECTANGULAR;
@@ -56,9 +56,7 @@ static int node_shader_gpu_tex_environment(GPUMaterial *mat,
 
   GPUNodeLink *outalpha;
 
-  /* HACK(@fclem): For lookdev mode: do not compile an empty environment and just create an empty
-   * texture entry point. We manually bind to it after #DRW_shgroup_add_material_resources(). */
-  if (!ima && !GPU_material_flag_get(mat, GPU_MATFLAG_LOOKDEV_HACK)) {
+  if (!ima) {
     return GPU_stack_link(mat, node, "node_tex_environment_empty", in, out);
   }
 
@@ -199,11 +197,11 @@ void register_node_type_sh_tex_environment()
   ntype.declare = file_ns::node_declare;
   ntype.initfunc = file_ns::node_shader_init_tex_environment;
   blender::bke::node_type_storage(
-      &ntype, "NodeTexEnvironment", node_free_standard_storage, node_copy_standard_storage);
+      ntype, "NodeTexEnvironment", node_free_standard_storage, node_copy_standard_storage);
   ntype.gpu_fn = file_ns::node_shader_gpu_tex_environment;
   ntype.labelfunc = node_image_label;
-  blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Large);
+  blender::bke::node_type_size_preset(ntype, blender::bke::eNodeSizePreset::Large);
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

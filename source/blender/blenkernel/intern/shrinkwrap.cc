@@ -6,6 +6,7 @@
  * \ingroup bke
  */
 
+#include <algorithm>
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
@@ -26,19 +27,20 @@
 #include "BLI_utildefines.h"
 
 #include "BKE_attribute.hh"
-#include "BKE_mesh_legacy_derived_mesh.hh"
 #include "BKE_modifier.hh"
 #include "BKE_shrinkwrap.hh"
+#include "BKE_subdiv.hh"
 
 #include "BKE_deform.hh"
 #include "BKE_editmesh.hh"
 #include "BKE_mesh.hh" /* for OMP limits. */
 #include "BKE_mesh_wrapper.hh"
-#include "BKE_subsurf.hh"
+#include "BKE_subdiv.hh"
+#include "BKE_subdiv_deform.hh"
 
 #include "DEG_depsgraph_query.hh"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 /* for timing... */
 #if 0
@@ -314,11 +316,8 @@ static void shrinkwrap_calc_nearest_vertex_cb_ex(void *__restrict userdata,
 
   float *co = calc->vertexCos[i];
   float tmp_co[3];
-  float weight = BKE_defvert_array_find_weight_safe(calc->dvert, i, calc->vgroup);
-
-  if (calc->invert_vgroup) {
-    weight = 1.0f - weight;
-  }
+  float weight = BKE_defvert_array_find_weight_safe(
+      calc->dvert, i, calc->vgroup, calc->invert_vgroup);
 
   if (weight == 0.0f) {
     return;
@@ -478,11 +477,8 @@ static void shrinkwrap_calc_normal_projection_cb_ex(void *__restrict userdata,
   const float proj_limit_squared = calc->smd->projLimit * calc->smd->projLimit;
   float *co = calc->vertexCos[i];
   const float *tmp_co, *tmp_no;
-  float weight = BKE_defvert_array_find_weight_safe(calc->dvert, i, calc->vgroup);
-
-  if (calc->invert_vgroup) {
-    weight = 1.0f - weight;
-  }
+  float weight = BKE_defvert_array_find_weight_safe(
+      calc->dvert, i, calc->vgroup, calc->invert_vgroup);
 
   if (weight == 0.0f) {
     return;
@@ -731,12 +727,8 @@ static void target_project_tri_jacobian(void *userdata, const float x[3], float 
 /* Clamp barycentric weights to the triangle. */
 static void target_project_tri_clamp(float x[3])
 {
-  if (x[0] < 0.0f) {
-    x[0] = 0.0f;
-  }
-  if (x[1] < 0.0f) {
-    x[1] = 0.0f;
-  }
+  x[0] = std::max(x[0], 0.0f);
+  x[1] = std::max(x[1], 0.0f);
   if (x[0] + x[1] > 1.0f) {
     x[0] = x[0] / (x[0] + x[1]);
     x[1] = 1.0f - x[0];
@@ -922,7 +914,7 @@ static void target_project_edge(const ShrinkwrapTreeData *tree,
 
   /* Retrieve boundary vertex IDs */
   const int *vert_boundary_id = tree->boundary->vert_boundary_id.data();
-  int bid1 = vert_boundary_id[edge[0]], bid2 = vert_boundary_id[edge[1]];
+  const int bid1 = vert_boundary_id[edge[0]], bid2 = vert_boundary_id[edge[1]];
 
   if (bid1 < 0 || bid2 < 0) {
     return;
@@ -944,35 +936,40 @@ static void target_project_edge(const ShrinkwrapTreeData *tree,
     negate_v3(vedge_dir[1]);
   }
 
-  /* Solve a quadratic equation: lerp(d0,d1,x) * (co - lerp(v0,v1,x)) = 0 */
-  float d0v0 = dot_v3v3(vedge_dir[0], vedge_co[0]), d0v1 = dot_v3v3(vedge_dir[0], vedge_co[1]);
-  float d1v0 = dot_v3v3(vedge_dir[1], vedge_co[0]), d1v1 = dot_v3v3(vedge_dir[1], vedge_co[1]);
-  float d0co = dot_v3v3(vedge_dir[0], co);
+  /* Solve a quadratic equation: `lerp(d0,d1,x) * (co - lerp(v0,v1,x)) = 0`. */
+  const float d0v0 = dot_v3v3(vedge_dir[0], vedge_co[0]),
+              d0v1 = dot_v3v3(vedge_dir[0], vedge_co[1]);
+  const float d1v0 = dot_v3v3(vedge_dir[1], vedge_co[0]),
+              d1v1 = dot_v3v3(vedge_dir[1], vedge_co[1]);
+  const float d0co = dot_v3v3(vedge_dir[0], co);
 
-  float a = d0v1 - d0v0 + d1v0 - d1v1;
-  float b = 2 * d0v0 - d0v1 - d0co - d1v0 + dot_v3v3(vedge_dir[1], co);
-  float c = d0co - d0v0;
-  float det = b * b - 4 * a * c;
+  /* Checked for non-zero prevent divide by zero when calculating `x`. */
+  const float a = d0v1 - d0v0 + d1v0 - d1v1;
+  if (a != 0.0f) {
+    const float b = 2 * d0v0 - d0v1 - d0co - d1v0 + dot_v3v3(vedge_dir[1], co);
+    const float c = d0co - d0v0;
+    const float det = b * b - 4 * a * c;
 
-  if (det >= 0 && a != 0) {
-    const float epsilon = 1e-6f;
-    float sdet = sqrtf(det);
-    float hit_co[3], hit_no[3];
+    if (det >= 0) {
+      const float epsilon = 1e-6f;
+      const float sdet = sqrtf(det);
+      float hit_co[3], hit_no[3];
 
-    for (int i = (det > 0 ? 2 : 0); i >= 0; i -= 2) {
-      float x = (-b + (float(i) - 1) * sdet) / (2 * a);
+      for (int i = (det > 0 ? 2 : 0); i >= 0; i -= 2) {
+        float x = (-b + float(i - 1) * sdet) / (2.0f * a);
 
-      if (x >= -epsilon && x <= 1.0f + epsilon) {
-        CLAMP(x, 0, 1);
+        if (x >= -epsilon && x <= 1.0f + epsilon) {
+          CLAMP(x, 0.0f, 1.0f);
 
-        float vedge_no[2][3];
-        copy_v3_v3(vedge_no[0], tree->vert_normals[edge[0]]);
-        copy_v3_v3(vedge_no[1], tree->vert_normals[edge[1]]);
+          float vedge_no[2][3];
+          copy_v3_v3(vedge_no[0], tree->vert_normals[edge[0]]);
+          copy_v3_v3(vedge_no[1], tree->vert_normals[edge[1]]);
 
-        interp_v3_v3v3(hit_co, vedge_co[0], vedge_co[1], x);
-        interp_v3_v3v3(hit_no, vedge_no[0], vedge_no[1], x);
+          interp_v3_v3v3(hit_co, vedge_co[0], vedge_co[1], x);
+          interp_v3_v3v3(hit_no, vedge_no[0], vedge_no[1], x);
 
-        update_hit(nearest, index, co, hit_co, hit_no);
+          update_hit(nearest, index, co, hit_co, hit_no);
+        }
       }
     }
   }
@@ -1063,7 +1060,7 @@ void BKE_shrinkwrap_find_nearest_surface(ShrinkwrapTreeData *tree,
 #endif
 
     if (nearest->index < 0) {
-      /* fallback to simple nearest */
+      /* fall back to simple nearest */
       BLI_bvhtree_find_nearest(tree->bvh, co, nearest, treeData->nearest_callback, treeData);
     }
   }
@@ -1089,11 +1086,8 @@ static void shrinkwrap_calc_nearest_surface_point_cb_ex(void *__restrict userdat
 
   float *co = calc->vertexCos[i];
   float tmp_co[3];
-  float weight = BKE_defvert_array_find_weight_safe(calc->dvert, i, calc->vgroup);
-
-  if (calc->invert_vgroup) {
-    weight = 1.0f - weight;
-  }
+  float weight = BKE_defvert_array_find_weight_safe(
+      calc->dvert, i, calc->vgroup, calc->invert_vgroup);
 
   if (weight == 0.0f) {
     return;
@@ -1166,7 +1160,7 @@ void BKE_shrinkwrap_compute_smooth_normal(const ShrinkwrapTreeData *tree,
                                  treeData->corner_verts[tri[2]]};
     float w[3], no[3][3], tmp_co[3];
 
-    /* Custom and auto smooth split normals. */
+    /* Custom normals. */
     if (!tree->corner_normals.is_empty()) {
       copy_v3_v3(no[0], tree->corner_normals[tri[0]]);
       copy_v3_v3(no[1], tree->corner_normals[tri[1]]);
@@ -1209,7 +1203,7 @@ void BKE_shrinkwrap_compute_smooth_normal(const ShrinkwrapTreeData *tree,
       BLI_space_transform_invert_normal(transform, r_no);
     }
   }
-  /* Finally fallback to the corner_tris normal. */
+  /* Finally fall back to the corner_tris normal. */
   else {
     copy_v3_v3(r_no, hit_no);
   }
@@ -1347,9 +1341,39 @@ static void shrinkwrap_calc_nearest_surface_point(ShrinkwrapCalcData *calc)
       0, calc->numVerts, &data, shrinkwrap_calc_nearest_surface_point_cb_ex, &settings);
 }
 
+static blender::Array<blender::float3> shrinkwrap_calc_subdivided_positions(
+    Mesh *mesh, const int subdivision_level)
+{
+  using namespace blender;
+  using namespace blender::bke;
+
+  Array<float3> positions = mesh->vert_positions();
+
+  subdiv::Settings settings{};
+  settings.is_simple = false;
+  settings.is_adaptive = false;
+  settings.level = subdivision_level;
+  settings.use_creases = true;
+
+  /* Default subdivision surface modifier settings:
+   * - UV Smooth:Keep Corners.
+   * - BoundarySmooth: All. */
+  settings.vtx_boundary_interpolation = subdiv::SUBDIV_VTX_BOUNDARY_EDGE_ONLY;
+  settings.fvar_linear_interpolation =
+      subdiv::SUBDIV_FVAR_LINEAR_INTERPOLATION_CORNERS_AND_JUNCTIONS;
+
+  subdiv::Subdiv *subdiv = subdiv::update_from_mesh(nullptr, &settings, mesh);
+  if (subdiv) {
+    subdiv::deform_coarse_vertices(subdiv, mesh, positions);
+    subdiv::free(subdiv);
+  }
+
+  return positions;
+}
+
 void shrinkwrapModifier_deform(ShrinkwrapModifierData *smd,
                                const ModifierEvalContext *ctx,
-                               Scene *scene,
+                               Scene * /*scene*/,
                                Object *ob,
                                Mesh *mesh,
                                const MDeformVert *dvert,
@@ -1357,9 +1381,8 @@ void shrinkwrapModifier_deform(ShrinkwrapModifierData *smd,
                                float (*vertexCos)[3],
                                int numVerts)
 {
-
-  DerivedMesh *ss_mesh = nullptr;
   ShrinkwrapCalcData calc = NULL_ShrinkwrapCalcData;
+  blender::Array<blender::float3> subdivided_positions;
 
   /* remove loop dependencies on derived meshes (TODO should this be done elsewhere?) */
   if (smd->target == ob) {
@@ -1379,7 +1402,7 @@ void shrinkwrapModifier_deform(ShrinkwrapModifierData *smd,
   calc.invert_vgroup = (smd->shrinkOpts & MOD_SHRINKWRAP_INVERT_VGROUP) != 0;
 
   if (smd->target != nullptr) {
-    Object *ob_target = DEG_get_evaluated_object(ctx->depsgraph, smd->target);
+    Object *ob_target = DEG_get_evaluated(ctx->depsgraph, smd->target);
     calc.target = BKE_modifier_get_evaluated_mesh_from_evaluated_object(ob_target);
 
     /* TODO: there might be several "bugs" with non-uniform scales matrices
@@ -1390,44 +1413,17 @@ void shrinkwrapModifier_deform(ShrinkwrapModifierData *smd,
     /* TODO: smd->keepDist is in global units.. must change to local */
     calc.keepDist = smd->keepDist;
   }
-  calc.aux_target = DEG_get_evaluated_object(ctx->depsgraph, smd->auxTarget);
+  calc.aux_target = DEG_get_evaluated(ctx->depsgraph, smd->auxTarget);
 
   if (mesh != nullptr && smd->shrinkType == MOD_SHRINKWRAP_PROJECT) {
     /* Setup arrays to get vertex positions, normals and deform weights */
-    calc.vert_positions = reinterpret_cast<float(*)[3]>(mesh->vert_positions_for_write().data());
+    calc.vert_positions = reinterpret_cast<float (*)[3]>(mesh->vert_positions_for_write().data());
     calc.vert_normals = mesh->vert_normals();
 
     /* Using vertices positions/normals as if a subsurface was applied */
     if (smd->subsurfLevels) {
-      SubsurfModifierData ssmd = {{nullptr}};
-      ssmd.subdivType = ME_CC_SUBSURF;  /* catmull clark */
-      ssmd.levels = smd->subsurfLevels; /* levels */
-
-      /* TODO: to be moved to Mesh once we are done with changes in subsurf code. */
-      DerivedMesh *dm = CDDM_from_mesh(mesh);
-
-      ss_mesh = subsurf_make_derived_from_derived(
-          dm,
-          &ssmd,
-          scene,
-          nullptr,
-          (ob->mode & OB_MODE_EDIT) ? SUBSURF_IN_EDIT_MODE : SubsurfFlags(0));
-
-      if (ss_mesh) {
-        calc.vert_positions = reinterpret_cast<float(*)[3]>(ss_mesh->getVertArray(ss_mesh));
-        if (calc.vert_positions) {
-          /* TRICKY: this code assumes subsurface will have the transformed original vertices
-           * in their original order at the end of the vert array. */
-          calc.vert_positions = calc.vert_positions + ss_mesh->getNumVerts(ss_mesh) -
-                                dm->getNumVerts(dm);
-        }
-      }
-
-      /* Just to make sure we are not leaving any memory behind */
-      BLI_assert(ssmd.emCache == nullptr);
-      BLI_assert(ssmd.mCache == nullptr);
-
-      dm->release(dm);
+      subdivided_positions = shrinkwrap_calc_subdivided_positions(mesh, smd->subsurfLevels);
+      calc.vert_positions = reinterpret_cast<float (*)[3]>(subdivided_positions.data());
     }
   }
 
@@ -1453,11 +1449,6 @@ void shrinkwrapModifier_deform(ShrinkwrapModifierData *smd,
     }
 
     BKE_shrinkwrap_free_tree(&tree);
-  }
-
-  /* free memory */
-  if (ss_mesh) {
-    ss_mesh->release(ss_mesh);
   }
 }
 
@@ -1486,7 +1477,7 @@ void shrinkwrapParams_deform(const ShrinkwrapParams &params,
   calc.smd = &smd;
   calc.ob = &object;
   calc.numVerts = int(positions.size());
-  calc.vertexCos = reinterpret_cast<float(*)[3]>(positions.data());
+  calc.vertexCos = reinterpret_cast<float (*)[3]>(positions.data());
   calc.dvert = dvert.is_empty() ? nullptr : dvert.data();
   calc.vgroup = defgrp_index;
   calc.invert_vgroup = params.invert_vertex_weights;
@@ -1534,7 +1525,7 @@ void BKE_shrinkwrap_mesh_nearest_surface_deform(Depsgraph *depsgraph,
       src_me,
       nullptr,
       -1,
-      reinterpret_cast<float(*)[3]>(src_me->vert_positions_for_write().data()),
+      reinterpret_cast<float (*)[3]>(src_me->vert_positions_for_write().data()),
       src_me->verts_num);
   src_me->tag_positions_changed();
 }
@@ -1558,12 +1549,12 @@ void BKE_shrinkwrap_remesh_target_project(Mesh *src_me, Mesh *target_me, Object 
 
   calc.smd = &ssmd;
   calc.numVerts = src_me->verts_num;
-  calc.vertexCos = reinterpret_cast<float(*)[3]>(src_me->vert_positions_for_write().data());
+  calc.vertexCos = reinterpret_cast<float (*)[3]>(src_me->vert_positions_for_write().data());
   calc.vert_normals = src_me->vert_normals();
   calc.vgroup = -1;
   calc.target = target_me;
   calc.keepDist = ssmd.keepDist;
-  calc.vert_positions = reinterpret_cast<float(*)[3]>(src_me->vert_positions_for_write().data());
+  calc.vert_positions = reinterpret_cast<float (*)[3]>(src_me->vert_positions_for_write().data());
   BLI_SPACE_TRANSFORM_SETUP(&calc.local2target, ob_target, ob_target);
 
   ShrinkwrapTreeData tree;

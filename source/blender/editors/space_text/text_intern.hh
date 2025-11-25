@@ -10,7 +10,7 @@
 
 #include "DNA_vec_types.h"
 
-/* internal exports only */
+/* Internal exports only. */
 
 struct ARegion;
 struct ScrArea;
@@ -121,7 +121,6 @@ void TEXT_OT_save(wmOperatorType *ot);
 void TEXT_OT_save_as(wmOperatorType *ot);
 void TEXT_OT_make_internal(wmOperatorType *ot);
 void TEXT_OT_run_script(wmOperatorType *ot);
-void TEXT_OT_refresh_pyconstraints(wmOperatorType *ot);
 
 void TEXT_OT_paste(wmOperatorType *ot);
 void TEXT_OT_copy(wmOperatorType *ot);
@@ -155,14 +154,14 @@ void TEXT_OT_selection_set(wmOperatorType *ot);
 void TEXT_OT_cursor_set(wmOperatorType *ot);
 void TEXT_OT_line_number(wmOperatorType *ot);
 
-/* find = find indicated text */
+/* The term: `find` means: find indicated text. */
 void TEXT_OT_find(wmOperatorType *ot);
 void TEXT_OT_find_set_selected(wmOperatorType *ot);
 void TEXT_OT_replace(wmOperatorType *ot);
 void TEXT_OT_replace_set_selected(wmOperatorType *ot);
 void TEXT_OT_jump_to_file_at_point(wmOperatorType *ot);
 
-/* text_find = open properties, activate search button */
+/* The term `text_find` means: open properties, activate search button. */
 void TEXT_OT_start_find(wmOperatorType *ot);
 
 void TEXT_OT_to_3d_object(wmOperatorType *ot);
@@ -171,13 +170,15 @@ void TEXT_OT_resolve_conflict(wmOperatorType *ot);
 
 bool text_space_edit_poll(bContext *C);
 
+void TEXT_OT_update_shader(wmOperatorType *ot);
+
 /* `text_autocomplete.cc` */
 
 void TEXT_OT_autocomplete(wmOperatorType *ot);
 
 /* `space_text.cc` */
 
-extern "C" const char *text_context_dir[]; /* doc access */
+extern "C" const char *text_context_dir[]; /* Doc access. */
 
 namespace blender::ed::text {
 struct SpaceText_Runtime {

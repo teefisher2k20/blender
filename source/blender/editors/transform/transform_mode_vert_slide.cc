@@ -6,14 +6,16 @@
  * \ingroup edtransform
  */
 
+#include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_matrix.hh"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "BKE_unit.hh"
 
 #include "GPU_immediate.hh"
 #include "GPU_matrix.hh"
+#include "GPU_state.hh"
 
 #include "ED_screen.hh"
 
@@ -32,7 +34,7 @@
 #include "transform_mode.hh"
 #include "transform_snap.hh"
 
-using namespace blender;
+namespace blender::ed::transform {
 
 /* -------------------------------------------------------------------- */
 /** \name Transform (Vert Slide)
@@ -95,7 +97,7 @@ struct VertSlideData {
         continue;
       }
 
-      const float3 &v_co_orig = sv.co_orig_3d();
+      const float3 v_co_orig = sv.co_orig_3d();
       float2 loc_src_2d = math::project_point(this->proj_mat, v_co_orig).xy();
 
       float dir_dot_best = -FLT_MAX;
@@ -141,7 +143,7 @@ struct VertSlideData {
 
 struct VertSlideParams {
   float perc;
-
+  wmOperator *op;
   bool use_even;
   bool flipped;
 };
@@ -153,8 +155,8 @@ static void vert_slide_update_input(TransInfo *t)
       TRANS_DATA_CONTAINER_FIRST_OK(t)->custom.mode.data);
   TransDataVertSlideVert *sv = &sld->sv[sld->curr_sv_index];
 
-  const float3 &co_orig_3d = sv->co_orig_3d();
-  const float3 &co_dest_3d = sv->co_dest_3d();
+  const float3 co_orig_3d = sv->co_orig_3d();
+  const float3 co_dest_3d = sv->co_dest_3d();
 
   int mval_ofs[2], mval_start[2], mval_end[2];
 
@@ -281,8 +283,8 @@ static void drawVertSlide(TransInfo *t)
     {
       TransDataVertSlideVert *curr_sv = &sld->sv[sld->curr_sv_index];
 
-      const float3 &co_orig_3d_act = curr_sv->co_orig_3d();
-      const float3 &co_dest_3d_act = curr_sv->co_dest_3d();
+      const float3 co_orig_3d_act = curr_sv->co_orig_3d();
+      const float3 co_dest_3d_act = curr_sv->co_dest_3d();
 
       const float ctrl_size = UI_GetThemeValuef(TH_FACEDOT_SIZE) + 1.5f;
       const float line_size = UI_GetThemeValuef(TH_OUTLINE_WIDTH) + 0.5f;
@@ -303,7 +305,7 @@ static void drawVertSlide(TransInfo *t)
       GPU_line_width(line_size);
 
       const uint shdr_pos = GPU_vertformat_attr_add(
-          immVertexFormat(), "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
+          immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32_32);
 
       immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
       immUniformThemeColorShadeAlpha(TH_EDGE_SELECT, 80, alpha_shade);
@@ -317,8 +319,8 @@ static void drawVertSlide(TransInfo *t)
       }
       else {
         for (TransDataVertSlideVert &sv : sld->sv) {
-          const float3 &co_orig_3d = sv.co_orig_3d();
-          const float3 &co_dest_3d = sv.co_dest_3d();
+          const float3 co_orig_3d = sv.co_orig_3d();
+          const float3 co_dest_3d = sv.co_dest_3d();
           float a[3], b[3];
           sub_v3_v3v3(a, co_dest_3d, co_orig_3d);
           mul_v3_fl(a, 100.0f);
@@ -332,7 +334,12 @@ static void drawVertSlide(TransInfo *t)
       }
       immEnd();
 
+      immUnbindProgram();
+
+      immBindBuiltinProgram(GPU_SHADER_3D_POINT_UNIFORM_COLOR);
+
       GPU_point_size(ctrl_size);
+      immUniformThemeColorShadeAlpha(TH_VERTEX_ACTIVE, 80, alpha_shade);
 
       immBegin(GPU_PRIM_POINTS, 1);
       immVertex3fv(shdr_pos, (slp->flipped && slp->use_even) ? co_dest_3d_act : co_orig_3d_act);
@@ -362,7 +369,7 @@ static void drawVertSlide(TransInfo *t)
         GPU_line_width(1.0f);
 
         const uint shdr_pos_2d = GPU_vertformat_attr_add(
-            immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+            immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
 
         immBindBuiltinProgram(GPU_SHADER_3D_LINE_DASHED_UNIFORM_COLOR);
 
@@ -395,8 +402,8 @@ static void vert_slide_apply_elem(const TransDataVertSlideVert &sv,
                                   const bool use_flip,
                                   float r_co[3])
 {
-  const float3 &co_orig_3d = sv.co_orig_3d();
-  const float3 &co_dest_3d = sv.co_dest_3d();
+  const float3 co_orig_3d = sv.co_orig_3d();
+  const float3 co_dest_3d = sv.co_dest_3d();
   if (use_even == false) {
     interp_v3_v3v3(r_co, co_orig_3d, co_dest_3d, perc);
   }
@@ -487,6 +494,9 @@ static void applyVertSlide(TransInfo *t)
   const bool use_even = slp->use_even;
   const bool is_clamp = !(t->flag & T_ALT_TRANSFORM);
   const bool is_constrained = !(is_clamp == false || hasNumInput(&t->num));
+  const bool is_precision = t->modifiers & MOD_PRECISION;
+  const bool is_snap = t->modifiers & MOD_SNAP;
+  const bool is_snap_invert = t->modifiers & MOD_SNAP_INVERT;
 
   final = t->values[0] + t->values_modal_offset[0];
 
@@ -505,23 +515,15 @@ static void applyVertSlide(TransInfo *t)
   t->values_final[0] = final;
 
   /* Header string. */
-  ofs += BLI_strncpy_rlen(str + ofs, IFACE_("Vertex Slide: "), sizeof(str) - ofs);
+  ofs += BLI_strncpy_utf8_rlen(str + ofs, IFACE_("Vertex Slide: "), sizeof(str) - ofs);
   if (hasNumInput(&t->num)) {
     char c[NUM_STR_REP_LEN];
     outputNumInput(&(t->num), c, t->scene->unit);
-    ofs += BLI_strncpy_rlen(str + ofs, &c[0], sizeof(str) - ofs);
+    ofs += BLI_strncpy_utf8_rlen(str + ofs, &c[0], sizeof(str) - ofs);
   }
   else {
-    ofs += BLI_snprintf_rlen(str + ofs, sizeof(str) - ofs, "%.4f ", final);
+    ofs += BLI_snprintf_utf8_rlen(str + ofs, sizeof(str) - ofs, "%.4f ", final);
   }
-  ofs += BLI_snprintf_rlen(
-      str + ofs, sizeof(str) - ofs, IFACE_("(E)ven: %s, "), WM_bool_as_string(use_even));
-  if (use_even) {
-    ofs += BLI_snprintf_rlen(
-        str + ofs, sizeof(str) - ofs, IFACE_("(F)lipped: %s, "), WM_bool_as_string(flipped));
-  }
-  ofs += BLI_snprintf_rlen(
-      str + ofs, sizeof(str) - ofs, IFACE_("Alt or (C)lamp: %s"), WM_bool_as_string(is_clamp));
   /* Done with header string. */
 
   /* Do stuff here. */
@@ -530,6 +532,27 @@ static void applyVertSlide(TransInfo *t)
   recalc_data(t);
 
   ED_area_status_text(t->area, str);
+
+  wmOperator *op = slp->op;
+  if (!op) {
+    return;
+  }
+
+  WorkspaceStatus status(t->context);
+  status.opmodal(IFACE_("Confirm"), op->type, TFM_MODAL_CONFIRM);
+  status.opmodal(IFACE_("Cancel"), op->type, TFM_MODAL_CONFIRM);
+  status.opmodal(IFACE_("Snap"), op->type, TFM_MODAL_SNAP_TOGGLE, is_snap);
+  status.opmodal(IFACE_("Snap Invert"), op->type, TFM_MODAL_SNAP_INV_ON, is_snap_invert);
+  status.opmodal(IFACE_("Set Snap Base"), op->type, TFM_MODAL_EDIT_SNAP_SOURCE_ON);
+  status.opmodal(IFACE_("Move"), op->type, TFM_MODAL_TRANSLATE);
+  status.opmodal(IFACE_("Rotate"), op->type, TFM_MODAL_ROTATE);
+  status.opmodal(IFACE_("Resize"), op->type, TFM_MODAL_RESIZE);
+  status.opmodal(IFACE_("Precision Mode"), op->type, TFM_MODAL_PRECISION, is_precision);
+  status.item_bool(IFACE_("Clamp"), is_clamp, ICON_EVENT_C, ICON_EVENT_ALT);
+  status.item_bool(IFACE_("Even"), use_even, ICON_EVENT_E);
+  if (use_even) {
+    status.item_bool(IFACE_("Flipped"), flipped, ICON_EVENT_F);
+  }
 }
 
 static void vert_slide_transform_matrix_fn(TransInfo *t, float mat_xform[4][4])
@@ -561,16 +584,18 @@ static void vert_slide_transform_matrix_fn(TransInfo *t, float mat_xform[4][4])
   add_v3_v3(mat_xform[3], delta);
 }
 
-static void initVertSlide_ex(TransInfo *t, bool use_even, bool flipped, bool use_clamp)
+static void initVertSlide_ex(
+    TransInfo *t, wmOperator *op, bool use_even, bool flipped, bool use_clamp)
 {
 
   t->mode = TFM_VERT_SLIDE;
 
   {
-    VertSlideParams *slp = static_cast<VertSlideParams *>(MEM_callocN(sizeof(*slp), __func__));
+    VertSlideParams *slp = MEM_callocN<VertSlideParams>(__func__);
     slp->use_even = use_even;
     slp->flipped = flipped;
     slp->perc = 0.0f;
+    slp->op = op;
 
     if (!use_clamp) {
       t->flag |= T_ALT_TRANSFORM;
@@ -604,10 +629,10 @@ static void initVertSlide_ex(TransInfo *t, bool use_even, bool flipped, bool use
 
   t->idx_max = 0;
   t->num.idx_max = 0;
-  t->snap[0] = 0.1f;
-  t->snap[1] = t->snap[0] * 0.1f;
+  t->increment[0] = 0.1f;
+  t->increment_precision = 0.1f;
 
-  copy_v3_fl(t->num.val_inc, t->snap[0]);
+  copy_v3_fl(t->num.val_inc, t->increment[0]);
   t->num.unit_sys = t->scene->unit.system;
   t->num.unit_type[0] = B_UNIT_NONE;
 }
@@ -618,11 +643,15 @@ static void initVertSlide(TransInfo *t, wmOperator *op)
   bool flipped = false;
   bool use_clamp = true;
   if (op) {
-    use_even = RNA_boolean_get(op->ptr, "use_even");
-    flipped = RNA_boolean_get(op->ptr, "flipped");
-    use_clamp = RNA_boolean_get(op->ptr, "use_clamp");
+    PropertyRNA *prop;
+    prop = RNA_struct_find_property(op->ptr, "use_even");
+    use_even = (prop) ? RNA_property_boolean_get(op->ptr, prop) : false;
+    prop = RNA_struct_find_property(op->ptr, "flipped");
+    flipped = (prop) ? RNA_property_boolean_get(op->ptr, prop) : false;
+    prop = RNA_struct_find_property(op->ptr, "use_clamp");
+    use_clamp = (prop) ? RNA_property_boolean_get(op->ptr, prop) : true;
   }
-  initVertSlide_ex(t, use_even, flipped, use_clamp);
+  initVertSlide_ex(t, op, use_even, flipped, use_clamp);
 }
 
 /** \} */
@@ -655,3 +684,5 @@ TransModeInfo TransMode_vertslide = {
     /*snap_apply_fn*/ vert_slide_snap_apply,
     /*draw_fn*/ drawVertSlide,
 };
+
+}  // namespace blender::ed::transform

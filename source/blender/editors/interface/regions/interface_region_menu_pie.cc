@@ -16,7 +16,8 @@
 
 #include "DNA_userdef_types.h"
 
-#include "BLI_string.h"
+#include "BLI_listbase.h"
+#include "BLI_string_utf8.h"
 #include "BLI_time.h"
 #include "BLI_utildefines.h"
 
@@ -30,7 +31,7 @@
 #include "RNA_path.hh"
 #include "RNA_prototypes.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 
 #include "BLT_translation.hh"
 
@@ -54,7 +55,7 @@ static uiBlock *ui_block_func_PIE(bContext * /*C*/, uiPopupBlockHandle *handle, 
 {
   uiBlock *block;
   uiPieMenu *pie = static_cast<uiPieMenu *>(arg_pie);
-  int minwidth, width, height;
+  int minwidth;
 
   minwidth = UI_MENU_WIDTH_MIN;
   block = pie->pie_block;
@@ -65,7 +66,7 @@ static uiBlock *ui_block_func_PIE(bContext * /*C*/, uiPopupBlockHandle *handle, 
     UI_block_region_set(block, handle->region);
   }
 
-  UI_block_layout_resolve(block, &width, &height);
+  blender::ui::block_layout_resolve(block);
 
   UI_block_flag_enable(block, UI_BLOCK_LOOP | UI_BLOCK_NUMSELECT);
   UI_block_theme_style_set(block, UI_BLOCK_THEME_STYLE_POPUP);
@@ -95,9 +96,9 @@ uiPieMenu *UI_pie_menu_begin(bContext *C, const char *title, int icon, const wmE
 
   wmWindow *win = CTX_wm_window(C);
 
-  uiPieMenu *pie = MEM_cnew<uiPieMenu>(__func__);
+  uiPieMenu *pie = MEM_callocN<uiPieMenu>(__func__);
 
-  pie->pie_block = UI_block_begin(C, nullptr, __func__, UI_EMBOSS);
+  pie->pie_block = UI_block_begin(C, nullptr, __func__, blender::ui::EmbossType::Emboss);
   /* may be useful later to allow spawning pies
    * from old positions */
   // pie->pie_block->flag |= UI_BLOCK_POPUP_MEMORY;
@@ -130,10 +131,17 @@ uiPieMenu *UI_pie_menu_begin(bContext *C, const char *title, int icon, const wmE
     win->pie_event_type_lock = event_type;
   }
 
-  pie->layout = UI_block_layout(
-      pie->pie_block, UI_LAYOUT_VERTICAL, UI_LAYOUT_PIEMENU, 0, 0, 200, 0, 0, style);
+  pie->layout = &blender::ui::block_layout(pie->pie_block,
+                                           blender::ui::LayoutDirection::Vertical,
+                                           blender::ui::LayoutType::PieMenu,
+                                           0,
+                                           0,
+                                           200,
+                                           0,
+                                           0,
+                                           style);
 
-  /* NOTE: #wmEvent.xy is where we started dragging in case of #KM_CLICK_DRAG. */
+  /* NOTE: #wmEvent.xy is where we started dragging in case of #KM_PRESS_DRAG. */
   pie->mx = event->xy[0];
   pie->my = event->xy[1];
 
@@ -143,26 +151,15 @@ uiPieMenu *UI_pie_menu_begin(bContext *C, const char *title, int icon, const wmE
     char titlestr[256];
     int w;
     if (icon) {
-      SNPRINTF(titlestr, " %s", title);
+      SNPRINTF_UTF8(titlestr, " %s", title);
       w = ui_pie_menu_title_width(titlestr, icon);
-      but = uiDefIconTextBut(pie->pie_block,
-                             UI_BTYPE_LABEL,
-                             0,
-                             icon,
-                             titlestr,
-                             0,
-                             0,
-                             w,
-                             UI_UNIT_Y,
-                             nullptr,
-                             0.0,
-                             0.0,
-                             "");
+      but = uiDefIconTextBut(
+          pie->pie_block, ButType::Label, icon, titlestr, 0, 0, w, UI_UNIT_Y, nullptr, "");
     }
     else {
       w = ui_pie_menu_title_width(title, 0);
       but = uiDefBut(
-          pie->pie_block, UI_BTYPE_LABEL, 0, title, 0, 0, w, UI_UNIT_Y, nullptr, 0.0, 0.0, "");
+          pie->pie_block, ButType::Label, title, 0, 0, w, UI_UNIT_Y, nullptr, 0.0, 0.0, "");
     }
     /* do not align left */
     but->drawflag &= ~UI_BUT_TEXT_LEFT;
@@ -193,7 +190,7 @@ uiLayout *UI_pie_menu_layout(uiPieMenu *pie)
   return pie->layout;
 }
 
-int UI_pie_menu_invoke(bContext *C, const char *idname, const wmEvent *event)
+wmOperatorStatus UI_pie_menu_invoke(bContext *C, const char *idname, const wmEvent *event)
 {
   uiPieMenu *pie;
   uiLayout *layout;
@@ -219,67 +216,13 @@ int UI_pie_menu_invoke(bContext *C, const char *idname, const wmEvent *event)
   return OPERATOR_INTERFACE;
 }
 
-int UI_pie_menu_invoke_from_operator_enum(bContext *C,
-                                          const StringRefNull title,
-                                          const StringRefNull opname,
-                                          const StringRefNull propname,
-                                          const wmEvent *event)
-{
-  uiPieMenu *pie;
-  uiLayout *layout;
-
-  pie = UI_pie_menu_begin(C, IFACE_(title.c_str()), ICON_NONE, event);
-  layout = UI_pie_menu_layout(pie);
-
-  layout = uiLayoutRadial(layout);
-  uiItemsEnumO(layout, opname, propname);
-
-  UI_pie_menu_end(C, pie);
-
-  return OPERATOR_INTERFACE;
-}
-
-int UI_pie_menu_invoke_from_rna_enum(bContext *C,
-                                     const char *title,
-                                     const char *path,
-                                     const wmEvent *event)
-{
-  PointerRNA r_ptr;
-  PropertyRNA *r_prop;
-  uiPieMenu *pie;
-  uiLayout *layout;
-
-  PointerRNA ctx_ptr = RNA_pointer_create_discrete(nullptr, &RNA_Context, C);
-
-  if (!RNA_path_resolve(&ctx_ptr, path, &r_ptr, &r_prop)) {
-    return OPERATOR_CANCELLED;
-  }
-
-  /* invalid property, only accept enums */
-  if (RNA_property_type(r_prop) != PROP_ENUM) {
-    BLI_assert(0);
-    return OPERATOR_CANCELLED;
-  }
-
-  pie = UI_pie_menu_begin(C, IFACE_(title), ICON_NONE, event);
-
-  layout = UI_pie_menu_layout(pie);
-
-  layout = uiLayoutRadial(layout);
-  uiItemFullR(layout, &r_ptr, r_prop, RNA_NO_INDEX, 0, UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
-
-  UI_pie_menu_end(C, pie);
-
-  return OPERATOR_INTERFACE;
-}
-
 /** \} */
 
 /* -------------------------------------------------------------------- */
 /** \name Pie Menu Levels
  *
  * Pie menus can't contain more than 8 items (yet).
- * When using #uiItemsFullEnumO, a "More" button is created that calls
+ * When using ##uiLayout::operator_enum, a "More" button is created that calls
  * a new pie menu if the enum has too many items. We call this a new "level".
  * Indirect recursion is used, so that a theoretically unlimited number of items is supported.
  *
@@ -295,11 +238,11 @@ struct PieMenuLevelData {
   int icon;                    /* parent pie icon, copied for level */
   int totitem;                 /* total count of *remaining* items */
 
-  /* needed for calling uiItemsFullEnumO_array again for new level */
+  /* needed for calling #uiLayout::operator_enum_items again for new level */
   wmOperatorType *ot;
   blender::StringRefNull propname;
   IDProperty *properties;
-  wmOperatorCallContext context;
+  blender::wm::OpCallContext context;
   eUI_Item_Flag flag;
 };
 
@@ -315,7 +258,7 @@ static void ui_pie_menu_level_invoke(bContext *C, void *argN, void *arg2)
   uiPieMenu *pie = UI_pie_menu_begin(C, IFACE_(lvl->title), lvl->icon, win->eventstate);
   uiLayout *layout = UI_pie_menu_layout(pie);
 
-  layout = uiLayoutRadial(layout);
+  layout = &layout->menu_pie();
 
   PointerRNA ptr;
 
@@ -325,15 +268,8 @@ static void ui_pie_menu_level_invoke(bContext *C, void *argN, void *arg2)
   PropertyRNA *prop = RNA_struct_find_property(&ptr, lvl->propname.c_str());
 
   if (prop) {
-    uiItemsFullEnumO_items(layout,
-                           lvl->ot,
-                           ptr,
-                           prop,
-                           lvl->properties,
-                           lvl->context,
-                           lvl->flag,
-                           item_array,
-                           lvl->totitem);
+    layout->op_enum_items(
+        lvl->ot, ptr, prop, lvl->properties, lvl->context, lvl->flag, item_array, lvl->totitem);
   }
   else {
     RNA_warning("%s.%s not found", RNA_struct_identifier(ptr.type), lvl->propname.c_str());
@@ -348,7 +284,7 @@ void ui_pie_menu_level_create(uiBlock *block,
                               IDProperty *properties,
                               const EnumPropertyItem *items,
                               int totitem,
-                              const wmOperatorCallContext context,
+                              const blender::wm::OpCallContext context,
                               const eUI_Item_Flag flag)
 {
   const int totitem_parent = PIE_MAX_ITEMS - 1;
@@ -364,7 +300,7 @@ void ui_pie_menu_level_create(uiBlock *block,
 
   /* yuk, static... issue is we can't reliably free this without doing dangerous changes */
   static PieMenuLevelData lvl;
-  STRNCPY(lvl.title, block->pie_data.title);
+  STRNCPY_UTF8(lvl.title, block->pie_data.title);
   lvl.totitem = totitem_remain;
   lvl.ot = ot;
   lvl.propname = propname;
@@ -374,8 +310,7 @@ void ui_pie_menu_level_create(uiBlock *block,
 
   /* add a 'more' menu entry */
   uiBut *but = uiDefIconTextBut(block,
-                                UI_BTYPE_BUT,
-                                0,
+                                ButType::But,
                                 ICON_PLUS,
                                 "More",
                                 0,
@@ -383,8 +318,6 @@ void ui_pie_menu_level_create(uiBlock *block,
                                 UI_UNIT_X * 3,
                                 UI_UNIT_Y,
                                 nullptr,
-                                0.0f,
-                                0.0f,
                                 "Show more items of this menu");
   UI_but_funcN_set(but, ui_pie_menu_level_invoke, remaining, &lvl);
 }

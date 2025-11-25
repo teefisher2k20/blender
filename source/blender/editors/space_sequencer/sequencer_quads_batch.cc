@@ -15,13 +15,15 @@
 #include "GPU_index_buffer.hh"
 #include "GPU_vertex_buffer.hh"
 
+namespace blender::ed::vse {
+
 struct ColorVertex {
-  blender::float2 pos;
-  blender::ColorTheme4b color;
+  float2 pos;
+  ColorTheme4b color;
 };
 static_assert(sizeof(ColorVertex) == 12);
 
-static blender::gpu::IndexBuf *create_quads_index_buffer(int quads_count)
+static gpu::IndexBuf *create_quads_index_buffer(int quads_count)
 {
   GPUIndexBufBuilder elb;
   GPU_indexbuf_init(&elb, GPU_PRIM_TRIS, quads_count * 2, quads_count * 4);
@@ -42,8 +44,8 @@ SeqQuadsBatch::SeqQuadsBatch()
 
   GPUVertFormat format;
   GPU_vertformat_clear(&format);
-  GPU_vertformat_attr_add(&format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
-  GPU_vertformat_attr_add(&format, "color", GPU_COMP_U8, 4, GPU_FETCH_INT_TO_FLOAT_UNIT);
+  GPU_vertformat_attr_add(&format, "pos", gpu::VertAttrType::SFLOAT_32_32);
+  GPU_vertformat_attr_add(&format, "color", gpu::VertAttrType::UNORM_8_8_8_8);
 
   vbo_quads = GPU_vertbuf_create_with_format_ex(format, GPU_USAGE_STREAM);
   GPU_vertbuf_data_alloc(*vbo_quads, MAX_QUADS * 4);
@@ -106,10 +108,10 @@ void SeqQuadsBatch::add_quad(float x1,
     BLI_assert(verts_quads != nullptr);
   }
 
-  ColorVertex v0 = {blender::float2(x1, y1), color1};
-  ColorVertex v1 = {blender::float2(x2, y2), color2};
-  ColorVertex v2 = {blender::float2(x3, y3), color3};
-  ColorVertex v3 = {blender::float2(x4, y4), color4};
+  ColorVertex v0 = {float2(x1, y1), color1};
+  ColorVertex v1 = {float2(x2, y2), color2};
+  ColorVertex v2 = {float2(x3, y3), color3};
+  ColorVertex v3 = {float2(x4, y4), color4};
 
   *verts_quads++ = v0;
   *verts_quads++ = v1;
@@ -129,10 +131,10 @@ void SeqQuadsBatch::add_wire_quad(float x1, float y1, float x2, float y2, const 
     BLI_assert(verts_lines != nullptr);
   }
 
-  ColorVertex v0 = {blender::float2(x1, y1), color};
-  ColorVertex v1 = {blender::float2(x1, y2), color};
-  ColorVertex v2 = {blender::float2(x2, y1), color};
-  ColorVertex v3 = {blender::float2(x2, y2), color};
+  ColorVertex v0 = {float2(x1, y1), color};
+  ColorVertex v1 = {float2(x1, y2), color};
+  ColorVertex v2 = {float2(x2, y1), color};
+  ColorVertex v3 = {float2(x2, y2), color};
 
   /* Left */
   *verts_lines++ = v0;
@@ -161,11 +163,13 @@ void SeqQuadsBatch::add_line(
     BLI_assert(verts_lines != nullptr);
   }
 
-  ColorVertex v0 = {blender::float2(x1, y1), color1};
-  ColorVertex v1 = {blender::float2(x2, y2), color2};
+  ColorVertex v0 = {float2(x1, y1), color1};
+  ColorVertex v1 = {float2(x2, y2), color2};
 
   *verts_lines++ = v0;
   *verts_lines++ = v1;
 
   lines_num++;
 }
+
+}  // namespace blender::ed::vse

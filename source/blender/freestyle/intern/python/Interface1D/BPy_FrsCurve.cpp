@@ -13,10 +13,6 @@
 #include "../Interface0D/BPy_CurvePoint.h"
 #include "../Interface0D/BPy_SVertex.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -42,8 +38,7 @@ PyDoc_STRVAR(
     "   :arg brother: A Curve object.\n"
     "   :type brother: :class:`Curve`\n"
     "   :arg id: An Id object.\n"
-    "   :type id: :class:`Id`");
-
+    "   :type id: :class:`Id`\n");
 static int FrsCurve_init(BPy_FrsCurve *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist_1[] = {"brother", nullptr};
@@ -80,8 +75,7 @@ PyDoc_STRVAR(
     "   Adds a single vertex at the end of the Curve.\n"
     "\n"
     "   :arg vertex: A vertex object.\n"
-    "   :type vertex: :class:`SVertex` | :class:`CurvePoint`");
-
+    "   :type vertex: :class:`SVertex` | :class:`CurvePoint`\n");
 static PyObject *FrsCurve_push_vertex_back(BPy_FrsCurve *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"vertex", nullptr};
@@ -112,8 +106,7 @@ PyDoc_STRVAR(
     "   Adds a single vertex at the front of the Curve.\n"
     "\n"
     "   :arg vertex: A vertex object.\n"
-    "   :type vertex: :class:`SVertex` | :class:`CurvePoint`");
-
+    "   :type vertex: :class:`SVertex` | :class:`CurvePoint`\n");
 static PyObject *FrsCurve_push_vertex_front(BPy_FrsCurve *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"vertex", nullptr};
@@ -136,6 +129,16 @@ static PyObject *FrsCurve_push_vertex_front(BPy_FrsCurve *self, PyObject *args, 
   Py_RETURN_NONE;
 }
 
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
+#endif
+
 static PyMethodDef BPy_FrsCurve_methods[] = {
     {"push_vertex_back",
      (PyCFunction)FrsCurve_push_vertex_back,
@@ -148,6 +151,14 @@ static PyMethodDef BPy_FrsCurve_methods[] = {
     {nullptr, nullptr, 0, nullptr},
 };
 
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
+#endif
+
 /*----------------------CurvePoint get/setters ----------------------------*/
 
 PyDoc_STRVAR(
@@ -155,8 +166,7 @@ PyDoc_STRVAR(
     FrsCurve_is_empty_doc,
     "True if the Curve doesn't have any Vertex yet.\n"
     "\n"
-    ":type: bool");
-
+    ":type: bool\n");
 static PyObject *FrsCurve_is_empty_get(BPy_FrsCurve *self, void * /*closure*/)
 {
   return PyBool_from_bool(self->c->empty());
@@ -167,8 +177,7 @@ PyDoc_STRVAR(
     FrsCurve_segments_size_doc,
     "The number of segments in the polyline constituting the Curve.\n"
     "\n"
-    ":type: int");
-
+    ":type: int\n");
 static PyObject *FrsCurve_segments_size_get(BPy_FrsCurve *self, void * /*closure*/)
 {
   return PyLong_FromLong(self->c->nSegments());
@@ -228,7 +237,3 @@ PyTypeObject FrsCurve_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

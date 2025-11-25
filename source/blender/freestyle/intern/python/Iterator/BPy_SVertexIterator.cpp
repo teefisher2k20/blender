@@ -12,10 +12,6 @@
 #include "../Interface0D/BPy_SVertex.h"
 #include "../Interface1D/BPy_FEdge.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -49,8 +45,7 @@ PyDoc_STRVAR(
     "   :arg next_edge: The next FEdge going out from vertex.\n"
     "   :type next_edge: :class:`FEdge`\n"
     "   :arg t: The curvilinear abscissa at vertex.\n"
-    "   :type t: float");
-
+    "   :type t: float\n");
 static int SVertexIterator_init(BPy_SVertexIterator *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist_1[] = {"brother", nullptr};
@@ -104,8 +99,7 @@ PyDoc_STRVAR(
     SVertexIterator_object_doc,
     "The SVertex object currently pointed by this iterator.\n"
     "\n"
-    ":type: :class:`SVertex`");
-
+    ":type: :class:`SVertex`\n");
 static PyObject *SVertexIterator_object_get(BPy_SVertexIterator *self, void * /*closure*/)
 {
   if (self->sv_it->isEnd()) {
@@ -124,8 +118,7 @@ PyDoc_STRVAR(
     SVertexIterator_t_doc,
     "The curvilinear abscissa of the current point.\n"
     "\n"
-    ":type: float");
-
+    ":type: float\n");
 static PyObject *SVertexIterator_t_get(BPy_SVertexIterator *self, void * /*closure*/)
 {
   return PyFloat_FromDouble(self->sv_it->t());
@@ -136,8 +129,7 @@ PyDoc_STRVAR(
     SVertexIterator_u_doc,
     "The point parameter at the current point in the 1D element (0 <= u <= 1).\n"
     "\n"
-    ":type: float");
-
+    ":type: float\n");
 static PyObject *SVertexIterator_u_get(BPy_SVertexIterator *self, void * /*closure*/)
 {
   return PyFloat_FromDouble(self->sv_it->u());
@@ -198,7 +190,3 @@ PyTypeObject SVertexIterator_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

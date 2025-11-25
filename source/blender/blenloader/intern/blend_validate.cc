@@ -11,20 +11,16 @@
  * \note Does not *fix* anything, only reports found errors.
  */
 
-#include <cstring> /* for #strrchr #strncmp #strstr */
-
 #include "CLG_log.h"
 
+#include "BLI_listbase.h"
 #include "BLI_utildefines.h"
 
 #include "BLI_linklist.h"
 
-#include "MEM_guardedalloc.h"
-
 #include "DNA_collection_types.h"
 #include "DNA_key_types.h"
 #include "DNA_node_types.h"
-#include "DNA_sdna_types.h"
 #include "DNA_windowmanager_types.h"
 
 #include "BKE_key.hh"
@@ -40,19 +36,20 @@
 
 #include "readfile.hh"
 
-static CLG_LogRef LOG = {"blo.blend_validate"};
+static CLG_LogRef LOG = {"blend.validate"};
 
 bool BLO_main_validate_libraries(Main *bmain, ReportList *reports)
 {
-  ListBase mainlist;
+  blo_split_main(bmain);
+  BLI_assert(bmain->split_mains);
+  blender::VectorSet<Main *> &split_mains = *bmain->split_mains;
+  BLI_assert(split_mains[0] == bmain);
   bool is_valid = true;
 
   BKE_main_lock(bmain);
 
-  blo_split_main(&mainlist, bmain);
-
-  ListBase *lbarray[INDEX_ID_MAX];
-  int i = set_listbasepointers(bmain, lbarray);
+  MainListsArray lbarray = BKE_main_lists_get(*bmain);
+  int i = lbarray.size();
   while (i--) {
     for (ID *id = static_cast<ID *>(lbarray[i]->first); id != nullptr;
          id = static_cast<ID *>(id->next))
@@ -68,7 +65,10 @@ bool BLO_main_validate_libraries(Main *bmain, ReportList *reports)
     }
   }
 
-  for (Main *curmain = bmain->next; curmain != nullptr; curmain = curmain->next) {
+  for (Main *curmain : split_mains) {
+    if (curmain == bmain) {
+      continue;
+    }
     Library *curlib = curmain->curlib;
     if (curlib == nullptr) {
       BKE_report(reports, RPT_ERROR, "Library database with null library data-block pointer!");
@@ -78,18 +78,19 @@ bool BLO_main_validate_libraries(Main *bmain, ReportList *reports)
     BKE_library_filepath_set(bmain, curlib, curlib->filepath);
     BlendFileReadReport bf_reports{};
     bf_reports.reports = reports;
-    BlendHandle *bh = BLO_blendhandle_from_file(curlib->runtime.filepath_abs, &bf_reports);
+    BlendHandle *bh = BLO_blendhandle_from_file(curlib->runtime->filepath_abs, &bf_reports);
 
     if (bh == nullptr) {
       BKE_reportf(reports,
                   RPT_ERROR,
                   "Library ID %s not found at expected path %s!",
                   curlib->id.name,
-                  curlib->runtime.filepath_abs);
+                  curlib->runtime->filepath_abs);
       continue;
     }
 
-    i = set_listbasepointers(curmain, lbarray);
+    lbarray = BKE_main_lists_get(*curmain);
+    i = lbarray.size();
     while (i--) {
       ID *id = static_cast<ID *>(lbarray[i]->first);
       if (id == nullptr) {
@@ -149,10 +150,8 @@ bool BLO_main_validate_libraries(Main *bmain, ReportList *reports)
     BLO_blendhandle_close(bh);
   }
 
-  blo_join_main(&mainlist);
-
-  BLI_assert(BLI_listbase_is_single(&mainlist));
-  BLI_assert(mainlist.first == (void *)bmain);
+  blo_join_main(bmain);
+  BLI_assert(!bmain->split_mains);
 
   BKE_main_unlock(bmain);
 
@@ -202,7 +201,7 @@ bool BLO_main_validate_shapekeys(Main *bmain, ReportList *reports)
 
     BKE_reportf(reports,
                 RPT_ERROR,
-                "Shapekey %s has an invalid 'from' pointer (%p), it will be deleted",
+                "ShapeKey %s has an invalid 'from' pointer (%p), it will be deleted",
                 shapekey->id.name,
                 shapekey->from);
     /* NOTE: also need to remap UI data ID pointers here, since `bmain` is not the current

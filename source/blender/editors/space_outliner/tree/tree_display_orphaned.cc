@@ -11,7 +11,6 @@
 
 #include "BLI_listbase.h"
 #include "BLI_listbase_wrapper.hh"
-#include "BLI_utildefines.h"
 
 #include "BKE_idtype.hh"
 #include "BKE_main.hh"
@@ -32,21 +31,19 @@ TreeDisplayIDOrphans::TreeDisplayIDOrphans(SpaceOutliner &space_outliner)
 ListBase TreeDisplayIDOrphans::build_tree(const TreeSourceData &source_data)
 {
   ListBase tree = {nullptr};
-  ListBase *lbarray[INDEX_ID_MAX];
   short filter_id_type = (space_outliner_.filter & SO_FILTER_ID_TYPE) ?
                              space_outliner_.filter_id_type :
                              0;
 
-  int tot;
+  Vector<ListBase *> lbarray;
   if (filter_id_type) {
-    lbarray[0] = which_libbase(source_data.bmain, filter_id_type);
-    tot = 1;
+    lbarray.append(which_libbase(source_data.bmain, filter_id_type));
   }
   else {
-    tot = set_listbasepointers(source_data.bmain, lbarray);
+    lbarray.extend(BKE_main_lists_get(*source_data.bmain));
   }
 
-  for (int a = 0; a < tot; a++) {
+  for (int a = 0; a < lbarray.size(); a++) {
     if (BLI_listbase_is_empty(lbarray[a])) {
       continue;
     }

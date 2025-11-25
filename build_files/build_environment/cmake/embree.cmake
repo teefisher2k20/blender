@@ -87,9 +87,10 @@ ExternalProject_Add(external_embree
   CMAKE_GENERATOR ${PLATFORM_ALT_GENERATOR}
   PREFIX ${BUILD_DIR}/embree
 
-  PATCH_COMMAND ${PATCH_CMD} -p 1 -d
-    ${BUILD_DIR}/embree/src/external_embree <
-    ${PATCH_DIR}/embree.diff
+  PATCH_COMMAND
+    ${PATCH_CMD} -p 1 -d
+      ${BUILD_DIR}/embree/src/external_embree <
+      ${PATCH_DIR}/embree.diff
 
   CMAKE_ARGS
     -DCMAKE_INSTALL_PREFIX=${LIBDIR}/embree

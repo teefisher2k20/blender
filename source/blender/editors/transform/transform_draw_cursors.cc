@@ -22,7 +22,7 @@
 #include "transform.hh"
 #include "transform_draw_cursors.hh" /* Own include. */
 
-using namespace blender;
+namespace blender::ed::transform {
 
 enum eArrowDirection {
   UP,
@@ -80,7 +80,10 @@ bool transform_draw_cursor_poll(bContext *C)
   return (region && ELEM(region->regiontype, RGN_TYPE_WINDOW, RGN_TYPE_PREVIEW)) ? true : false;
 }
 
-void transform_draw_cursor_draw(bContext *C, int x, int y, void *customdata)
+void transform_draw_cursor_draw(bContext *C,
+                                const blender::int2 &xy,
+                                const blender::float2 & /*tilt*/,
+                                void *customdata)
 {
   TransInfo *t = (TransInfo *)customdata;
 
@@ -125,10 +128,10 @@ void transform_draw_cursor_draw(bContext *C, int x, int y, void *customdata)
   GPU_line_smooth(true);
   GPU_blend(GPU_BLEND_ALPHA);
   const uint pos_id = GPU_vertformat_attr_add(
-      immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
 
   /* Dashed lines first. */
-  if (ELEM(t->helpline, HLP_SPRING, HLP_ANGLE)) {
+  if (ELEM(t->helpline, HLP_SPRING, HLP_ANGLE, HLP_ERROR_DASH)) {
     GPU_line_width(DASH_WIDTH);
     immBindBuiltinProgram(GPU_SHADER_3D_LINE_DASHED_UNIFORM_COLOR);
     immUniform2f("viewport_size", viewport_size[2], viewport_size[3]);
@@ -163,7 +166,7 @@ void transform_draw_cursor_draw(bContext *C, int x, int y, void *customdata)
   immUniform1f("lineWidth", ARROW_WIDTH * 2.0f);
 
   GPU_matrix_push();
-  GPU_matrix_translate_3f(float(x), float(y), 0.0f);
+  GPU_matrix_translate_3f(float(xy.x), float(xy.y), 0.0f);
 
   switch (t->helpline) {
     case HLP_SPRING:
@@ -249,6 +252,8 @@ void transform_draw_cursor_draw(bContext *C, int x, int y, void *customdata)
       drawArrow(pos_id, DOWN);
       break;
     }
+    case HLP_ERROR:
+    case HLP_ERROR_DASH:
     case HLP_NONE:
       break;
   }
@@ -258,3 +263,5 @@ void transform_draw_cursor_draw(bContext *C, int x, int y, void *customdata)
   GPU_line_smooth(false);
   GPU_blend(GPU_BLEND_NONE);
 }
+
+}  // namespace blender::ed::transform

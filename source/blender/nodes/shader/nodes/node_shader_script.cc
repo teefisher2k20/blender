@@ -10,7 +10,7 @@
 
 #include "RNA_access.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 namespace blender::nodes::node_shader_script_cc {
@@ -19,38 +19,37 @@ static void node_shader_buts_script(uiLayout *layout, bContext * /*C*/, PointerR
 {
   uiLayout *row;
 
-  row = uiLayoutRow(layout, false);
-  uiItemR(
-      row, ptr, "mode", UI_ITEM_R_SPLIT_EMPTY_NAME | UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
+  row = &layout->row(false);
+  row->prop(ptr, "mode", UI_ITEM_R_SPLIT_EMPTY_NAME | UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 
-  row = uiLayoutRow(layout, true);
+  row = &layout->row(true);
 
   if (RNA_enum_get(ptr, "mode") == NODE_SCRIPT_INTERNAL) {
-    uiItemR(row, ptr, "script", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
+    row->prop(ptr, "script", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
   }
   else {
-    uiItemR(row, ptr, "filepath", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
+    row->prop(ptr, "filepath", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
   }
 
-  uiItemO(row, "", ICON_FILE_REFRESH, "node.shader_script_update");
+  row->op("node.shader_script_update", "", ICON_FILE_REFRESH);
 }
 
 static void node_shader_buts_script_ex(uiLayout *layout, bContext *C, PointerRNA *ptr)
 {
-  uiItemS(layout);
+  layout->separator();
 
   node_shader_buts_script(layout, C, ptr);
 
 #if 0 /* not implemented yet */
   if (RNA_enum_get(ptr, "mode") == NODE_SCRIPT_EXTERNAL) {
-    uiItemR(layout, ptr, "use_auto_update", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+    layout->prop(ptr, "use_auto_update", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
   }
 #endif
 }
 
 static void init(bNodeTree * /*ntree*/, bNode *node)
 {
-  NodeShaderScript *nss = MEM_cnew<NodeShaderScript>("shader script node");
+  NodeShaderScript *nss = MEM_callocN<NodeShaderScript>("shader script node");
   node->storage = nss;
 }
 
@@ -98,7 +97,7 @@ void register_node_type_sh_script()
   ntype.draw_buttons_ex = file_ns::node_shader_buts_script_ex;
   ntype.initfunc = file_ns::init;
   blender::bke::node_type_storage(
-      &ntype, "NodeShaderScript", file_ns::node_free_script, file_ns::node_copy_script);
+      ntype, "NodeShaderScript", file_ns::node_free_script, file_ns::node_copy_script);
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

@@ -12,7 +12,7 @@ namespace blender::nodes::materialx {
 
 constexpr StringRef TEXCOORD_NODE_NAME = "node_texcoord";
 
-CLG_LOGREF_DECLARE_GLOBAL(LOG_MATERIALX_SHADER, "materialx.shader");
+CLG_LOGREF_DECLARE_GLOBAL(LOG_IO_MATERIALX, "io.materialx");
 
 NodeParser::NodeParser(NodeGraph &graph,
                        const bNode *node,
@@ -31,7 +31,7 @@ NodeItem NodeParser::compute_full()
 {
   NodeItem res = empty();
 
-  if (socket_out_ && !NodeItem::is_convertible((eNodeSocketDatatype)socket_out_->type, to_type_)) {
+  if (socket_out_ && !NodeItem::is_convertible(eNodeSocketDatatype(socket_out_->type), to_type_)) {
     return res;
   }
 
@@ -39,12 +39,11 @@ NodeItem NodeParser::compute_full()
   const std::string res_node_name = node_name();
   res = graph_.get_node(res_node_name);
   if (!res.node) {
-    CLOG_INFO(LOG_MATERIALX_SHADER,
-              1,
-              "%s [%d] => %s",
-              node_->name,
-              node_->typeinfo->type_legacy,
-              NodeItem::type(to_type_).c_str());
+    CLOG_DEBUG(LOG_IO_MATERIALX,
+               "%s [%d] => %s",
+               node_->name,
+               node_->typeinfo->type_legacy,
+               NodeItem::type(to_type_).c_str());
 
     res = compute();
     if (res.node) {
@@ -61,7 +60,7 @@ std::string NodeParser::node_name(const char *override_output_name) const
           to_type_ :
           NodeItem::Type::Empty;
   const StringRef socket_out_name = (override_output_name) ? override_output_name :
-                                    (socket_out_)          ? socket_out_->name :
+                                    (socket_out_)          ? socket_out_->identifier :
                                                              "";
   return graph_.unique_node_name(node_, socket_out_name, to_type);
 }
@@ -90,7 +89,7 @@ NodeItem NodeParser::create_output(const std::string &name, const NodeItem &item
 
 NodeItem NodeParser::get_input_default(const std::string &name, NodeItem::Type to_type)
 {
-  return get_default(node_->input_by_identifier(name), to_type);
+  return get_default(*node_->input_by_identifier(name), to_type);
 }
 
 NodeItem NodeParser::get_input_default(int index, NodeItem::Type to_type)
@@ -100,7 +99,7 @@ NodeItem NodeParser::get_input_default(int index, NodeItem::Type to_type)
 
 NodeItem NodeParser::get_input_link(const std::string &name, NodeItem::Type to_type)
 {
-  return get_input_link(node_->input_by_identifier(name), to_type, false);
+  return get_input_link(*node_->input_by_identifier(name), to_type, false);
 }
 
 NodeItem NodeParser::get_input_link(int index, NodeItem::Type to_type)
@@ -110,7 +109,7 @@ NodeItem NodeParser::get_input_link(int index, NodeItem::Type to_type)
 
 NodeItem NodeParser::get_input_value(const std::string &name, NodeItem::Type to_type)
 {
-  return get_input_value(node_->input_by_identifier(name), to_type);
+  return get_input_value(*node_->input_by_identifier(name), to_type);
 }
 
 NodeItem NodeParser::get_input_value(int index, NodeItem::Type to_type)
@@ -120,7 +119,7 @@ NodeItem NodeParser::get_input_value(int index, NodeItem::Type to_type)
 
 NodeItem NodeParser::get_output_default(const std::string &name, NodeItem::Type to_type)
 {
-  return get_default(node_->output_by_identifier(name), to_type);
+  return get_default(*node_->output_by_identifier(name), to_type);
 }
 
 NodeItem NodeParser::get_output_default(int index, NodeItem::Type to_type)
@@ -189,7 +188,7 @@ NodeItem NodeParser::get_default(const bNodeSocket &socket, NodeItem::Type to_ty
       break;
     }
     default: {
-      CLOG_WARN(LOG_MATERIALX_SHADER, "Unsupported socket type: %d", socket.type);
+      CLOG_WARN(LOG_IO_MATERIALX, "Unsupported socket type: %d", socket.type);
     }
   }
   return res.convert(to_type);
@@ -227,7 +226,7 @@ NodeItem NodeParser::get_input_link(const bNodeSocket &socket,
   }
 
   if (!from_node->typeinfo->materialx_fn) {
-    CLOG_WARN(LOG_MATERIALX_SHADER,
+    CLOG_WARN(LOG_IO_MATERIALX,
               "Unsupported node: %s [%d]",
               from_node->name,
               from_node->typeinfo->type_legacy);

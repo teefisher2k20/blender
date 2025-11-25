@@ -93,7 +93,7 @@ def openBlendFile(filename):
 
 def Align(handle):
     '''
-    Aligns the filehandle on 4 bytes
+    Aligns the file-handle on 4 bytes
     '''
     offset = handle.tell()
     trim = offset % 4
@@ -107,8 +107,8 @@ def Align(handle):
 
 class BlendFile:
     '''
-    Reads a blendfile and store the header, all the fileblocks, and catalogue
-    structs found in the DNA fileblock
+    Reads a blend-file and store the header, all the file-blocks, and catalog
+    structs found in the DNA file-block
 
     - BlendFile.Header  (BlendFileHeader instance)
     - BlendFile.Blocks  (list of BlendFileBlock instances)
@@ -216,7 +216,7 @@ class FileBlockHeader:
     OldAddress  (pointer)
     SDNAIndex   (int)
     Count       (int)
-    FileOffset  (= file pointer of datablock)
+    FileOffset  (= file pointer of data-block)
     '''
 
     def __init__(self, handle, fileheader):

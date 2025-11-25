@@ -27,7 +27,7 @@ static VArray<float> construct_face_area_varray(const Mesh &mesh, const AttrDoma
   };
 
   return mesh.attributes().adapt_domain<float>(
-      VArray<float>::ForFunc(faces.size(), area_fn), AttrDomain::Face, domain);
+      VArray<float>::from_func(faces.size(), area_fn), AttrDomain::Face, domain);
 }
 
 class FaceAreaFieldInput final : public bke::MeshFieldInput {
@@ -76,7 +76,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_INPUT;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

@@ -13,12 +13,9 @@
 #include "DNA_scene_types.h"
 
 #include "BLI_math_rotation.h"
-#include "BLI_math_vector.h"
-#include "BLI_utildefines.h"
 
 #include "BLT_translation.hh"
 
-#include "RNA_access.hh"
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
 
@@ -154,6 +151,8 @@ static const EnumPropertyItem curve2d_fill_mode_items[] = {
 
 #  include "DNA_object_types.h"
 
+#  include "BLI_math_vector.h"
+
 #  include "BKE_curve.hh"
 #  include "BKE_curveprofile.h"
 #  include "BKE_main.hh"
@@ -212,17 +211,17 @@ static Nurb *curve_nurb_from_point(Curve *cu, const void *point, int *nu_index, 
 
 static StructRNA *rna_Curve_refine(PointerRNA *ptr)
 {
-  Curve *cu = static_cast<Curve *>(ptr->data);
-  short obtype = BKE_curve_type_get(cu);
-
-  if (obtype == OB_FONT) {
-    return &RNA_TextCurve;
-  }
-  else if (obtype == OB_SURF) {
-    return &RNA_SurfaceCurve;
-  }
-  else {
-    return &RNA_Curve;
+  const Curve *cu = static_cast<Curve *>(ptr->data);
+  switch (cu->ob_type) {
+    case OB_FONT: {
+      return &RNA_TextCurve;
+    }
+    case OB_SURF: {
+      return &RNA_SurfaceCurve;
+    }
+    default: {
+      return &RNA_Curve;
+    }
   }
 }
 
@@ -388,6 +387,7 @@ static void rna_BPoint_array_begin(CollectionPropertyIterator *iter, PointerRNA 
 {
   Nurb *nu = static_cast<Nurb *>(ptr->data);
   rna_iterator_array_begin(iter,
+                           ptr,
                            static_cast<void *>(nu->bp),
                            sizeof(BPoint),
                            nu->pntsv > 0 ? nu->pntsu * nu->pntsv : nu->pntsu,
@@ -595,11 +595,10 @@ static void rna_Curve_body_set(PointerRNA *ptr, const char *value)
     MEM_freeN(cu->strinfo);
   }
 
-  cu->str = static_cast<char *>(MEM_mallocN(len_bytes + sizeof(char32_t), "str"));
+  cu->str = MEM_malloc_arrayN<char>(len_bytes + sizeof(char32_t), "str");
   memcpy(cu->str, value, len_bytes + 1);
 
-  cu->strinfo = static_cast<CharInfo *>(
-      MEM_callocN((len_chars + 4) * sizeof(CharInfo), "strinfo"));
+  cu->strinfo = MEM_calloc_arrayN<CharInfo>((len_chars + 4), "strinfo");
 }
 
 static void rna_Nurb_update_cyclic_u(Main *bmain, Scene *scene, PointerRNA *ptr)
@@ -684,15 +683,15 @@ static void rna_Curve_spline_bezpoints_add(ID *id, Nurb *nu, ReportList *reports
 
 static Nurb *rna_Curve_spline_new(Curve *cu, int type)
 {
-  Nurb *nu = static_cast<Nurb *>(MEM_callocN(sizeof(Nurb), "spline.new"));
+  Nurb *nu = MEM_callocN<Nurb>("spline.new");
 
   if (type == CU_BEZIER) {
-    BezTriple *bezt = static_cast<BezTriple *>(MEM_callocN(sizeof(BezTriple), "spline.new.bezt"));
+    BezTriple *bezt = MEM_callocN<BezTriple>("spline.new.bezt");
     bezt->radius = 1.0;
     nu->bezt = bezt;
   }
   else {
-    BPoint *bp = static_cast<BPoint *>(MEM_callocN(sizeof(BPoint), "spline.new.bp"));
+    BPoint *bp = MEM_callocN<BPoint>("spline.new.bp");
     bp->radius = 1.0f;
     nu->bp = bp;
   }
@@ -722,7 +721,7 @@ static void rna_Curve_spline_remove(Curve *cu, ReportList *reports, PointerRNA *
   }
 
   BKE_nurb_free(nu);
-  RNA_POINTER_INVALIDATE(nu_ptr);
+  nu_ptr->invalidate();
 
   DEG_id_tag_update(&cu->id, ID_RECALC_GEOMETRY);
   WM_main_add_notifier(NC_GEOM | ND_DATA, nullptr);
@@ -749,7 +748,7 @@ static PointerRNA rna_Curve_active_spline_get(PointerRNA *ptr)
   nu = static_cast<Nurb *>(BLI_findlink(nurbs, cu->actnu));
 
   if (nu) {
-    return rna_pointer_inherit_refine(ptr, &RNA_Spline, nu);
+    return RNA_pointer_create_with_parent(*ptr, &RNA_Spline, nu);
   }
 
   return PointerRNA_NULL;
@@ -819,14 +818,13 @@ static std::optional<std::string> rna_TextBox_path(const PointerRNA *ptr)
 static void rna_Curve_splines_begin(CollectionPropertyIterator *iter, PointerRNA *ptr)
 {
   Curve *cu = reinterpret_cast<Curve *>(ptr->owner_id);
-  rna_iterator_listbase_begin(iter, BKE_curve_nurbs_get(cu), nullptr);
+  rna_iterator_listbase_begin(iter, ptr, BKE_curve_nurbs_get(cu), nullptr);
 }
 
 static bool rna_Curve_is_editmode_get(PointerRNA *ptr)
 {
-  Curve *cu = reinterpret_cast<Curve *>(ptr->owner_id);
-  const short type = BKE_curve_type_get(cu);
-  if (type == OB_FONT) {
+  const Curve *cu = reinterpret_cast<const Curve *>(ptr->owner_id);
+  if (cu->ob_type == OB_FONT) {
     return (cu->editfont != nullptr);
   }
   else {
@@ -1058,7 +1056,7 @@ static void rna_def_path(BlenderRNA * /*brna*/, StructRNA *srna)
   RNA_def_property_ui_text(
       prop,
       "Clamp",
-      "Clamp the curve path children so they can't travel past the start/end point of the curve");
+      "Clamp the curve path children so they cannot travel past the start/end point of the curve");
   RNA_def_property_update(prop, 0, "rna_Curve_update_data");
 
   prop = RNA_def_property(srna, "use_stretch", PROP_BOOLEAN, PROP_NONE);
@@ -1166,7 +1164,7 @@ static void rna_def_font(BlenderRNA * /*brna*/, StructRNA *srna)
   RNA_def_property_enum_items(prop, prop_overflow_items);
   RNA_def_property_enum_default(prop, CU_OVERFLOW_NONE);
   RNA_def_property_ui_text(
-      prop, "Textbox Overflow", "Handle the text behavior when it doesn't fit in the text boxes");
+      prop, "Textbox Overflow", "Handle the text behavior when it does not fit in the text boxes");
   RNA_def_property_update(prop, 0, "rna_Curve_update_data");
 
   /* number values */
@@ -1409,14 +1407,6 @@ static void rna_def_charinfo(BlenderRNA *brna)
   RNA_def_property_ui_text(prop, "Underline", "");
   RNA_def_property_ui_icon(prop, ICON_UNDERLINE, 0);
   RNA_def_property_update(prop, 0, "rna_Curve_update_data");
-
-  /* probably there is no reason to expose this */
-#  if 0
-  prop = RNA_def_property(srna, "use_wrap", PROP_BOOLEAN, PROP_NONE);
-  RNA_def_property_boolean_sdna(prop, nullptr, "flag", CU_CHINFO_WRAP);
-  RNA_def_property_ui_text(prop, "Wrap", "");
-  RNA_def_property_update(prop, 0, "rna_Curve_update_data");
-#  endif
 
   prop = RNA_def_property(srna, "use_small_caps", PROP_BOOLEAN, PROP_NONE);
   RNA_def_property_boolean_sdna(prop, nullptr, "flag", CU_CHINFO_SMALLCAPS);

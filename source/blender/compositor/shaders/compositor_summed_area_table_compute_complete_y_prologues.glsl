@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "infos/compositor_summed_area_table_infos.hh"
+
+COMPUTE_SHADER_CREATE_INFO(compositor_summed_area_table_compute_complete_y_prologues)
+
 #include "gpu_shader_compositor_texture_utilities.glsl"
 
 /* See the compute_complete_y_prologues function for a description of this shader. */
@@ -10,10 +14,10 @@ void main()
   int x = int(gl_GlobalInvocationID.x);
   int num_rows = texture_size(incomplete_y_prologues_tx).y;
 
-  vec4 accumulated_color = vec4(0.0);
+  float4 accumulated_color = float4(0.0f);
   for (int y = 0; y < num_rows; y++) {
-    accumulated_color += texture_load(incomplete_y_prologues_tx, ivec2(x, y));
-    accumulated_color += texture_load(complete_x_prologues_sum_tx, ivec2(gl_WorkGroupID.x, y));
-    imageStore(complete_y_prologues_img, ivec2(x, y), accumulated_color);
+    accumulated_color += texture_load(incomplete_y_prologues_tx, int2(x, y));
+    accumulated_color += texture_load(complete_x_prologues_sum_tx, int2(gl_WorkGroupID.x, y));
+    imageStore(complete_y_prologues_img, int2(x, y), accumulated_color);
   }
 }

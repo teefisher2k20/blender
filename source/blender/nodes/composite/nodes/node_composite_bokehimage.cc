@@ -6,13 +6,10 @@
  * \ingroup cmpnodes
  */
 
-#include "BLI_math_base.h"
+#include "BLI_math_base.hh"
 #include "BLI_math_vector_types.hh"
 
-#include "UI_interface.hh"
 #include "UI_resources.hh"
-
-#include "GPU_shader.hh"
 
 #include "COM_bokeh_kernel.hh"
 #include "COM_node_operation.hh"
@@ -23,46 +20,37 @@
 
 namespace blender::nodes::node_composite_bokehimage_cc {
 
-NODE_STORAGE_FUNCS(NodeBokehImage)
-
 static void cmp_node_bokehimage_declare(NodeDeclarationBuilder &b)
 {
-  b.add_output<decl::Color>("Image");
-}
+  b.add_input<decl::Int>("Flaps").default_value(5).min(3).max(24).description(
+      "The number of flaps in the bokeh");
+  b.add_input<decl::Float>("Angle")
+      .default_value(0.0f)
+      .subtype(PROP_ANGLE)
+      .description("The angle of the bokeh");
+  b.add_input<decl::Float>("Roundness")
+      .default_value(0.0f)
+      .min(0.0f)
+      .max(1.0f)
+      .subtype(PROP_FACTOR)
+      .description(
+          "Specifies how round the bokeh is, maximum roundness produces a circular bokeh");
+  b.add_input<decl::Float>("Catadioptric Size")
+      .default_value(0.0f)
+      .subtype(PROP_FACTOR)
+      .min(0.0f)
+      .max(1.0f)
+      .description("Specifies the size of the catadioptric iris, zero means no iris");
+  b.add_input<decl::Float>("Color Shift")
+      .default_value(0.0f)
+      .subtype(PROP_FACTOR)
+      .min(-1.0f)
+      .max(1.0f)
+      .description(
+          "Specifies the amount of color shifting. 1 means maximum shifting towards blue while -1 "
+          "means maximum shifting toward red");
 
-static void node_composit_init_bokehimage(bNodeTree * /*ntree*/, bNode *node)
-{
-  NodeBokehImage *data = MEM_cnew<NodeBokehImage>(__func__);
-  data->angle = 0.0f;
-  data->flaps = 5;
-  data->rounding = 0.0f;
-  data->catadioptric = 0.0f;
-  data->lensshift = 0.0f;
-  node->storage = data;
-}
-
-static void node_composit_buts_bokehimage(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
-{
-  uiItemR(layout, ptr, "flaps", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
-  uiItemR(layout, ptr, "angle", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
-  uiItemR(layout,
-          ptr,
-          "rounding",
-          UI_ITEM_R_SPLIT_EMPTY_NAME | UI_ITEM_R_SLIDER,
-          std::nullopt,
-          ICON_NONE);
-  uiItemR(layout,
-          ptr,
-          "catadioptric",
-          UI_ITEM_R_SPLIT_EMPTY_NAME | UI_ITEM_R_SLIDER,
-          std::nullopt,
-          ICON_NONE);
-  uiItemR(layout,
-          ptr,
-          "shift",
-          UI_ITEM_R_SPLIT_EMPTY_NAME | UI_ITEM_R_SLIDER,
-          std::nullopt,
-          ICON_NONE);
+  b.add_output<decl::Color>("Image").structure_type(StructureType::Dynamic);
 }
 
 using namespace blender::compositor;
@@ -73,24 +61,50 @@ class BokehImageOperation : public NodeOperation {
 
   void execute() override
   {
-    const Domain domain = compute_domain();
+    const Domain domain = this->compute_domain();
 
-    const Result &bokeh_kernel = context().cache_manager().bokeh_kernels.get(
-        context(),
-        domain.size,
-        node_storage(bnode()).flaps,
-        node_storage(bnode()).angle,
-        node_storage(bnode()).rounding,
-        node_storage(bnode()).catadioptric,
-        node_storage(bnode()).lensshift);
+    const Result &bokeh_kernel = this->context().cache_manager().bokeh_kernels.get(
+        this->context(),
+        domain.data_size,
+        this->get_flaps(),
+        this->get_angle(),
+        this->get_roundness(),
+        this->get_catadioptric_size(),
+        this->get_color_shift());
 
-    Result &output = get_result("Image");
+    Result &output = this->get_result("Image");
     output.wrap_external(bokeh_kernel);
   }
 
   Domain compute_domain() override
   {
     return Domain(int2(512));
+  }
+
+  int get_flaps()
+  {
+    return math::clamp(this->get_input("Flaps").get_single_value_default(5), 3, 24);
+  }
+
+  float get_angle()
+  {
+    return this->get_input("Angle").get_single_value_default(0.0f);
+  }
+
+  float get_roundness()
+  {
+    return math::clamp(this->get_input("Roundness").get_single_value_default(0.0f), 0.0f, 1.0f);
+  }
+
+  float get_catadioptric_size()
+  {
+    return math::clamp(
+        this->get_input("Catadioptric Size").get_single_value_default(0.0f), 0.0f, 1.0f);
+  }
+
+  float get_color_shift()
+  {
+    return math::clamp(this->get_input("Color Shift").get_single_value_default(0.0f), -1.0f, 1.0f);
   }
 };
 
@@ -101,7 +115,7 @@ static NodeOperation *get_compositor_operation(Context &context, DNode node)
 
 }  // namespace blender::nodes::node_composite_bokehimage_cc
 
-void register_node_type_cmp_bokehimage()
+static void register_node_type_cmp_bokehimage()
 {
   namespace file_ns = blender::nodes::node_composite_bokehimage_cc;
 
@@ -113,12 +127,10 @@ void register_node_type_cmp_bokehimage()
   ntype.enum_name_legacy = "BOKEHIMAGE";
   ntype.nclass = NODE_CLASS_INPUT;
   ntype.declare = file_ns::cmp_node_bokehimage_declare;
-  ntype.draw_buttons = file_ns::node_composit_buts_bokehimage;
   ntype.flag |= NODE_PREVIEW;
-  ntype.initfunc = file_ns::node_composit_init_bokehimage;
-  blender::bke::node_type_storage(
-      &ntype, "NodeBokehImage", node_free_standard_storage, node_copy_standard_storage);
   ntype.get_compositor_operation = file_ns::get_compositor_operation;
+  blender::bke::node_type_size(ntype, 160, 140, NODE_DEFAULT_MAX_WIDTH);
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
+NOD_REGISTER_NODE(register_node_type_cmp_bokehimage)

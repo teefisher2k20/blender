@@ -10,10 +10,6 @@
 
 #include "../../stroke/BasicStrokeShaders.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -47,7 +43,6 @@ PyDoc_STRVAR(
     "\n"
     "   :arg stroke: A Stroke object.\n"
     "   :type stroke: :class:`freestyle.types.Stroke`\n");
-
 static int PolygonalizationShader___init__(BPy_PolygonalizationShader *self,
                                            PyObject *args,
                                            PyObject *kwds)
@@ -106,7 +101,3 @@ PyTypeObject PolygonalizationShader_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

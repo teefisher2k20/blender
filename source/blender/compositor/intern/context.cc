@@ -2,11 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "BLI_bounds.hh"
 #include "BLI_math_vector.hh"
-#include "BLI_rect.h"
 
 #include "DNA_node_types.h"
-#include "DNA_vec_types.h"
 
 #include "GPU_shader.hh"
 
@@ -16,11 +15,40 @@
 #include "COM_profiler.hh"
 #include "COM_render_context.hh"
 #include "COM_static_cache_manager.hh"
-#include "COM_texture_pool.hh"
 
 namespace blender::compositor {
 
-Context::Context(TexturePool &texture_pool) : texture_pool_(texture_pool) {}
+Bounds<int2> Context::get_input_region() const
+{
+  return Bounds<int2>(int2(0), this->get_compositing_domain().display_size);
+}
+
+Result Context::get_pass(const Scene * /*scene*/, int /*view_layer*/, const char * /*name*/)
+{
+  return this->create_result(compositor::ResultType::Color);
+}
+
+const RenderData &Context::get_render_data() const
+{
+  return this->get_scene().r;
+}
+
+StringRef Context::get_view_name() const
+{
+  return "";
+}
+
+ResultPrecision Context::get_precision() const
+{
+  return ResultPrecision::Full;
+}
+
+void Context::set_info_message(StringRef /*message*/) const {}
+
+bool Context::treat_viewer_as_compositor_output() const
+{
+  return false;
+}
 
 void Context::populate_meta_data_for_pass(const Scene * /*scene*/,
                                           int /*view_layer_id*/,
@@ -51,24 +79,7 @@ bool Context::is_canceled() const
 
 void Context::reset()
 {
-  texture_pool_.reset();
   cache_manager_.reset();
-}
-
-int2 Context::get_compositing_region_size() const
-{
-  const rcti compositing_region = get_compositing_region();
-  const int x = BLI_rcti_size_x(&compositing_region);
-  const int y = BLI_rcti_size_y(&compositing_region);
-  return math::max(int2(1), int2(x, y));
-}
-
-bool Context::is_valid_compositing_region() const
-{
-  const rcti compositing_region = get_compositing_region();
-  const int x = BLI_rcti_size_x(&compositing_region);
-  const int y = BLI_rcti_size_y(&compositing_region);
-  return x != 0 && y != 0;
 }
 
 float Context::get_render_percentage() const
@@ -89,12 +100,23 @@ float Context::get_time() const
   return frame_number / frame_rate;
 }
 
-GPUShader *Context::get_shader(const char *info_name, ResultPrecision precision)
+eCompositorDenoiseQaulity Context::get_denoise_quality() const
+{
+  if (this->render_context()) {
+    return static_cast<eCompositorDenoiseQaulity>(
+        this->get_render_data().compositor_denoise_final_quality);
+  }
+
+  return static_cast<eCompositorDenoiseQaulity>(
+      this->get_render_data().compositor_denoise_preview_quality);
+}
+
+gpu::Shader *Context::get_shader(const char *info_name, ResultPrecision precision)
 {
   return cache_manager().cached_shaders.get(info_name, precision);
 }
 
-GPUShader *Context::get_shader(const char *info_name)
+gpu::Shader *Context::get_shader(const char *info_name)
 {
   return get_shader(info_name, get_precision());
 }
@@ -109,14 +131,14 @@ Result Context::create_result(ResultType type)
   return create_result(type, get_precision());
 }
 
-TexturePool &Context::texture_pool()
-{
-  return texture_pool_;
-}
-
 StaticCacheManager &Context::cache_manager()
 {
   return cache_manager_;
+}
+
+const Strip *Context::get_strip() const
+{
+  return nullptr;
 }
 
 }  // namespace blender::compositor

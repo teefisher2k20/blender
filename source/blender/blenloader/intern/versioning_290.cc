@@ -13,7 +13,9 @@
 #include "BLI_listbase.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
+#include "BLI_math_vector.h"
 #include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_utildefines.h"
 
 /* Define macros in `DNA_genfile.h`. */
@@ -43,6 +45,8 @@
 #include "DNA_space_types.h"
 #include "DNA_text_types.h"
 #include "DNA_tracking_types.h"
+#include "DNA_userdef_types.h"
+#include "DNA_windowmanager_types.h"
 #include "DNA_workspace_types.h"
 
 #undef DNA_GENFILE_VERSIONING_MACROS
@@ -62,17 +66,23 @@
 #include "BKE_multires.hh"
 #include "BKE_node.hh"
 #include "BKE_node_legacy_types.hh"
+#include "BKE_report.hh"
 
-#include "IMB_imbuf.hh"
+#include "IMB_imbuf_enums.h"
 #include "MEM_guardedalloc.h"
 
 #include "SEQ_proxy.hh"
 #include "SEQ_sequencer.hh"
 #include "SEQ_time.hh"
 
+#include "BLO_read_write.hh"
 #include "BLO_readfile.hh"
 #include "readfile.hh"
 #include "versioning_common.hh"
+
+#include "BLT_translation.hh"
+
+#include <fmt/format.h>
 
 /* Make preferences read-only, use `versioning_userdef.cc`. */
 #define U (*((const UserDef *)&U))
@@ -100,7 +110,7 @@ static eSpaceSeq_Proxy_RenderSize get_sequencer_render_size(Main *bmain)
   return render_size;
 }
 
-static bool can_use_proxy(const Strip *strip, int psize)
+static bool can_use_proxy(const Strip *strip, IMB_Proxy_Size psize)
 {
   if (strip->data->proxy == nullptr) {
     return false;
@@ -150,10 +160,10 @@ static void strip_convert_transform_crop(const Scene *scene,
                                          const eSpaceSeq_Proxy_RenderSize render_size)
 {
   if (strip->data->transform == nullptr) {
-    strip->data->transform = MEM_cnew<StripTransform>(__func__);
+    strip->data->transform = MEM_callocN<StripTransform>(__func__);
   }
   if (strip->data->crop == nullptr) {
-    strip->data->crop = MEM_cnew<StripCrop>(__func__);
+    strip->data->crop = MEM_callocN<StripCrop>(__func__);
   }
 
   StripCrop *c = strip->data->crop;
@@ -172,9 +182,9 @@ static void strip_convert_transform_crop(const Scene *scene,
     image_size_x = s_elem->orig_width;
     image_size_y = s_elem->orig_height;
 
-    if (can_use_proxy(strip, SEQ_rendersize_to_proxysize(render_size))) {
-      image_size_x /= SEQ_rendersize_to_scale_factor(render_size);
-      image_size_y /= SEQ_rendersize_to_scale_factor(render_size);
+    if (can_use_proxy(strip, blender::seq::rendersize_to_proxysize(render_size))) {
+      image_size_x /= blender::seq::rendersize_to_scale_factor(render_size);
+      image_size_y /= blender::seq::rendersize_to_scale_factor(render_size);
     }
   }
 
@@ -258,12 +268,12 @@ static void strip_convert_transform_crop_lb(const Scene *scene,
                                             const eSpaceSeq_Proxy_RenderSize render_size)
 {
 
-  LISTBASE_FOREACH (Strip *, seq, lb) {
-    if (!ELEM(seq->type, STRIP_TYPE_SOUND_RAM, STRIP_TYPE_SOUND_HD)) {
-      strip_convert_transform_crop(scene, seq, render_size);
+  LISTBASE_FOREACH (Strip *, strip, lb) {
+    if (!ELEM(strip->type, STRIP_TYPE_SOUND_RAM, STRIP_TYPE_SOUND_HD)) {
+      strip_convert_transform_crop(scene, strip, render_size);
     }
-    if (seq->type == STRIP_TYPE_META) {
-      strip_convert_transform_crop_lb(scene, &seq->seqbase, render_size);
+    if (strip->type == STRIP_TYPE_META) {
+      strip_convert_transform_crop_lb(scene, &strip->seqbase, render_size);
     }
   }
 }
@@ -302,9 +312,9 @@ static void strip_convert_transform_crop_2(const Scene *scene,
   int image_size_x = s_elem->orig_width;
   int image_size_y = s_elem->orig_height;
 
-  if (can_use_proxy(strip, SEQ_rendersize_to_proxysize(render_size))) {
-    image_size_x /= SEQ_rendersize_to_scale_factor(render_size);
-    image_size_y /= SEQ_rendersize_to_scale_factor(render_size);
+  if (can_use_proxy(strip, blender::seq::rendersize_to_proxysize(render_size))) {
+    image_size_x /= blender::seq::rendersize_to_scale_factor(render_size);
+    image_size_y /= blender::seq::rendersize_to_scale_factor(render_size);
   }
 
   /* Calculate scale factor, so image fits in preview area with original aspect ratio. */
@@ -344,19 +354,19 @@ static void strip_convert_transform_crop_lb_2(const Scene *scene,
                                               const eSpaceSeq_Proxy_RenderSize render_size)
 {
 
-  LISTBASE_FOREACH (Strip *, seq, lb) {
-    if (!ELEM(seq->type, STRIP_TYPE_SOUND_RAM, STRIP_TYPE_SOUND_HD)) {
-      strip_convert_transform_crop_2(scene, seq, render_size);
+  LISTBASE_FOREACH (Strip *, strip, lb) {
+    if (!ELEM(strip->type, STRIP_TYPE_SOUND_RAM, STRIP_TYPE_SOUND_HD)) {
+      strip_convert_transform_crop_2(scene, strip, render_size);
     }
-    if (seq->type == STRIP_TYPE_META) {
-      strip_convert_transform_crop_lb_2(scene, &seq->seqbase, render_size);
+    if (strip->type == STRIP_TYPE_META) {
+      strip_convert_transform_crop_lb_2(scene, &strip->seqbase, render_size);
     }
   }
 }
 
 static void seq_update_meta_disp_range(Scene *scene)
 {
-  Editing *ed = SEQ_editing_get(scene);
+  Editing *ed = blender::seq::editing_get(scene);
 
   if (ed == nullptr) {
     return;
@@ -365,25 +375,26 @@ static void seq_update_meta_disp_range(Scene *scene)
   LISTBASE_FOREACH_BACKWARD (MetaStack *, ms, &ed->metastack) {
     /* Update ms->disp_range from meta. */
     if (ms->disp_range[0] == ms->disp_range[1]) {
-      ms->disp_range[0] = SEQ_time_left_handle_frame_get(scene, ms->parseq);
-      ms->disp_range[1] = SEQ_time_right_handle_frame_get(scene, ms->parseq);
+      ms->disp_range[0] = blender::seq::time_left_handle_frame_get(scene, ms->parent_strip);
+      ms->disp_range[1] = blender::seq::time_right_handle_frame_get(scene, ms->parent_strip);
     }
 
     /* Update meta strip endpoints. */
-    SEQ_time_left_handle_frame_set(scene, ms->parseq, ms->disp_range[0]);
-    SEQ_time_right_handle_frame_set(scene, ms->parseq, ms->disp_range[1]);
+    blender::seq::time_left_handle_frame_set(scene, ms->parent_strip, ms->disp_range[0]);
+    blender::seq::time_right_handle_frame_set(scene, ms->parent_strip, ms->disp_range[1]);
 
     /* Recalculate effects using meta strip. */
-    LISTBASE_FOREACH (Strip *, seq, ms->oldbasep) {
-      if (seq->seq2) {
-        seq->start = seq->startdisp = max_ii(seq->seq1->startdisp, seq->seq2->startdisp);
-        seq->enddisp = min_ii(seq->seq1->enddisp, seq->seq2->enddisp);
+    ListBase *old_seqbasep = ms->old_strip ? &ms->old_strip->seqbase : &ed->seqbase;
+    LISTBASE_FOREACH (Strip *, strip, old_seqbasep) {
+      if (strip->input2) {
+        strip->start = strip->startdisp = max_ii(strip->input1->startdisp,
+                                                 strip->input2->startdisp);
+        strip->enddisp = min_ii(strip->input1->enddisp, strip->input2->enddisp);
       }
     }
 
-    /* Ensure that active seqbase points to active meta strip seqbase. */
-    MetaStack *active_ms = SEQ_meta_stack_active_get(ed);
-    SEQ_seqbase_active_set(ed, &active_ms->parseq->seqbase);
+    MetaStack *active_ms = blender::seq::meta_stack_active_get(ed);
+    active_ms->old_strip = ms->parent_strip;
   }
 }
 
@@ -396,10 +407,10 @@ static void version_node_socket_duplicate(bNodeTree *ntree,
   LISTBASE_FOREACH_MUTABLE (bNodeLink *, link, &ntree->links) {
     if (link->tonode->type_legacy == node_type) {
       bNode *node = link->tonode;
-      bNodeSocket *dest_socket = blender::bke::node_find_socket(node, SOCK_IN, new_name);
+      bNodeSocket *dest_socket = blender::bke::node_find_socket(*node, SOCK_IN, new_name);
       BLI_assert(dest_socket);
       if (STREQ(link->tosock->name, old_name)) {
-        blender::bke::node_add_link(ntree, link->fromnode, link->fromsock, node, dest_socket);
+        blender::bke::node_add_link(*ntree, *link->fromnode, *link->fromsock, *node, *dest_socket);
       }
     }
   }
@@ -407,8 +418,8 @@ static void version_node_socket_duplicate(bNodeTree *ntree,
   /* Duplicate the default value from the old socket and assign it to the new socket. */
   LISTBASE_FOREACH (bNode *, node, &ntree->nodes) {
     if (node->type_legacy == node_type) {
-      bNodeSocket *source_socket = blender::bke::node_find_socket(node, SOCK_IN, old_name);
-      bNodeSocket *dest_socket = blender::bke::node_find_socket(node, SOCK_IN, new_name);
+      bNodeSocket *source_socket = blender::bke::node_find_socket(*node, SOCK_IN, old_name);
+      bNodeSocket *dest_socket = blender::bke::node_find_socket(*node, SOCK_IN, new_name);
       BLI_assert(source_socket && dest_socket);
       if (dest_socket->default_value) {
         MEM_freeN(dest_socket->default_value);
@@ -710,11 +721,11 @@ static void do_versions_point_attributes(CustomData *pdata)
   for (int i = 0; i < pdata->totlayer; i++) {
     CustomDataLayer *layer = &pdata->layers[i];
     if (layer->type == CD_LOCATION) {
-      STRNCPY(layer->name, "Position");
+      STRNCPY_UTF8(layer->name, "Position");
       layer->type = CD_PROP_FLOAT3;
     }
     else if (layer->type == CD_RADIUS) {
-      STRNCPY(layer->name, "Radius");
+      STRNCPY_UTF8(layer->name, "Radius");
       layer->type = CD_PROP_FLOAT;
     }
   }
@@ -726,10 +737,10 @@ static void do_versions_point_attribute_names(CustomData *pdata)
   for (int i = 0; i < pdata->totlayer; i++) {
     CustomDataLayer *layer = &pdata->layers[i];
     if (layer->type == CD_PROP_FLOAT3 && STREQ(layer->name, "Position")) {
-      STRNCPY(layer->name, "position");
+      STRNCPY_UTF8(layer->name, "position");
     }
     else if (layer->type == CD_PROP_FLOAT && STREQ(layer->name, "Radius")) {
-      STRNCPY(layer->name, "radius");
+      STRNCPY_UTF8(layer->name, "radius");
     }
   }
 }
@@ -782,16 +793,6 @@ static void do_versions_291_fcurve_handles_limit(FCurve *fcu)
   }
 }
 
-static void do_versions_strip_cache_settings_recursive(const ListBase *seqbase)
-{
-  LISTBASE_FOREACH (Strip *, seq, seqbase) {
-    seq->cache_flag = 0;
-    if (seq->type == STRIP_TYPE_META) {
-      do_versions_strip_cache_settings_recursive(&seq->seqbase);
-    }
-  }
-}
-
 static void version_node_join_geometry_for_multi_input_socket(bNodeTree *ntree)
 {
   LISTBASE_FOREACH_MUTABLE (bNodeLink *, link, &ntree->links) {
@@ -806,7 +807,7 @@ static void version_node_join_geometry_for_multi_input_socket(bNodeTree *ntree)
       bNodeSocket *socket = static_cast<bNodeSocket *>(node->inputs.first);
       socket->flag |= SOCK_MULTI_INPUT;
       socket->limit = 4095;
-      blender::bke::node_remove_socket(ntree, node, socket->next);
+      blender::bke::node_remove_socket(*ntree, *node, *socket->next);
     }
   }
 }
@@ -823,27 +824,12 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
           CustomData_get_layer(&me->face_data, CD_MPOLY));
       for (const int i : blender::IndexRange(me->faces_num)) {
         if (polys[i].totloop == 2) {
-          bool changed;
-          BKE_mesh_legacy_convert_loops_to_corners(me);
-          BKE_mesh_legacy_convert_polys_to_offsets(me);
-          BKE_mesh_validate_arrays(
-              me,
-              reinterpret_cast<float(*)[3]>(me->vert_positions_for_write().data()),
-              me->verts_num,
-              me->edges_for_write().data(),
-              me->edges_num,
-              (MFace *)CustomData_get_layer_for_write(
-                  &me->fdata_legacy, CD_MFACE, me->totface_legacy),
-              me->totface_legacy,
-              me->corner_verts().data(),
-              me->corner_edges_for_write().data(),
-              me->corners_num,
-              me->face_offsets().data(),
-              me->faces_num,
-              me->deform_verts_for_write().data(),
-              false,
-              true,
-              &changed);
+          std::string message = fmt::format(
+              fmt::runtime(RPT_("Mesh %s has invalid faces, likely caused by the manifold extrude "
+                                "tool in version 2.90.0. Opening and saving the file in a version "
+                                "prior to 5.1 should resolve the issue\n")),
+              me->id.name + 2);
+          BLO_read_invalidate_message((BlendHandle *)fd, bmain, message.c_str());
           break;
         }
       }
@@ -918,7 +904,7 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
               tex->sun_rotation = 0.0f;
               tex->altitude = 0.0f;
               tex->air_density = 1.0f;
-              tex->dust_density = 1.0f;
+              tex->aerosol_density = 1.0f;
               tex->ozone_density = 1.0f;
             }
           }
@@ -1141,7 +1127,7 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
 
     if (!DNA_struct_member_exists(fd->filesdna, "CacheFile", "char", "velocity_unit")) {
       LISTBASE_FOREACH (CacheFile *, cache_file, &bmain->cachefiles) {
-        STRNCPY(cache_file->velocity_name, ".velocities");
+        STRNCPY_UTF8(cache_file->velocity_name, ".velocities");
         cache_file->velocity_unit = CACHEFILE_VELOCITY_UNIT_SECOND;
       }
     }
@@ -1180,7 +1166,7 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
 
       /* The sub-step method changed from "per second" to "per frame".
        * To get the new value simply divide the old bullet sim FPS with the scene FPS. */
-      rbw->substeps_per_frame /= FPS;
+      rbw->substeps_per_frame /= scene->frames_per_second();
 
       if (rbw->substeps_per_frame <= 0) {
         rbw->substeps_per_frame = 1;
@@ -1189,7 +1175,7 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
 
     /* PointCloud attributes. */
     LISTBASE_FOREACH (PointCloud *, pointcloud, &bmain->pointclouds) {
-      do_versions_point_attributes(&pointcloud->pdata);
+      do_versions_point_attributes(&pointcloud->pdata_legacy);
     }
 
     /* Show outliner mode column by default. */
@@ -1398,7 +1384,7 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
           switch (sl->spacetype) {
             case SPACE_IMAGE: {
               SpaceImage *sima = (SpaceImage *)sl;
-              sima->flag &= ~(SI_FLAG_UNUSED_20);
+              sima->flag &= ~SI_FLAG_UNUSED_20;
               break;
             }
           }
@@ -1495,7 +1481,7 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
 
     /* PointCloud attributes names. */
     LISTBASE_FOREACH (PointCloud *, pointcloud, &bmain->pointclouds) {
-      do_versions_point_attribute_names(&pointcloud->pdata);
+      do_versions_point_attribute_names(&pointcloud->pdata_legacy);
     }
 
     /* Cryptomatte render pass */
@@ -1539,7 +1525,7 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
             LISTBASE_FOREACH (bNodeSocket *, output_socket, &node->outputs) {
               const char *volume_scatter = "VolumeScatterCol";
               if (STREQLEN(output_socket->name, volume_scatter, MAX_NAME)) {
-                STRNCPY(output_socket->name, RE_PASSNAME_VOLUME_LIGHT);
+                STRNCPY_UTF8(output_socket->name, RE_PASSNAME_VOLUME_LIGHT);
               }
             }
           }
@@ -1555,7 +1541,7 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
             if (node->type_legacy == CMP_NODE_CRYPTOMATTE_LEGACY) {
               NodeCryptomatte *storage = (NodeCryptomatte *)node->storage;
               char *matte_id = storage->matte_id;
-              if (matte_id == nullptr || strlen(storage->matte_id) == 0) {
+              if ((matte_id == nullptr) || (storage->matte_id[0] == '\0')) {
                 continue;
               }
               BKE_cryptomatte_matte_id_to_entries(storage, storage->matte_id);
@@ -1583,14 +1569,14 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
     LISTBASE_FOREACH (bNodeTree *, ntree, &bmain->nodetrees) {
       LISTBASE_FOREACH (bNode *, node, &ntree->nodes) {
         if (STREQ(node->idname, "GeometryNodeRandomAttribute")) {
-          STRNCPY(node->idname, "GeometryLegacyNodeAttributeRandomize");
+          STRNCPY_UTF8(node->idname, "GeometryLegacyNodeAttributeRandomize");
         }
       }
     }
 
     LISTBASE_FOREACH (Scene *, scene, &bmain->scenes) {
       if (scene->toolsettings->sequencer_tool_settings == nullptr) {
-        scene->toolsettings->sequencer_tool_settings = SEQ_tool_settings_init();
+        scene->toolsettings->sequencer_tool_settings = blender::seq::tool_settings_init();
       }
     }
   }
@@ -1633,7 +1619,7 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
           if (node->type_legacy != CMP_NODE_SETALPHA) {
             continue;
           }
-          NodeSetAlpha *storage = MEM_cnew<NodeSetAlpha>("NodeSetAlpha");
+          NodeSetAlpha *storage = MEM_callocN<NodeSetAlpha>("NodeSetAlpha");
           storage->mode = CMP_NODE_SETALPHA_MODE_REPLACE_ALPHA;
           node->storage = storage;
         }
@@ -1642,12 +1628,11 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
     }
 
     LISTBASE_FOREACH (Scene *, scene, &bmain->scenes) {
-      Editing *ed = SEQ_editing_get(scene);
+      Editing *ed = blender::seq::editing_get(scene);
       if (ed == nullptr) {
         continue;
       }
       ed->cache_flag = (SEQ_CACHE_STORE_RAW | SEQ_CACHE_STORE_FINAL_OUT);
-      do_versions_strip_cache_settings_recursive(&ed->seqbase);
     }
   }
 
@@ -1704,8 +1689,7 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
       }
       LISTBASE_FOREACH (bNode *, node, &ntree->nodes) {
         if (node->type_legacy == GEO_NODE_OBJECT_INFO && node->storage == nullptr) {
-          NodeGeometryObjectInfo *data = (NodeGeometryObjectInfo *)MEM_callocN(
-              sizeof(NodeGeometryObjectInfo), __func__);
+          NodeGeometryObjectInfo *data = MEM_callocN<NodeGeometryObjectInfo>(__func__);
           data->transform_space = GEO_NODE_TRANSFORM_SPACE_RELATIVE;
           node->storage = data;
         }
@@ -1800,9 +1784,8 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
       /* Fix old scene with too many samples that were not being used.
        * Now they are properly used and might produce a huge slowdown.
        * So we clamp to what the old max actual was. */
-      if (scene->eevee.volumetric_shadow_samples > 32) {
-        scene->eevee.volumetric_shadow_samples = 32;
-      }
+      scene->eevee.volumetric_shadow_samples = std::min(scene->eevee.volumetric_shadow_samples,
+                                                        32);
     }
   }
 
@@ -1811,10 +1794,10 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
       if (ntree->type == NTREE_GEOMETRY) {
         LISTBASE_FOREACH (bNode *, node, &ntree->nodes) {
           if (STREQ(node->idname, "GeometryNodeSubdivisionSurfaceSimple")) {
-            STRNCPY(node->idname, "GeometryNodeSubdivide");
+            STRNCPY_UTF8(node->idname, "GeometryNodeSubdivide");
           }
           if (STREQ(node->idname, "GeometryNodeSubdivisionSurface")) {
-            STRNCPY(node->idname, "GeometryNodeSubdivideSmooth");
+            STRNCPY_UTF8(node->idname, "GeometryNodeSubdivideSmooth");
           }
         }
       }
@@ -1836,7 +1819,7 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
               {
                 sseq->flag |= SEQ_USE_PROXIES;
               }
-              if (sseq->render_size == SEQ_RENDER_SIZE_FULL) {
+              if (sseq->render_size == SEQ_RENDER_SIZE_FULL_DEPRECATED) {
                 sseq->render_size = SEQ_RENDER_SIZE_PROXY_100;
               }
             }
@@ -1868,7 +1851,7 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
       if (ntree->type == NTREE_GEOMETRY) {
         LISTBASE_FOREACH (bNode *, node, &ntree->nodes) {
           if (STREQ(node->idname, "GeometryNodeSubdivideSmooth")) {
-            STRNCPY(node->idname, "GeometryNodeSubdivisionSurface");
+            STRNCPY_UTF8(node->idname, "GeometryNodeSubdivisionSurface");
           }
         }
       }
@@ -1946,21 +1929,7 @@ void blo_do_versions_290(FileData *fd, Library * /*lib*/, Main *bmain)
           if (sl->spacetype == SPACE_NODE) {
             SpaceNode *snode = (SpaceNode *)sl;
             LISTBASE_FOREACH (bNodeTreePath *, path, &snode->treepath) {
-              STRNCPY(path->display_name, path->node_name);
-            }
-          }
-        }
-      }
-    }
-
-    /* Consolidate node and final evaluation modes. */
-    LISTBASE_FOREACH (bScreen *, screen, &bmain->screens) {
-      LISTBASE_FOREACH (ScrArea *, area, &screen->areabase) {
-        LISTBASE_FOREACH (SpaceLink *, sl, &area->spacedata) {
-          if (sl->spacetype == SPACE_SPREADSHEET) {
-            SpaceSpreadsheet *sspreadsheet = (SpaceSpreadsheet *)sl;
-            if (sspreadsheet->object_eval_state == 2) {
-              sspreadsheet->object_eval_state = SPREADSHEET_OBJECT_EVAL_STATE_EVALUATED;
+              STRNCPY_UTF8(path->display_name, path->node_name);
             }
           }
         }

@@ -386,7 +386,7 @@ static void ExportCurveSegments(Scene *scene, Hair *hair, ParticleCurveData *CDa
 
   /* check allocation */
   if ((hair->get_curve_keys().size() != num_keys) || (hair->num_curves() != num_curves)) {
-    VLOG_WARNING << "Hair memory allocation failed, clearing data.";
+    LOG_ERROR << "Hair memory allocation failed, clearing data.";
     hair->clear(true);
   }
 }
@@ -450,7 +450,7 @@ static void export_hair_motion_validate_attribute(Hair *hair,
   if (num_motion_keys != num_keys || !have_motion) {
     /* No motion or hair "topology" changed, remove attributes again. */
     if (num_motion_keys != num_keys) {
-      VLOG_WORK << "Hair topology changed, removing motion attribute.";
+      LOG_DEBUG << "Hair topology changed, removing motion attribute.";
     }
     hair->attributes.remove(ATTR_STD_MOTION_VERTEX_POSITION);
   }
@@ -675,33 +675,8 @@ void BlenderSync::sync_particle_hair(
       }
     }
   }
-}
 
-template<typename TypeInCycles, typename GetValueAtIndex>
-static void fill_generic_attribute(const int num_curves,
-                                   const int num_points,
-                                   TypeInCycles *data,
-                                   const AttributeElement element,
-                                   const GetValueAtIndex &get_value_at_index)
-{
-  switch (element) {
-    case ATTR_ELEMENT_CURVE_KEY: {
-      for (int i = 0; i < num_points; i++) {
-        data[i] = get_value_at_index(i);
-      }
-      break;
-    }
-    case ATTR_ELEMENT_CURVE: {
-      for (int i = 0; i < num_curves; i++) {
-        data[i] = get_value_at_index(i);
-      }
-      break;
-    }
-    default: {
-      assert(false);
-      break;
-    }
-  }
+  hair->curve_shape = scene->params.hair_shape;
 }
 
 static void attr_create_motion_from_velocity(Hair *hair,
@@ -750,7 +725,7 @@ static void attr_create_generic(Scene *scene,
     const ustring name{std::string_view(iter.name)};
 
     const blender::bke::AttrDomain b_domain = iter.domain;
-    const eCustomDataType b_data_type = iter.data_type;
+    const blender::bke::AttrType b_data_type = iter.data_type;
 
     if (need_motion && name == u_velocity) {
       const blender::VArraySpan b_attr = *iter.get<blender::float3>(
@@ -760,7 +735,7 @@ static void attr_create_generic(Scene *scene,
     }
 
     /* Weak, use first float2 attribute as standard UV. */
-    if (need_uv && !have_uv && b_data_type == CD_PROP_FLOAT2 &&
+    if (need_uv && !have_uv && b_data_type == blender::bke::AttrType::Float2 &&
         b_domain == blender::bke::AttrDomain::Curve)
     {
       Attribute *attr = attributes.add(ATTR_STD_UV, name);
@@ -1029,9 +1004,18 @@ void BlenderSync::sync_hair(Hair *hair, BObjectInfo &b_ob_info, bool motion, con
   else {
     export_hair_curves(scene, hair, b_curves, need_motion, motion_scale);
   }
+
+  const blender::VArray<int8_t> b_types = b_curves.curve_types();
+  /* This does not handle cases where the curve type is not the same across all curves */
+  if (!b_types.is_empty() && b_types[0] == CURVE_TYPE_POLY) {
+    hair->curve_shape = CURVE_THICK_LINEAR;
+  }
+  else {
+    hair->curve_shape = scene->params.hair_shape;
+  }
 }
 
-void BlenderSync::sync_hair(BL::Depsgraph b_depsgraph, BObjectInfo &b_ob_info, Hair *hair)
+void BlenderSync::sync_hair(BObjectInfo &b_ob_info, Hair *hair)
 {
   /* make a copy of the shaders as the caller in the main thread still need them for syncing the
    * attributes */
@@ -1047,13 +1031,11 @@ void BlenderSync::sync_hair(BL::Depsgraph b_depsgraph, BObjectInfo &b_ob_info, H
     }
     else {
       /* Particle hair. */
-      const bool need_undeformed = new_hair.need_attribute(scene, ATTR_STD_GENERATED);
-      BL::Mesh b_mesh = object_to_mesh(
-          b_data, b_ob_info, b_depsgraph, need_undeformed, Mesh::SUBDIVISION_NONE);
+      BL::Mesh b_mesh = object_to_mesh(b_ob_info);
 
       if (b_mesh) {
         sync_particle_hair(&new_hair, b_mesh, b_ob_info, false);
-        free_object_to_mesh(b_data, b_ob_info, b_mesh);
+        free_object_to_mesh(b_ob_info, b_mesh);
       }
     }
   }
@@ -1070,6 +1052,8 @@ void BlenderSync::sync_hair(BL::Depsgraph b_depsgraph, BObjectInfo &b_ob_info, H
 
   hair->attributes.update(std::move(new_hair.attributes));
 
+  hair->curve_shape = new_hair.curve_shape;
+
   /* tag update */
 
   /* Compares curve_keys rather than strands in order to handle quick hair
@@ -1079,10 +1063,7 @@ void BlenderSync::sync_hair(BL::Depsgraph b_depsgraph, BObjectInfo &b_ob_info, H
   hair->tag_update(scene, rebuild);
 }
 
-void BlenderSync::sync_hair_motion(BL::Depsgraph b_depsgraph,
-                                   BObjectInfo &b_ob_info,
-                                   Hair *hair,
-                                   const int motion_step)
+void BlenderSync::sync_hair_motion(BObjectInfo &b_ob_info, Hair *hair, const int motion_step)
 {
   /* Skip if nothing exported. */
   if (hair->num_keys() == 0) {
@@ -1098,11 +1079,10 @@ void BlenderSync::sync_hair_motion(BL::Depsgraph b_depsgraph,
     }
 
     /* Particle hair. */
-    BL::Mesh b_mesh = object_to_mesh(
-        b_data, b_ob_info, b_depsgraph, false, Mesh::SUBDIVISION_NONE);
+    BL::Mesh b_mesh = object_to_mesh(b_ob_info);
     if (b_mesh) {
       sync_particle_hair(hair, b_mesh, b_ob_info, true, motion_step);
-      free_object_to_mesh(b_data, b_ob_info, b_mesh);
+      free_object_to_mesh(b_ob_info, b_mesh);
       return;
     }
   }

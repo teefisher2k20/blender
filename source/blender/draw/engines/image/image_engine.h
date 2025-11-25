@@ -8,14 +8,14 @@
 
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "DRW_render.hh"
 
-struct DrawEngineType;
+namespace blender::image_engine {
 
-extern DrawEngineType draw_engine_image_type;
+struct Engine : public DrawEngine::Pointer {
+  DrawEngine *create_instance() final;
 
-#ifdef __cplusplus
-}
-#endif
+  static void free_static();
+};
+
+}  // namespace blender::image_engine

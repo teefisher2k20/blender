@@ -6,6 +6,7 @@
  * \ingroup edgreasepencil
  */
 
+#include "BLI_listbase.h"
 #include "BLI_math_matrix.hh"
 
 #include "BKE_attribute_math.hh"
@@ -200,9 +201,7 @@ void merge_layers(const GreasePencil &src_grease_pencil,
         BLI_assert(duration >= 0);
         dst_frames.add_or_modify(
             item.key,
-            [&](InsertKeyframe *frame) {
-              *frame = {item.value, duration};
-            },
+            [&](InsertKeyframe *frame) { *frame = {item.value, duration}; },
             [&](InsertKeyframe *frame) {
               /* The destination frame is always an implicit hold if at least on of the source
                * frame is an implicit hold. */
@@ -331,15 +330,15 @@ void merge_layers(const GreasePencil &src_grease_pencil,
   const bke::AttributeAccessor src_attributes = src_grease_pencil.attributes();
   bke::MutableAttributeAccessor dst_attributes = dst_grease_pencil.attributes_for_write();
   src_attributes.foreach_attribute([&](const blender::bke::AttributeIter &iter) {
-    if (iter.data_type == CD_PROP_STRING) {
+    if (iter.data_type == bke::AttrType::String) {
       return;
     }
-    bke::GAttributeReader src_attribute = src_attributes.lookup(iter.name);
-    if (!src_attribute) {
-      return;
-    }
+    bke::GAttributeReader src_attribute = iter.get();
     bke::GSpanAttributeWriter dst_attribute = dst_attributes.lookup_or_add_for_write_only_span(
         iter.name, bke::AttrDomain::Layer, iter.data_type);
+    if (!dst_attribute) {
+      return;
+    }
 
     const CPPType &type = dst_attribute.span.type();
     bke::attribute_math::convert_to_static_type(type, [&](auto type) {

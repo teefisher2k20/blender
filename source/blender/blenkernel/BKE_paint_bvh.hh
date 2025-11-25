@@ -15,14 +15,16 @@
 #include "BLI_bit_group_vector.hh"
 #include "BLI_bit_vector.hh"
 #include "BLI_bounds_types.hh"
+#include "BLI_enum_flags.hh"
 #include "BLI_function_ref.hh"
 #include "BLI_index_mask_fwd.hh"
+#include "BLI_math_vector.hh"
 #include "BLI_math_vector_types.hh"
 #include "BLI_offset_indices.hh"
 #include "BLI_set.hh"
 #include "BLI_span.hh"
 #include "BLI_string_ref.hh"
-#include "BLI_utildefines.h"
+#include "BLI_utility_mixins.hh"
 #include "BLI_vector.hh"
 #include "BLI_vector_set.hh"
 
@@ -39,16 +41,15 @@ struct SubdivCCGCoord;
 struct Image;
 struct ImageUser;
 struct Object;
-namespace blender {
-namespace bke::pbvh {
+
+namespace blender::bke::pbvh {
 class Node;
 class Tree;
 namespace pixels {
 struct PBVHData;
 struct NodeData;
 }  // namespace pixels
-}  // namespace bke::pbvh
-}  // namespace blender
+}  // namespace blender::bke::pbvh
 
 namespace blender::bke::pbvh {
 
@@ -58,14 +59,13 @@ class Tree;
  * \todo Most data is public but should either be removed or become private in the future.
  * The "_" suffix means that fields shouldn't be used by consumers of the `bke::pbvh` API.
  */
-class Node {
+class Node : NonCopyable {
   friend Tree;
 
  public:
   enum Flags : uint32_t {
+    None = 0,
     Leaf = 1 << 0,
-
-    UpdateRedraw = 1 << 5,
 
     FullyHidden = 1 << 10,
     FullyMasked = 1 << 11,
@@ -78,6 +78,9 @@ class Node {
     TopologyUpdated = 1 << 17,
   };
 
+  /* Index of the parent node. A value of -1 indicates that the node is the root node. */
+  int parent_ = -1;
+
   /** Axis aligned min and max of all vertex positions in the node. */
   Bounds<float3> bounds_ = {};
   /** Bounds from the start of current brush stroke. */
@@ -89,7 +92,7 @@ class Node {
 
   /* Indicates whether this node is a leaf or not; also used for
    * marking various updates that need to be applied. */
-  Flags flag_ = UpdateRedraw;
+  Flags flag_ = None;
 
   /**
    * Used for ray-casting: how close the bounding-box is to the ray point.
@@ -106,9 +109,13 @@ class Node {
 
   /** \todo Move storage of image painting data to #Tree or elsewhere. */
   pixels::NodeData *pixels_ = nullptr;
+
+  std::optional<int> parent() const;
+  const Bounds<float3> &bounds() const;
+  const Bounds<float3> &bounds_orig() const;
 };
 
-ENUM_OPERATORS(Node::Flags, Node::Flags::TopologyUpdated);
+ENUM_OPERATORS(Node::Flags);
 
 struct MeshNode : public Node {
   /**
@@ -121,6 +128,7 @@ struct MeshNode : public Node {
    * order to use 32 bit integers for slot values. .
    */
   using LocalVertMap = VectorSet<int,
+                                 0,
                                  DefaultProbingStrategy,
                                  DefaultHash<int>,
                                  DefaultEquality<int>,
@@ -227,9 +235,6 @@ class Tree {
   /** Memory backing for #Node::prim_indices. Without an inline buffer to make #Tree movable. */
   Array<int, 0> prim_indices_;
 
- public:
-  std::variant<Vector<MeshNode>, Vector<GridsNode>, Vector<BMeshNode>> nodes_;
-
   /**
    * If true, the bounds for the corresponding node index is out of date.
    * \note Values are only meaningful for leaf nodes.
@@ -251,11 +256,13 @@ class Tree {
    */
   BitVector<> visibility_dirty_;
 
+ public:
+  std::variant<Vector<MeshNode>, Vector<GridsNode>, Vector<BMeshNode>> nodes_;
+
   pixels::PBVHData *pixels_ = nullptr;
 
   std::unique_ptr<DrawCache> draw_data;
 
- public:
   Tree(const Tree &other) = delete;
   Tree(Tree &&other) = default;
   Tree &operator=(const Tree &other) = delete;
@@ -273,10 +280,7 @@ class Tree {
   template<typename NodeT> Span<NodeT> nodes() const;
   template<typename NodeT> MutableSpan<NodeT> nodes();
 
-  Type type() const
-  {
-    return this->type_;
-  }
+  Type type() const;
 
   /**
    * Mark data based on positions for specific BVH nodes dirty. In particular: bounds, normals,
@@ -285,7 +289,7 @@ class Tree {
    */
   void tag_positions_changed(const IndexMask &node_mask);
 
-  /** Tag nodes where face or vertex visibility has changed.  */
+  /** Tag nodes where face or vertex visibility has changed. */
   void tag_visibility_changed(const IndexMask &node_mask);
 
   /**
@@ -304,8 +308,30 @@ class Tree {
    */
   void tag_attribute_changed(const IndexMask &node_mask, StringRef attribute_name);
 
+  /**
+   * Run the last step of the BVH bounds recalculation process, propagating updated leaf node
+   * bounds to their parent/ancestor inner nodes. This is meant to be used after leaf node bounds
+   * have been computed separately.
+   */
+  void flush_bounds_to_parents();
+
+  /**
+   * Recalculate node bounding boxes based on the current coordinates. Calculation is only done for
+   * affected nodes that have been tagged by #PBVH::tag_positions_changed().
+   */
+  void update_bounds(const Depsgraph &depsgraph, const Object &object);
+  void update_bounds_mesh(Span<float3> vert_positions);
+  void update_bounds_grids(Span<float3> positions, int grid_area);
+  void update_bounds_bmesh(const BMesh &bm);
+
+  void update_normals(Object &object_orig, Object &object_eval);
+
+  void update_visibility(const Object &object);
+
  private:
   explicit Tree(Type type);
+  /** Build a BVH tree from pre-computed MeshGroup data. */
+  static Tree from_spatially_organized_mesh(const Mesh &mesh);
 };
 
 void build_pixels(const Depsgraph &depsgraph, Object &object, Image &image, ImageUser &image_user);
@@ -316,10 +342,29 @@ void build_pixels(const Depsgraph &depsgraph, Object &object, Image &image, Imag
  * hit first */
 
 void raycast(Tree &pbvh,
-             FunctionRef<void(Node &node, float *tmin)> cb,
+             FunctionRef<void(Node &node, float *tmin)> hit_fn,
              const float3 &ray_start,
              const float3 &ray_normal,
              bool original);
+
+inline Bounds<float3> calc_face_bounds(const Span<float3> vert_positions,
+                                       const Span<int> face_verts)
+{
+  Bounds<float3> bounds{vert_positions[face_verts.first()]};
+  for (const int vert : face_verts.slice(1, face_verts.size() - 1)) {
+    math::min_max(vert_positions[vert], bounds.min, bounds.max);
+  }
+  return bounds;
+}
+
+int partition_along_axis(const Span<float3> face_centers,
+                         MutableSpan<int> faces,
+                         const int axis,
+                         const float middle);
+
+int partition_material_indices(const Span<int> material_indices, MutableSpan<int> faces);
+
+bool leaf_needs_material_split(const Span<int> faces, const Span<int> material_indices);
 
 bool node_raycast_mesh(const MeshNode &node,
                        Span<float3> node_positions,
@@ -350,15 +395,15 @@ bool node_raycast_grids(const SubdivCCG &subdiv_ccg,
 bool node_raycast_bmesh(BMeshNode &node,
                         const float3 &ray_start,
                         const float3 &ray_normal,
-                        IsectRayPrecalc *isect_precalc,
+                        const IsectRayPrecalc *isect_precalc,
                         float *depth,
                         bool use_original,
                         BMVert **r_active_vertex,
                         float3 &r_face_normal);
 
-bool raycast_node_detail_bmesh(BMeshNode &node,
+bool raycast_node_detail_bmesh(const BMeshNode &node,
                                const float3 &ray_start,
-                               IsectRayPrecalc *isect_precalc,
+                               const IsectRayPrecalc *isect_precalc,
                                float *depth,
                                float *r_edge_length);
 
@@ -420,21 +465,18 @@ namespace blender::bke::pbvh {
 /**
  * Returns the number of visible quads in the nodes' grids.
  */
-int count_grid_quads(const BitGroupVector<> &grid_visibility,
+int count_grid_quads(const BitGroupVector<> &grid_hidden,
                      Span<int> grid_indices,
                      int gridsize,
                      int display_gridsize);
 
 }  // namespace blender::bke::pbvh
 
-int BKE_pbvh_get_grid_num_verts(const Object &object);
-int BKE_pbvh_get_grid_num_faces(const Object &object);
-
 enum PBVHTopologyUpdateMode {
   PBVH_Subdivide = 1,
   PBVH_Collapse = 2,
 };
-ENUM_OPERATORS(PBVHTopologyUpdateMode, PBVH_Collapse);
+ENUM_OPERATORS(PBVHTopologyUpdateMode);
 
 namespace blender::bke::pbvh {
 
@@ -447,8 +489,8 @@ bool bmesh_update_topology(BMesh &bm,
                            PBVHTopologyUpdateMode mode,
                            float min_edge_len,
                            float max_edge_len,
-                           const float center[3],
-                           const float view_normal[3],
+                           const float3 &center,
+                           const std::optional<float3> &view_normal,
                            float radius,
                            bool use_frontface,
                            bool use_projected);
@@ -478,12 +520,7 @@ Span<int> node_face_indices_calc_grids(const SubdivCCG &subdiv_ccg,
                                        const GridsNode &node,
                                        Vector<int> &faces);
 
-Bounds<float3> node_bounds(const Node &node);
-
 }  // namespace blender::bke::pbvh
-
-blender::Bounds<blender::float3> BKE_pbvh_node_get_original_BB(
-    const blender::bke::pbvh::Node *node);
 
 float BKE_pbvh_node_get_tmin(const blender::bke::pbvh::Node *node);
 
@@ -508,15 +545,6 @@ void BKE_pbvh_bmesh_after_stroke(BMesh &bm, blender::bke::pbvh::Tree &pbvh);
 namespace blender::bke::pbvh {
 
 /**
- * Recalculate node bounding boxes based on the current coordinates. Calculation is only done for
- * affected nodes that have been tagged by #PBVH::tag_positions_changed().
- */
-void update_bounds(const Depsgraph &depsgraph, const Object &object, Tree &pbvh);
-void update_bounds_mesh(Span<float3> vert_positions, Tree &pbvh);
-void update_bounds_grids(const CCGKey &key, Span<float3> positions, Tree &pbvh);
-void update_bounds_bmesh(const BMesh &bm, Tree &pbvh);
-
-/**
  * Copy all current node bounds to the original bounds. "Original" bounds are typically from before
  * a brush stroke started (while the "regular" bounds update on every change of positions). These
  * are stored to optimize the BVH traversal for original coordinates enabled by various "use
@@ -529,14 +557,12 @@ void update_mask_mesh(const Mesh &mesh, const IndexMask &node_mask, Tree &pbvh);
 void update_mask_grids(const SubdivCCG &subdiv_ccg, const IndexMask &node_mask, Tree &pbvh);
 void update_mask_bmesh(const BMesh &bm, const IndexMask &node_mask, Tree &pbvh);
 
-void update_visibility(const Object &object, Tree &pbvh);
 void update_normals(const Depsgraph &depsgraph, Object &object_orig, Tree &pbvh);
 /** Update geometry normals (potentially on the original object geometry). */
 void update_normals_from_eval(Object &object_eval, Tree &pbvh);
 
 }  // namespace blender::bke::pbvh
 
-blender::Bounds<blender::float3> BKE_pbvh_redraw_BB(const blender::bke::pbvh::Tree &pbvh);
 namespace blender::bke::pbvh {
 IndexMask nodes_to_face_selection_grids(const SubdivCCG &subdiv_ccg,
                                         Span<GridsNode> nodes,
@@ -604,24 +630,36 @@ void update_node_bounds_mesh(Span<float3> positions, MeshNode &node);
 void update_node_bounds_grids(int grid_area, Span<float3> positions, GridsNode &node);
 void update_node_bounds_bmesh(BMeshNode &node);
 
-/**
- * Run the last step of the BVH bounds recalculation process, propagating updated leaf node bounds
- * to their parent/ancestor inner nodes. This is meant to be used after leaf node bounds have been
- * computed separately.
- */
-void flush_bounds_to_parents(Tree &pbvh);
+inline std::optional<int> Node::parent() const
+{
+  if (parent_ == -1) {
+    return std::nullopt;
+  }
+
+  return parent_;
+}
+
+inline const Bounds<float3> &Node::bounds() const
+{
+  return bounds_;
+}
+
+inline const Bounds<float3> &Node::bounds_orig() const
+{
+  return bounds_orig_;
+}
 
 inline Span<int> MeshNode::faces() const
 {
-  return this->face_indices_;
+  return face_indices_;
 }
 inline Span<int> MeshNode::verts() const
 {
-  return this->vert_indices_.as_span().slice(0, this->unique_verts_num_);
+  return vert_indices_.as_span().slice(0, unique_verts_num_);
 }
 inline Span<int> MeshNode::all_verts() const
 {
-  return this->vert_indices_;
+  return vert_indices_;
 }
 inline int MeshNode::corners_num() const
 {
@@ -630,7 +668,12 @@ inline int MeshNode::corners_num() const
 
 inline Span<int> GridsNode::grids() const
 {
-  return this->prim_indices_;
+  return prim_indices_;
+}
+
+inline Type Tree::type() const
+{
+  return type_;
 }
 
 }  // namespace blender::bke::pbvh

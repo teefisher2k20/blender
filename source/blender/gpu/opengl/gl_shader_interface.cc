@@ -157,35 +157,35 @@ static Type gpu_type_from_gl_type(int gl_type)
 {
   switch (gl_type) {
     case GL_FLOAT:
-      return Type::FLOAT;
+      return Type::float_t;
     case GL_FLOAT_VEC2:
-      return Type::VEC2;
+      return Type::float2_t;
     case GL_FLOAT_VEC3:
-      return Type::VEC3;
+      return Type::float3_t;
     case GL_FLOAT_VEC4:
-      return Type::VEC4;
+      return Type::float4_t;
     case GL_FLOAT_MAT3:
-      return Type::MAT3;
+      return Type::float3x3_t;
     case GL_FLOAT_MAT4:
-      return Type::MAT4;
+      return Type::float4x4_t;
     case GL_UNSIGNED_INT:
-      return Type::UINT;
+      return Type::uint_t;
     case GL_UNSIGNED_INT_VEC2:
-      return Type::UVEC2;
+      return Type::uint2_t;
     case GL_UNSIGNED_INT_VEC3:
-      return Type::UVEC3;
+      return Type::uint3_t;
     case GL_UNSIGNED_INT_VEC4:
-      return Type::UVEC4;
+      return Type::uint4_t;
     case GL_INT:
-      return Type::INT;
+      return Type::int_t;
     case GL_INT_VEC2:
-      return Type::IVEC2;
+      return Type::int2_t;
     case GL_INT_VEC3:
-      return Type::IVEC3;
+      return Type::int3_t;
     case GL_INT_VEC4:
-      return Type::IVEC4;
+      return Type::int4_t;
     case GL_BOOL:
-      return Type::BOOL;
+      return Type::bool_t;
     case GL_FLOAT_MAT2:
     case GL_FLOAT_MAT2x3:
     case GL_FLOAT_MAT2x4:
@@ -196,7 +196,7 @@ static Type gpu_type_from_gl_type(int gl_type)
     default:
       BLI_assert(0);
   }
-  return Type::FLOAT;
+  return Type::float_t;
 }
 
 GLShaderInterface::GLShaderInterface(GLuint program)
@@ -254,7 +254,7 @@ GLShaderInterface::GLShaderInterface(GLuint program)
   /* Bit set to true if uniform comes from a uniform block. */
   BLI_bitmap *uniforms_from_blocks = BLI_BITMAP_NEW(active_uniform_len, __func__);
   /* Set uniforms from block for exclusion. */
-  GLint *ubo_uni_ids = (GLint *)MEM_mallocN(sizeof(GLint) * max_ubo_uni_len, __func__);
+  GLint *ubo_uni_ids = MEM_malloc_arrayN<GLint>(max_ubo_uni_len, __func__);
   for (int i = 0; i < ubo_len; i++) {
     GLint ubo_uni_len;
     glGetActiveUniformBlockiv(program, i, GL_UNIFORM_BLOCK_ACTIVE_UNIFORMS, &ubo_uni_len);
@@ -266,7 +266,7 @@ GLShaderInterface::GLShaderInterface(GLuint program)
   MEM_freeN(ubo_uni_ids);
 
   int input_tot_len = attr_len + ubo_len + uniform_len + ssbo_len;
-  inputs_ = (ShaderInput *)MEM_callocN(sizeof(ShaderInput) * input_tot_len, __func__);
+  inputs_ = MEM_calloc_arrayN<ShaderInput>(input_tot_len, __func__);
 
   const uint32_t name_buffer_len = attr_len * max_attr_name_len + ubo_len * max_ubo_name_len +
                                    uniform_len * max_uniform_name_len +
@@ -413,28 +413,13 @@ GLShaderInterface::GLShaderInterface(GLuint program, const shader::ShaderCreateI
     }
   }
 
-  size_t workaround_names_size = 0;
-  Vector<StringRefNull> workaround_uniform_names;
-  auto check_enabled_uniform = [&](const char *uniform_name) {
-    if (glGetUniformLocation(program, uniform_name) != -1) {
-      workaround_uniform_names.append(uniform_name);
-      workaround_names_size += StringRefNull(uniform_name).size() + 1;
-      uniform_len_++;
-    }
-  };
-
-  if (!GLContext::shader_draw_parameters_support) {
-    check_enabled_uniform("gpu_BaseInstance");
-  }
-
   BLI_assert_msg(ubo_len_ <= 16, "enabled_ubo_mask_ is uint16_t");
 
   int input_tot_len = attr_len_ + ubo_len_ + uniform_len_ + ssbo_len_ + constant_len_;
-  inputs_ = (ShaderInput *)MEM_callocN(sizeof(ShaderInput) * input_tot_len, __func__);
+  inputs_ = MEM_calloc_arrayN<ShaderInput>(input_tot_len, __func__);
   ShaderInput *input = inputs_;
 
-  name_buffer_ = (char *)MEM_mallocN(info.interface_names_size_ + workaround_names_size,
-                                     "name_buffer");
+  name_buffer_ = (char *)MEM_mallocN(info.interface_names_size_, "name_buffer");
   uint32_t name_buffer_offset = 0;
 
   /* Necessary to make #glUniform works. TODO(fclem) Remove. */
@@ -508,14 +493,7 @@ GLShaderInterface::GLShaderInterface(GLuint program, const shader::ShaderCreateI
     input->binding = -1;
     input++;
   }
-
-  /* Compatibility uniforms. */
-  for (auto &name : workaround_uniform_names) {
-    copy_input_name(input, name, name_buffer_, name_buffer_offset);
-    input->location = glGetUniformLocation(program, name_buffer_ + input->name_offset);
-    input->binding = -1;
-    input++;
-  }
+  set_image_formats_from_info(info);
 
   /* SSBOs */
   for (const ShaderCreateInfo::Resource &res : all_resources) {

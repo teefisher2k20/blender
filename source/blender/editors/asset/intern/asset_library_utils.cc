@@ -6,8 +6,9 @@
  * \ingroup edasset
  */
 
+#include "AS_asset_representation.hh"
+
 #include "BKE_context.hh"
-#include "BKE_preferences.h"
 
 #include "ED_asset_library.hh"
 #include "ED_asset_list.hh"
@@ -18,11 +19,9 @@
 
 #include "DNA_userdef_types.h"
 #include "RNA_access.hh"
-#include "UI_resources.hh"
 #include "WM_api.hh"
 
 #include "AS_asset_catalog.hh"
-#include "AS_asset_catalog_tree.hh"
 #include "AS_asset_library.hh"
 
 namespace blender::ed::asset {
@@ -30,18 +29,14 @@ namespace blender::ed::asset {
 static asset_system::AssetCatalog &library_ensure_catalog(
     asset_system::AssetLibrary &library, const asset_system::AssetCatalogPath &path)
 {
-  if (asset_system::AssetCatalog *catalog = library.catalog_service().find_catalog_by_path(path)) {
+  asset_system::AssetCatalogService &catalog_service = library.catalog_service();
+  if (asset_system::AssetCatalog *catalog = catalog_service.find_catalog_by_path(path)) {
     return *catalog;
   }
-  return *library.catalog_service().create_catalog(path);
+  asset_system::AssetCatalog *new_catalog = catalog_service.create_catalog(path);
+  catalog_service.tag_has_unsaved_changes(new_catalog);
+  return *new_catalog;
 }
-
-/* Suppress warning for GCC-14.2. This isn't a dangling reference
- * because the #asset_system::AssetLibrary owns the returned value. */
-#if defined(__GNUC__) && !defined(__clang__)
-#  pragma GCC diagnostic push
-#  pragma GCC diagnostic ignored "-Wdangling-reference"
-#endif
 
 blender::asset_system::AssetCatalog &library_ensure_catalogs_in_path(
     asset_system::AssetLibrary &library, const blender::asset_system::AssetCatalogPath &path)
@@ -56,25 +51,12 @@ blender::asset_system::AssetCatalog &library_ensure_catalogs_in_path(
   return *library.catalog_service().find_catalog_by_path(path);
 }
 
-#if defined(__GNUC__) && !defined(__clang__)
-#  pragma GCC diagnostic pop
-#endif
-
 AssetLibraryReference user_library_to_library_ref(const bUserAssetLibrary &user_library)
 {
   AssetLibraryReference library_ref{};
   library_ref.custom_library_index = BLI_findindex(&U.asset_libraries, &user_library);
   library_ref.type = ASSET_LIBRARY_CUSTOM;
   return library_ref;
-}
-
-const bUserAssetLibrary *library_ref_to_user_library(const AssetLibraryReference &library_ref)
-{
-  if (library_ref.type != ASSET_LIBRARY_CUSTOM) {
-    return nullptr;
-  }
-  return static_cast<const bUserAssetLibrary *>(
-      BLI_findlink(&U.asset_libraries, library_ref.custom_library_index));
 }
 
 void refresh_asset_library(const bContext *C, const AssetLibraryReference &library_ref)
@@ -88,6 +70,16 @@ void refresh_asset_library(const bContext *C, const AssetLibraryReference &libra
 void refresh_asset_library(const bContext *C, const bUserAssetLibrary &user_library)
 {
   refresh_asset_library(C, user_library_to_library_ref(user_library));
+}
+
+void refresh_asset_library_from_asset(const bContext *C,
+                                      const asset_system::AssetRepresentation &asset)
+{
+  if (std::optional<AssetLibraryReference> library_ref =
+          asset.owner_asset_library().library_reference())
+  {
+    refresh_asset_library(C, *library_ref);
+  }
 }
 
 }  // namespace blender::ed::asset

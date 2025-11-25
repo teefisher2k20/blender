@@ -223,13 +223,16 @@ set(SRC_RNA_INC
 
 set(SRC
   makesrna.cc
+  makesrna_utils.cc
   rna_define.cc
   ${DEFSRC}
   ${APISRC}
-  ../../../../intern/clog/clog.c
+  ../../../../intern/clog/clog.cc
   # Needed for defaults.
   ../../../../release/datafiles/userdef/userdef_default.c
   ../../../../release/datafiles/userdef/userdef_default_theme.c
+
+  makesrna_utils.hh
 )
 
 set(INC
@@ -253,6 +256,8 @@ set(INC
   ../../io/usd
   ../../modifiers
   ../../nodes
+  ../../nodes/composite/include
+  ../../nodes/function/include
   ../../nodes/geometry/include
   ../../sequencer
   ../../simulation
@@ -262,7 +267,6 @@ set(INC
   ../../render
   ../../../../intern/clog
   ../../../../intern/cycles/blender
-  ../../../../extern/fmtlib/include
   ../../../../intern/memutil
   ../../../../intern/mantaflow/extern
 
@@ -272,7 +276,7 @@ set(INC
 )
 
 set(INC_SYS
-
+  ../../../../extern/fmtlib/include
 )
 
 if(WITH_CYCLES)
@@ -287,19 +291,19 @@ if(WITH_PYTHON)
 endif()
 
 if(WITH_IMAGE_OPENEXR)
-  add_definitions(-DWITH_OPENEXR)
+  add_definitions(-DWITH_IMAGE_OPENEXR)
 endif()
 
 if(WITH_IMAGE_OPENJPEG)
-  add_definitions(-DWITH_OPENJPEG)
+  add_definitions(-DWITH_IMAGE_OPENJPEG)
 endif()
 
 if(WITH_IMAGE_CINEON)
-  add_definitions(-DWITH_CINEON)
+  add_definitions(-DWITH_IMAGE_CINEON)
 endif()
 
 if(WITH_IMAGE_WEBP)
-  add_definitions(-DWITH_WEBP)
+  add_definitions(-DWITH_IMAGE_WEBP)
 endif()
 
 if(WITH_AUDASPACE)
@@ -355,10 +359,6 @@ if(WITH_WASAPI)
   add_definitions(-DWITH_WASAPI)
 endif()
 
-if(WITH_OPENCOLLADA)
-  add_definitions(-DWITH_COLLADA)
-endif()
-
 if(WITH_INTERNATIONAL)
   add_definitions(-DWITH_INTERNATIONAL)
 endif()
@@ -389,23 +389,6 @@ if(WITH_OPENSUBDIV)
     ../../../../intern/opensubdiv
   )
   add_definitions(-DWITH_OPENSUBDIV)
-endif()
-if(WITH_OPENVDB)
-  list(APPEND INC
-    ../../../../intern/openvdb
-  )
-  list(APPEND INC_SYS
-    ${OPENVDB_INCLUDE_DIRS}
-  )
-  add_definitions(-DWITH_OPENVDB ${OPENVDB_DEFINITIONS})
-endif()
-
-if(WITH_OPENVDB)
-  add_definitions(-DWITH_OPENVDB)
-
-  if(WITH_OPENVDB_BLOSC)
-    add_definitions(-DWITH_OPENVDB_BLOSC)
-  endif()
 endif()
 
 if(WITH_INPUT_NDOF)
@@ -476,12 +459,12 @@ set(SRC
   rna_curves_utils.hh
   rna_internal.hh
   rna_internal_types.hh
-  rna_mesh_utils.hh
 )
 
 set(LIB
   PRIVATE bf::animrig
   PRIVATE bf::dna
+  PRIVATE bf::dependencies::optional::openvdb
   PRIVATE bf::dependencies::optional::tbb
   PRIVATE extern_fmtlib
   bf_editor_space_api
@@ -497,6 +480,7 @@ set(LIB
   bf_editor_mesh
   bf_editor_object
   bf_editor_physics
+  bf_editor_pointcloud
   bf_editor_render
   bf_editor_scene
   bf_editor_sculpt_paint
@@ -507,3 +491,14 @@ set(LIB
 )
 
 blender_add_lib(bf_rna "${SRC}" "${INC}" "${INC_SYS}" "${LIB}")
+
+if(WITH_GTESTS)
+  set(TEST_SRC
+    makesrna_utils.cc
+    makesrna_test.cc
+  )
+  set(TEST_LIB
+    ${LIB}
+  )
+  blender_add_test_suite_lib(bf_makesrna "${TEST_SRC}" "${INC}" "${INC_SYS}" "${TEST_LIB}")
+endif()

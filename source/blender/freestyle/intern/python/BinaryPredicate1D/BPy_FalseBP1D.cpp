@@ -8,10 +8,6 @@
 
 #include "BPy_FalseBP1D.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -33,7 +29,6 @@ PyDoc_STRVAR(
     "   :type inter2: :class:`freestyle.types.Interface1D`\n"
     "   :return: False.\n"
     "   :rtype: bool\n");
-
 static int FalseBP1D___init__(BPy_FalseBP1D *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {nullptr};
@@ -89,7 +84,3 @@ PyTypeObject FalseBP1D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

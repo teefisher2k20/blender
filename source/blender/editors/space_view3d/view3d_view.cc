@@ -17,8 +17,10 @@
 
 #include "BKE_action.hh"
 #include "BKE_context.hh"
+#ifdef WITH_XR_OPENXR
+#  include "BKE_idprop.hh"
+#endif
 #include "BKE_global.hh"
-#include "BKE_idprop.hh"
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_main.hh"
@@ -37,6 +39,7 @@
 
 #include "WM_api.hh"
 
+#include "ED_info.hh"
 #include "ED_object.hh"
 #include "ED_screen.hh"
 
@@ -48,11 +51,13 @@
 #include "view3d_intern.hh" /* own include */
 #include "view3d_navigate.hh"
 
+#include "DNA_camera_types.h"
+
 /* -------------------------------------------------------------------- */
 /** \name Camera to View Operator
  * \{ */
 
-static int view3d_camera_to_view_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus view3d_camera_to_view_exec(bContext *C, wmOperator * /*op*/)
 {
   const Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
   View3D *v3d;
@@ -108,7 +113,7 @@ void VIEW3D_OT_camera_to_view(wmOperatorType *ot)
   ot->description = "Set camera view to active view";
   ot->idname = "VIEW3D_OT_camera_to_view";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = view3d_camera_to_view_exec;
   ot->poll = view3d_camera_to_view_poll;
 
@@ -122,9 +127,11 @@ void VIEW3D_OT_camera_to_view(wmOperatorType *ot)
 /** \name Camera Fit Frame to Selected Operator
  * \{ */
 
-/* unlike VIEW3D_OT_view_selected this is for framing a render and not
- * meant to take into account vertex/bone selection for eg. */
-static int view3d_camera_to_view_selected_exec(bContext *C, wmOperator *op)
+/**
+ * Unlike #VIEW3D_OT_view_selected this is for framing a render and not
+ * meant to take into account vertex/bone selection for eg.
+ */
+static wmOperatorStatus view3d_camera_to_view_selected_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
   Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
@@ -151,7 +158,7 @@ void VIEW3D_OT_camera_to_view_selected(wmOperatorType *ot)
   ot->description = "Move the camera so selected objects are framed";
   ot->idname = "VIEW3D_OT_camera_to_view_selected";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = view3d_camera_to_view_selected_exec;
   ot->poll = ED_operator_scene_editable;
 
@@ -221,7 +228,7 @@ static void sync_viewport_camera_smoothview(bContext *C,
   }
 }
 
-static int view3d_setobjectascamera_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus view3d_setobjectascamera_exec(bContext *C, wmOperator *op)
 {
   View3D *v3d;
   ARegion *region;
@@ -289,7 +296,7 @@ void VIEW3D_OT_object_as_camera(wmOperatorType *ot)
   ot->description = "Set the active object as the active camera for this view or scene";
   ot->idname = "VIEW3D_OT_object_as_camera";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = view3d_setobjectascamera_exec;
   ot->poll = ED_operator_rv3d_user_region_poll;
 
@@ -388,7 +395,7 @@ void view3d_viewmatrix_set(const Depsgraph *depsgraph,
 {
   if (rv3d->persp == RV3D_CAMOB) { /* obs/camera */
     if (v3d->camera) {
-      Object *ob_camera_eval = DEG_get_evaluated_object(depsgraph, v3d->camera);
+      Object *ob_camera_eval = DEG_get_evaluated(depsgraph, v3d->camera);
       obmat_to_viewmat(rv3d, ob_camera_eval);
     }
     else {
@@ -409,7 +416,7 @@ void view3d_viewmatrix_set(const Depsgraph *depsgraph,
       rv3d->viewmat[3][2] -= rv3d->dist;
     }
     if (v3d->ob_center) {
-      Object *ob_eval = DEG_get_evaluated_object(depsgraph, v3d->ob_center);
+      Object *ob_eval = DEG_get_evaluated(depsgraph, v3d->ob_center);
       float vec[3];
 
       copy_v3_v3(vec, ob_eval->object_to_world().location());
@@ -447,9 +454,9 @@ void view3d_viewmatrix_set(const Depsgraph *depsgraph,
       vec[2] = 0.0f;
 
       if (rect_scale) {
-        /* Since 'RegionView3D.winmat' has been calculated and this function doesn't take the
-         * 'ARegion' we don't know about the region size.
-         * Use 'rect_scale' when drawing a sub-region to apply 2D offset,
+        /* Since `RegionView3D.winmat` has been calculated and this function doesn't take the
+         * #ARegion we don't know about the region size.
+         * Use `rect_scale` when drawing a sub-region to apply 2D offset,
          * scaled by the difference between the sub-region and the region size.
          */
         vec[0] /= rect_scale[0];
@@ -466,15 +473,15 @@ void view3d_viewmatrix_set(const Depsgraph *depsgraph,
 /** \} */
 
 /* -------------------------------------------------------------------- */
-/** \name OpenGL Select Utilities
+/** \name GPU Select Utilities
  * \{ */
 
-void view3d_opengl_select_cache_begin()
+void view3d_gpu_select_cache_begin()
 {
   GPU_select_cache_begin();
 }
 
-void view3d_opengl_select_cache_end()
+void view3d_gpu_select_cache_end()
 {
   GPU_select_cache_end();
 }
@@ -484,7 +491,7 @@ struct DrawSelectLoopUserData {
   uint hits;
   GPUSelectBuffer *buffer;
   const rcti *rect;
-  eGPUSelectMode gpu_select_mode;
+  GPUSelectMode gpu_select_mode;
 };
 
 static bool drw_select_loop_pass(eDRWSelectStage stage, void *user_data)
@@ -537,15 +544,15 @@ static bool drw_select_filter_object_mode_lock(Object *ob, void *user_data)
 static bool drw_select_filter_object_mode_lock_for_weight_paint(Object *ob, void *user_data)
 {
   LinkNode *ob_pose_list = static_cast<LinkNode *>(user_data);
-  return ob_pose_list && (BLI_linklist_index(ob_pose_list, DEG_get_original_object(ob)) != -1);
+  return ob_pose_list && (BLI_linklist_index(ob_pose_list, DEG_get_original(ob)) != -1);
 }
 
-int view3d_opengl_select_ex(const ViewContext *vc,
-                            GPUSelectBuffer *buffer,
-                            const rcti *input,
-                            eV3DSelectMode select_mode,
-                            eV3DSelectObjectFilter select_filter,
-                            const bool do_material_slot_selection)
+int view3d_gpu_select_ex(const ViewContext *vc,
+                         GPUSelectBuffer *buffer,
+                         const rcti *input,
+                         eV3DSelectMode select_mode,
+                         eV3DSelectObjectFilter select_filter,
+                         const bool do_material_slot_selection)
 {
   bThemeState theme_state;
   const wmWindowManager *wm = CTX_wm_manager(vc->C);
@@ -561,7 +568,7 @@ int view3d_opengl_select_ex(const ViewContext *vc,
   const bool use_nearest = select_mode == VIEW3D_SELECT_PICK_NEAREST;
   bool draw_surface = true;
 
-  eGPUSelectMode gpu_select_mode = GPU_SELECT_INVALID;
+  GPUSelectMode gpu_select_mode = GPU_SELECT_INVALID;
 
   /* case not a box select */
   if (input->xmin == input->xmax) {
@@ -583,7 +590,7 @@ int view3d_opengl_select_ex(const ViewContext *vc,
     gpu_select_mode = GPU_SELECT_ALL;
   }
 
-  /* Important to use 'vc->obact', not 'BKE_view_layer_active_object_get(vc->view_layer)' below,
+  /* Important to use `vc->obact`, not `BKE_view_layer_active_object_get(vc->view_layer)` below,
    * so it will be nullptr when hidden. */
   struct {
     DRW_ObjectFilterFn fn;
@@ -596,7 +603,7 @@ int view3d_opengl_select_ex(const ViewContext *vc,
     GPU_select_begin_next(buffer, &rect, gpu_select_mode, 0);
     GPU_select_cache_load_id();
     hits = GPU_select_end();
-    goto finally;
+    return hits;
   }
 
   switch (select_filter) {
@@ -611,7 +618,7 @@ int view3d_opengl_select_ex(const ViewContext *vc,
     case VIEW3D_SELECT_FILTER_WPAINT_POSE_MODE_LOCK: {
       Object *obact = vc->obact;
       BLI_assert(obact && (obact->mode & OB_MODE_ALL_WEIGHT_PAINT));
-      /* While this uses 'alloca' in a loop (which we typically avoid),
+      /* While this uses `alloca` in a loop (which we typically avoid),
        * the number of items is nearly always 1, maybe 2..3 in rare cases. */
       LinkNode *ob_pose_list = nullptr;
       VirtualModifierData virtual_modifier_data;
@@ -660,7 +667,7 @@ int view3d_opengl_select_ex(const ViewContext *vc,
   /* If in X-ray mode, we select the wires in priority. */
   if (XRAY_ACTIVE(v3d) && use_nearest) {
     /* We need to call "GPU_select_*" API's inside DRW_draw_select_loop
-     * because the OpenGL context created & destroyed inside this function. */
+     * because the GPU context created & destroyed inside this function. */
     DrawSelectLoopUserData drw_select_loop_user_data = {};
     drw_select_loop_user_data.pass = 0;
     drw_select_loop_user_data.hits = 0;
@@ -689,7 +696,7 @@ int view3d_opengl_select_ex(const ViewContext *vc,
 
   if (hits == 0) {
     /* We need to call "GPU_select_*" API's inside DRW_draw_select_loop
-     * because the OpenGL context created & destroyed inside this function. */
+     * because the GPU context created & destroyed inside this function. */
     DrawSelectLoopUserData drw_select_loop_user_data = {};
     drw_select_loop_user_data.pass = 0;
     drw_select_loop_user_data.hits = 0;
@@ -726,28 +733,27 @@ int view3d_opengl_select_ex(const ViewContext *vc,
 
   UI_Theme_Restore(&theme_state);
 
-finally:
   return hits;
 }
 
-int view3d_opengl_select(const ViewContext *vc,
-                         GPUSelectBuffer *buffer,
-                         const rcti *input,
-                         eV3DSelectMode select_mode,
-                         eV3DSelectObjectFilter select_filter)
+int view3d_gpu_select(const ViewContext *vc,
+                      GPUSelectBuffer *buffer,
+                      const rcti *input,
+                      eV3DSelectMode select_mode,
+                      eV3DSelectObjectFilter select_filter)
 {
-  return view3d_opengl_select_ex(vc, buffer, input, select_mode, select_filter, false);
+  return view3d_gpu_select_ex(vc, buffer, input, select_mode, select_filter, false);
 }
 
-int view3d_opengl_select_with_id_filter(const ViewContext *vc,
-                                        GPUSelectBuffer *buffer,
-                                        const rcti *input,
-                                        eV3DSelectMode select_mode,
-                                        eV3DSelectObjectFilter select_filter,
-                                        uint select_id)
+int view3d_gpu_select_with_id_filter(const ViewContext *vc,
+                                     GPUSelectBuffer *buffer,
+                                     const rcti *input,
+                                     eV3DSelectMode select_mode,
+                                     eV3DSelectObjectFilter select_filter,
+                                     uint select_id)
 {
   const int64_t start = buffer->storage.size();
-  int hits = view3d_opengl_select(vc, buffer, input, select_mode, select_filter);
+  int hits = view3d_gpu_select(vc, buffer, input, select_mode, select_filter);
 
   /* Selection sometimes uses -1 for an invalid selection ID, remove these as they
    * interfere with detection of actual number of hits in the selection. */
@@ -836,7 +842,7 @@ static bool view3d_localview_init(const Depsgraph *depsgraph,
         base->local_view_bits &= ~local_view_bit;
       }
       FOREACH_BASE_IN_EDIT_MODE_BEGIN (scene, view_layer, v3d, base_iter) {
-        Object *ob_eval = DEG_get_evaluated_object(depsgraph, base_iter->object);
+        Object *ob_eval = DEG_get_evaluated(depsgraph, base_iter->object);
         BKE_object_minmax(ob_eval ? ob_eval : base_iter->object, min, max);
         base_iter->local_view_bits |= local_view_bit;
         changed = true;
@@ -847,7 +853,7 @@ static bool view3d_localview_init(const Depsgraph *depsgraph,
       BKE_view_layer_synced_ensure(scene, view_layer);
       LISTBASE_FOREACH (Base *, base, BKE_view_layer_object_bases_get(view_layer)) {
         if (BASE_SELECTED(v3d, base)) {
-          Object *ob_eval = DEG_get_evaluated_object(depsgraph, base->object);
+          Object *ob_eval = DEG_get_evaluated(depsgraph, base->object);
           BKE_object_minmax(ob_eval ? ob_eval : base->object, min, max);
           base->local_view_bits |= local_view_bit;
           changed = true;
@@ -876,7 +882,7 @@ static bool view3d_localview_init(const Depsgraph *depsgraph,
     }
   }
 
-  v3d->localvd = static_cast<View3D *>(MEM_mallocN(sizeof(View3D), "localview"));
+  v3d->localvd = MEM_mallocN<View3D>("localview");
   *v3d->localvd = blender::dna::shallow_copy(*v3d);
   v3d->local_view_uid = local_view_bit;
 
@@ -889,8 +895,7 @@ static bool view3d_localview_init(const Depsgraph *depsgraph,
       Object *camera_old = nullptr;
       float dist_new, ofs_new[3];
 
-      rv3d->localvd = static_cast<RegionView3D *>(
-          MEM_mallocN(sizeof(RegionView3D), "localview region"));
+      rv3d->localvd = MEM_mallocN<RegionView3D>("localview region");
       memcpy(rv3d->localvd, rv3d, sizeof(RegionView3D));
 
       if (frame_selected) {
@@ -899,8 +904,9 @@ static bool view3d_localview_init(const Depsgraph *depsgraph,
         negate_v3_v3(ofs_new, mid);
 
         if (rv3d->persp == RV3D_CAMOB) {
-          rv3d->persp = RV3D_PERSP;
           camera_old = v3d->camera;
+          const Camera &camera = *static_cast<Camera *>(camera_old->data);
+          rv3d->persp = (camera.type == CAM_ORTHO) ? RV3D_ORTHO : RV3D_PERSP;
         }
 
         if (rv3d->persp == RV3D_ORTHO) {
@@ -915,7 +921,8 @@ static bool view3d_localview_init(const Depsgraph *depsgraph,
 
           if (rv3d->persp == RV3D_PERSP) {
             /* Don't zoom closer than the near clipping plane. */
-            dist_new = max_ff(dist_new, v3d->clip_start * 1.5f);
+            const float dist_min = ED_view3d_dist_soft_min_get(v3d, true);
+            CLAMP_MIN(dist_new, dist_min);
           }
         }
 
@@ -980,7 +987,7 @@ static bool view3d_localview_exit(const Depsgraph *depsgraph,
 
   MEM_freeN(v3d->localvd);
   v3d->localvd = nullptr;
-  MEM_SAFE_FREE(v3d->runtime.local_stats);
+  ED_view3d_local_stats_free(v3d);
 
   LISTBASE_FOREACH (ARegion *, region, &area->regionbase) {
     if (region->regiontype == RGN_TYPE_WINDOW) {
@@ -1049,7 +1056,7 @@ bool ED_localview_exit_if_empty(const Depsgraph *depsgraph,
       depsgraph, wm, win, scene, view_layer, area, frame_selected, smooth_viewtx);
 }
 
-static int localview_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus localview_exec(bContext *C, wmOperator *op)
 {
   const Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
   const int smooth_viewtx = WM_operator_smooth_viewtx_get(op);
@@ -1105,7 +1112,7 @@ void VIEW3D_OT_localview(wmOperatorType *ot)
   ot->description = "Toggle display of selected object(s) separately and centered in view";
   ot->idname = "VIEW3D_OT_localview";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = localview_exec;
   /* Use undo because local-view changes object layer bit-flags. */
   ot->flag = OPTYPE_UNDO;
@@ -1119,7 +1126,7 @@ void VIEW3D_OT_localview(wmOperatorType *ot)
                   "Move the view to frame the selected objects");
 }
 
-static int localview_remove_from_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus localview_remove_from_exec(bContext *C, wmOperator *op)
 {
   View3D *v3d = CTX_wm_view3d(C);
   Main *bmain = CTX_data_main(C);
@@ -1181,7 +1188,7 @@ void VIEW3D_OT_localview_remove_from(wmOperatorType *ot)
   ot->description = "Move selected objects out of local view";
   ot->idname = "VIEW3D_OT_localview_remove_from";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = localview_remove_from_exec;
   ot->poll = localview_remove_from_poll;
   ot->flag = OPTYPE_UNDO;
@@ -1282,7 +1289,7 @@ bool ED_view3d_local_collections_set(const Main *bmain, View3D *v3d)
 void ED_view3d_local_collections_reset(const bContext *C, const bool reset_all)
 {
   Main *bmain = CTX_data_main(C);
-  uint local_view_bit = ~(0);
+  uint local_view_bit = ~0;
   bool do_reset = false;
 
   /* Reset only the ones that are not in use. */
@@ -1307,10 +1314,10 @@ void ED_view3d_local_collections_reset(const bContext *C, const bool reset_all)
   if (do_reset) {
     view3d_local_collections_reset(bmain, local_view_bit);
   }
-  else if (reset_all && (do_reset || (local_view_bit != ~(0)))) {
-    view3d_local_collections_reset(bmain, ~(0));
+  else if (reset_all && (do_reset || (local_view_bit != ~0))) {
+    view3d_local_collections_reset(bmain, ~0);
     View3D v3d = {};
-    v3d.local_collections_uid = ~(0);
+    v3d.local_collections_uid = ~0;
     BKE_layer_collection_local_sync(CTX_data_scene(C), CTX_data_view_layer(C), &v3d);
     DEG_id_tag_update(&CTX_data_scene(C)->id, ID_RECALC_BASE_FLAGS);
   }

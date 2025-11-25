@@ -2,17 +2,21 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "infos/compositor_filter_infos.hh"
+
+COMPUTE_SHADER_CREATE_INFO(compositor_filter)
+
 #include "gpu_shader_compositor_texture_utilities.glsl"
 
 void main()
 {
-  ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+  int2 texel = int2(gl_GlobalInvocationID.xy);
 
   /* Compute the dot product between the 3x3 window around the pixel and the filter kernel. */
-  vec4 color = vec4(0);
+  float4 color = float4(0);
   for (int j = 0; j < 3; j++) {
     for (int i = 0; i < 3; i++) {
-      color += texture_load(input_tx, texel + ivec2(i - 1, j - 1)) * ukernel[j][i];
+      color += texture_load(input_tx, texel + int2(i - 1, j - 1)) * ukernel[j][i];
     }
   }
 
@@ -20,5 +24,5 @@ void main()
   color = mix(texture_load(input_tx, texel), color, texture_load(factor_tx, texel).x);
 
   /* Store the color making sure it is not negative. */
-  imageStore(output_img, texel, max(color, 0.0));
+  imageStore(output_img, texel, max(color, 0.0f));
 }

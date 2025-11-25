@@ -6,8 +6,6 @@
  * \ingroup modifiers
  */
 
-#include "BLI_utildefines.h"
-
 #include "MOD_modifiertypes.hh"
 
 #include "UI_resources.hh"
@@ -56,4 +54,5 @@ ModifierTypeInfo modifierType_None = {
     /*blend_write*/ nullptr,
     /*blend_read*/ nullptr,
     /*foreach_cache*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
 };

@@ -4,13 +4,12 @@
 
 #include <numeric>
 
-#include "BLI_listbase.h"
+#include "BLI_math_base.h"
 #include "BLI_string.h"
-#include "BLI_string_utf8.h"
 
 #include "RNA_enum_types.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "NOD_inverse_eval_params.hh"
@@ -25,15 +24,40 @@ namespace blender::nodes::node_fn_integer_math_cc {
 static void node_declare(NodeDeclarationBuilder &b)
 {
   b.is_function_node();
-  b.add_input<decl::Int>("Value");
-  b.add_input<decl::Int>("Value", "Value_001");
-  b.add_input<decl::Int>("Value", "Value_002");
+
+  b.add_input<decl::Int>("Value").label_fn([](bNode node) {
+    switch (node.custom1) {
+      case NODE_INTEGER_MATH_POWER:
+        return IFACE_("Base");
+      default:
+        return IFACE_("Value");
+    }
+  });
+
+  b.add_input<decl::Int>("Value", "Value_001").label_fn([](bNode node) {
+    switch (node.custom1) {
+      case NODE_INTEGER_MATH_MULTIPLY_ADD:
+        return IFACE_("Multiplier");
+      case NODE_INTEGER_MATH_POWER:
+        return IFACE_("Exponent");
+      default:
+        return IFACE_("Value");
+    }
+  });
+  b.add_input<decl::Int>("Value", "Value_002").label_fn([](bNode node) {
+    switch (node.custom1) {
+      case NODE_INTEGER_MATH_MULTIPLY_ADD:
+        return IFACE_("Addend");
+      default:
+        return IFACE_("Value");
+    }
+  });
   b.add_output<decl::Int>("Value");
 };
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "operation", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "operation", UI_ITEM_NONE, "", ICON_NONE);
 }
 
 static void node_update(bNodeTree *ntree, bNode *node)
@@ -46,23 +70,8 @@ static void node_update(bNodeTree *ntree, bNode *node)
   bNodeSocket *sockB = sockA->next;
   bNodeSocket *sockC = sockB->next;
 
-  bke::node_set_socket_availability(ntree, sockB, !one_input_ops);
-  bke::node_set_socket_availability(ntree, sockC, three_input_ops);
-
-  node_sock_label_clear(sockA);
-  node_sock_label_clear(sockB);
-  node_sock_label_clear(sockC);
-  switch (node->custom1) {
-    case NODE_INTEGER_MATH_MULTIPLY_ADD:
-      node_sock_label(sockA, N_("Value"));
-      node_sock_label(sockB, N_("Multiplier"));
-      node_sock_label(sockC, N_("Addend"));
-      break;
-    case NODE_INTEGER_MATH_POWER:
-      node_sock_label(sockA, N_("Base"));
-      node_sock_label(sockB, N_("Exponent"));
-      break;
-  }
+  bke::node_set_socket_availability(*ntree, *sockB, !one_input_ops);
+  bke::node_set_socket_availability(*ntree, *sockC, three_input_ops);
 }
 
 class SocketSearchOp {
@@ -94,21 +103,24 @@ static void node_gather_link_searches(GatherLinkSearchOpParams &params)
        item++)
   {
     if (item->name != nullptr && item->identifier[0] != '\0') {
-      params.add_item(IFACE_(item->name),
+      params.add_item(CTX_IFACE_(BLT_I18NCONTEXT_ID_NODETREE, item->name),
                       SocketSearchOp{"Value", NodeIntegerMathOperation(item->value)},
                       weight);
     }
   }
 }
 
-static void node_label(const bNodeTree * /*ntree*/, const bNode *node, char *label, int maxlen)
+static void node_label(const bNodeTree * /*ntree*/,
+                       const bNode *node,
+                       char *label,
+                       int label_maxncpy)
 {
   const char *name;
   bool enum_label = RNA_enum_name(rna_enum_node_integer_math_items, node->custom1, &name);
   if (!enum_label) {
-    name = "Unknown";
+    name = CTX_N_(BLT_I18NCONTEXT_ID_NODETREE, "Unknown");
   }
-  BLI_strncpy(label, CTX_IFACE_(BLT_I18NCONTEXT_ID_NODETREE, name), maxlen);
+  BLI_strncpy(label, CTX_IFACE_(BLT_I18NCONTEXT_ID_NODETREE, name), label_maxncpy);
 }
 
 /* Derived from `divide_round_i` but fixed to be safe and handle negative inputs. */
@@ -304,6 +316,7 @@ static void node_register()
 
   fn_node_type_base(&ntype, "FunctionNodeIntegerMath", FN_NODE_INTEGER_MATH);
   ntype.ui_name = "Integer Math";
+  ntype.ui_description = "Perform various math operations on the given integer inputs";
   ntype.enum_name_legacy = "INTEGER_MATH";
   ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = node_declare;
@@ -316,7 +329,7 @@ static void node_register()
   ntype.eval_inverse_elem = node_eval_inverse_elem;
   ntype.eval_inverse = node_eval_inverse;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

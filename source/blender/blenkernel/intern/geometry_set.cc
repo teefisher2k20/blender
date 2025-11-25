@@ -2,6 +2,8 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include <fmt/format.h>
+
 #include "BLI_bounds.hh"
 #include "BLI_map.hh"
 #include "BLI_memory_counter.hh"
@@ -16,6 +18,7 @@
 #include "BKE_mesh.hh"
 #include "BKE_modifier.hh"
 #include "BKE_object_types.hh"
+#include "BKE_subdiv_modifier.hh"
 #include "BKE_volume.hh"
 
 #include "DNA_object_types.h"
@@ -161,19 +164,6 @@ void GeometrySet::keep_only(const Span<GeometryComponent::Type> component_types)
   }
 }
 
-void GeometrySet::keep_only_during_modify(const Span<GeometryComponent::Type> component_types)
-{
-  Vector<GeometryComponent::Type> extended_types = component_types;
-  extended_types.append_non_duplicates(GeometryComponent::Type::Instance);
-  extended_types.append_non_duplicates(GeometryComponent::Type::Edit);
-  this->keep_only(extended_types);
-}
-
-void GeometrySet::remove_geometry_during_modify()
-{
-  this->keep_only_during_modify({});
-}
-
 void GeometrySet::add(const GeometryComponent &component)
 {
   BLI_assert(!components_[size_t(component.type())]);
@@ -193,23 +183,30 @@ Vector<const GeometryComponent *> GeometrySet::get_components() const
   return components;
 }
 
-std::optional<Bounds<float3>> GeometrySet::compute_boundbox_without_instances() const
+std::optional<Bounds<float3>> GeometrySet::compute_boundbox_without_instances(
+    const bool use_radius, const bool use_subdiv) const
 {
   std::optional<Bounds<float3>> bounds;
   if (const PointCloud *pointcloud = this->get_pointcloud()) {
-    bounds = bounds::merge(bounds, pointcloud->bounds_min_max());
+    bounds = bounds::merge(bounds, pointcloud->bounds_min_max(use_radius));
   }
   if (const Mesh *mesh = this->get_mesh()) {
-    bounds = bounds::merge(bounds, mesh->bounds_min_max());
+    /* Use tessellated subdivision mesh if it exists. */
+    if (use_subdiv && mesh->runtime->mesh_eval) {
+      bounds = bounds::merge(bounds, mesh->runtime->mesh_eval->bounds_min_max());
+    }
+    else {
+      bounds = bounds::merge(bounds, mesh->bounds_min_max());
+    }
   }
   if (const Volume *volume = this->get_volume()) {
     bounds = bounds::merge(bounds, BKE_volume_min_max(volume));
   }
   if (const Curves *curves_id = this->get_curves()) {
-    bounds = bounds::merge(bounds, curves_id->geometry.wrap().bounds_min_max());
+    bounds = bounds::merge(bounds, curves_id->geometry.wrap().bounds_min_max(use_radius));
   }
   if (const GreasePencil *grease_pencil = this->get_grease_pencil()) {
-    bounds = bounds::merge(bounds, grease_pencil->bounds_min_max_eval());
+    bounds = bounds::merge(bounds, grease_pencil->bounds_min_max_eval(use_radius));
   }
   return bounds;
 }
@@ -217,11 +214,25 @@ std::optional<Bounds<float3>> GeometrySet::compute_boundbox_without_instances() 
 std::ostream &operator<<(std::ostream &stream, const GeometrySet &geometry_set)
 {
   Vector<std::string> parts;
+  if (!geometry_set.name.empty()) {
+    parts.append(fmt::format("\"{}\"", geometry_set.name));
+  }
   if (const Mesh *mesh = geometry_set.get_mesh()) {
     parts.append(std::to_string(mesh->verts_num) + " verts");
     parts.append(std::to_string(mesh->edges_num) + " edges");
     parts.append(std::to_string(mesh->faces_num) + " faces");
     parts.append(std::to_string(mesh->corners_num) + " corners");
+    if (mesh->runtime->subsurf_runtime_data) {
+      const int resolution = mesh->runtime->subsurf_runtime_data->resolution;
+      if (is_power_of_2_i(resolution - 1)) {
+        /* Display the resolution as subdiv levels if possible because that's more common. */
+        const int level = log2_floor(resolution - 1);
+        parts.append(std::to_string(level) + " subdiv levels");
+      }
+      else {
+        parts.append(std::to_string(resolution) + " subdiv resolution");
+      }
+    }
   }
   if (const Curves *curves = geometry_set.get_curves()) {
     parts.append(std::to_string(curves->geometry.point_num) + " control points");
@@ -230,8 +241,8 @@ std::ostream &operator<<(std::ostream &stream, const GeometrySet &geometry_set)
   if (const GreasePencil *grease_pencil = geometry_set.get_grease_pencil()) {
     parts.append(std::to_string(grease_pencil->layers().size()) + " Grease Pencil layers");
   }
-  if (const PointCloud *point_cloud = geometry_set.get_pointcloud()) {
-    parts.append(std::to_string(point_cloud->totpoint) + " points");
+  if (const PointCloud *pointcloud = geometry_set.get_pointcloud()) {
+    parts.append(std::to_string(pointcloud->totpoint) + " points");
   }
   if (const Volume *volume = geometry_set.get_volume()) {
     parts.append(std::to_string(BKE_volume_num_grids(volume)) + " volume grids");
@@ -293,6 +304,15 @@ bool GeometrySet::owns_direct_data() const
     }
   }
   return true;
+}
+
+void GeometrySet::ensure_no_shared_components()
+{
+  for (const int i : IndexRange(this->components_.size())) {
+    if (components_[i]) {
+      this->get_component_for_write(GeometryComponent::Type(i));
+    }
+  }
 }
 
 const Mesh *GeometrySet::get_mesh() const
@@ -384,7 +404,10 @@ bool GeometrySet::has_realized_data() const
 {
   for (const GeometryComponentPtr &component_ptr : components_) {
     if (component_ptr) {
-      if (component_ptr->type() != GeometryComponent::Type::Instance) {
+      if (!ELEM(component_ptr->type(),
+                GeometryComponent::Type::Instance,
+                GeometryComponent::Type::Edit))
+      {
         return true;
       }
     }
@@ -624,6 +647,18 @@ void GeometrySet::attribute_foreach(const Span<GeometryComponent::Type> componen
         callback(iter.name, {iter.domain, iter.data_type}, component);
       });
     }
+    /* For Grease Pencil, we also need to iterate over the attributes of the evaluated drawings. */
+    if (component_type == GeometryComponent::Type::GreasePencil) {
+      const GreasePencil &grease_pencil = *this->get_grease_pencil();
+      for (const bke::greasepencil::Layer *layer : grease_pencil.layers()) {
+        if (const bke::greasepencil::Drawing *drawing = grease_pencil.get_eval_drawing(*layer)) {
+          const AttributeAccessor attributes = drawing->strokes().attributes();
+          attributes.foreach_attribute([&](const AttributeIter &iter) {
+            callback(iter.name, {iter.domain, iter.data_type}, component);
+          });
+        }
+      }
+    }
   }
   if (include_instances && this->has_instances()) {
     const Instances &instances = *this->get_instances();
@@ -669,12 +704,26 @@ bool attribute_is_builtin_on_component_type(const GeometryComponent::Type type,
   return false;
 }
 
+void GeometrySet::GatheredAttributes::add(const StringRef name, const AttributeDomainAndType &kind)
+{
+  const int index = this->names.index_of_or_add(name);
+  if (index >= this->kinds.size()) {
+    this->kinds.append(AttributeDomainAndType{kind.domain, kind.data_type});
+  }
+  else {
+    this->kinds[index].domain = bke::attribute_domain_highest_priority(
+        {this->kinds[index].domain, kind.domain});
+    this->kinds[index].data_type = bke::attribute_data_type_highest_complexity(
+        {this->kinds[index].data_type, kind.data_type});
+  }
+}
+
 void GeometrySet::gather_attributes_for_propagation(
     const Span<GeometryComponent::Type> component_types,
     const GeometryComponent::Type dst_component_type,
     bool include_instances,
     const AttributeFilter &attribute_filter,
-    Map<StringRef, AttributeDomainAndType> &r_attributes) const
+    GatheredAttributes &r_attributes) const
 {
   this->attribute_foreach(
       component_types,
@@ -689,7 +738,7 @@ void GeometrySet::gather_attributes_for_propagation(
             return;
           }
         }
-        if (meta_data.data_type == CD_PROP_STRING) {
+        if (meta_data.data_type == AttrType::String) {
           /* Propagating string attributes is not supported yet. */
           return;
         }
@@ -703,17 +752,7 @@ void GeometrySet::gather_attributes_for_propagation(
           domain = AttrDomain::Point;
         }
 
-        auto add_info = [&](AttributeDomainAndType *attribute_kind) {
-          attribute_kind->domain = domain;
-          attribute_kind->data_type = meta_data.data_type;
-        };
-        auto modify_info = [&](AttributeDomainAndType *attribute_kind) {
-          attribute_kind->domain = bke::attribute_domain_highest_priority(
-              {attribute_kind->domain, domain});
-          attribute_kind->data_type = bke::attribute_data_type_highest_complexity(
-              {attribute_kind->data_type, meta_data.data_type});
-        };
-        r_attributes.add_or_modify(attribute_id, add_info, modify_info);
+        r_attributes.add(attribute_id, AttributeDomainAndType{domain, meta_data.data_type});
       });
 }
 
@@ -749,39 +788,6 @@ Vector<GeometryComponent::Type> GeometrySet::gather_component_types(const bool i
   Vector<GeometryComponent::Type> types;
   gather_component_types_recursive(*this, include_instances, ignore_empty, types);
   return types;
-}
-
-static void gather_mutable_geometry_sets(GeometrySet &geometry_set,
-                                         Vector<GeometrySet *> &r_geometry_sets)
-{
-  r_geometry_sets.append(&geometry_set);
-  if (!geometry_set.has_instances()) {
-    return;
-  }
-  /* In the future this can be improved by deduplicating instance references across different
-   * instances. */
-  Instances &instances = *geometry_set.get_instances_for_write();
-  instances.ensure_geometry_instances();
-  for (const int handle : instances.references().index_range()) {
-    if (instances.references()[handle].type() == InstanceReference::Type::GeometrySet) {
-      GeometrySet &instance_geometry = instances.geometry_set_from_reference(handle);
-      gather_mutable_geometry_sets(instance_geometry, r_geometry_sets);
-    }
-  }
-}
-
-void GeometrySet::modify_geometry_sets(ForeachSubGeometryCallback callback)
-{
-  Vector<GeometrySet *> geometry_sets;
-  gather_mutable_geometry_sets(*this, geometry_sets);
-  if (geometry_sets.size() == 1) {
-    /* Avoid possible overhead and a large call stack when multithreading is pointless. */
-    callback(*geometry_sets.first());
-  }
-  else {
-    threading::parallel_for_each(geometry_sets,
-                                 [&](GeometrySet *geometry_set) { callback(*geometry_set); });
-  }
 }
 
 bool object_has_geometry_set_instances(const Object &object)

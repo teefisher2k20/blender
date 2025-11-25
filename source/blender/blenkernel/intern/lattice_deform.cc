@@ -10,7 +10,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -76,8 +75,7 @@ LatticeDeformData *BKE_lattice_deform_data_create(const Object *oblatt, const Ob
   const int32_t num_points = lt->pntsu * lt->pntsv * lt->pntsw;
   /* We allocate one additional float for SSE2 optimizations. Without this
    * the SSE2 instructions for the last item would read in unallocated memory. */
-  fp = latticedata = static_cast<float *>(
-      MEM_mallocN(sizeof(float[3]) * num_points + sizeof(float), "latticedata"));
+  fp = latticedata = MEM_malloc_arrayN<float>(3 * size_t(num_points) + 1, "latticedata");
 
   /* for example with a particle system: (ob == nullptr) */
   if (ob == nullptr) {
@@ -103,8 +101,7 @@ LatticeDeformData *BKE_lattice_deform_data_create(const Object *oblatt, const Ob
     defgrp_index = BKE_id_defgroup_name_index(&lt->id, lt->vgroup);
 
     if (defgrp_index != -1) {
-      lattice_weights = static_cast<float *>(
-          MEM_malloc_arrayN(num_points, sizeof(float), "lattice_weights"));
+      lattice_weights = MEM_malloc_arrayN<float>(size_t(num_points), "lattice_weights");
       for (int index = 0; index < num_points; index++) {
         lattice_weights[index] = BKE_defvert_find_weight(dvert + index, defgrp_index);
       }
@@ -132,8 +129,7 @@ LatticeDeformData *BKE_lattice_deform_data_create(const Object *oblatt, const Ob
     }
   }
 
-  lattice_deform_data = static_cast<LatticeDeformData *>(
-      MEM_mallocN(sizeof(LatticeDeformData), "Lattice Deform Data"));
+  lattice_deform_data = MEM_mallocN<LatticeDeformData>("Lattice Deform Data");
   lattice_deform_data->latticedata = latticedata;
   lattice_deform_data->lattice_weights = lattice_weights;
   lattice_deform_data->lt = lt;
@@ -171,7 +167,7 @@ void BKE_lattice_deform_data_eval_co(LatticeDeformData *lattice_deform_data,
     u = (vec[0] - lt->fu) / lt->du;
     ui = int(floor(u));
     u -= ui;
-    key_curve_position_weights(u, tu, lt->typeu);
+    key_curve_position_weights(u, tu, KeyInterpolationType(lt->typeu));
   }
   else {
     tu[0] = tu[2] = tu[3] = 0.0;
@@ -183,7 +179,7 @@ void BKE_lattice_deform_data_eval_co(LatticeDeformData *lattice_deform_data,
     v = (vec[1] - lt->fv) / lt->dv;
     vi = int(floor(v));
     v -= vi;
-    key_curve_position_weights(v, tv, lt->typev);
+    key_curve_position_weights(v, tv, KeyInterpolationType(lt->typev));
   }
   else {
     tv[0] = tv[2] = tv[3] = 0.0;
@@ -195,7 +191,7 @@ void BKE_lattice_deform_data_eval_co(LatticeDeformData *lattice_deform_data,
     w = (vec[2] - lt->fw) / lt->dw;
     wi = int(floor(w));
     w -= wi;
-    key_curve_position_weights(w, tw, lt->typew);
+    key_curve_position_weights(w, tw, KeyInterpolationType(lt->typew));
   }
   else {
     tw[0] = tw[2] = tw[3] = 0.0;
@@ -366,8 +362,7 @@ static void lattice_deform_coords_impl(const Object *ob_lattice,
         cd_dvert_offset = CustomData_get_offset(&em_target->bm->vdata, CD_MDEFORMVERT);
       }
       else if (me_target) {
-        dvert = static_cast<const MDeformVert *>(
-            CustomData_get_layer(&me_target->vert_data, CD_MDEFORMVERT));
+        dvert = me_target->deform_verts().data();
       }
       else if (ob_target->type == OB_LATTICE) {
         dvert = ((Lattice *)ob_target->data)->dvert;

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "DNA_ID.h"
+#include "DNA_colorband_types.h"
 #include "DNA_defs.h"
 #include "DNA_image_types.h" /* ImageUser */
 
@@ -16,7 +17,6 @@ struct AnimData;
 struct ColorBand;
 struct CurveMapping;
 struct Image;
-struct Ipo;
 struct Object;
 struct PreviewImage;
 struct Tex;
@@ -32,8 +32,7 @@ typedef struct MTex {
   char _pad2[2];
   struct Object *object;
   struct Tex *tex;
-  /** MAX_CUSTOMDATA_LAYER_NAME. */
-  char uvname[68];
+  char uvname[/*MAX_CUSTOMDATA_LAYER_NAME*/ 68];
 
   char projx, projy, projz, mapping;
   char brush_map_mode, brush_angle_mode;
@@ -63,115 +62,30 @@ typedef struct MTex {
 /** \} */
 
 /* -------------------------------------------------------------------- */
-/** \name #ColorBand
- * \{ */
-
-#ifndef DNA_USHORT_FIX
-#  define DNA_USHORT_FIX
-/**
- * \deprecated This typedef serves to avoid badly typed functions when
- * \deprecated compiling while delivering a proper dna.c. Do not use
- * \deprecated it in any case.
- */
-typedef unsigned short dna_ushort_fix;
-#endif
-
-typedef struct CBData {
-  float r, g, b, a, pos;
-  int cur;
-} CBData;
-
-/**
- * 32 = #MAXCOLORBAND
- * \note that this has to remain a single struct, for UserDef.
- */
-typedef struct ColorBand {
-  short tot, cur;
-  char ipotype, ipotype_hue;
-  char color_mode;
-  char _pad[1];
-
-  CBData data[32];
-} ColorBand;
-
-/** \} */
-
-/* -------------------------------------------------------------------- */
-/** \name #PointDensity
- * \{ */
-
-typedef struct PointDensity {
-  DNA_DEFINE_CXX_METHODS(PointDensity)
-
-  short flag;
-
-  short falloff_type;
-  float falloff_softness;
-  float radius;
-  short source;
-  char _pad0[2];
-
-  /** psys_color_source */
-  short color_source;
-  short ob_color_source;
-
-  int totpoints;
-
-  /** for 'Object' or 'Particle system' type - source object */
-  struct Object *object;
-  /** `index + 1` in ob.particle-system, non-ID pointer not allowed. */
-  int psys;
-  /** cache points in world-space, object space, ... ? */
-  short psys_cache_space;
-  /** cache points in world-space, object space, ... ? */
-  short ob_cache_space;
-  /** vertex attribute layer for color source, MAX_CUSTOMDATA_LAYER_NAME */
-  char vertex_attribute_name[68];
-  char _pad1[4];
-
-  /** The acceleration tree containing points. */
-  void *point_tree;
-  /** Dynamically allocated extra for extra information, like particle age. */
-  float *point_data;
-
-  float noise_size;
-  short noise_depth;
-  short noise_influence;
-  short noise_basis;
-  char _pad2[6];
-  float noise_fac;
-
-  float speed_scale, falloff_speed_scale;
-  char _pad3[4];
-  /** For time -> color */
-  struct ColorBand *coba;
-
-  /** Falloff density curve. */
-  struct CurveMapping *falloff_curve;
-} PointDensity;
-
-/** \} */
-
-/* -------------------------------------------------------------------- */
 /** \name #Tex
  * \{ */
 
+typedef struct Tex_Runtime {
+  /* The Depsgraph::update_count when this ID was last updated. Covers any IDRecalcFlag. */
+  uint64_t last_update;
+} Tex_Runtime;
+
 typedef struct Tex {
+#ifdef __cplusplus
   DNA_DEFINE_CXX_METHODS(Tex)
+  /** See #ID_Type comment for why this is here. */
+  static constexpr ID_Type id_type = ID_TE;
+#endif
 
   ID id;
   /** Animation data (must be immediately after id for utilities to use it). */
   struct AnimData *adt;
-  /**
-   * Engines draw data, must be immediately after AnimData. See IdDdtTemplate and
-   * DRW_drawdatalist_from_id to understand this requirement.
-   */
-  DrawDataList drawdata;
+
+  void *_pad3;
 
   float noisesize, turbul;
   float bright, contrast, saturation, rfac, gfac, bfac;
   float filtersize;
-  char _pad2[4];
 
   /* newnoise: musgrave parameters */
   float mg_H, mg_lacunarity, mg_octaves, mg_offset, mg_gain;
@@ -198,9 +112,6 @@ typedef struct Tex {
   short type, stype;
 
   float cropxmin, cropymin, cropxmax, cropymax;
-  int texfilter;
-  /** Anisotropic filter maximum value, EWA -> max eccentricity, feline -> max probes. */
-  int afmax;
   short xrepeat, yrepeat;
   short extend;
 
@@ -212,13 +123,10 @@ typedef struct Tex {
   int sfra DNA_DEPRECATED;
 
   float checkerdist, nabla;
-  char _pad1[4];
 
   struct ImageUser iuser;
 
   struct bNodeTree *nodetree;
-  /* old animation system, deprecated for 2.5 */
-  struct Ipo *ipo DNA_DEPRECATED;
   struct Image *ima;
   struct ColorBand *coba;
   struct PreviewImage *preview;
@@ -226,6 +134,7 @@ typedef struct Tex {
   char use_nodes;
   char _pad[7];
 
+  Tex_Runtime runtime;
 } Tex;
 
 /** Used for mapping and texture nodes. */
@@ -346,21 +255,10 @@ enum {
 enum {
   TEX_INTERPOL = 1 << 0,
   TEX_USEALPHA = 1 << 1,
-  TEX_MIPMAP = 1 << 2,
   TEX_IMAROT = 1 << 4,
   TEX_CALCALPHA = 1 << 5,
   TEX_NORMALMAP = 1 << 11,
-  TEX_GAUSS_MIP = 1 << 12,
-  TEX_FILTER_MIN = 1 << 13,
   TEX_DERIVATIVEMAP = 1 << 14,
-};
-
-/** #Tex::texfilter type. */
-enum {
-  TXF_BOX = 0, /* Blender's old texture filtering method. */
-  TXF_EWA = 1,
-  TXF_FELINE = 2,
-  TXF_AREA = 3,
 };
 
 /** #Tex::flag bit-mask. */
@@ -531,94 +429,6 @@ enum {
 enum {
   MTEX_ANGLE_RANDOM = 1,
   MTEX_ANGLE_RAKE = 2,
-};
-
-/** \} */
-
-/* -------------------------------------------------------------------- */
-/** \name #ColorBand Types
- * \{ */
-
-/** #ColorBand::color_mode. */
-enum {
-  COLBAND_BLEND_RGB = 0,
-  COLBAND_BLEND_HSV = 1,
-  COLBAND_BLEND_HSL = 2,
-};
-
-/** #ColorBand::ipotype (interpolation). */
-enum {
-  COLBAND_INTERP_LINEAR = 0,
-  COLBAND_INTERP_EASE = 1,
-  COLBAND_INTERP_B_SPLINE = 2,
-  COLBAND_INTERP_CARDINAL = 3,
-  COLBAND_INTERP_CONSTANT = 4,
-};
-
-/** #ColorBand::ipotype_hue (hue interpolation). */
-enum {
-  COLBAND_HUE_NEAR = 0,
-  COLBAND_HUE_FAR = 1,
-  COLBAND_HUE_CW = 2,
-  COLBAND_HUE_CCW = 3,
-};
-
-/** \} */
-
-/* -------------------------------------------------------------------- */
-/** \name #PointDensity Types
- * \{ */
-
-/** #PointDensity::source. */
-enum {
-  TEX_PD_PSYS = 0,
-  TEX_PD_OBJECT = 1,
-  TEX_PD_FILE = 2,
-};
-
-/** #PointDensity::falloff_type. */
-enum {
-  TEX_PD_FALLOFF_STD = 0,
-  TEX_PD_FALLOFF_SMOOTH = 1,
-  TEX_PD_FALLOFF_SOFT = 2,
-  TEX_PD_FALLOFF_CONSTANT = 3,
-  TEX_PD_FALLOFF_ROOT = 4,
-  TEX_PD_FALLOFF_PARTICLE_AGE = 5,
-  TEX_PD_FALLOFF_PARTICLE_VEL = 6,
-};
-
-/** #PointDensity::psys_cache_space. */
-enum {
-  TEX_PD_OBJECTLOC = 0,
-  TEX_PD_OBJECTSPACE = 1,
-  TEX_PD_WORLDSPACE = 2,
-};
-
-/** #PointDensity::flag. */
-enum {
-  TEX_PD_TURBULENCE = 1 << 0,
-  TEX_PD_FALLOFF_CURVE = 1 << 1,
-};
-
-/** #PointDensity::noise_influence. */
-enum {
-  TEX_PD_NOISE_STATIC = 0,
-  // TEX_PD_NOISE_VEL = 1,  /* Deprecated. */
-  // TEX_PD_NOISE_AGE = 2,  /* Deprecated. */
-  // TEX_PD_NOISE_TIME = 3, /* Deprecated. */
-};
-
-/** #PointDensity::color_source. */
-enum {
-  TEX_PD_COLOR_CONSTANT = 0,
-  /* color_source: particles */
-  TEX_PD_COLOR_PARTAGE = 1,
-  TEX_PD_COLOR_PARTSPEED = 2,
-  TEX_PD_COLOR_PARTVEL = 3,
-  /* color_source: vertices */
-  TEX_PD_COLOR_VERTCOL = 1,
-  TEX_PD_COLOR_VERTWEIGHT = 2,
-  TEX_PD_COLOR_VERTNOR = 3,
 };
 
 /** \} */

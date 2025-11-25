@@ -10,10 +10,11 @@
 
 #include "BLI_math_base.h"
 #include "BLI_math_geom.h"
+#include "BLI_sys_types.h"
 
 #include "BLI_lasso_2d.hh" /* own include */
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 using blender::int2;
 using blender::Span;
@@ -50,7 +51,7 @@ bool BLI_lasso_is_point_inside(const Span<int2> mcoords,
 
   const int pt[2] = {sx, sy};
   return isect_point_poly_v2_int(
-      pt, reinterpret_cast<const int(*)[2]>(mcoords.data()), uint(mcoords.size()));
+      pt, reinterpret_cast<const int (*)[2]>(mcoords.data()), uint(mcoords.size()));
 }
 
 bool BLI_lasso_is_edge_inside(

@@ -124,11 +124,11 @@ static int node_shader_gpu_volume_principled(GPUMaterial *mat,
   const int size = CM_TABLE + 1;
   float *data, layer;
   if (use_blackbody) {
-    data = (float *)MEM_mallocN(sizeof(float) * size * 4, "blackbody texture");
+    data = MEM_malloc_arrayN<float>(size * 4, "blackbody texture");
     IMB_colormanagement_blackbody_temperature_to_rgb_table(data, size, 800.0f, 12000.0f);
   }
   else {
-    data = (float *)MEM_callocN(sizeof(float) * size * 4, "blackbody black");
+    data = MEM_calloc_arrayN<float>(size * 4, "blackbody black");
   }
   GPUNodeLink *spectrummap = GPU_color_band(mat, size, data, &layer);
 
@@ -170,8 +170,8 @@ void register_node_type_sh_volume_principled()
   ntype.enum_name_legacy = "PRINCIPLED_VOLUME";
   ntype.nclass = NODE_CLASS_SHADER;
   ntype.declare = file_ns::node_declare;
-  blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Large);
+  blender::bke::node_type_size_preset(ntype, blender::bke::eNodeSizePreset::Large);
   ntype.gpu_fn = file_ns::node_shader_gpu_volume_principled;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

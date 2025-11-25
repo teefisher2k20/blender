@@ -53,6 +53,14 @@ def save(context, export_settings):
 def __export(export_settings):
     exporter = GlTF2Exporter(export_settings)
     __gather_gltf(exporter, export_settings)
+
+    # If the directory does not exist, create it
+    if not os.path.isdir(export_settings['gltf_filedirectory']):
+        os.makedirs(export_settings['gltf_filedirectory'])
+    if export_settings['gltf_format'] == "GLTF_SEPARATE" \
+            and not os.path.isdir(export_settings['gltf_texturedirectory']):
+        os.makedirs(export_settings['gltf_texturedirectory'])
+
     buffer = __create_buffer(exporter, export_settings)
     exporter.finalize_images()
 
@@ -269,7 +277,7 @@ def __postprocess_with_gltfpack(export_settings):
 
     if (export_settings['gltf_gltfpack_noq']):
         options.append("-noq")
-    if (export_settings['export_gltfpack_kn']):
+    if (export_settings['gltf_gltfpack_kn']):
         options.append("-kn")
     else:
         options.append("-vp")
@@ -297,7 +305,7 @@ def __postprocess_with_gltfpack(export_settings):
 
     try:
         subprocess.run([gltfpack_binary_file_path] + options + parameters, check=True)
-    except subprocess.CalledProcessError as e:
+    except subprocess.CalledProcessError as _e:
         export_settings['log'].error("Calling gltfpack was not successful")
 
 

@@ -13,13 +13,15 @@
 #include "BLI_index_range.hh"
 #include "BLI_listbase.h"
 #include "BLI_path_utils.hh"
-#include "BLI_string.h"
+#include "BLI_string_ref.hh"
+#include "BLI_string_utf8.h"
 #include "BLI_task.hh"
 #include "BLI_vector.hh"
 
 #include "BLT_translation.hh"
 
 #include "DNA_image_types.h"
+#include "DNA_scene_types.h"
 
 #include "MEM_guardedalloc.h"
 
@@ -33,51 +35,18 @@
 #include "BKE_image.hh"
 #include "BKE_image_format.hh"
 #include "BKE_image_save.hh"
+#include "BKE_library.hh"
 #include "BKE_main.hh"
 #include "BKE_report.hh"
 #include "BKE_scene.hh"
 
 #include "RE_pipeline.h"
 
+#include "CLG_log.h"
+
+static CLG_LogRef LOG_RENDER = {"render"};
+
 using blender::Vector;
-
-static char imtype_best_depth(ImBuf *ibuf, const char imtype)
-{
-  const char depth_ok = BKE_imtype_valid_depths(imtype);
-
-  if (ibuf->float_buffer.data) {
-    if (depth_ok & R_IMF_CHAN_DEPTH_32) {
-      return R_IMF_CHAN_DEPTH_32;
-    }
-    if (depth_ok & R_IMF_CHAN_DEPTH_24) {
-      return R_IMF_CHAN_DEPTH_24;
-    }
-    if (depth_ok & R_IMF_CHAN_DEPTH_16) {
-      return R_IMF_CHAN_DEPTH_16;
-    }
-    if (depth_ok & R_IMF_CHAN_DEPTH_12) {
-      return R_IMF_CHAN_DEPTH_12;
-    }
-    return R_IMF_CHAN_DEPTH_8;
-  }
-
-  if (depth_ok & R_IMF_CHAN_DEPTH_8) {
-    return R_IMF_CHAN_DEPTH_8;
-  }
-  if (depth_ok & R_IMF_CHAN_DEPTH_12) {
-    return R_IMF_CHAN_DEPTH_12;
-  }
-  if (depth_ok & R_IMF_CHAN_DEPTH_16) {
-    return R_IMF_CHAN_DEPTH_16;
-  }
-  if (depth_ok & R_IMF_CHAN_DEPTH_24) {
-    return R_IMF_CHAN_DEPTH_24;
-  }
-  if (depth_ok & R_IMF_CHAN_DEPTH_32) {
-    return R_IMF_CHAN_DEPTH_32;
-  }
-  return R_IMF_CHAN_DEPTH_8; /* fallback, should not get here */
-}
 
 bool BKE_image_save_options_init(ImageSaveOptions *opts,
                                  Main *bmain,
@@ -95,25 +64,23 @@ bool BKE_image_save_options_init(ImageSaveOptions *opts,
     iuser->scene = scene;
   }
 
-  memset(opts, 0, sizeof(*opts));
+  *opts = ImageSaveOptions{};
 
   opts->bmain = bmain;
   opts->scene = scene;
   opts->save_as_render = ima->source == IMA_SRC_VIEWER || save_as_render;
 
-  BKE_image_format_init(&opts->im_format, false);
+  BKE_image_format_init(&opts->im_format);
 
   void *lock;
   ImBuf *ibuf = BKE_image_acquire_ibuf(ima, iuser, &lock);
 
   if (ibuf) {
-    bool is_depth_set = false;
     const char *ima_colorspace = ima->colorspace_settings.name;
 
     if (opts->save_as_render) {
       /* Render/compositor output or user chose to save with render settings. */
       BKE_image_format_init_for_write(&opts->im_format, scene, nullptr);
-      is_depth_set = true;
       if (!BKE_image_is_multiview(ima)) {
         /* In case multiview is disabled,
          * render settings would be invalid for render result in this area. */
@@ -139,7 +106,7 @@ bool BKE_image_save_options_init(ImageSaveOptions *opts,
 
     /* Default to saving in the same colorspace as the image setting. */
     if (!opts->save_as_render) {
-      STRNCPY(opts->im_format.linear_colorspace_settings.name, ima_colorspace);
+      STRNCPY_UTF8(opts->im_format.linear_colorspace_settings.name, ima_colorspace);
     }
 
     opts->im_format.color_management = R_IMF_COLOR_MANAGEMENT_FOLLOW_SCENE;
@@ -148,16 +115,22 @@ bool BKE_image_save_options_init(ImageSaveOptions *opts,
      * by the image saving code itself. */
     BKE_image_user_file_path_ex(bmain, iuser, ima, opts->filepath, false, false);
 
+    /* For movies, replace extension and add the frame number to avoid writing over the movie file
+     * itself and provide a good default file path. */
+    if (ima->source == IMA_SRC_MOVIE) {
+      char filepath_no_ext[FILE_MAX];
+      STRNCPY(filepath_no_ext, opts->filepath);
+      BLI_path_extension_strip(filepath_no_ext);
+      SNPRINTF(opts->filepath, "%s_%.*d", filepath_no_ext, 4, ibuf->fileframe);
+      BKE_image_path_ext_from_imformat_ensure(
+          opts->filepath, sizeof(opts->filepath), &opts->im_format);
+    }
+
     /* sanitize all settings */
 
     /* unlikely but just in case */
     if (ELEM(opts->im_format.planes, R_IMF_PLANES_BW, R_IMF_PLANES_RGB, R_IMF_PLANES_RGBA) == 0) {
       opts->im_format.planes = R_IMF_PLANES_RGBA;
-    }
-
-    /* depth, account for float buffer and format support */
-    if (is_depth_set == false) {
-      opts->im_format.depth = imtype_best_depth(ibuf, opts->im_format.imtype);
     }
 
     /* some formats don't use quality so fallback to scenes quality */
@@ -259,7 +232,10 @@ static void image_save_post(ReportList *reports,
                             bool *r_colorspace_changed)
 {
   if (!ok) {
-    BKE_reportf(reports, RPT_ERROR, "Could not write image: %s", strerror(errno));
+    BKE_reportf(reports,
+                RPT_ERROR,
+                "Could not write image: %s",
+                errno ? strerror(errno) : "internal error, see console");
     return;
   }
 
@@ -285,8 +261,8 @@ static void image_save_post(ReportList *reports,
     /* workaround to ensure the render result buffer is no longer used
      * by this image, otherwise can crash when a new render result is
      * created. */
-    imb_freerectImBuf(ibuf);
-    imb_freerectfloatImBuf(ibuf);
+    IMB_free_byte_pixels(ibuf);
+    IMB_free_float_pixels(ibuf);
   }
   if (ELEM(ima->source, IMA_SRC_GENERATED, IMA_SRC_VIEWER)) {
     ima->source = IMA_SRC_FILE;
@@ -307,6 +283,24 @@ static void image_save_post(ReportList *reports,
                                                  &opts->im_format.linear_colorspace_settings);
       *r_colorspace_changed = true;
     }
+  }
+  else if (opts->save_as_render) {
+    /* Set the display colorspace that we converted to. */
+    const ColorSpace *colorspace = IMB_colormangement_display_get_color_space(
+        &opts->im_format.view_settings, &opts->im_format.display_settings);
+    if (colorspace) {
+      blender::StringRefNull colorspace_name = IMB_colormanagement_colorspace_get_name(colorspace);
+      if (colorspace_name != ima->colorspace_settings.name) {
+        STRNCPY(ima->colorspace_settings.name, colorspace_name.c_str());
+      }
+    }
+
+    /* View transform is now baked in, so don't apply it a second time for viewing. */
+    if (ima->flag & IMA_VIEW_AS_RENDER) {
+      ima->flag &= ~IMA_VIEW_AS_RENDER;
+    }
+
+    *r_colorspace_changed = true;
   }
 }
 
@@ -375,8 +369,7 @@ static bool image_save_single(ReportList *reports,
 
   /* we need renderresult for exr and rendered multiview */
   rr = BKE_image_acquire_renderresult(opts->scene, ima);
-  const bool is_mono = rr ? BLI_listbase_count_at_most(&rr->views, 2) < 2 :
-                            BLI_listbase_count_at_most(&ima->views, 2) < 2;
+  const bool is_mono = !(rr ? RE_ResultIsMultiView(rr) : BKE_image_is_multiview(ima));
   const bool is_exr_rr = rr && ELEM(imf->imtype, R_IMF_IMTYPE_OPENEXR, R_IMF_IMTYPE_MULTILAYER) &&
                          RE_HasFloatPixels(rr);
   const bool is_multilayer = is_exr_rr && (imf->imtype == R_IMF_IMTYPE_MULTILAYER);
@@ -421,11 +414,35 @@ static bool image_save_single(ReportList *reports,
     BKE_imbuf_stamp_info(rr, ibuf);
   }
 
+  /* Don't write permanently into the render-result. */
+  double rr_ppm_prev[2] = {0, 0};
+
+  if (save_as_render && rr) {
+    /* These could be used in the case of a null `rr`, currently they're not though.
+     * Note that setting zero when there is no `rr` is intentional,
+     * this signifies no valid PPM is set. */
+    double ppm[2] = {0, 0};
+    if (opts->scene) {
+      BKE_scene_ppm_get(&opts->scene->r, ppm);
+    }
+    copy_v2_v2_db(rr_ppm_prev, rr->ppm);
+    copy_v2_v2_db(rr->ppm, ppm);
+  }
+
+  /* From now on, calls to #BKE_image_release_renderresult must restore the PPM beforehand. */
+  auto render_result_restore_ppm = [rr, save_as_render, rr_ppm_prev]() {
+    if (save_as_render && rr) {
+      copy_v2_v2_db(rr->ppm, rr_ppm_prev);
+    }
+  };
+
   /* fancy multiview OpenEXR */
   if (imf->views_format == R_IMF_VIEWS_MULTIVIEW && is_exr_rr) {
     /* save render result */
     ok = BKE_image_render_write_exr(
         reports, rr, opts->filepath, imf, save_as_render, nullptr, layer);
+
+    render_result_restore_ppm();
     BKE_image_release_renderresult(opts->scene, ima, rr);
     image_save_post(reports, ima, ibuf, ok, opts, true, opts->filepath, r_colorspace_changed);
     BKE_image_release_ibuf(ima, ibuf, lock);
@@ -441,6 +458,8 @@ static bool image_save_single(ReportList *reports,
       ok = BKE_imbuf_write_as(colormanaged_ibuf, opts->filepath, imf, save_copy);
       imbuf_save_post(ibuf, colormanaged_ibuf);
     }
+
+    render_result_restore_ppm();
     BKE_image_release_renderresult(opts->scene, ima, rr);
     image_save_post(reports,
                     ima,
@@ -509,6 +528,7 @@ static bool image_save_single(ReportList *reports,
       ok &= ok_view;
     }
 
+    render_result_restore_ppm();
     BKE_image_release_renderresult(opts->scene, ima, rr);
 
     if (is_exr_rr) {
@@ -520,6 +540,8 @@ static bool image_save_single(ReportList *reports,
     if (imf->imtype == R_IMF_IMTYPE_MULTILAYER) {
       ok = BKE_image_render_write_exr(
           reports, rr, opts->filepath, imf, save_as_render, nullptr, layer);
+
+      render_result_restore_ppm();
       BKE_image_release_renderresult(opts->scene, ima, rr);
       image_save_post(reports, ima, ibuf, ok, opts, true, opts->filepath, r_colorspace_changed);
       BKE_image_release_ibuf(ima, ibuf, lock);
@@ -596,10 +618,12 @@ static bool image_save_single(ReportList *reports,
         IMB_freeImBuf(ibuf_stereo[i]);
       }
 
+      render_result_restore_ppm();
       BKE_image_release_renderresult(opts->scene, ima, rr);
     }
   }
   else {
+    render_result_restore_ppm();
     BKE_image_release_renderresult(opts->scene, ima, rr);
     BKE_image_release_ibuf(ima, ibuf, lock);
   }
@@ -666,6 +690,7 @@ bool BKE_image_save(
 
   if (colorspace_changed) {
     BKE_image_signal(bmain, ima, nullptr, IMA_SIGNAL_COLORMANAGE);
+    BKE_image_partial_update_mark_full_update(ima);
   }
 
   return ok;
@@ -678,7 +703,8 @@ static float *image_exr_from_scene_linear_to_output(float *rect,
                                                     const int height,
                                                     const int channels,
                                                     const ImageFormatData *imf,
-                                                    Vector<float *> &tmp_output_rects)
+                                                    Vector<float *> &tmp_output_rects,
+                                                    blender::StringRefNull &r_colorspace)
 {
   if (imf == nullptr) {
     return rect;
@@ -694,8 +720,10 @@ static float *image_exr_from_scene_linear_to_output(float *rect,
 
   const char *from_colorspace = IMB_colormanagement_role_colorspace_name_get(
       COLOR_ROLE_SCENE_LINEAR);
-  IMB_colormanagement_transform(
+  IMB_colormanagement_transform_float(
       output_rect, width, height, channels, from_colorspace, to_colorspace, false);
+
+  r_colorspace = to_colorspace;
 
   return output_rect;
 }
@@ -703,8 +731,8 @@ static float *image_exr_from_scene_linear_to_output(float *rect,
 static float *image_exr_from_rgb_to_bw(
     float *input_buffer, int width, int height, int channels, Vector<float *> &temporary_buffers)
 {
-  float *gray_scale_output = static_cast<float *>(
-      MEM_malloc_arrayN(width * height, sizeof(float), "Gray Scale Buffer For EXR"));
+  float *gray_scale_output = MEM_malloc_arrayN<float>(size_t(width) * size_t(height),
+                                                      "Gray Scale Buffer For EXR");
   temporary_buffers.append(gray_scale_output);
 
   blender::threading::parallel_for(
@@ -725,8 +753,8 @@ static float *image_exr_opaque_alpha_buffer(int width,
                                             int height,
                                             Vector<float *> &temporary_buffers)
 {
-  float *alpha_output = static_cast<float *>(
-      MEM_malloc_arrayN(width * height, sizeof(float), "Opaque Alpha Buffer For EXR"));
+  float *alpha_output = MEM_malloc_arrayN<float>(size_t(width) * size_t(height),
+                                                 "Opaque Alpha Buffer For EXR");
   temporary_buffers.append(alpha_output);
 
   blender::threading::parallel_for(
@@ -741,7 +769,7 @@ static float *image_exr_opaque_alpha_buffer(int width,
   return alpha_output;
 }
 
-static void add_exr_compositing_result(void *exr_handle,
+static void add_exr_compositing_result(ExrHandle *exr_handle,
                                        const RenderResult *render_result,
                                        const ImageFormatData *imf,
                                        bool save_as_render,
@@ -780,30 +808,32 @@ static void add_exr_compositing_result(void *exr_handle,
 
     /* Compositing results is always a 4-channel RGBA. */
     const int channels_count_in_buffer = 4;
-    float *output_buffer = (save_as_render) ? image_exr_from_scene_linear_to_output(
-                                                  render_view->ibuf->float_buffer.data,
-                                                  render_result->rectx,
-                                                  render_result->recty,
-                                                  channels_count_in_buffer,
-                                                  imf,
-                                                  temporary_buffers) :
-                                              render_view->ibuf->float_buffer.data;
+    float *output_buffer = render_view->ibuf->float_buffer.data;
+    blender::StringRefNull colorspace = IMB_colormanagement_role_colorspace_name_get(
+        COLOR_ROLE_SCENE_LINEAR);
+
+    if (save_as_render) {
+      output_buffer = image_exr_from_scene_linear_to_output(output_buffer,
+                                                            render_result->rectx,
+                                                            render_result->recty,
+                                                            channels_count_in_buffer,
+                                                            imf,
+                                                            temporary_buffers,
+                                                            colorspace);
+    }
 
     /* For multi-layer EXRs, we write the buffer as is with all its 4 channels. */
     const bool half_float = (imf && imf->depth == R_IMF_CHAN_DEPTH_16);
     if (is_multi_layer) {
-      for (int i = 0; i < channels_count_in_buffer; i++) {
-        char passname[EXR_PASS_MAXNAME];
-        RE_render_result_full_channel_name(passname, nullptr, "Combined", nullptr, "RGBA", i);
-        IMB_exr_add_channel(exr_handle,
-                            "Composite",
-                            passname,
-                            render_view_name,
-                            channels_count_in_buffer,
-                            channels_count_in_buffer * render_result->rectx,
-                            output_buffer + i,
-                            half_float);
-      }
+      IMB_exr_add_channels(exr_handle,
+                           "Composite.Combined",
+                           "RGBA",
+                           render_view_name,
+                           colorspace,
+                           channels_count_in_buffer,
+                           channels_count_in_buffer * render_result->rectx,
+                           output_buffer,
+                           half_float);
       continue;
     }
 
@@ -818,29 +848,30 @@ static void add_exr_compositing_result(void *exr_handle,
                                                           render_result->recty,
                                                           channels_count_in_buffer,
                                                           temporary_buffers);
-      IMB_exr_add_channel(exr_handle,
-                          "",
-                          "V",
-                          render_view_name,
-                          1,
-                          render_result->rectx,
-                          gray_scale_output,
-                          half_float);
+      IMB_exr_add_channels(exr_handle,
+                           "",
+                           "V",
+                           render_view_name,
+                           colorspace,
+                           1,
+                           render_result->rectx,
+                           gray_scale_output,
+                           half_float);
       continue;
     }
 
     /* Add RGB[A] channels. This will essentially skip the alpha channel if only three channels
      * were required. */
-    for (int i = 0; i < required_channels; i++) {
-      IMB_exr_add_channel(exr_handle,
-                          "",
-                          std::string(1, "RGBA"[i]).c_str(),
-                          render_view_name,
-                          channels_count_in_buffer,
-                          channels_count_in_buffer * render_result->rectx,
-                          output_buffer + i,
-                          half_float);
-    }
+    std::string channelnames = blender::StringRef("RGBA").substr(0, required_channels);
+    IMB_exr_add_channels(exr_handle,
+                         "",
+                         channelnames,
+                         render_view_name,
+                         colorspace,
+                         channels_count_in_buffer,
+                         channels_count_in_buffer * render_result->rectx,
+                         output_buffer,
+                         half_float);
   }
 }
 
@@ -852,7 +883,8 @@ bool BKE_image_render_write_exr(ReportList *reports,
                                 const char *view,
                                 int layer)
 {
-  void *exrhandle = IMB_exr_get_handle();
+  const int write_multipart = (imf ? imf->exr_flag & R_IMF_EXR_FLAG_MULTIPART : true);
+  ExrHandle *exrhandle = IMB_exr_get_handle(write_multipart);
   const bool multi_layer = !(imf && imf->imtype == R_IMF_IMTYPE_OPENEXR);
 
   /* Write first layer if not multilayer and no layer was specified. */
@@ -860,7 +892,7 @@ bool BKE_image_render_write_exr(ReportList *reports,
     layer = 0;
   }
 
-  /* First add views since IMB_exr_add_channel checks number of views. */
+  /* First add views since IMB_exr_add_channels checks number of views. */
   const RenderView *first_rview = (const RenderView *)rr->views.first;
   if (first_rview && (first_rview->next || first_rview->name[0])) {
     LISTBASE_FOREACH (RenderView *, rview, &rr->views) {
@@ -907,44 +939,39 @@ bool BKE_image_render_write_exr(ReportList *reports,
       const bool pass_half_float = half_float && pass_RGBA;
 
       /* Color-space conversion only happens on RGBA passes. */
-      float *output_rect = (save_as_render && pass_RGBA) ?
-                               image_exr_from_scene_linear_to_output(
-                                   render_pass->ibuf->float_buffer.data,
-                                   rr->rectx,
-                                   rr->recty,
-                                   render_pass->channels,
-                                   imf,
-                                   tmp_output_rects) :
-                               render_pass->ibuf->float_buffer.data;
+      float *output_rect = render_pass->ibuf->float_buffer.data;
+      blender::StringRefNull colorspace = IMB_colormanagement_role_colorspace_name_get(
+          (pass_RGBA) ? COLOR_ROLE_SCENE_LINEAR : COLOR_ROLE_DATA);
+
+      if (save_as_render && pass_RGBA) {
+        output_rect = image_exr_from_scene_linear_to_output(output_rect,
+                                                            rr->rectx,
+                                                            rr->recty,
+                                                            render_pass->channels,
+                                                            imf,
+                                                            tmp_output_rects,
+                                                            colorspace);
+      }
 
       /* For multi-layer EXRs, we write the pass as is with all of its channels. */
       if (multi_layer) {
-        for (int i = 0; i < render_pass->channels; i++) {
-          char passname[EXR_PASS_MAXNAME];
-          char layname[EXR_PASS_MAXNAME];
+        std::string layer_pass_name = render_pass->name;
 
-          /* A single unnamed layer indicates that the pass name should be used as the layer name,
-           * while the pass name should be the channel ID. */
-          if (!has_multiple_layers && rl->name[0] == '\0') {
-            passname[0] = render_pass->chan_id[i];
-            passname[1] = '\0';
-            STRNCPY(layname, render_pass->name);
-          }
-          else {
-            RE_render_result_full_channel_name(
-                passname, nullptr, render_pass->name, nullptr, render_pass->chan_id, i);
-            STRNCPY(layname, rl->name);
-          }
-
-          IMB_exr_add_channel(exrhandle,
-                              layname,
-                              passname,
-                              viewname,
-                              render_pass->channels,
-                              render_pass->channels * rr->rectx,
-                              output_rect + i,
-                              pass_half_float);
+        /* Unless we have a single unnamed layer, include the layer name. */
+        if (has_multiple_layers || rl->name[0] != '\0') {
+          layer_pass_name = rl->name + ("." + layer_pass_name);
         }
+
+        std::string channelnames = blender::StringRef(render_pass->chan_id, render_pass->channels);
+        IMB_exr_add_channels(exrhandle,
+                             layer_pass_name,
+                             channelnames,
+                             viewname,
+                             colorspace,
+                             render_pass->channels,
+                             render_pass->channels * rr->rectx,
+                             output_rect,
+                             pass_half_float);
         continue;
       }
 
@@ -958,48 +985,57 @@ bool BKE_image_render_write_exr(ReportList *reports,
       if (required_channels == render_pass->channels ||
           (required_channels != 1 && render_pass->channels != 1))
       {
-        for (int i = 0; i < std::min(required_channels, render_pass->channels); i++) {
-          IMB_exr_add_channel(exrhandle,
-                              "",
-                              std::string(1, render_pass->chan_id[i]).c_str(),
-                              viewname,
-                              render_pass->channels,
-                              render_pass->channels * rr->rectx,
-                              output_rect + i,
-                              pass_half_float);
-        }
+        std::string channelnames = blender::StringRef(
+            render_pass->chan_id, std::min(required_channels, render_pass->channels));
+        IMB_exr_add_channels(exrhandle,
+                             "",
+                             channelnames,
+                             viewname,
+                             colorspace,
+                             render_pass->channels,
+                             render_pass->channels * rr->rectx,
+                             output_rect,
+                             pass_half_float);
       }
       else if (required_channels == 1) {
-        /* In case of a single required channel, we need to do RGB[A] to BW conversion. We know the
-         * input is RGB[A] and not single channel because it filed the condition above. */
+        /* In case of a single required channel, we need to do RGB[A] to BW conversion. We know
+         * the input is RGB[A] and not single channel because it filed the condition above. */
         float *gray_scale_output = image_exr_from_rgb_to_bw(
             output_rect, rr->rectx, rr->recty, render_pass->channels, tmp_output_rects);
-        IMB_exr_add_channel(
-            exrhandle, "", "V", viewname, 1, rr->rectx, gray_scale_output, pass_half_float);
+        IMB_exr_add_channels(exrhandle,
+                             "",
+                             "V",
+                             viewname,
+                             colorspace,
+                             1,
+                             rr->rectx,
+                             gray_scale_output,
+                             pass_half_float);
       }
       else if (render_pass->channels == 1) {
-        /* In case of a single channel pass, we need to broadcast the same channel for each of the
-         * RGB channels that are required. We know the RGB is required because single channel
+        /* In case of a single channel pass, we need to broadcast the same channel for each of
+         * the RGB channels that are required. We know the RGB is required because single channel
          * requirement was handled above. The alpha channel will be added later. */
         for (int i = 0; i < 3; i++) {
-          IMB_exr_add_channel(exrhandle,
-                              "",
-                              std::string(1, "RGB"[i]).c_str(),
-                              viewname,
-                              1,
-                              rr->rectx,
-                              output_rect,
-                              pass_half_float);
+          IMB_exr_add_channels(exrhandle,
+                               "",
+                               std::string(1, "RGB"[i]).c_str(),
+                               viewname,
+                               colorspace,
+                               1,
+                               rr->rectx,
+                               output_rect,
+                               pass_half_float);
         }
       }
 
-      /* Add an opaque alpha channel if the pass contains no alpha channel but an alpha channel is
-       * required. */
+      /* Add an opaque alpha channel if the pass contains no alpha channel but an alpha channel
+       * is required. */
       if (required_channels == 4 && render_pass->channels < 4) {
         float *alpha_output = image_exr_opaque_alpha_buffer(
             rr->rectx, rr->recty, tmp_output_rects);
-        IMB_exr_add_channel(
-            exrhandle, "", "A", viewname, 1, rr->rectx, alpha_output, pass_half_float);
+        IMB_exr_add_channels(
+            exrhandle, "", "A", viewname, colorspace, 1, rr->rectx, alpha_output, pass_half_float);
       }
     }
   }
@@ -1011,7 +1047,7 @@ bool BKE_image_render_write_exr(ReportList *reports,
   const int compress = (imf ? imf->exr_codec : 0);
   const int quality = (imf ? imf->quality : 90);
   bool success = IMB_exr_begin_write(
-      exrhandle, filepath, rr->rectx, rr->recty, compress, quality, rr->stamp_data);
+      exrhandle, filepath, rr->rectx, rr->recty, rr->ppm, compress, quality, rr->stamp_data);
   if (success) {
     IMB_exr_write_channels(exrhandle);
   }
@@ -1038,9 +1074,7 @@ static void image_render_print_save_message(ReportList *reports,
 {
   if (ok) {
     /* no need to report, just some helpful console info */
-    if (!G.quiet) {
-      printf("Saved: '%s'\n", filepath);
-    }
+    CLOG_INFO_NOCHECK(&LOG_RENDER, "Saved: '%s'", filepath);
   }
   else {
     /* report on error since users will want to know what failed */
@@ -1094,7 +1128,7 @@ bool BKE_image_render_write(ReportList *reports,
                                                &format->linear_colorspace_settings);
   }
 
-  const bool is_mono = BLI_listbase_count_at_most(&rr->views, 2) < 2;
+  const bool is_mono = !RE_ResultIsMultiView(rr);
   const bool is_exr_rr = ELEM(
                              image_format.imtype, R_IMF_IMTYPE_OPENEXR, R_IMF_IMTYPE_MULTILAYER) &&
                          RE_HasFloatPixels(rr);

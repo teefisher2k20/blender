@@ -15,7 +15,6 @@
 #include "DNA_movieclip_types.h"
 
 struct AnimData;
-struct Ipo;
 struct Object;
 
 /* ------------------------------------------- */
@@ -71,11 +70,16 @@ typedef struct Camera_Runtime {
 } Camera_Runtime;
 
 typedef struct Camera {
+#ifdef __cplusplus
+  /** See #ID_Type comment for why this is here. */
+  static constexpr ID_Type id_type = ID_CA;
+#endif
+
   ID id;
   /** Animation data (must be immediately after id for utilities to use it). */
   struct AnimData *adt;
 
-  /** CAM_PERSP, CAM_ORTHO or CAM_PANO. */
+  /** CAM_PERSP, CAM_ORTHO, CAM_PANO or CAM_CUSTOM. */
   char type;
   /** Draw type extra. */
   char dtx;
@@ -110,8 +114,15 @@ typedef struct Camera {
   float central_cylindrical_radius;
   float _pad2;
 
-  /** Old animation system, deprecated for 2.5. */
-  struct Ipo *ipo DNA_DEPRECATED;
+  /* Custom Camera properties. */
+  struct Text *custom_shader;
+
+  char custom_filepath[/*FILE_MAX*/ 1024];
+
+  char custom_bytecode_hash[64];
+  char *custom_bytecode;
+  int custom_mode;
+  int _pad3;
 
   struct Object *dof_ob DNA_DEPRECATED;
   struct GPUDOFSettings gpu_dof DNA_DEPRECATED;
@@ -122,6 +133,9 @@ typedef struct Camera {
 
   /* Stereo settings */
   struct CameraStereoSettings stereo;
+
+  /* Compositional guide overlay color */
+  float composition_guide_color[4];
 
   /** Runtime data (keep last). */
   Camera_Runtime runtime;
@@ -134,6 +148,7 @@ enum {
   CAM_PERSP = 0,
   CAM_ORTHO = 1,
   CAM_PANO = 2,
+  CAM_CUSTOM = 3,
 };
 
 /* panorama_type */
@@ -145,6 +160,12 @@ enum {
   CAM_PANORAMA_FISHEYE_LENS_POLYNOMIAL = 4,
   CAM_PANORAMA_EQUIANGULAR_CUBEMAP_FACE = 5,
   CAM_PANORAMA_CENTRAL_CYLINDRICAL = 6,
+};
+
+/* custom_mode */
+enum {
+  CAM_CUSTOM_SHADER_INTERNAL = 0,
+  CAM_CUSTOM_SHADER_EXTERNAL = 1,
 };
 
 /* dtx */

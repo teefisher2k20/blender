@@ -22,6 +22,8 @@
 
 #include "transform_convert.hh"
 
+namespace blender::ed::transform {
+
 /* -------------------------------------------------------------------- */
 /** \name Edit Mesh #CD_MVERT_SKIN Transform Creation
  * \{ */
@@ -137,9 +139,9 @@ static void createTransMeshSkin(bContext * /*C*/, TransInfo *t)
     int *dists_index = nullptr;
     float *dists = nullptr;
     if (prop_mode & T_PROP_CONNECTED) {
-      dists = static_cast<float *>(MEM_mallocN(bm->totvert * sizeof(float), __func__));
+      dists = MEM_malloc_arrayN<float>(bm->totvert, __func__);
       if (is_island_center) {
-        dists_index = static_cast<int *>(MEM_mallocN(bm->totvert * sizeof(int), __func__));
+        dists_index = MEM_malloc_arrayN<int>(bm->totvert, __func__);
       }
       transform_convert_mesh_connectivity_distance(em->bm, mtx, dists, dists_index);
     }
@@ -174,8 +176,7 @@ static void createTransMeshSkin(bContext * /*C*/, TransInfo *t)
     /* Create TransData. */
     BLI_assert(data_len >= 1);
     tc->data_len = data_len;
-    tc->data = static_cast<TransData *>(
-        MEM_callocN(data_len * sizeof(TransData), "TransObData(Mesh EditMode)"));
+    tc->data = MEM_calloc_arrayN<TransData>(data_len, "TransObData(Mesh EditMode)");
 
     TransData *td = tc->data;
     TransDataMirror *td_mirror = tc->data_mirror;
@@ -294,3 +295,5 @@ TransConvertTypeInfo TransConvertType_MeshSkin = {
     /*recalc_data*/ recalcData_mesh_skin,
     /*special_aftertrans_update*/ nullptr,
 };
+
+}  // namespace blender::ed::transform

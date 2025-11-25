@@ -2,9 +2,6 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BLI_index_range.hh"
-#include "BLI_task.hh"
-
 #include "GPU_shader.hh"
 
 #include "COM_context.hh"
@@ -17,7 +14,7 @@ namespace blender::compositor {
 
 static void extract_alpha_gpu(Context &context, Result &input, Result &output)
 {
-  GPUShader *shader = context.get_shader("compositor_convert_color_to_alpha");
+  gpu::Shader *shader = context.get_shader("compositor_convert_color_to_alpha");
   GPU_shader_bind(shader);
 
   input.bind_as_texture(shader, "input_tx");
@@ -25,7 +22,7 @@ static void extract_alpha_gpu(Context &context, Result &input, Result &output)
   output.allocate_texture(input.domain());
   output.bind_as_image(shader, "output_img");
 
-  compute_dispatch_threads_at_least(shader, input.domain().size);
+  compute_dispatch_threads_at_least(shader, input.domain().data_size);
 
   GPU_shader_unbind();
   input.unbind_as_texture();
@@ -35,8 +32,8 @@ static void extract_alpha_gpu(Context &context, Result &input, Result &output)
 static void extract_alpha_cpu(Result &input, Result &output)
 {
   output.allocate_texture(input.domain());
-  parallel_for(input.domain().size, [&](const int2 texel) {
-    output.store_pixel(texel, input.load_pixel<float4>(texel).w);
+  parallel_for(input.domain().data_size, [&](const int2 texel) {
+    output.store_pixel(texel, input.load_pixel<Color>(texel).a);
   });
 }
 

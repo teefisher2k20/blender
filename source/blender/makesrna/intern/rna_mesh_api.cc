@@ -6,7 +6,6 @@
  * \ingroup RNA
  */
 
-#include <cstdio>
 #include <cstdlib>
 
 #include "RNA_define.hh"
@@ -14,8 +13,6 @@
 #include "DNA_customdata_types.h"
 
 #include "BLI_math_base.h"
-#include "BLI_sys_types.h"
-#include "BLI_utildefines.h"
 
 #include "rna_internal.hh" /* own include */
 
@@ -61,25 +58,45 @@ static void rna_Mesh_sharp_from_angle_set(Mesh *mesh, const float angle)
 
 static void rna_Mesh_calc_tangents(Mesh *mesh, ReportList *reports, const char *uvmap)
 {
-  float(*r_looptangents)[4];
-
+  using namespace blender;
+  float4 *r_looptangents;
   if (CustomData_has_layer(&mesh->corner_data, CD_MLOOPTANGENT)) {
-    r_looptangents = static_cast<float(*)[4]>(
+    r_looptangents = static_cast<float4 *>(
         CustomData_get_layer_for_write(&mesh->corner_data, CD_MLOOPTANGENT, mesh->corners_num));
-    memset(r_looptangents, 0, sizeof(float[4]) * mesh->corners_num);
+    memset(reinterpret_cast<void *>(r_looptangents), 0, sizeof(float4) * mesh->corners_num);
   }
   else {
-    r_looptangents = static_cast<float(*)[4]>(CustomData_add_layer(
+    r_looptangents = static_cast<float4 *>(CustomData_add_layer(
         &mesh->corner_data, CD_MLOOPTANGENT, CD_SET_DEFAULT, mesh->corners_num));
     CustomData_set_layer_flag(&mesh->corner_data, CD_MLOOPTANGENT, CD_FLAG_TEMPORARY);
   }
 
-  BKE_mesh_calc_loop_tangent_single(mesh, uvmap, r_looptangents, reports);
+  if (!uvmap) {
+    uvmap = mesh->active_uv_map_name().c_str();
+  }
+
+  const bke::AttributeAccessor attributes = mesh->attributes();
+  const VArraySpan uv_map = *attributes.lookup<float2>(uvmap, bke::AttrDomain::Corner);
+  if (uv_map.is_empty()) {
+    BKE_reportf(reports,
+                RPT_ERROR,
+                "Tangent space computation needs a UV Map, \"%s\" not found, aborting",
+                uvmap);
+    return;
+  }
+
+  bke::mesh::calc_uv_tangent_tris_quads(mesh->vert_positions(),
+                                        mesh->faces(),
+                                        mesh->corner_verts(),
+                                        mesh->corner_normals(),
+                                        uv_map,
+                                        {r_looptangents, mesh->corners_num},
+                                        reports);
 }
 
 static void rna_Mesh_free_tangents(Mesh *mesh)
 {
-  CustomData_free_layers(&mesh->corner_data, CD_MLOOPTANGENT, mesh->corners_num);
+  CustomData_free_layers(&mesh->corner_data, CD_MLOOPTANGENT);
 }
 
 static void rna_Mesh_calc_corner_tri(Mesh *mesh)
@@ -87,21 +104,37 @@ static void rna_Mesh_calc_corner_tri(Mesh *mesh)
   mesh->corner_tris();
 }
 
-static void rna_Mesh_calc_smooth_groups(
-    Mesh *mesh, bool use_bitflags, int **r_poly_group, int *r_poly_group_num, int *r_group_total)
+static void rna_Mesh_calc_smooth_groups(Mesh *mesh,
+                                        bool use_bitflags,
+                                        bool use_boundary_vertices_for_bitflags,
+                                        int **r_poly_group,
+                                        int *r_poly_group_num,
+                                        int *r_group_total)
 {
   using namespace blender;
   *r_poly_group_num = mesh->faces_num;
   const bke::AttributeAccessor attributes = mesh->attributes();
   const VArraySpan sharp_edges = *attributes.lookup<bool>("sharp_edge", bke::AttrDomain::Edge);
   const VArraySpan sharp_faces = *attributes.lookup<bool>("sharp_face", bke::AttrDomain::Face);
-  *r_poly_group = BKE_mesh_calc_smoothgroups(mesh->edges_num,
-                                             mesh->faces(),
-                                             mesh->corner_edges(),
-                                             sharp_edges,
-                                             sharp_faces,
-                                             r_group_total,
-                                             use_bitflags);
+  if (use_bitflags) {
+    *r_poly_group = BKE_mesh_calc_smoothgroups_bitflags(mesh->edges_num,
+                                                        mesh->verts_num,
+                                                        mesh->faces(),
+                                                        mesh->corner_edges(),
+                                                        mesh->corner_verts(),
+                                                        sharp_edges,
+                                                        sharp_faces,
+                                                        use_boundary_vertices_for_bitflags,
+                                                        r_group_total);
+  }
+  else {
+    *r_poly_group = BKE_mesh_calc_smoothgroups(mesh->edges_num,
+                                               mesh->faces(),
+                                               mesh->corner_edges(),
+                                               sharp_edges,
+                                               sharp_faces,
+                                               r_group_total);
+  }
 }
 
 static void rna_Mesh_normals_split_custom_set(Mesh *mesh,
@@ -150,7 +183,7 @@ static void rna_Mesh_normals_split_custom_set_from_vertices(Mesh *mesh,
 
 static void rna_Mesh_transform(Mesh *mesh, const float mat[16], bool shape_keys)
 {
-  BKE_mesh_transform(mesh, (const float(*)[4])mat, shape_keys);
+  blender::bke::mesh_transform(*mesh, blender::float4x4(mat), shape_keys);
 
   DEG_id_tag_update(&mesh->id, 0);
 }
@@ -183,6 +216,8 @@ static void rna_Mesh_update(Mesh *mesh,
   mesh->runtime->vert_normals_cache.tag_dirty();
   mesh->runtime->face_normals_cache.tag_dirty();
   mesh->runtime->corner_normals_cache.tag_dirty();
+  mesh->runtime->vert_normals_true_cache.tag_dirty();
+  mesh->runtime->face_normals_true_cache.tag_dirty();
 
   DEG_id_tag_update(&mesh->id, 0);
   WM_event_add_notifier(C, NC_GEOM | ND_DATA, mesh);
@@ -207,6 +242,16 @@ static void rna_Mesh_clear_geometry(Mesh *mesh)
 
   DEG_id_tag_update(&mesh->id, ID_RECALC_GEOMETRY_ALL_MODES);
   WM_main_add_notifier(NC_GEOM | ND_DATA, mesh);
+}
+
+static bool rna_Mesh_validate(Mesh *mesh, const bool verbose, const bool /*clean_customdata*/)
+{
+  return !blender::bke::mesh_validate(*mesh, verbose);
+}
+
+static bool rna_Mesh_validate_material_indices(Mesh *mesh)
+{
+  return !blender::bke::mesh_validate_material_indices(*mesh);
 }
 
 #else
@@ -251,9 +296,9 @@ void RNA_api_mesh(StructRNA *srna)
   RNA_def_function_flag(func, FUNC_USE_REPORTS);
   RNA_def_function_ui_description(
       func,
-      "Compute tangents and bitangent signs, to be used together with the split normals "
+      "Compute tangents and bitangent signs, to be used together with the custom normals "
       "to get a complete tangent space for normal mapping "
-      "(split normals are also computed if not yet present)");
+      "(custom normals are also computed if not yet present)");
   RNA_def_string(func,
                  "uvmap",
                  nullptr,
@@ -272,6 +317,16 @@ void RNA_api_mesh(StructRNA *srna)
   RNA_def_function_ui_description(func, "Calculate smooth groups from sharp edges");
   RNA_def_boolean(
       func, "use_bitflags", false, "", "Produce bitflags groups instead of simple numeric values");
+  RNA_def_boolean(
+      func,
+      "use_boundary_vertices_for_bitflags",
+      false,
+      "",
+      "Also consider different smoothgroups sharing only vertices (but without any common edge) "
+      "as neighbors, preventing them from sharing the same bitflag value. Only effective when "
+      "``use_bitflags`` is set. "
+      "WARNING: Will overflow (run out of available bits) easily with some types of topology, "
+      "e.g. large fans of sharp edges");
   /* return values */
   parm = RNA_def_int_array(func, "poly_groups", 1, nullptr, 0, 0, "", "Smooth Groups", 0, 0);
   RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_OUTPUT);
@@ -281,7 +336,7 @@ void RNA_api_mesh(StructRNA *srna)
 
   func = RNA_def_function(srna, "normals_split_custom_set", "rna_Mesh_normals_split_custom_set");
   RNA_def_function_ui_description(func,
-                                  "Define custom split normals of this mesh "
+                                  "Define custom normals of this mesh "
                                   "(use zero-vectors to keep auto ones)");
   RNA_def_function_flag(func, FUNC_USE_REPORTS);
   /* TODO: see how array size of 0 works, this shouldn't be used. */
@@ -292,10 +347,9 @@ void RNA_api_mesh(StructRNA *srna)
   func = RNA_def_function(srna,
                           "normals_split_custom_set_from_vertices",
                           "rna_Mesh_normals_split_custom_set_from_vertices");
-  RNA_def_function_ui_description(
-      func,
-      "Define custom split normals of this mesh, from vertices' normals "
-      "(use zero-vectors to keep auto ones)");
+  RNA_def_function_ui_description(func,
+                                  "Define custom normals of this mesh, from vertices' normals "
+                                  "(use zero-vectors to keep auto ones)");
   RNA_def_function_flag(func, FUNC_USE_REPORTS);
   /* TODO: see how array size of 0 works, this shouldn't be used. */
   parm = RNA_def_float_array(func, "normals", 1, nullptr, -1.0f, 1.0f, "", "Normals", 0.0f, 0.0f);
@@ -334,20 +388,17 @@ void RNA_api_mesh(StructRNA *srna)
       func,
       "Remove all geometry from the mesh. Note that this does not free shape keys or materials.");
 
-  func = RNA_def_function(srna, "validate", "BKE_mesh_validate");
+  func = RNA_def_function(srna, "validate", "rna_Mesh_validate");
   RNA_def_function_ui_description(func,
                                   "Validate geometry, return True when the mesh has had "
                                   "invalid geometry corrected/removed");
   RNA_def_boolean(func, "verbose", false, "Verbose", "Output information about the errors found");
-  RNA_def_boolean(func,
-                  "clean_customdata",
-                  true,
-                  "Clean Custom Data",
-                  "Remove temp/cached custom-data layers, like e.g. normals...");
+  RNA_def_boolean(
+      func, "clean_customdata", true, "Clean Custom Data", "Deprecated, has no effect");
   parm = RNA_def_boolean(func, "result", false, "Result", "");
   RNA_def_function_return(func, parm);
 
-  func = RNA_def_function(srna, "validate_material_indices", "BKE_mesh_validate_material_indices");
+  func = RNA_def_function(srna, "validate_material_indices", "rna_Mesh_validate_material_indices");
   RNA_def_function_ui_description(
       func,
       "Validate material indices of polygons, return True when the mesh has had "

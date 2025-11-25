@@ -12,14 +12,15 @@
 
 #include "rna_internal.hh"
 
-#include "DNA_vfont_types.h"
-
 #include "WM_types.hh"
 
 #ifdef RNA_RUNTIME
 
-#  include "BKE_vfont.hh"
 #  include "DNA_object_types.h"
+#  include "DNA_vfont_types.h"
+
+#  include "BKE_library.hh"
+#  include "BKE_vfont.hh"
 
 #  include "DEG_depsgraph.hh"
 
@@ -59,6 +60,7 @@ void RNA_def_vfont(BlenderRNA *brna)
 
   prop = RNA_def_property(srna, "filepath", PROP_STRING, PROP_FILEPATH);
   RNA_def_property_string_sdna(prop, nullptr, "filepath");
+  RNA_def_property_flag(prop, PROP_PATH_SUPPORTS_BLEND_RELATIVE);
   RNA_def_property_editable_func(prop, "rna_VectorFont_filepath_editable");
   RNA_def_property_ui_text(prop, "File Path", "");
   RNA_def_property_update(prop, NC_GEOM | ND_DATA, "rna_VectorFont_reload_update");

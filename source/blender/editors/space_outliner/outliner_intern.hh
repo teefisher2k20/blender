@@ -38,6 +38,7 @@ struct bPoseChannel;
 struct View2D;
 struct wmKeyConfig;
 struct wmOperatorType;
+struct WorkSpace;
 
 namespace blender::bke::outliner::treehash {
 class TreeHash;
@@ -140,7 +141,7 @@ struct TreeElementIcon {
         ID_CV, \
         ID_PT, \
         ID_VO, \
-        ID_GP) || /* Only in 'blendfile' mode ... :/ */ \
+        ID_GP) || /* Only in blend-file mode ... :/ */ \
    ELEM(GS((_id)->name), \
         ID_SCR, \
         ID_WM, \
@@ -235,6 +236,9 @@ enum eOLSetState {
  * Also so we can have one place to assign these variables.
  */
 struct TreeViewContext {
+  /* Workspace. */
+  WorkSpace *workspace;
+
   /* Scene level. */
   Scene *scene;
   ViewLayer *view_layer;
@@ -275,6 +279,7 @@ void outliner_free_tree_element(TreeElement *element, ListBase *parent_subtree);
  * Main entry point for building the tree data-structure that the outliner represents.
  */
 void outliner_build_tree(Main *mainvar,
+                         WorkSpace *workspace,
                          Scene *scene,
                          ViewLayer *view_layer,
                          SpaceOutliner *space_outliner,
@@ -485,6 +490,7 @@ void OUTLINER_OT_lib_relocate(wmOperatorType *ot);
 void OUTLINER_OT_lib_reload(wmOperatorType *ot);
 
 void OUTLINER_OT_id_delete(wmOperatorType *ot);
+void OUTLINER_OT_id_linked_relocate(wmOperatorType *ot);
 
 void OUTLINER_OT_show_one_level(wmOperatorType *ot);
 void OUTLINER_OT_show_active(wmOperatorType *ot);

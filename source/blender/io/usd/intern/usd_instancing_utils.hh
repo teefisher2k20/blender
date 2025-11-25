@@ -1,9 +1,9 @@
-/* SPDX-FileCopyrightText: 2025  NVIDIA Corporation. All rights reserved.
+/* SPDX-FileCopyrightText: 2025 NVIDIA Corporation. All rights reserved.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #pragma once
 
-#include <pxr/usd/usd/stage.h>
+#include <pxr/usd/usd/common.h>
 
 namespace blender::io::usd {
 

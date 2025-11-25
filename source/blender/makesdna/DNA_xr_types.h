@@ -38,6 +38,10 @@ typedef struct XrSessionSettings {
   /** Object type settings to apply to VR view (unlike shading, not shared with window 3D-View). */
   int object_type_exclude_viewport;
   int object_type_exclude_select;
+
+  /** Fly speed. */
+  float fly_speed;
+  float padding;
 } XrSessionSettings;
 
 typedef enum eXrSessionFlag {
@@ -122,14 +126,14 @@ typedef enum eXrPoseFlag {
 
 typedef struct XrComponentPath {
   struct XrComponentPath *next, *prev;
-  char path[192]; /* XR_MAX_COMPONENT_PATH_LENGTH */
+  char path[/*XR_MAX_COMPONENT_PATH_LENGTH*/ 192];
 } XrComponentPath;
 
 typedef struct XrActionMapBinding {
   struct XrActionMapBinding *next, *prev;
 
   /** Unique name. */
-  char name[64]; /* MAX_NAME */
+  char name[/*MAX_NAME*/ 64];
 
   /** OpenXR interaction profile path. */
   char profile[256];
@@ -150,14 +154,14 @@ typedef struct XrActionMapBinding {
 
 typedef struct XrUserPath {
   struct XrUserPath *next, *prev;
-  char path[64]; /* XR_MAX_USER_PATH_LENGTH */
+  char path[/*XR_MAX_USER_PATH_LENGTH*/ 64];
 } XrUserPath;
 
 typedef struct XrActionMapItem {
   struct XrActionMapItem *next, *prev;
 
   /** Unique name. */
-  char name[64]; /* MAX_NAME */
+  char name[/*MAX_NAME*/ 64];
   /** Type. */
   char type; /** eXrActionType */
   char _pad[7];
@@ -166,7 +170,7 @@ typedef struct XrActionMapItem {
   ListBase user_paths; /* XrUserPath */
 
   /** Operator to be called on XR events. */
-  char op[64]; /* OP_MAX_TYPENAME */
+  char op[/*OP_MAX_TYPENAME*/ 64];
   /** Operator properties, assigned to ptr->data and can be written to a file. */
   IDProperty *op_properties;
   /** RNA pointer to access properties. */
@@ -180,7 +184,7 @@ typedef struct XrActionMapItem {
   short pose_flag; /* eXrPoseFlag */
 
   /** Haptic properties. */
-  char haptic_name[64]; /* MAX_NAME */
+  char haptic_name[/*MAX_NAME*/ 64];
   float haptic_duration;
   float haptic_frequency;
   float haptic_amplitude;
@@ -196,7 +200,7 @@ typedef struct XrActionMap {
   struct XrActionMap *next, *prev;
 
   /** Unique name. */
-  char name[64]; /* MAX_NAME */
+  char name[/*MAX_NAME*/ 64];
 
   ListBase items; /* XrActionMapItem */
   short selitem;

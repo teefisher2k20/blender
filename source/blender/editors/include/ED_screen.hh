@@ -10,7 +10,10 @@
 
 #include "DNA_screen_types.h"
 #include "DNA_space_types.h"
+#include "DNA_userdef_types.h"
 #include "DNA_workspace_types.h"
+
+#include "ED_screen_types.hh"
 
 #include "WM_types.hh"
 
@@ -30,7 +33,6 @@ struct bContext;
 struct bScreen;
 struct rcti;
 struct uiBlock;
-struct uiLayout;
 struct wmKeyConfig;
 struct wmMsgSubscribeKey;
 struct wmMsgSubscribeValue;
@@ -41,6 +43,10 @@ struct wmRegionMessageSubscribeParams;
 struct wmSpaceTypeListenerParams;
 struct wmWindow;
 struct wmWindowManager;
+
+namespace blender::ui {
+struct Layout;
+}  // namespace blender::ui
 
 /* regions */
 /** Only exported for WM. */
@@ -76,6 +82,14 @@ void ED_region_tag_refresh_ui(ARegion *region);
 void ED_region_tag_redraw_editor_overlays(ARegion *region);
 
 /**
+ * If the region has tag RGN_FLAG_INDICATE_OVERFLOW then draw
+ * a line or gradient on edges if there is content overflowing.
+ */
+void ED_region_draw_overflow_indication(const ScrArea *area,
+                                        const ARegion *region,
+                                        const rcti *mask = nullptr);
+
+/**
  * Set the temporary update flag for property search.
  */
 void ED_region_search_filter_update(const ScrArea *area, ARegion *region);
@@ -83,11 +97,15 @@ void ED_region_search_filter_update(const ScrArea *area, ARegion *region);
  * Returns the search string if the space type and region type support property search.
  */
 const char *ED_area_region_search_filter_get(const ScrArea *area, const ARegion *region);
+/**
+ * Returns the maximum size a region can grow to so it still fits in the area.
+ */
+int ED_area_max_regionsize(const ScrArea *area, const ARegion *scale_region, const AZEdge edge);
 
 void ED_region_panels_init(wmWindowManager *wm, ARegion *region);
 void ED_region_panels_ex(const bContext *C,
                          ARegion *region,
-                         wmOperatorCallContext op_context,
+                         blender::wm::OpCallContext op_context,
                          const char *contexts[]);
 void ED_region_panels(const bContext *C, ARegion *region);
 /**
@@ -98,7 +116,7 @@ void ED_region_panels(const bContext *C, ARegion *region);
 void ED_region_panels_layout_ex(const bContext *C,
                                 ARegion *region,
                                 ListBase *paneltypes,
-                                wmOperatorCallContext op_context,
+                                blender::wm::OpCallContext op_context,
                                 const char *contexts[],
                                 const char *category_override);
 /**
@@ -157,7 +175,7 @@ void ED_region_info_draw_multiline(ARegion *region,
                                    const char *text_array[],
                                    const float fill_color[4],
                                    bool full_redraw);
-void ED_region_image_metadata_panel_draw(ImBuf *ibuf, uiLayout *layout);
+void ED_region_image_metadata_panel_draw(ImBuf *ibuf, blender::ui::Layout *layout);
 void ED_region_grid_draw(ARegion *region, float zoomx, float zoomy, float x0, float y0);
 float ED_region_blend_alpha(ARegion *region);
 const rcti *ED_region_visible_rect(ARegion *region);
@@ -333,7 +351,8 @@ void ED_screen_exit(bContext *C, wmWindow *window, bScreen *screen);
  * redraws: uses defines from `stime->redraws`
  * \param enable: 1 - forward on, -1 - backwards on, 0 - off.
  */
-void ED_screen_animation_timer(bContext *C, int redraws, int sync, int enable);
+void ED_screen_animation_timer(
+    bContext *C, Scene *scene, ViewLayer *view_layer, int redraws, int sync, int enable);
 void ED_screen_animation_timer_update(bScreen *screen, int redraws);
 void ED_screen_restore_temp_type(bContext *C, ScrArea *area);
 ScrArea *ED_screen_full_newspace(bContext *C, ScrArea *area, int type);
@@ -373,13 +392,12 @@ ScrArea *ED_screen_state_toggle(bContext *C, wmWindow *win, ScrArea *area, short
  */
 ScrArea *ED_screen_temp_space_open(bContext *C,
                                    const char *title,
-                                   const rcti *rect_unscaled,
                                    eSpace_Type space_type,
                                    int display_type,
-                                   bool dialog) ATTR_NONNULL(1, 2, 3);
-void ED_screens_header_tools_menu_create(bContext *C, uiLayout *layout, void *arg);
-void ED_screens_footer_tools_menu_create(bContext *C, uiLayout *layout, void *arg);
-void ED_screens_region_flip_menu_create(bContext *C, uiLayout *layout, void *arg);
+                                   bool dialog) ATTR_NONNULL(1);
+void ED_screens_header_tools_menu_create(bContext *C, blender::ui::Layout *layout, void *arg);
+void ED_screens_footer_tools_menu_create(bContext *C, blender::ui::Layout *layout, void *arg);
+void ED_screens_region_flip_menu_create(bContext *C, blender::ui::Layout *layout, void *arg);
 /**
  * \return true if any active area requires to see in 3D.
  */
@@ -475,6 +493,11 @@ class WorkspaceStatus {
   void item(std::string text, int icon1, int icon2 = 0);
 
   /**
+   * Add extra (or negative) space between items.
+   */
+  void separator(float factor = 1.0f);
+
+  /**
    * Add a dynamic status entry with up to two icons that change appearance.
    * Example:
    *   [CTRL] Tweak
@@ -508,7 +531,7 @@ void ED_update_for_newframe(Main *bmain, Depsgraph *depsgraph);
  * Toggle operator.
  */
 void ED_reset_audio_device(bContext *C);
-int ED_screen_animation_play(bContext *C, int sync, int mode);
+wmOperatorStatus ED_screen_animation_play(bContext *C, int sync, int mode);
 /**
  * Find window that owns the animation timer.
  */
@@ -528,6 +551,7 @@ void ED_operatortypes_workspace();
 /* operators; context poll callbacks */
 
 bool ED_operator_screenactive(bContext *C);
+bool ED_operator_active_screen_and_scene(bContext *C);
 bool ED_operator_screenactive_nobackground(bContext *C);
 /**
  * When mouse is over area-edge.
@@ -538,6 +562,9 @@ bool ED_operator_regionactive(bContext *C);
 
 bool ED_operator_scene(bContext *C);
 bool ED_operator_scene_editable(bContext *C);
+bool ED_operator_sequencer_scene(bContext *C);
+bool ED_operator_sequencer_scene_editable(bContext *C);
+
 bool ED_operator_objectmode(bContext *C);
 /**
  * Same as #ED_operator_objectmode() but additionally sets a "disabled hint". That is, a message
@@ -583,6 +610,8 @@ bool ED_operator_nla_active(bContext *C);
 bool ED_operator_info_active(bContext *C);
 bool ED_operator_console_active(bContext *C);
 
+/** Only check there is an active object (no visibility check). */
+bool ED_operator_object_active_only(bContext *C);
 bool ED_operator_object_active(bContext *C);
 bool ED_operator_object_active_editable_ex(bContext *C, const Object *ob);
 bool ED_operator_object_active_editable(bContext *C);
@@ -641,7 +670,7 @@ bUserMenuItem_Op *ED_screen_user_menu_item_find_operator(ListBase *lb,
                                                          const wmOperatorType *ot,
                                                          IDProperty *prop,
                                                          const char *op_prop_enum,
-                                                         wmOperatorCallContext opcontext);
+                                                         blender::wm::OpCallContext opcontext);
 bUserMenuItem_Menu *ED_screen_user_menu_item_find_menu(ListBase *lb, const MenuType *mt);
 bUserMenuItem_Prop *ED_screen_user_menu_item_find_prop(ListBase *lb,
                                                        const char *context_data_path,
@@ -653,7 +682,7 @@ void ED_screen_user_menu_item_add_operator(ListBase *lb,
                                            const wmOperatorType *ot,
                                            const IDProperty *prop,
                                            const char *op_prop_enum,
-                                           wmOperatorCallContext opcontext);
+                                           blender::wm::OpCallContext opcontext);
 void ED_screen_user_menu_item_add_menu(ListBase *lb, const char *ui_name, const MenuType *mt);
 void ED_screen_user_menu_item_add_prop(ListBase *lb,
                                        const char *ui_name,
@@ -682,6 +711,7 @@ void ED_region_generic_tools_region_message_subscribe(
  * Callback for #ARegionType.snap_size
  */
 int ED_region_generic_tools_region_snap_size(const ARegion *region, int size, int axis);
+int ED_region_generic_panel_region_snap_size(const ARegion *region, int size, int axis);
 
 /* `area_query.cc` */
 

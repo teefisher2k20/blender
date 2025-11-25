@@ -26,12 +26,12 @@ class GHOST_SystemSDL;
 
 class GHOST_WindowSDL : public GHOST_Window {
  private:
-  GHOST_SystemSDL *m_system;
-  bool m_valid_setup;
-  bool m_invalid_window;
+  GHOST_SystemSDL *system_;
+  bool valid_setup_;
+  bool invalid_window_;
 
-  SDL_Window *m_sdl_win;
-  SDL_Cursor *m_sdl_custom_cursor;
+  SDL_Window *sdl_win_;
+  SDL_Cursor *sdl_custom_cursor_;
 
  public:
   GHOST_WindowSDL(GHOST_SystemSDL *system,
@@ -41,17 +41,17 @@ class GHOST_WindowSDL : public GHOST_Window {
                   uint32_t width,
                   uint32_t height,
                   GHOST_TWindowState state,
-                  GHOST_TDrawingContextType type = GHOST_kDrawingContextTypeNone,
-                  const bool stereoVisual = false,
+                  GHOST_TDrawingContextType type,
+                  const GHOST_ContextParams &context_params,
                   const bool exclusive = false,
-                  const GHOST_IWindow *parentWindow = nullptr);
+                  const GHOST_IWindow *parent_window = nullptr);
 
   ~GHOST_WindowSDL();
 
   /* SDL specific */
   SDL_Window *getSDLWindow()
   {
-    return m_sdl_win;
+    return sdl_win_;
   }
 
   GHOST_TSuccess invalidate() override;
@@ -63,7 +63,7 @@ class GHOST_WindowSDL : public GHOST_Window {
 
   void validate()
   {
-    m_invalid_window = false;
+    invalid_window_ = false;
   }
 
   bool getValid() const override;
@@ -83,13 +83,11 @@ class GHOST_WindowSDL : public GHOST_Window {
   GHOST_TSuccess setWindowCursorShape(GHOST_TStandardCursor shape) override;
   GHOST_TSuccess hasCursorShape(GHOST_TStandardCursor shape) override;
 
-  GHOST_TSuccess setWindowCustomCursorShape(uint8_t *bitmap,
-                                            uint8_t *mask,
-                                            int sizex,
-                                            int sizey,
-                                            int hotX,
-                                            int hotY,
-                                            bool canInvertColor) override;
+  GHOST_TSuccess setWindowCustomCursorShape(const uint8_t *bitmap,
+                                            const uint8_t *mask,
+                                            const int size[2],
+                                            const int hot_spot[2],
+                                            bool can_invert_color) override;
 
   GHOST_TSuccess setWindowCursorVisibility(bool visible) override;
 
@@ -115,17 +113,6 @@ class GHOST_WindowSDL : public GHOST_Window {
   {
     // TODO
     return GHOST_kSuccess;
-  }
-
-  // TODO
-  GHOST_TSuccess beginFullScreen() const override
-  {
-    return GHOST_kFailure;
-  }
-
-  GHOST_TSuccess endFullScreen() const override
-  {
-    return GHOST_kFailure;
   }
 
   uint16_t getDPIHint() override;

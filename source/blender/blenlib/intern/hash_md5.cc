@@ -45,13 +45,13 @@
 #endif
 
 #if UINT_MAX == UINT_MAX_32_BITS
-typedef unsigned int md5_uint32;
+using md5_uint32 = uint;
 #else
 #  if USHRT_MAX == UINT_MAX_32_BITS
-typedef unsigned short md5_uint32;
+using md5_uint32 = unsigned short;
 #  else
 #    if ULONG_MAX == UINT_MAX_32_BITS
-typedef unsigned long md5_uint32;
+using md5_uint32 = unsigned long;
 #    else
 /* The following line is intended to evoke an error. Using #error is not portable enough. */
 "Cannot determine unsigned 32-bit data type."
@@ -60,7 +60,7 @@ typedef unsigned long md5_uint32;
 #endif
 
 /* Following code is low level, upon which are built up the functions
- * 'BLI_hash_md5_stream' and 'BLI_hash_md5_buffer'. */
+ * #BLI_hash_md5_stream and #BLI_hash_md5_buffer. */
 
 /* Structure to save state of computation between the single steps. */
 struct md5_ctx {
@@ -70,11 +70,8 @@ struct md5_ctx {
   md5_uint32 D;
 };
 
-#ifdef __BIG_ENDIAN__
-#  define SWAP(n) (((n) << 24) | (((n) & 0xff00) << 8) | (((n) >> 8) & 0xff00) | ((n) >> 24))
-#else
-#  define SWAP(n) (n)
-#endif
+/* NOTE: this is endianness-sensitive. */
+#define SWAP(n) (n)
 
 /* This array contains the bytes used to pad the buffer to the next 64-byte boundary.
  * (RFC 1321, 3.1: Step 1) */

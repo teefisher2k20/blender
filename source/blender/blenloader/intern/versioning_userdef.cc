@@ -10,7 +10,7 @@
 #define DNA_DEPRECATED_ALLOW
 #include <cstring>
 
-#include "fmt/format.h"
+#include <fmt/format.h>
 
 #include "BLI_listbase.h"
 #include "BLI_map.hh"
@@ -93,13 +93,6 @@ static void do_versions_theme(const UserDef *userdef, bTheme *btheme)
     btheme->space_node.grid_levels = U_theme_default.space_node.grid_levels;
   }
 
-  if (!USER_VERSION_ATLEAST(302, 9)) {
-    FROM_DEFAULT_V4_UCHAR(space_sequencer.list);
-    FROM_DEFAULT_V4_UCHAR(space_sequencer.list_title);
-    FROM_DEFAULT_V4_UCHAR(space_sequencer.list_text);
-    FROM_DEFAULT_V4_UCHAR(space_sequencer.list_text_hi);
-  }
-
   if (!USER_VERSION_ATLEAST(306, 3)) {
     FROM_DEFAULT_V4_UCHAR(space_view3d.face_retopology);
   }
@@ -113,23 +106,12 @@ static void do_versions_theme(const UserDef *userdef, bTheme *btheme)
     FROM_DEFAULT_V4_UCHAR(space_node.node_zone_repeat);
   }
 
-  if (!USER_VERSION_ATLEAST(400, 14)) {
-    FROM_DEFAULT_V4_UCHAR(space_view3d.asset_shelf.back);
-    FROM_DEFAULT_V4_UCHAR(space_view3d.asset_shelf.header_back);
-  }
-
   if (!USER_VERSION_ATLEAST(400, 24)) {
     FROM_DEFAULT_V4_UCHAR(tui.wcol_list_item.inner_sel);
     FROM_DEFAULT_V4_UCHAR(space_sequencer.transition);
   }
 
   if (!USER_VERSION_ATLEAST(400, 27)) {
-    FROM_DEFAULT_V4_UCHAR(space_sequencer.keytype_keyframe);
-    FROM_DEFAULT_V4_UCHAR(space_sequencer.keytype_breakdown);
-    FROM_DEFAULT_V4_UCHAR(space_sequencer.keytype_movehold);
-    FROM_DEFAULT_V4_UCHAR(space_sequencer.keytype_keyframe_select);
-    FROM_DEFAULT_V4_UCHAR(space_sequencer.keytype_breakdown_select);
-    FROM_DEFAULT_V4_UCHAR(space_sequencer.keytype_movehold_select);
     FROM_DEFAULT_V4_UCHAR(space_sequencer.keyborder);
     FROM_DEFAULT_V4_UCHAR(space_sequencer.keyborder_select);
     FROM_DEFAULT_V4_UCHAR(space_sequencer.transition);
@@ -156,23 +138,8 @@ static void do_versions_theme(const UserDef *userdef, bTheme *btheme)
         &userdef->themes, btheme, "Theme", '.', offsetof(bTheme, name), sizeof(btheme->name));
   }
 
-  if (!USER_VERSION_ATLEAST(402, 17)) {
-    FROM_DEFAULT_V4_UCHAR(space_action.keytype_generated);
-    FROM_DEFAULT_V4_UCHAR(space_action.keytype_generated_select);
-  }
-
-  if (!USER_VERSION_ATLEAST(402, 21)) {
-    FROM_DEFAULT_V4_UCHAR(space_image.asset_shelf.back);
-    FROM_DEFAULT_V4_UCHAR(space_image.asset_shelf.header_back);
-  }
-
   if (!USER_VERSION_ATLEAST(402, 47)) {
     FROM_DEFAULT_V4_UCHAR(space_view3d.time_gp_keyframe);
-  }
-
-  if (!USER_VERSION_ATLEAST(403, 1)) {
-    FROM_DEFAULT_V4_UCHAR(space_sequencer.keytype_generated);
-    FROM_DEFAULT_V4_UCHAR(space_sequencer.keytype_generated_select);
   }
 
   if (!USER_VERSION_ATLEAST(402, 62)) {
@@ -211,13 +178,246 @@ static void do_versions_theme(const UserDef *userdef, bTheme *btheme)
   }
 
   if (!USER_VERSION_ATLEAST(404, 7)) {
-    FROM_DEFAULT_V4_UCHAR(space_view3d.face_front);
+    if (btheme->space_view3d.face_front[0] == 0 && btheme->space_view3d.face_front[1] == 0 &&
+        btheme->space_view3d.face_front[2] == 0xFF && btheme->space_view3d.face_front[3] == 0xB3)
+    {
+      /* Use new default value only if currently set to the old default value. */
+      FROM_DEFAULT_V4_UCHAR(space_view3d.face_front);
+    }
   }
 
   if (!USER_VERSION_ATLEAST(404, 12)) {
     FROM_DEFAULT_V4_UCHAR(space_sequencer.text_strip_cursor);
     FROM_DEFAULT_V4_UCHAR(space_sequencer.selected_text);
   }
+
+  if (!USER_VERSION_ATLEAST(405, 3)) {
+    FROM_DEFAULT_V4_UCHAR(tui.wcol_state.error);
+    FROM_DEFAULT_V4_UCHAR(tui.wcol_state.warning);
+    FROM_DEFAULT_V4_UCHAR(tui.wcol_state.info);
+    FROM_DEFAULT_V4_UCHAR(tui.wcol_state.success);
+  }
+
+  if (!USER_VERSION_ATLEAST(405, 14)) {
+    FROM_DEFAULT_V4_UCHAR(space_node.node_zone_closure);
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 6)) {
+    /* Match the selected/unselected outline colors. */
+    copy_v4_v4_uchar(btheme->tui.wcol_box.outline_sel, U_theme_default.tui.wcol_box.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_list_item.outline_sel,
+                     U_theme_default.tui.wcol_list_item.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_menu.outline_sel, U_theme_default.tui.wcol_menu.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_menu_back.outline_sel,
+                     U_theme_default.tui.wcol_menu_back.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_menu_item.outline_sel,
+                     U_theme_default.tui.wcol_menu_item.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_num.outline_sel, U_theme_default.tui.wcol_num.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_numslider.outline_sel,
+                     U_theme_default.tui.wcol_numslider.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_option.outline_sel, U_theme_default.tui.wcol_option.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_pie_menu.outline_sel,
+                     U_theme_default.tui.wcol_pie_menu.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_progress.outline_sel,
+                     U_theme_default.tui.wcol_progress.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_pulldown.outline_sel,
+                     U_theme_default.tui.wcol_pulldown.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_radio.outline_sel, U_theme_default.tui.wcol_radio.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_regular.outline_sel,
+                     U_theme_default.tui.wcol_regular.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_scroll.outline_sel, U_theme_default.tui.wcol_scroll.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_tab.outline_sel, U_theme_default.tui.wcol_tab.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_text.outline_sel, U_theme_default.tui.wcol_text.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_toggle.outline_sel, U_theme_default.tui.wcol_toggle.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_tool.outline_sel, U_theme_default.tui.wcol_tool.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_toolbar_item.outline_sel,
+                     U_theme_default.tui.wcol_toolbar_item.outline);
+    copy_v4_v4_uchar(btheme->tui.wcol_tooltip.outline_sel,
+                     U_theme_default.tui.wcol_tooltip.outline);
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 9)) {
+    FROM_DEFAULT_V4_UCHAR(tui.panel_header);
+    FROM_DEFAULT_V4_UCHAR(tui.panel_back);
+    FROM_DEFAULT_V4_UCHAR(tui.panel_sub_back);
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 12)) {
+    FROM_DEFAULT_V4_UCHAR(space_node.syntaxs);
+    FROM_DEFAULT_V4_UCHAR(space_node.syntaxb);
+    FROM_DEFAULT_V4_UCHAR(space_node.syntaxn);
+    FROM_DEFAULT_V4_UCHAR(space_node.syntaxv);
+    FROM_DEFAULT_V4_UCHAR(space_node.syntaxc);
+    FROM_DEFAULT_V4_UCHAR(space_node.syntaxd);
+    FROM_DEFAULT_V4_UCHAR(space_node.nodeclass_attribute);
+    FROM_DEFAULT_V4_UCHAR(space_node.nodeclass_filter);
+    FROM_DEFAULT_V4_UCHAR(space_node.nodeclass_geometry);
+    FROM_DEFAULT_V4_UCHAR(space_node.nodeclass_output);
+    FROM_DEFAULT_V4_UCHAR(space_node.nodeclass_script);
+    FROM_DEFAULT_V4_UCHAR(space_node.nodeclass_shader);
+    FROM_DEFAULT_V4_UCHAR(space_node.nodeclass_texture);
+    FROM_DEFAULT_V4_UCHAR(space_node.nodeclass_vector);
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 19)) {
+    btheme->tui.menu_shadow_fac = U_theme_default.tui.menu_shadow_fac;
+    btheme->tui.menu_shadow_width = U_theme_default.tui.menu_shadow_width;
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 24)) {
+    FROM_DEFAULT_V4_UCHAR(tui.panel_title);
+    FROM_DEFAULT_V4_UCHAR(tui.panel_text);
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 29)) {
+    FROM_DEFAULT_V4_UCHAR(space_node.console_output);
+  }
+
+  if (!USER_VERSION_ATLEAST(405, 45)) {
+    FROM_DEFAULT_V4_UCHAR(space_node.node_zone_closure);
+    FROM_DEFAULT_V4_UCHAR(space_node.node_zone_repeat);
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 47)) {
+    if (btheme->tui.panel_title[3] == 0) {
+      btheme->tui.panel_title[3] = 255;
+    }
+    if (btheme->tui.panel_text[3] == 0) {
+      btheme->tui.panel_text[3] = 255;
+    }
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 50)) {
+    FROM_DEFAULT_V4_UCHAR(common.anim.preview_range);
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 52)) {
+    FROM_DEFAULT_V4_UCHAR(tui.waxis);
+  }
+
+  if (!USER_VERSION_ATLEAST(405, 55)) {
+    FROM_DEFAULT_V4_UCHAR(space_node.node_zone_closure);
+    FROM_DEFAULT_V4_UCHAR(space_node.node_zone_repeat);
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 56)) {
+    FROM_DEFAULT_V4_UCHAR(common.anim.playhead);
+    FROM_DEFAULT_V4_UCHAR(common.anim.channel_group);
+    FROM_DEFAULT_V4_UCHAR(common.anim.channel_group_active);
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 60)) {
+    FROM_DEFAULT_V4_UCHAR(common.curves.handle_free);
+    FROM_DEFAULT_V4_UCHAR(common.curves.handle_auto);
+    FROM_DEFAULT_V4_UCHAR(common.curves.handle_vect);
+    FROM_DEFAULT_V4_UCHAR(common.curves.handle_align);
+    FROM_DEFAULT_V4_UCHAR(common.curves.handle_auto_clamped);
+    FROM_DEFAULT_V4_UCHAR(common.curves.handle_sel_free);
+    FROM_DEFAULT_V4_UCHAR(common.curves.handle_sel_auto);
+    FROM_DEFAULT_V4_UCHAR(common.curves.handle_sel_vect);
+    FROM_DEFAULT_V4_UCHAR(common.curves.handle_sel_align);
+    FROM_DEFAULT_V4_UCHAR(common.curves.handle_sel_auto_clamped);
+    FROM_DEFAULT_V4_UCHAR(common.curves.handle_vertex);
+    FROM_DEFAULT_V4_UCHAR(common.curves.handle_vertex_select);
+    btheme->common.curves.handle_vertex_size = U_theme_default.common.curves.handle_vertex_size;
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 69)) {
+    FROM_DEFAULT_V4_UCHAR(common.anim.keyframe);
+    FROM_DEFAULT_V4_UCHAR(common.anim.keyframe_extreme);
+    FROM_DEFAULT_V4_UCHAR(common.anim.keyframe_breakdown);
+    FROM_DEFAULT_V4_UCHAR(common.anim.keyframe_jitter);
+    FROM_DEFAULT_V4_UCHAR(common.anim.keyframe_moving_hold);
+    FROM_DEFAULT_V4_UCHAR(common.anim.keyframe_generated);
+    FROM_DEFAULT_V4_UCHAR(common.anim.keyframe_selected);
+    FROM_DEFAULT_V4_UCHAR(common.anim.keyframe_extreme_selected);
+    FROM_DEFAULT_V4_UCHAR(common.anim.keyframe_breakdown_selected);
+    FROM_DEFAULT_V4_UCHAR(common.anim.keyframe_jitter_selected);
+    FROM_DEFAULT_V4_UCHAR(common.anim.keyframe_moving_hold_selected);
+    FROM_DEFAULT_V4_UCHAR(common.anim.keyframe_generated_selected);
+    FROM_DEFAULT_V4_UCHAR(common.anim.long_key);
+    FROM_DEFAULT_V4_UCHAR(common.anim.long_key_selected);
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 74)) {
+    FROM_DEFAULT_V4_UCHAR(tui.panel_active);
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 78)) {
+    FROM_DEFAULT_V4_UCHAR(regions.channels.back);
+    FROM_DEFAULT_V4_UCHAR(regions.channels.text);
+    FROM_DEFAULT_V4_UCHAR(regions.channels.text_selected);
+    FROM_DEFAULT_V4_UCHAR(regions.asset_shelf.back);
+    FROM_DEFAULT_V4_UCHAR(regions.asset_shelf.header_back);
+    FROM_DEFAULT_V4_UCHAR(regions.sidebars.back);
+    FROM_DEFAULT_V4_UCHAR(regions.sidebars.tab_back);
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 79)) {
+    FROM_DEFAULT_V4_UCHAR(common.anim.channels);
+    FROM_DEFAULT_V4_UCHAR(common.anim.channels_sub);
+    FROM_DEFAULT_V4_UCHAR(common.anim.channel);
+    FROM_DEFAULT_V4_UCHAR(common.anim.channel_selected);
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 80)) {
+    FROM_DEFAULT_V4_UCHAR(regions.scrubbing.back);
+    FROM_DEFAULT_V4_UCHAR(regions.scrubbing.text);
+    FROM_DEFAULT_V4_UCHAR(regions.scrubbing.time_marker);
+    FROM_DEFAULT_V4_UCHAR(regions.scrubbing.time_marker_selected);
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 91)) {
+    FROM_DEFAULT_V4_UCHAR(space_view3d.bevel);
+    FROM_DEFAULT_V4_UCHAR(space_view3d.seam);
+    FROM_DEFAULT_V4_UCHAR(space_view3d.sharp);
+    FROM_DEFAULT_V4_UCHAR(space_view3d.crease);
+    FROM_DEFAULT_V4_UCHAR(space_view3d.freestyle);
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 93)) {
+    FROM_DEFAULT_V4_UCHAR(tui.wcol_curve.text);
+    FROM_DEFAULT_V4_UCHAR(tui.wcol_curve.text_sel);
+    FROM_DEFAULT_V4_UCHAR(tui.wcol_curve.item);
+    FROM_DEFAULT_V4_UCHAR(tui.wcol_curve.inner);
+    FROM_DEFAULT_V4_UCHAR(tui.wcol_curve.inner_sel);
+    FROM_DEFAULT_V4_UCHAR(tui.wcol_curve.outline);
+    FROM_DEFAULT_V4_UCHAR(tui.wcol_curve.outline_sel);
+    btheme->tui.wcol_curve.roundness = U_theme_default.tui.wcol_curve.roundness;
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 104)) {
+    FROM_DEFAULT_V4_UCHAR(common.anim.scene_strip_range);
+  }
+
+  /* Reset the theme due to compatibility breaking changes in 5.0. */
+  if (!USER_VERSION_ATLEAST(500, 111)) {
+    MEMCPY_STRUCT_AFTER(btheme, &U_theme_default, name);
+    /* Update text styles to match. */
+    LISTBASE_FOREACH (uiStyle *, style, &userdef->uistyles) {
+      style->paneltitle.points = 11.0f;
+      style->paneltitle.shadow = 3;
+      style->paneltitle.shadowalpha = 0.5f;
+      style->paneltitle.shadowcolor = 0.0f;
+      style->widget.points = 11.0f;
+      style->widget.shadow = 1;
+      style->widget.shadowalpha = 0.5f;
+      style->widget.shadowcolor = 0.0f;
+      style->tooltip.shadow = 1;
+      style->tooltip.points = 11.0f;
+      style->tooltip.shadowalpha = 0.5f;
+      style->tooltip.shadowcolor = 0.0f;
+    }
+
+    FROM_DEFAULT_V4_UCHAR(space_node.node_outline);
+  }
+
+  if (!USER_VERSION_ATLEAST(501, 3)) {
+    FROM_DEFAULT_V4_UCHAR(space_action.anim_interpolation_other);
+    FROM_DEFAULT_V4_UCHAR(space_action.anim_interpolation_constant);
+    FROM_DEFAULT_V4_UCHAR(space_action.anim_interpolation_linear);
+  }
+
   /**
    * Always bump subversion in BKE_blender_version.h when adding versioning
    * code here, and wrap it inside a USER_VERSION_ATLEAST check.
@@ -253,14 +453,21 @@ static void do_version_select_mouse(const UserDef *userdef, wmKeyMapItem *kmi)
       break;
     case EVT_TWEAK_S:
       kmi->type = (left) ? LEFTMOUSE : RIGHTMOUSE;
-      kmi->val = KM_CLICK_DRAG;
+      kmi->val = KM_PRESS_DRAG;
       break;
     case EVT_TWEAK_A:
       kmi->type = (left) ? RIGHTMOUSE : LEFTMOUSE;
-      kmi->val = KM_CLICK_DRAG;
+      kmi->val = KM_PRESS_DRAG;
       break;
     default:
       break;
+  }
+}
+
+static void do_version_keyframe_jump(wmKeyMapItem *kmi)
+{
+  if (STREQ(kmi->idname, "GRAPH_OT_keyframe_jump")) {
+    STRNCPY(kmi->idname, "SCREEN_OT_keyframe_jump");
   }
 }
 
@@ -307,7 +514,7 @@ static bool keymap_item_update_tweak_event(wmKeyMapItem *kmi, void * /*user_data
   else {
     kmi->direction = KM_ANY;
   }
-  kmi->val = KM_CLICK_DRAG;
+  kmi->val = KM_PRESS_DRAG;
   return false;
 }
 
@@ -324,7 +531,7 @@ static void keymap_update_brushes_handle_add_item(
   if (STREQ(kmi->idname, "WM_OT_tool_set_by_id")) {
     IDProperty *idprop = IDP_GetPropertyFromGroup(kmi->properties, "name");
     if (idprop && (idprop->type == IDP_STRING)) {
-      const blender::StringRef prop_val = IDP_String(idprop);
+      const blender::StringRef prop_val = IDP_string_get(idprop);
       if (!prop_val.startswith("builtin_brush.")) {
         return;
       }
@@ -339,7 +546,7 @@ static void keymap_update_brushes_handle_add_item(
   else if (STREQ(kmi->idname, "PAINT_OT_brush_select")) {
     IDProperty *idprop = IDP_GetPropertyFromGroup(kmi->properties, tool_property);
     if (idprop && (idprop->type == IDP_INT)) {
-      const int prop_val = IDP_Int(idprop);
+      const int prop_val = IDP_int_get(idprop);
       if (id_asset_map.contains(prop_val)) {
         asset_id = id_asset_map.lookup(prop_val);
       }
@@ -375,7 +582,7 @@ static void keymap_update_brushes_handle_remove_item(
   if (STREQ(kmi->idname, "PAINT_OT_brush_select")) {
     IDProperty *idprop = IDP_GetPropertyFromGroup(kmi->properties, tool_property);
     if (idprop && (idprop->type == IDP_INT)) {
-      const int prop_val = IDP_Int(idprop);
+      const int prop_val = IDP_int_get(idprop);
       if (id_asset_map.contains(prop_val)) {
         asset_id = id_asset_map.lookup(prop_val);
       }
@@ -626,7 +833,7 @@ void blo_do_versions_userdef(UserDef *userdef)
   /* If the userdef was created on a different platform, it may have an
    * unsupported GPU backend selected.  If so, pick a supported default. */
 #ifdef __APPLE__
-  if (userdef->gpu_backend == GPU_BACKEND_OPENGL) {
+  if (userdef->gpu_backend == GPU_BACKEND_OPENGL || userdef->gpu_backend == GPU_BACKEND_VULKAN) {
     userdef->gpu_backend = GPU_BACKEND_METAL;
   }
 #else
@@ -811,14 +1018,14 @@ void blo_do_versions_userdef(UserDef *userdef)
       userdef->anisotropic_filter = 1;
     }
 
-    if (userdef->ndof_sensitivity == 0.0f) {
-      userdef->ndof_sensitivity = 1.0f;
+    if (userdef->ndof_translation_sensitivity == 0.0f) {
+      userdef->ndof_translation_sensitivity = 1.0f;
       userdef->ndof_flag = (NDOF_LOCK_HORIZON | NDOF_SHOULD_PAN | NDOF_SHOULD_ZOOM |
                             NDOF_SHOULD_ROTATE);
     }
 
-    if (userdef->ndof_orbit_sensitivity == 0.0f) {
-      userdef->ndof_orbit_sensitivity = userdef->ndof_sensitivity;
+    if (userdef->ndof_rotation_sensitivity == 0.0f) {
+      userdef->ndof_rotation_sensitivity = userdef->ndof_translation_sensitivity;
 
       if (!(userdef->flag & USER_TRACKBALL)) {
         userdef->ndof_flag |= NDOF_TURNTABLE;
@@ -851,10 +1058,10 @@ void blo_do_versions_userdef(UserDef *userdef)
 
   if (!USER_VERSION_ATLEAST(278, 6)) {
     /* Clear preference flags for re-use. */
-    userdef->flag &= ~(USER_FLAG_NUMINPUT_ADVANCED | (1 << 2) | USER_FLAG_UNUSED_3 |
+    userdef->flag &= ~(USER_FLAG_NUMINPUT_ADVANCED | (1 << 2) | USER_MENU_CLOSE_LEAVE |
                        USER_FLAG_UNUSED_6 | USER_FLAG_UNUSED_7 | USER_INTERNET_ALLOW |
                        USER_DEVELOPER_UI);
-    userdef->uiflag &= ~(USER_HEADER_BOTTOM);
+    userdef->uiflag &= ~USER_HEADER_BOTTOM;
     userdef->transopts &= ~(USER_TR_UNUSED_3 | USER_TR_UNUSED_4 | USER_TR_UNUSED_6 |
                             USER_TR_UNUSED_7);
 
@@ -942,7 +1149,7 @@ void blo_do_versions_userdef(UserDef *userdef)
 
     copy_v3_fl3(userdef->light_ambient, 0.025000, 0.025000, 0.025000);
 
-    userdef->flag &= ~(USER_FLAG_UNUSED_4);
+    userdef->flag &= ~USER_FLAG_UNUSED_4;
 
     userdef->uiflag &= ~(USER_HEADER_FROM_PREF | USER_REGISTER_ALL_USERS);
   }
@@ -954,9 +1161,9 @@ void blo_do_versions_userdef(UserDef *userdef)
   }
 
   if (!USER_VERSION_ATLEAST(280, 44)) {
-    userdef->uiflag &= ~(USER_NO_MULTITOUCH_GESTURES | USER_UIFLAG_UNUSED_1);
-    userdef->uiflag2 &= ~(USER_UIFLAG2_UNUSED_0);
-    userdef->gp_settings &= ~(GP_PAINT_UNUSED_0);
+    userdef->uiflag &= ~USER_NO_MULTITOUCH_GESTURES;
+    userdef->uiflag2 &= ~USER_ALWAYS_SHOW_NUMBER_ARROWS;
+    userdef->gp_settings &= ~GP_PAINT_UNUSED_0;
   }
 
   if (!USER_VERSION_ATLEAST(280, 50)) {
@@ -1090,7 +1297,7 @@ void blo_do_versions_userdef(UserDef *userdef)
       userdef->pixelsize = 1.0f;
     }
     /* Clear old userdef flag for "Camera Parent Lock". */
-    userdef->uiflag &= ~USER_UIFLAG_UNUSED_3;
+    userdef->uiflag &= ~USER_AREA_CORNER_HANDLE;
   }
 
   if (!USER_VERSION_ATLEAST(292, 9)) {
@@ -1170,9 +1377,7 @@ void blo_do_versions_userdef(UserDef *userdef)
   }
 
   if (!USER_VERSION_ATLEAST(302, 5)) {
-    wmKeyConfigFilterItemParams params{};
-    params.check_item = true;
-    params.check_diff_item_add = true;
+    const wmKeyConfigFilterItemParams params = WM_KEY_CONFIG_FILTER_ITEM_ALL;
     BKE_keyconfig_pref_filter_items(userdef, &params, keymap_item_update_tweak_event, nullptr);
   }
 
@@ -1208,8 +1413,8 @@ void blo_do_versions_userdef(UserDef *userdef)
 
   if (!USER_VERSION_ATLEAST(306, 5)) {
     if (userdef->pythondir_legacy[0]) {
-      bUserScriptDirectory *script_dir = static_cast<bUserScriptDirectory *>(
-          MEM_callocN(sizeof(*script_dir), "Versioning user script path"));
+      bUserScriptDirectory *script_dir = MEM_callocN<bUserScriptDirectory>(
+          "Versioning user script path");
 
       STRNCPY(script_dir->dir_path, userdef->pythondir_legacy);
       STRNCPY_UTF8(script_dir->name, DATA_("Untitled"));
@@ -1301,10 +1506,6 @@ void blo_do_versions_userdef(UserDef *userdef)
     }
   }
 
-  if (!USER_VERSION_ATLEAST(402, 51)) {
-    userdef->sequencer_editor_flag |= USER_SEQ_ED_SIMPLE_TWEAKING;
-  }
-
   if (!USER_VERSION_ATLEAST(402, 56)) {
     BKE_preferences_extension_repo_add_default_system(userdef);
   }
@@ -1394,6 +1595,150 @@ void blo_do_versions_userdef(UserDef *userdef)
         keymap_update_mesh_texture_paint_brushes(keymap);
       }
     }
+  }
+
+  if (!USER_VERSION_ATLEAST(404, 28)) {
+    userdef->ndof_flag |= NDOF_SHOW_GUIDE_ORBIT_CENTER | NDOF_ORBIT_CENTER_AUTO;
+  }
+
+  if (userdef->border_width == 0) {
+    userdef->border_width = 2;
+  }
+
+  if (!USER_VERSION_ATLEAST(405, 10)) {
+    static const blender::Map<std::string, std::string> keymap_renames = {
+        {"SequencerCommon", "Video Sequence Editor"},
+        {"SequencerPreview", "Preview"},
+
+        {"Sequencer Tool: Cursor", "Preview Tool: Cursor"},
+        {"Sequencer Tool: Sample", "Preview Tool: Sample"},
+        {"Sequencer Tool: Move", "Preview Tool: Move"},
+        {"Sequencer Tool: Rotate", "Preview Tool: Rotate"},
+        {"Sequencer Tool: Scale", "Preview Tool: Scale"},
+
+        {"Sequencer Timeline Tool: Select Box", "Sequencer Tool: Select Box"},
+        {"Sequencer Timeline Tool: Select Box (fallback)",
+         "Sequencer Tool: Select Box (fallback)"},
+
+        {"Sequencer Preview Tool: Tweak", "Preview Tool: Tweak"},
+        {"Sequencer Preview Tool: Tweak (fallback)", "Preview Tool: Tweak (fallback)"},
+        {"Sequencer Preview Tool: Select Box", "Preview Tool: Select Box"},
+        {"Sequencer Preview Tool: Select Box (fallback)", "Preview Tool: Select Box (fallback)"},
+    };
+
+    LISTBASE_FOREACH (wmKeyMap *, keymap, &userdef->user_keymaps) {
+      std::string old_name(keymap->idname);
+      if (const std::string *new_name = keymap_renames.lookup_ptr(old_name)) {
+        STRNCPY(keymap->idname, new_name->c_str());
+      }
+    }
+  }
+
+  if (!USER_VERSION_ATLEAST(405, 11)) {
+    const wmKeyConfigFilterItemParams params = WM_KEY_CONFIG_FILTER_ITEM_ALL;
+    BKE_keyconfig_pref_filter_items(
+        userdef,
+        &params,
+        [](wmKeyMapItem *kmi, void * /*user_data*/) -> bool {
+          if (kmi->shift == KM_ANY && kmi->ctrl == KM_ANY && kmi->alt == KM_ANY &&
+              kmi->oskey == KM_ANY)
+          {
+            kmi->hyper = KM_ANY;
+          }
+          return false;
+        },
+        nullptr);
+  }
+
+  if (!USER_VERSION_ATLEAST(405, 50)) {
+    LISTBASE_FOREACH (wmKeyMap *, keymap, &userdef->user_keymaps) {
+      LISTBASE_FOREACH (wmKeyMapDiffItem *, kmdi, &keymap->diff_items) {
+        if (kmdi->remove_item) {
+          do_version_keyframe_jump(kmdi->remove_item);
+        }
+        if (kmdi->add_item) {
+          do_version_keyframe_jump(kmdi->add_item);
+        }
+      }
+
+      LISTBASE_FOREACH (wmKeyMapItem *, kmi, &keymap->items) {
+        do_version_keyframe_jump(kmi);
+      }
+    }
+  }
+
+  if (!USER_VERSION_ATLEAST(405, 86)) {
+    if (userdef->gpu_shader_workers > 0) {
+      userdef->shader_compilation_method = USER_SHADER_COMPILE_SUBPROCESS;
+    }
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 11)) {
+    userdef->gpu_flag &= ~USER_GPU_FLAG_UNUSED_0;
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 59)) {
+    userdef->preferences_display_type = USER_TEMP_SPACE_DISPLAY_WINDOW;
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 76)) {
+    if (userdef->stored_bounds.file.xmin == userdef->stored_bounds.file.xmax) {
+      memcpy(&userdef->stored_bounds, &U_default.stored_bounds, sizeof(userdef->stored_bounds));
+    }
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 90)) {
+    BKE_preferences_asset_shelf_settings_ensure_catalog_path_enabled(
+        userdef, "IMAGE_AST_brush_paint", "Brushes/Mesh Texture Paint/Basic");
+    BKE_preferences_asset_shelf_settings_ensure_catalog_path_enabled(
+        userdef, "IMAGE_AST_brush_paint", "Brushes/Mesh Texture Paint/Erase");
+    BKE_preferences_asset_shelf_settings_ensure_catalog_path_enabled(
+        userdef, "IMAGE_AST_brush_paint", "Brushes/Mesh Texture Paint/Pixel Art");
+    BKE_preferences_asset_shelf_settings_ensure_catalog_path_enabled(
+        userdef, "IMAGE_AST_brush_paint", "Brushes/Mesh Texture Paint/Utilities");
+
+    BKE_preferences_asset_shelf_settings_ensure_catalog_path_enabled(
+        userdef, "VIEW3D_AST_brush_texture_paint", "Brushes/Mesh Texture Paint/Basic");
+    BKE_preferences_asset_shelf_settings_ensure_catalog_path_enabled(
+        userdef, "VIEW3D_AST_brush_texture_paint", "Brushes/Mesh Texture Paint/Erase");
+    BKE_preferences_asset_shelf_settings_ensure_catalog_path_enabled(
+        userdef, "VIEW3D_AST_brush_texture_paint", "Brushes/Mesh Texture Paint/Pixel Art");
+    BKE_preferences_asset_shelf_settings_ensure_catalog_path_enabled(
+        userdef, "VIEW3D_AST_brush_texture_paint", "Brushes/Mesh Texture Paint/Utilities");
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 94)) {
+    /* Force-reset file compression to ON, see #135735. */
+    userdef->flag |= USER_FILECOMPRESS;
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 96)) {
+    /* Increase the number of recently-used files if using the old default value. */
+    if (userdef->recent_files == 20) {
+      userdef->recent_files = 200;
+    }
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 99)) {
+    userdef->xr_navigation.vignette_intensity = 50.0f;
+    userdef->xr_navigation.turn_amount = DEG2RAD(30);
+    userdef->xr_navigation.turn_speed = DEG2RAD(60);
+    userdef->xr_navigation.flag = USER_XR_NAV_SNAP_TURN;
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 101)) {
+    /* The Copy Global Transform add-on was moved into Blender itself, and thus
+     * is no longer an add-on. */
+    BKE_addon_remove_safe(&userdef->addons, "copy_global_transform");
+  }
+
+  if (!USER_VERSION_ATLEAST(500, 116)) {
+    BKE_preferences_asset_shelf_settings_ensure_catalog_path_enabled(
+        userdef, "NODE_AST_compositor", "Camera & Lens Effects");
+    BKE_preferences_asset_shelf_settings_ensure_catalog_path_enabled(
+        userdef, "NODE_AST_compositor", "Creative");
+    BKE_preferences_asset_shelf_settings_ensure_catalog_path_enabled(
+        userdef, "NODE_AST_compositor", "Utilities");
   }
 
   /**

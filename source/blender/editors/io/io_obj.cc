@@ -17,19 +17,18 @@
 
 #  include "BLI_path_utils.hh"
 #  include "BLI_string.h"
-#  include "BLI_utildefines.h"
+#  include "BLI_string_utf8.h"
 
 #  include "BLT_translation.hh"
 
 #  include "ED_fileselect.hh"
 #  include "ED_outliner.hh"
 
-#  include "MEM_guardedalloc.h"
-
 #  include "RNA_access.hh"
 #  include "RNA_define.hh"
 
 #  include "UI_interface.hh"
+#  include "UI_interface_layout.hh"
 #  include "UI_resources.hh"
 
 #  include "WM_api.hh"
@@ -62,7 +61,22 @@ static const EnumPropertyItem io_obj_path_mode[] = {
     {PATH_REFERENCE_COPY, "COPY", 0, "Copy", "Copy the file to the destination path"},
     {0, nullptr, 0, nullptr, nullptr}};
 
-static int wm_obj_export_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static const EnumPropertyItem io_obj_mtl_name_collision_mode[] = {
+    {OBJ_MTL_NAME_COLLISION_MAKE_UNIQUE,
+     "MAKE_UNIQUE",
+     0,
+     "Make Unique",
+     "Create new materials with unique names for each OBJ file"},
+    {OBJ_MTL_NAME_COLLISION_REFERENCE_EXISTING,
+     "REFERENCE_EXISTING",
+     0,
+     "Reference Existing",
+     "Use existing materials with same name instead of creating new ones"},
+    {0, nullptr, 0, nullptr, nullptr}};
+
+static wmOperatorStatus wm_obj_export_invoke(bContext *C,
+                                             wmOperator *op,
+                                             const wmEvent * /*event*/)
 {
   ED_fileselect_ensure_default_filepath(C, op, ".obj");
 
@@ -70,7 +84,7 @@ static int wm_obj_export_invoke(bContext *C, wmOperator *op, const wmEvent * /*e
   return OPERATOR_RUNNING_MODAL;
 }
 
-static int wm_obj_export_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus wm_obj_export_exec(bContext *C, wmOperator *op)
 {
   if (!RNA_struct_property_is_set_ex(op->ptr, "filepath", false)) {
     BKE_report(op->reports, RPT_ERROR, "No filepath given");
@@ -88,6 +102,7 @@ static int wm_obj_export_exec(bContext *C, wmOperator *op)
   export_params.up_axis = eIOAxis(RNA_enum_get(op->ptr, "up_axis"));
   export_params.global_scale = RNA_float_get(op->ptr, "global_scale");
   export_params.apply_modifiers = RNA_boolean_get(op->ptr, "apply_modifiers");
+  export_params.apply_transform = RNA_boolean_get(op->ptr, "apply_transform");
   export_params.export_eval_mode = eEvaluationMode(RNA_enum_get(op->ptr, "export_eval_mode"));
 
   export_params.export_selected_objects = RNA_boolean_get(op->ptr, "export_selected_objects");
@@ -111,102 +126,101 @@ static int wm_obj_export_exec(bContext *C, wmOperator *op)
   RNA_string_get(op->ptr, "collection", export_params.collection);
 
   OBJ_export(C, &export_params);
-  return BKE_reports_contain(op->reports, RPT_ERROR) ? OPERATOR_CANCELLED : OPERATOR_FINISHED;
+
+  if (BKE_reports_contain(op->reports, RPT_ERROR)) {
+    return OPERATOR_CANCELLED;
+  }
+
+  BKE_report(op->reports, RPT_INFO, "File exported successfully");
+  return OPERATOR_FINISHED;
 }
 
-static void ui_obj_export_settings(const bContext *C, uiLayout *layout, PointerRNA *ptr)
+static void ui_obj_export_settings(const bContext *C, blender::ui::Layout &layout, PointerRNA *ptr)
 {
   const bool export_animation = RNA_boolean_get(ptr, "export_animation");
   const bool export_smooth_groups = RNA_boolean_get(ptr, "export_smooth_groups");
   const bool export_materials = RNA_boolean_get(ptr, "export_materials");
 
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout.use_property_split_set(true);
+  layout.use_property_decorate_set(false);
 
   /* Object General options. */
-  if (uiLayout *panel = uiLayoutPanel(C, layout, "OBJ_export_general", false, IFACE_("General"))) {
-    uiLayout *col = uiLayoutColumn(panel, false);
+  if (blender::ui::Layout *panel = layout.panel(C, "OBJ_export_general", false, IFACE_("General")))
+  {
+    blender::ui::Layout &col = panel->column(false);
 
     if (CTX_wm_space_file(C)) {
-      uiLayout *sub = uiLayoutColumnWithHeading(col, false, IFACE_("Include"));
-      uiItemR(
-          sub, ptr, "export_selected_objects", UI_ITEM_NONE, IFACE_("Selection Only"), ICON_NONE);
+      blender::ui::Layout &sub = col.column(false, IFACE_("Include"));
+      sub.prop(ptr, "export_selected_objects", UI_ITEM_NONE, IFACE_("Selection Only"), ICON_NONE);
     }
 
-    uiItemR(col, ptr, "global_scale", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "forward_axis", UI_ITEM_NONE, IFACE_("Forward Axis"), ICON_NONE);
-    uiItemR(col, ptr, "up_axis", UI_ITEM_NONE, IFACE_("Up Axis"), ICON_NONE);
+    col.prop(ptr, "global_scale", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col.prop(ptr, "forward_axis", UI_ITEM_NONE, IFACE_("Forward Axis"), ICON_NONE);
+    col.prop(ptr, "up_axis", UI_ITEM_NONE, IFACE_("Up Axis"), ICON_NONE);
   }
 
   /* Geometry options. */
-  if (uiLayout *panel = uiLayoutPanel(C, layout, "OBJ_export_geometry", false, IFACE_("Geometry")))
+  if (blender::ui::Layout *panel = layout.panel(
+          C, "OBJ_export_geometry", false, IFACE_("Geometry")))
   {
-    uiLayout *col = uiLayoutColumn(panel, false);
-    uiItemR(col, ptr, "export_uv", UI_ITEM_NONE, IFACE_("UV Coordinates"), ICON_NONE);
-    uiItemR(col, ptr, "export_normals", UI_ITEM_NONE, IFACE_("Normals"), ICON_NONE);
-    uiItemR(col, ptr, "export_colors", UI_ITEM_NONE, IFACE_("Colors"), ICON_NONE);
-    uiItemR(
-        col, ptr, "export_curves_as_nurbs", UI_ITEM_NONE, IFACE_("Curves as NURBS"), ICON_NONE);
+    blender::ui::Layout &col = panel->column(false);
+    col.prop(ptr, "export_uv", UI_ITEM_NONE, IFACE_("UV Coordinates"), ICON_NONE);
+    col.prop(ptr, "export_normals", UI_ITEM_NONE, IFACE_("Normals"), ICON_NONE);
+    col.prop(ptr, "export_colors", UI_ITEM_NONE, IFACE_("Colors"), ICON_NONE);
+    col.prop(ptr, "export_curves_as_nurbs", UI_ITEM_NONE, IFACE_("Curves as NURBS"), ICON_NONE);
 
-    uiItemR(col,
-            ptr,
-            "export_triangulated_mesh",
-            UI_ITEM_NONE,
-            IFACE_("Triangulated Mesh"),
-            ICON_NONE);
-    uiItemR(col, ptr, "apply_modifiers", UI_ITEM_NONE, IFACE_("Apply Modifiers"), ICON_NONE);
-    uiItemR(col, ptr, "export_eval_mode", UI_ITEM_NONE, IFACE_("Properties"), ICON_NONE);
+    col.prop(
+        ptr, "export_triangulated_mesh", UI_ITEM_NONE, IFACE_("Triangulated Mesh"), ICON_NONE);
+    col.prop(ptr, "apply_modifiers", UI_ITEM_NONE, IFACE_("Apply Modifiers"), ICON_NONE);
+    col.prop(ptr, "apply_transform", UI_ITEM_NONE, IFACE_("Apply Transform"), ICON_NONE);
+    col.prop(ptr, "export_eval_mode", UI_ITEM_NONE, IFACE_("Properties"), ICON_NONE);
   }
 
   /* Grouping options. */
-  if (uiLayout *panel = uiLayoutPanel(C, layout, "OBJ_export_grouping", false, IFACE_("Grouping")))
+  if (blender::ui::Layout *panel = layout.panel(
+          C, "OBJ_export_grouping", false, IFACE_("Grouping")))
   {
-    uiLayout *col = uiLayoutColumn(panel, false);
-    uiItemR(col, ptr, "export_object_groups", UI_ITEM_NONE, IFACE_("Object Groups"), ICON_NONE);
-    uiItemR(
-        col, ptr, "export_material_groups", UI_ITEM_NONE, IFACE_("Material Groups"), ICON_NONE);
-    uiItemR(col, ptr, "export_vertex_groups", UI_ITEM_NONE, IFACE_("Vertex Groups"), ICON_NONE);
-    uiItemR(col, ptr, "export_smooth_groups", UI_ITEM_NONE, IFACE_("Smooth Groups"), ICON_NONE);
-    col = uiLayoutColumn(col, false);
-    uiLayoutSetEnabled(col, export_smooth_groups);
-    uiItemR(col,
-            ptr,
-            "smooth_group_bitflags",
-            UI_ITEM_NONE,
-            IFACE_("Smooth Group Bitflags"),
-            ICON_NONE);
+    blender::ui::Layout &col = panel->column(false);
+    col.prop(ptr, "export_object_groups", UI_ITEM_NONE, IFACE_("Object Groups"), ICON_NONE);
+    col.prop(ptr, "export_material_groups", UI_ITEM_NONE, IFACE_("Material Groups"), ICON_NONE);
+    col.prop(ptr, "export_vertex_groups", UI_ITEM_NONE, IFACE_("Vertex Groups"), ICON_NONE);
+    col.prop(ptr, "export_smooth_groups", UI_ITEM_NONE, IFACE_("Smooth Groups"), ICON_NONE);
+    blender::ui::Layout &sub = col.column(false);
+    sub.enabled_set(export_smooth_groups);
+    sub.prop(
+        ptr, "smooth_group_bitflags", UI_ITEM_NONE, IFACE_("Smooth Group Bitflags"), ICON_NONE);
   }
 
   /* Material options. */
-  PanelLayout panel = uiLayoutPanel(C, layout, "OBJ_export_materials", false);
-  uiLayoutSetPropSep(panel.header, false);
-  uiItemR(panel.header, ptr, "export_materials", UI_ITEM_NONE, "", ICON_NONE);
-  uiItemL(panel.header, IFACE_("Materials"), ICON_NONE);
+  PanelLayout panel = layout.panel(C, "OBJ_export_materials", false);
+  panel.header->use_property_split_set(false);
+  panel.header->prop(ptr, "export_materials", UI_ITEM_NONE, "", ICON_NONE);
+  panel.header->label(IFACE_("Materials"), ICON_NONE);
   if (panel.body) {
-    uiLayout *col = uiLayoutColumn(panel.body, false);
-    uiLayoutSetEnabled(col, export_materials);
+    blender::ui::Layout &col = panel.body->column(false);
+    col.enabled_set(export_materials);
 
-    uiItemR(col, ptr, "export_pbr_extensions", UI_ITEM_NONE, IFACE_("PBR Extensions"), ICON_NONE);
-    uiItemR(col, ptr, "path_mode", UI_ITEM_NONE, IFACE_("Path Mode"), ICON_NONE);
+    col.prop(ptr, "export_pbr_extensions", UI_ITEM_NONE, IFACE_("PBR Extensions"), ICON_NONE);
+    col.prop(ptr, "path_mode", UI_ITEM_NONE, IFACE_("Path Mode"), ICON_NONE);
   }
 
   /* Animation options. */
-  panel = uiLayoutPanel(C, layout, "OBJ_export_animation", true);
-  uiLayoutSetPropSep(panel.header, false);
-  uiItemR(panel.header, ptr, "export_animation", UI_ITEM_NONE, "", ICON_NONE);
-  uiItemL(panel.header, IFACE_("Animation"), ICON_NONE);
+  panel = layout.panel(C, "OBJ_export_animation", true);
+  panel.header->use_property_split_set(false);
+  panel.header->prop(ptr, "export_animation", UI_ITEM_NONE, "", ICON_NONE);
+  panel.header->label(IFACE_("Animation"), ICON_NONE);
   if (panel.body) {
-    uiLayout *col = uiLayoutColumn(panel.body, false);
-    uiLayoutSetEnabled(col, export_animation);
+    blender::ui::Layout &col = panel.body->column(false);
+    col.enabled_set(export_animation);
 
-    uiItemR(col, ptr, "start_frame", UI_ITEM_NONE, IFACE_("Frame Start"), ICON_NONE);
-    uiItemR(col, ptr, "end_frame", UI_ITEM_NONE, IFACE_("End"), ICON_NONE);
+    col.prop(ptr, "start_frame", UI_ITEM_NONE, IFACE_("Frame Start"), ICON_NONE);
+    col.prop(ptr, "end_frame", UI_ITEM_NONE, IFACE_("End"), ICON_NONE);
   }
 }
 
 static void wm_obj_export_draw(bContext *C, wmOperator *op)
 {
-  ui_obj_export_settings(C, op->layout, op->ptr);
+  ui_obj_export_settings(C, *op->layout, op->ptr);
 }
 
 /**
@@ -315,6 +329,11 @@ void WM_OT_obj_export(wmOperatorType *ot)
   /* File Writer options. */
   RNA_def_boolean(
       ot->srna, "apply_modifiers", true, "Apply Modifiers", "Apply modifiers to exported meshes");
+  RNA_def_boolean(ot->srna,
+                  "apply_transform",
+                  true,
+                  "Apply Transform",
+                  "Apply object transforms to exported vertices");
   RNA_def_enum(ot->srna,
                "export_eval_mode",
                io_obj_export_evaluation_mode,
@@ -332,7 +351,7 @@ void WM_OT_obj_export(wmOperatorType *ot)
                   "export_normals",
                   true,
                   "Export Normals",
-                  "Export per-face normals if the face is flat-shaded, per-face-per-loop "
+                  "Export per-face normals if the face is flat-shaded, per-face-corner "
                   "normals if smooth-shaded");
   RNA_def_boolean(ot->srna, "export_colors", false, "Export Colors", "Export per-vertex colors");
   RNA_def_boolean(ot->srna,
@@ -347,12 +366,13 @@ void WM_OT_obj_export(wmOperatorType *ot)
                   "Export Materials with PBR Extensions",
                   "Export MTL library using PBR extensions (roughness, metallic, sheen, "
                   "coat, anisotropy, transmission)");
-  RNA_def_enum(ot->srna,
-               "path_mode",
-               io_obj_path_mode,
-               PATH_REFERENCE_AUTO,
-               "Path Mode",
-               "Method used to reference paths");
+  prop = RNA_def_enum(ot->srna,
+                      "path_mode",
+                      io_obj_path_mode,
+                      PATH_REFERENCE_AUTO,
+                      "Path Mode",
+                      "Method used to reference paths");
+  RNA_def_property_translation_context(prop, BLT_I18NCONTEXT_EDITOR_FILEBROWSER);
   RNA_def_boolean(ot->srna,
                   "export_triangulated_mesh",
                   false,
@@ -383,24 +403,30 @@ void WM_OT_obj_export(wmOperatorType *ot)
       "Export Vertex Groups",
       "Export the name of the vertex group of a face. It is approximated "
       "by choosing the vertex group with the most members among the vertices of a face");
+  RNA_def_boolean(ot->srna,
+                  "export_smooth_groups",
+                  false,
+                  "Export Smooth Groups",
+                  "Generate smooth groups identifiers for each group of smooth faces, as "
+                  "unique integer values by default");
   RNA_def_boolean(
       ot->srna,
-      "export_smooth_groups",
+      "smooth_group_bitflags",
       false,
-      "Export Smooth Groups",
-      "Every smooth-shaded face is assigned group \"1\" and every flat-shaded face \"off\"");
-  RNA_def_boolean(
-      ot->srna, "smooth_group_bitflags", false, "Generate Bitflags for Smooth Groups", "");
+      "Bitflags Smooth Groups",
+      "If exporting smoothgroups, generate 'bitflags' values for the groups, instead of "
+      "unique integer values. The same bitflag value can be re-used for different groups of "
+      "smooth faces, as long as they have no common sharp edges or vertices");
 
   /* Only show `.obj` or `.mtl` files by default. */
   prop = RNA_def_string(ot->srna, "filter_glob", "*.obj;*.mtl", 0, "Extension Filter", "");
   RNA_def_property_flag(prop, PROP_HIDDEN);
 
-  prop = RNA_def_string(ot->srna, "collection", nullptr, MAX_IDPROP_NAME, "Collection", nullptr);
+  prop = RNA_def_string(ot->srna, "collection", nullptr, MAX_ID_NAME - 2, "Collection", nullptr);
   RNA_def_property_flag(prop, PROP_HIDDEN);
 }
 
-static int wm_obj_import_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus wm_obj_import_exec(bContext *C, wmOperator *op)
 {
   OBJImportParams import_params;
   import_params.global_scale = RNA_float_get(op->ptr, "global_scale");
@@ -417,6 +443,8 @@ static int wm_obj_import_exec(bContext *C, wmOperator *op)
   import_params.collection_separator = separator[0];
   import_params.relative_paths = ((U.flag & USER_RELPATHS) != 0);
   import_params.clear_selection = true;
+  import_params.mtl_name_collision_mode = eOBJMtlNameCollisionMode(
+      RNA_enum_get(op->ptr, "mtl_name_collision_mode"));
 
   import_params.reports = op->reports;
 
@@ -442,33 +470,42 @@ static int wm_obj_import_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static void ui_obj_import_settings(const bContext *C, uiLayout *layout, PointerRNA *ptr)
+static void ui_obj_import_settings(const bContext *C, blender::ui::Layout &layout, PointerRNA *ptr)
 {
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout.use_property_split_set(true);
+  layout.use_property_decorate_set(false);
 
-  if (uiLayout *panel = uiLayoutPanel(C, layout, "OBJ_import_general", false, IFACE_("General"))) {
-    uiLayout *col = uiLayoutColumn(panel, false);
-    uiItemR(col, ptr, "global_scale", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "clamp_size", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "forward_axis", UI_ITEM_NONE, IFACE_("Forward Axis"), ICON_NONE);
-    uiItemR(col, ptr, "up_axis", UI_ITEM_NONE, IFACE_("Up Axis"), ICON_NONE);
+  if (blender::ui::Layout *panel = layout.panel(C, "OBJ_import_general", false, IFACE_("General")))
+  {
+    blender::ui::Layout &col = panel->column(false);
+    col.prop(ptr, "global_scale", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col.prop(ptr, "clamp_size", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col.prop(ptr, "forward_axis", UI_ITEM_NONE, IFACE_("Forward Axis"), ICON_NONE);
+    col.prop(ptr, "up_axis", UI_ITEM_NONE, IFACE_("Up Axis"), ICON_NONE);
   }
 
-  if (uiLayout *panel = uiLayoutPanel(C, layout, "OBJ_import_options", false, IFACE_("Options"))) {
-    uiLayout *col = uiLayoutColumn(panel, false);
-    uiItemR(col, ptr, "use_split_objects", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "use_split_groups", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "import_vertex_groups", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "validate_meshes", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "close_spline_loops", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "collection_separator", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  if (blender::ui::Layout *panel = layout.panel(C, "OBJ_import_options", false, IFACE_("Options")))
+  {
+    blender::ui::Layout &col = panel->column(false);
+    col.prop(ptr, "use_split_objects", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col.prop(ptr, "use_split_groups", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col.prop(ptr, "import_vertex_groups", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col.prop(ptr, "validate_meshes", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col.prop(ptr, "close_spline_loops", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col.prop(ptr, "collection_separator", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  }
+
+  if (blender::ui::Layout *panel = layout.panel(
+          C, "OBJ_import_materials", false, IFACE_("Materials")))
+  {
+    blender::ui::Layout &col = panel->column(false);
+    col.prop(ptr, "mtl_name_collision_mode", UI_ITEM_NONE, IFACE_("Name Collision"), ICON_NONE);
   }
 }
 
 static void wm_obj_import_draw(bContext *C, wmOperator *op)
 {
-  ui_obj_import_settings(C, op->layout, op->ptr);
+  ui_obj_import_settings(C, *op->layout, op->ptr);
 }
 
 void WM_OT_obj_import(wmOperatorType *ot)
@@ -545,7 +582,7 @@ void WM_OT_obj_import(wmOperatorType *ot)
                   "close_spline_loops",
                   true,
                   "Detect Cyclic Curves",
-                  "Join curve endpoints if overlapping control points are detected"
+                  "Join curve endpoints if overlapping control points are detected "
                   "(if disabled, no curves will be cyclic)");
 
   RNA_def_string(ot->srna,
@@ -554,6 +591,14 @@ void WM_OT_obj_import(wmOperatorType *ot)
                  2,
                  "Path Separator",
                  "Character used to separate objects name into hierarchical structure");
+
+  /* Material options */
+  RNA_def_enum(ot->srna,
+               "mtl_name_collision_mode",
+               io_obj_mtl_name_collision_mode,
+               OBJ_MTL_NAME_COLLISION_MAKE_UNIQUE,
+               "Material Name Collision",
+               "How to handle naming collisions when importing materials");
 
   /* Only show `.obj` or `.mtl` files by default. */
   prop = RNA_def_string(ot->srna, "filter_glob", "*.obj;*.mtl", 0, "Extension Filter", "");
@@ -564,11 +609,11 @@ namespace blender::ed::io {
 void obj_file_handler_add()
 {
   auto fh = std::make_unique<blender::bke::FileHandlerType>();
-  STRNCPY(fh->idname, "IO_FH_obj");
-  STRNCPY(fh->import_operator, "WM_OT_obj_import");
-  STRNCPY(fh->export_operator, "WM_OT_obj_export");
-  STRNCPY(fh->label, "Wavefront OBJ");
-  STRNCPY(fh->file_extensions_str, ".obj");
+  STRNCPY_UTF8(fh->idname, "IO_FH_obj");
+  STRNCPY_UTF8(fh->import_operator, "WM_OT_obj_import");
+  STRNCPY_UTF8(fh->export_operator, "WM_OT_obj_export");
+  STRNCPY_UTF8(fh->label, "Wavefront OBJ");
+  STRNCPY_UTF8(fh->file_extensions_str, ".obj");
   fh->poll_drop = poll_file_object_drop;
   bke::file_handler_add(std::move(fh));
 }

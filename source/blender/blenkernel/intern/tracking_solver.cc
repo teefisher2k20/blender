@@ -17,7 +17,7 @@
 #include "BLI_listbase.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "BLT_translation.hh"
 
@@ -162,7 +162,7 @@ static bool reconstruct_retrieve_libmv_tracks(MovieReconstructContext *context,
   reconstruction->camnr = 0;
   reconstruction->cameras = nullptr;
 
-  MovieReconstructedCamera *reconstructed_cameras = MEM_cnew_array<MovieReconstructedCamera>(
+  MovieReconstructedCamera *reconstructed_cameras = MEM_calloc_arrayN<MovieReconstructedCamera>(
       (efra - sfra + 1), "temp reconstructed camera");
 
   for (int a = sfra; a <= efra; a++) {
@@ -213,8 +213,8 @@ static bool reconstruct_retrieve_libmv_tracks(MovieReconstructContext *context,
 
   if (reconstruction->camnr) {
     const size_t size = reconstruction->camnr * sizeof(MovieReconstructedCamera);
-    reconstruction->cameras = MEM_cnew_array<MovieReconstructedCamera>(reconstruction->camnr,
-                                                                       "reconstructed camera");
+    reconstruction->cameras = MEM_calloc_arrayN<MovieReconstructedCamera>(reconstruction->camnr,
+                                                                          "reconstructed camera");
     memcpy(reconstruction->cameras, reconstructed_cameras, size);
   }
 
@@ -299,16 +299,18 @@ bool BKE_tracking_reconstruction_check(MovieTracking *tracking,
   if ((tracking->settings.reconstruction_flag & TRACKING_USE_KEYFRAME_SELECTION) == 0) {
     /* automatic keyframe selection does not require any pre-process checks */
     if (reconstruct_count_tracks_on_both_keyframes(tracking_object) < 8) {
-      BLI_strncpy(error_msg,
-                  N_("At least 8 common tracks on both keyframes are needed for reconstruction"),
-                  error_size);
+      BLI_strncpy_utf8(
+          error_msg,
+          N_("At least 8 common tracks on both keyframes are needed for reconstruction"),
+          error_size);
 
       return false;
     }
   }
 
 #ifndef WITH_LIBMV
-  BLI_strncpy(error_msg, N_("Blender is compiled without motion tracking library"), error_size);
+  BLI_strncpy_utf8(
+      error_msg, N_("Blender is compiled without motion tracking library"), error_size);
   return false;
 #endif
 
@@ -324,13 +326,13 @@ MovieReconstructContext *BKE_tracking_reconstruction_context_new(
     int height)
 {
   MovieTracking *tracking = &clip->tracking;
-  MovieReconstructContext *context = MEM_cnew<MovieReconstructContext>(
+  MovieReconstructContext *context = MEM_callocN<MovieReconstructContext>(
       "MovieReconstructContext data");
   const float aspy = 1.0f / tracking->camera.pixel_aspect;
   const int num_tracks = BLI_listbase_count(&tracking_object->tracks);
   int sfra = INT_MAX, efra = INT_MIN;
 
-  STRNCPY(context->object_name, tracking_object->name);
+  STRNCPY_UTF8(context->object_name, tracking_object->name);
   context->motion_flag = tracking->settings.motion_flag;
 
   context->select_keyframes = (tracking->settings.reconstruction_flag &
@@ -389,7 +391,7 @@ void BKE_tracking_reconstruction_report_error_message(MovieReconstructContext *c
     /* Only keep initial error message, the rest are inducted ones. */
     return;
   }
-  STRNCPY(context->error_message, error_message);
+  STRNCPY_UTF8(context->error_message, error_message);
 }
 
 const char *BKE_tracking_reconstruction_error_message_get(const MovieReconstructContext *context)
@@ -420,7 +422,7 @@ static void reconstruct_update_solve_cb(void *customdata, double progress, const
     *progressdata->do_update = true;
   }
 
-  BLI_snprintf(
+  BLI_snprintf_utf8(
       progressdata->stats_message, progressdata->message_size, "Solving camera | %s", message);
 }
 

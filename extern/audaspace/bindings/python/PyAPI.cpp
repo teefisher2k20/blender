@@ -14,6 +14,7 @@
  * limitations under the License.
  ******************************************************************************/
 
+#include "PyAnimateableProperty.h"
 #include "PyAPI.h"
 #include "PySound.h"
 #include "PyHandle.h"
@@ -30,6 +31,10 @@
 #include "PyHRTF.h"
 #endif
 
+#ifdef WITH_RUBBERBAND
+#include "fx/TimeStretchPitchScale.h"
+#endif
+
 #include "respec/Specification.h"
 #include "devices/IHandle.h"
 #include "devices/I3DDevice.h"
@@ -43,7 +48,6 @@
 #include <structmember.h>
 
 using namespace aud;
-
 // ====================================================================
 
 #define PY_MODULE_ADD_CONSTANT(module, name) PyModule_AddIntConstant(module, #name, name)
@@ -101,6 +105,9 @@ PyInit_aud()
 	if(!initializeSource())
 		return nullptr;
 
+	if(!initializeAnimateableProperty())
+		return nullptr;
+
 #ifdef WITH_CONVOLUTION
 	if(!initializeImpulseResponse())
 		return nullptr;
@@ -113,6 +120,7 @@ PyInit_aud()
 	if(module == nullptr)
 		return nullptr;
 
+	addAnimateablePropertyToModule(module);
 	addSoundToModule(module);
 	addHandleToModule(module);
 	addDeviceToModule(module);
@@ -138,6 +146,8 @@ PyInit_aud()
 	PY_MODULE_ADD_CONSTANT(module, AP_PITCH);
 	PY_MODULE_ADD_CONSTANT(module, AP_LOCATION);
 	PY_MODULE_ADD_CONSTANT(module, AP_ORIENTATION);
+	PY_MODULE_ADD_CONSTANT(module, AP_TIME_STRETCH);
+	PY_MODULE_ADD_CONSTANT(module, AP_PITCH_SCALE);
 	// channels constants
 	PY_MODULE_ADD_CONSTANT(module, CHANNELS_INVALID);
 	PY_MODULE_ADD_CONSTANT(module, CHANNELS_MONO);
@@ -202,6 +212,13 @@ PyInit_aud()
 	PY_MODULE_ADD_CONSTANT(module, STATUS_PAUSED);
 	PY_MODULE_ADD_CONSTANT(module, STATUS_PLAYING);
 	PY_MODULE_ADD_CONSTANT(module, STATUS_STOPPED);
+
+#ifdef WITH_RUBBERBAND
+	// stretcher quality
+	PyModule_AddIntConstant(module, "STRETCHER_QUALITY_HIGH", static_cast<int>(StretcherQuality::HIGH));
+	PyModule_AddIntConstant(module, "STRETCHER_QUALITY_FAST", static_cast<int>(StretcherQuality::FAST));
+	PyModule_AddIntConstant(module, "STRETCHER_QUALITY_CONSISTENT", static_cast<int>(StretcherQuality::CONSISTENT));
+#endif
 
 	return module;
 }

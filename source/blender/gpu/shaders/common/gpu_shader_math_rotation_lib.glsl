@@ -4,81 +4,14 @@
 
 #pragma once
 
+#include "gpu_shader_math_axis_angle_lib.glsl"
+#include "gpu_shader_math_euler_lib.glsl"
+#include "gpu_shader_math_matrix_construct_lib.glsl"
+#include "gpu_shader_math_quaternion_lib.glsl"
 #include "gpu_shader_utildefines_lib.glsl"
 
-/* WORKAROUND: to guard against double include in EEVEE. */
-#ifndef GPU_SHADER_MATH_ROTATION_LIB_GLSL
-#  define GPU_SHADER_MATH_ROTATION_LIB_GLSL
-
 /* -------------------------------------------------------------------- */
-/** \name Rotation Types
- * \{ */
-
-struct Angle {
-  /* Angle in radian. */
-  float angle;
-
-#  ifdef __cplusplus
-  Angle() = default;
-  Angle(float angle_) : angle(angle_){};
-#  endif
-};
-
-struct AxisAngle {
-  vec3 axis;
-  float angle;
-
-#  ifdef __cplusplus
-  AxisAngle() = default;
-  AxisAngle(vec3 axis_, float angle_) : axis(axis_), angle(angle_){};
-#  endif
-};
-
-AxisAngle AxisAngle_identity()
-{
-  return AxisAngle(vec3(0, 1, 0), 0);
-}
-
-struct Quaternion {
-  float x, y, z, w;
-#  ifdef __cplusplus
-  Quaternion() = default;
-  Quaternion(float x_, float y_, float z_, float w_) : x(x_), y(y_), z(z_), w(w_){};
-#  endif
-};
-
-vec4 as_vec4(Quaternion quat)
-{
-  return vec4(quat.x, quat.y, quat.z, quat.w);
-}
-
-Quaternion Quaternion_identity()
-{
-  return Quaternion(1, 0, 0, 0);
-}
-
-struct EulerXYZ {
-  float x, y, z;
-#  ifdef __cplusplus
-  EulerXYZ() = default;
-  EulerXYZ(float x_, float y_, float z_) : x(x_), y(y_), z(z_){};
-#  endif
-};
-
-vec3 as_vec3(EulerXYZ eul)
-{
-  return vec3(eul.x, eul.y, eul.z);
-}
-
-EulerXYZ EulerXYZ_identity()
-{
-  return EulerXYZ(0, 0, 0);
-}
-
-/** \} */
-
-/* -------------------------------------------------------------------- */
-/** \name Rotation Functions
+/** \name Interpolate
  * \{ */
 
 /**
@@ -89,12 +22,12 @@ EulerXYZ EulerXYZ_identity()
  * \param cosom: dot product from normalized vectors/quaternions.
  * \param r_w: calculated weights.
  */
-vec2 interpolate_dot_slerp(float t, float cosom)
+float2 interpolate_dot_slerp(float t, float cosom)
 {
-  vec2 w = vec2(1.0 - t, t);
+  float2 w = float2(1.0f - t, t);
   /* Within [-1..1] range, avoid aligned axis. */
-  const float eps = 1e-4;
-  if (abs(cosom) < 1.0 - eps) {
+  constexpr float eps = 1e-4f;
+  if (abs(cosom) < 1.0f - eps) {
     float omega = acos(cosom);
     w = sin(w * omega) / sin(omega);
   }
@@ -103,89 +36,118 @@ vec2 interpolate_dot_slerp(float t, float cosom)
 
 Quaternion interpolate(Quaternion a, Quaternion b, float t)
 {
-  vec4 quat = as_vec4(a);
-  float cosom = dot(as_vec4(a), as_vec4(b));
+  float4 quat = a.as_float4();
+  float cosom = dot(a.as_float4(), b.as_float4());
   /* Rotate around shortest angle. */
-  if (cosom < 0.0) {
+  if (cosom < 0.0f) {
     cosom = -cosom;
     quat = -quat;
   }
-  vec2 w = interpolate_dot_slerp(t, cosom);
-  quat = w.x * quat + w.y * as_vec4(b);
+  float2 w = interpolate_dot_slerp(t, cosom);
+  quat = w.x * quat + w.y * b.as_float4();
   return Quaternion(UNPACK4(quat));
-}
-
-Quaternion to_quaternion(EulerXYZ eul)
-{
-  float ti = eul.x * 0.5;
-  float tj = eul.y * 0.5;
-  float th = eul.z * 0.5;
-  float ci = cos(ti);
-  float cj = cos(tj);
-  float ch = cos(th);
-  float si = sin(ti);
-  float sj = sin(tj);
-  float sh = sin(th);
-  float cc = ci * ch;
-  float cs = ci * sh;
-  float sc = si * ch;
-  float ss = si * sh;
-
-  Quaternion quat;
-  quat.x = cj * cc + sj * ss;
-  quat.y = cj * sc - sj * cs;
-  quat.z = cj * ss + sj * cc;
-  quat.w = cj * cs - sj * sc;
-  return quat;
-}
-
-Quaternion to_axis_angle(AxisAngle axis_angle)
-{
-  float angle_cos = cos(axis_angle.angle);
-  /** Using half angle identities: sin(angle / 2) = sqrt((1 - angle_cos) / 2) */
-  float sine = sqrt(0.5 - angle_cos * 0.5);
-  float cosine = sqrt(0.5 + angle_cos * 0.5);
-
-  /* TODO(fclem): Optimize. */
-  float angle_sin = sin(axis_angle.angle);
-  if (angle_sin < 0.0) {
-    sine = -sine;
-  }
-
-  Quaternion quat;
-  quat.x = cosine;
-  quat.y = axis_angle.axis.x * sine;
-  quat.z = axis_angle.axis.y * sine;
-  quat.w = axis_angle.axis.z * sine;
-  return quat;
-}
-
-AxisAngle to_axis_angle(Quaternion quat)
-{
-  /* Calculate angle/2, and sin(angle/2). */
-  float ha = acos(quat.x);
-  float si = sin(ha);
-
-  /* From half-angle to angle. */
-  float angle = ha * 2;
-  /* Prevent division by zero for axis conversion. */
-  if (abs(si) < 0.0005) {
-    si = 1.0;
-  }
-
-  vec3 axis = vec3(quat.y, quat.z, quat.w) / si;
-  if (is_zero(axis)) {
-    axis[1] = 1.0;
-  }
-  return AxisAngle(axis, angle);
-}
-
-AxisAngle to_axis_angle(EulerXYZ eul)
-{
-  /* Use quaternions as intermediate representation for now... */
-  return to_axis_angle(to_quaternion(eul));
 }
 
 /** \} */
 
-#endif /* GPU_SHADER_MATH_ROTATION_LIB_GLSL */
+/* -------------------------------------------------------------------- */
+/** \name Rotate
+ * \{ */
+
+/**
+ * Equivalent to `mat * from_rotation(rotation)` but with fewer operation.
+ * Optimized for rotation on basis vector (i.e: AxisAngle({1, 0, 0}, 0.2f)).
+ */
+float3x3 rotate(float3x3 mat, AxisAngle rotation)
+{
+  float3x3 result;
+  /* axis_vec is given to be normalized. */
+  if (rotation.axis.x == 1.0f) {
+    float angle_cos = cos(rotation.angle);
+    float angle_sin = sin(rotation.angle);
+    for (int c = 0; c < 3; c++) {
+      result[0][c] = mat[0][c];
+      result[1][c] = angle_cos * mat[1][c] + angle_sin * mat[2][c];
+      result[2][c] = -angle_sin * mat[1][c] + angle_cos * mat[2][c];
+    }
+  }
+  else if (rotation.axis.y == 1.0f) {
+    float angle_cos = cos(rotation.angle);
+    float angle_sin = sin(rotation.angle);
+    for (int c = 0; c < 3; c++) {
+      result[0][c] = angle_cos * mat[0][c] - angle_sin * mat[2][c];
+      result[1][c] = mat[1][c];
+      result[2][c] = angle_sin * mat[0][c] + angle_cos * mat[2][c];
+    }
+  }
+  else if (rotation.axis.z == 1.0f) {
+    float angle_cos = cos(rotation.angle);
+    float angle_sin = sin(rotation.angle);
+    for (int c = 0; c < 3; c++) {
+      result[0][c] = angle_cos * mat[0][c] + angle_sin * mat[1][c];
+      result[1][c] = -angle_sin * mat[0][c] + angle_cos * mat[1][c];
+      result[2][c] = mat[2][c];
+    }
+  }
+  else {
+    /* Un-optimized case. Arbitrary rotation. */
+    result = mat * from_rotation(rotation);
+  }
+  return result;
+}
+/**
+ * Equivalent to `mat * from_rotation(rotation)` but with fewer operation.
+ * Optimized for rotation on basis vector (i.e: AxisAngle({1, 0, 0}, 0.2f)).
+ */
+float3x3 rotate(float3x3 mat, EulerXYZ rotation)
+{
+  AxisAngle axis_angle;
+  if (rotation.y == 0.0f && rotation.z == 0.0f) {
+    axis_angle = AxisAngle(float3(1.0f, 0.0f, 0.0f), rotation.x);
+  }
+  else if (rotation.x == 0.0f && rotation.z == 0.0f) {
+    axis_angle = AxisAngle(float3(0.0f, 1.0f, 0.0f), rotation.y);
+  }
+  else if (rotation.x == 0.0f && rotation.y == 0.0f) {
+    axis_angle = AxisAngle(float3(0.0f, 0.0f, 1.0f), rotation.z);
+  }
+  else {
+    /* Un-optimized case. Arbitrary rotation. */
+    return mat * from_rotation(rotation);
+  }
+  return rotate(mat, axis_angle);
+}
+/**
+ * Equivalent to `mat * from_rotation(rotation)` but with fewer operation.
+ * Optimized for rotation on basis vector (i.e: AxisAngle({1, 0, 0}, 0.2f)).
+ */
+float4x4 rotate(float4x4 mat, AxisAngle rotation)
+{
+  float4x4 result = to_float4x4(rotate(to_float3x3(mat), rotation));
+  result[0][3] = mat[0][3];
+  result[1][3] = mat[1][3];
+  result[2][3] = mat[2][3];
+  result[3][0] = mat[3][0];
+  result[3][1] = mat[3][1];
+  result[3][2] = mat[3][2];
+  result[3][3] = mat[3][3];
+  return result;
+}
+/**
+ * Equivalent to `mat * from_rotation(rotation)` but with fewer operation.
+ * Optimized for rotation on basis vector (i.e: AxisAngle({1, 0, 0}, 0.2f)).
+ */
+float4x4 rotate(float4x4 mat, EulerXYZ rotation)
+{
+  float4x4 result = to_float4x4(rotate(to_float3x3(mat), rotation));
+  result[0][3] = mat[0][3];
+  result[1][3] = mat[1][3];
+  result[2][3] = mat[2][3];
+  result[3][0] = mat[3][0];
+  result[3][1] = mat[3][1];
+  result[3][2] = mat[3][2];
+  result[3][3] = mat[3][3];
+  return result;
+}
+
+/** \} */

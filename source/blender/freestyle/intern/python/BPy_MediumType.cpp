@@ -10,10 +10,6 @@
 
 #include "BPy_Convert.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -30,8 +26,7 @@ PyDoc_STRVAR(
     "\n"
     "* Stroke.DRY_MEDIUM: To simulate a dry medium such as Pencil or Charcoal.\n"
     "* Stroke.HUMID_MEDIUM: To simulate ink painting (color subtraction blending).\n"
-    "* Stroke.OPAQUE_MEDIUM: To simulate an opaque medium (oil, spray...).");
-
+    "* Stroke.OPAQUE_MEDIUM: To simulate an opaque medium (oil, spray...).\n");
 PyTypeObject MediumType_Type = {
     /*ob_base*/ PyVarObject_HEAD_INIT(nullptr, 0)
     /*tp_name*/ "MediumType",
@@ -92,7 +87,3 @@ int MediumType_Init(PyObject *module)
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

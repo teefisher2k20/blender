@@ -128,12 +128,8 @@ struct UVPrimitiveLookup {
 
     uint64_t uv_island_index = 0;
     for (uv_islands::UVIsland &uv_island : uv_islands.islands) {
-      for (VectorList<uv_islands::UVPrimitive>::UsedVector &uv_primitives :
-           uv_island.uv_primitives)
-      {
-        for (uv_islands::UVPrimitive &uv_primitive : uv_primitives) {
-          lookup[uv_primitive.primitive_i].append_as(Entry(&uv_primitive, uv_island_index));
-        }
+      for (uv_islands::UVPrimitive &uv_primitive : uv_island.uv_primitives) {
+        lookup[uv_primitive.primitive_i].append_as(Entry(&uv_primitive, uv_island_index));
       }
       uv_island_index++;
     }
@@ -275,7 +271,7 @@ static bool find_nodes_to_update(Tree &pbvh, Vector<MeshNode *> &r_nodes_to_upda
       continue;
     }
     r_nodes_to_update.append(&node);
-    node.flag_ = static_cast<Node::Flags>(node.flag_ | Node::RebuildPixels);
+    node.flag_ = (node.flag_ | Node::RebuildPixels);
 
     if (node.pixels_ == nullptr) {
       NodeData *node_data = MEM_new<NodeData>(__func__);
@@ -342,8 +338,7 @@ static bool update_pixels(const Depsgraph &depsgraph,
   }
 
   const Mesh &mesh = *static_cast<const Mesh *>(object.data);
-  const StringRef active_uv_name = CustomData_get_active_layer_name(&mesh.corner_data,
-                                                                    CD_PROP_FLOAT2);
+  const StringRef active_uv_name = mesh.active_uv_map_name();
   if (active_uv_name.is_empty()) {
     return false;
   }

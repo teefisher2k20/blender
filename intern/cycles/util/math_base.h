@@ -213,6 +213,13 @@ ccl_device_inline float max4(const float a, const float b, float c, const float 
   return max(max(a, b), max(c, d));
 }
 
+template<typename T> ccl_device_inline T make_zero();
+
+ccl_device_template_spec float make_zero()
+{
+  return 0.0f;
+}
+
 #if !defined(__KERNEL_METAL__) && !defined(__KERNEL_ONEAPI__)
 /* Int/Float conversion */
 
@@ -492,7 +499,12 @@ ccl_device_inline int mod(const int x, const int m)
   return (x % m + m) % m;
 }
 
-ccl_device_inline float inverse_lerp(const float a, const float b, float x)
+ccl_device_inline float interp(const float a, const float b, const float t)
+{
+  return a + t * (b - a);
+}
+
+ccl_device_inline float inverse_lerp(const float a, const float b, const float x)
 {
   return (x - a) / (b - a);
 }
@@ -535,19 +547,23 @@ ccl_device float safe_acosf(const float a)
 
 ccl_device float compatible_powf(const float x, const float y)
 {
-#ifdef __KERNEL_GPU__
-  if (y == 0.0f) /* x^0 -> 1, including 0^0 */
+  if (y == 0.0f) {
+    /* x^0 -> 1, including 0^0. */
     return 1.0f;
-
+  }
+  if (x == 0.0f) {
+    return 0.0f;
+  }
+#ifdef __KERNEL_GPU__
   /* GPU pow doesn't accept negative x, do manual checks here */
   if (x < 0.0f) {
-    if (fmodf(-y, 2.0f) == 0.0f)
+    if (fmodf(-y, 2.0f) == 0.0f) {
       return powf(-x, y);
-    else
+    }
+    else {
       return -powf(-x, y);
+    }
   }
-  else if (x == 0.0f)
-    return 0.0f;
 #endif
   return powf(x, y);
 }
@@ -612,6 +628,12 @@ ccl_device_inline float one_minus_cos(const float angle)
   return angle > 0.02f ? 1.0f - cosf(angle) : 0.5f * sqr(angle);
 }
 
+/*  2^a. */
+ccl_device_inline int power_of_2(const int a)
+{
+  return 1 << a;
+}
+
 ccl_device_inline float pow20(const float a)
 {
   return sqr(sqr(sqr(sqr(a)) * a));
@@ -641,9 +663,14 @@ ccl_device_inline float beta(const float x, const float y)
   return expf(lgammaf(x) + lgammaf(y) - lgammaf(x + y));
 }
 
-ccl_device_inline float xor_signmask(const float x, const int y)
+ccl_device_inline float xor_mask(const float x, const uint y)
 {
-  return __int_as_float(__float_as_int(x) ^ y);
+  return __uint_as_float(__float_as_uint(x) ^ y);
+}
+
+ccl_device_inline float or_mask(const float x, const uint y)
+{
+  return __uint_as_float(__float_as_uint(x) | y);
 }
 
 ccl_device float bits_to_01(const uint bits)
@@ -846,7 +873,8 @@ template<typename T> struct Interval {
 
   ccl_device_inline_method bool is_empty() const
   {
-    return min >= max;
+    /* NaN-safe comparison. */
+    return !(min < max);
   }
 
   ccl_device_inline_method bool contains(T value) const
@@ -860,12 +888,66 @@ template<typename T> struct Interval {
   }
 };
 
+template<typename T1, typename T2>
+ccl_device_inline Interval<T1> operator/=(ccl_private Interval<T1> &interval, const T2 f)
+{
+  interval.min /= f;
+  interval.max /= f;
+  return interval;
+}
+
 /* Computes the intersection of two intervals. */
 template<typename T>
 ccl_device_inline Interval<T> intervals_intersection(const ccl_private Interval<T> &first,
                                                      const ccl_private Interval<T> &second)
 {
   return {max(first.min, second.min), min(first.max, second.max)};
+}
+
+/* Defines the minimal and maximal values of a quantity. */
+template<typename T> struct Extrema {
+  T min;
+  T max;
+  Extrema() = default;
+  ccl_device_inline_method Extrema(T value) : min(value), max(value) {}
+  ccl_device_inline_method Extrema(T min_, T max_) : min(min_), max(max_) {}
+
+  ccl_device_inline_method T range() const
+  {
+    return max - min;
+  }
+};
+
+template<typename T> ccl_device_inline Extrema<T> operator*(const Extrema<T> a, const T b)
+{
+  return {a.min * b, a.max * b};
+}
+
+template<typename T>
+ccl_device_inline Extrema<T> operator+(const ccl_private Extrema<T> &a,
+                                       const ccl_private Extrema<T> &b)
+{
+  return {a.min + b.min, a.max + b.max};
+}
+
+template<typename T>
+ccl_device_inline Extrema<T> operator+=(ccl_private Extrema<T> &a, const ccl_private Extrema<T> &b)
+{
+  return a = a + b;
+}
+
+/* Returns the extrema of both extrema. */
+template<typename T>
+ccl_device_inline Extrema<T> merge(const ccl_private Extrema<T> &a,
+                                   const ccl_private Extrema<T> &b)
+{
+  return {min(a.min, b.min), max(a.max, b.max)};
+}
+
+template<typename T>
+ccl_device_inline Extrema<T> merge(const ccl_private Extrema<T> &a, const ccl_private T &v)
+{
+  return {min(a.min, v), max(a.max, v)};
 }
 
 CCL_NAMESPACE_END

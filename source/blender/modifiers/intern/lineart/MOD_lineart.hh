@@ -8,8 +8,8 @@
 
 #pragma once
 
+#include "BLI_enum_flags.hh"
 #include "BLI_linklist.h"
-#include "BLI_listbase.h"
 #include "BLI_math_matrix_types.hh"
 #include "BLI_math_vector.h"
 #include "BLI_set.hh"
@@ -18,7 +18,7 @@
 #include "ED_grease_pencil.hh"
 
 #include <algorithm>
-#include <math.h>
+#include <cmath>
 
 struct LineartBoundingArea;
 struct LineartEdge;
@@ -93,7 +93,7 @@ enum eLineArtElementNodeFlag {
   LRT_ELEMENT_NO_INTERSECTION = (1 << 2),
   LRT_ELEMENT_INTERSECTION_DATA = (1 << 3),
 };
-ENUM_OPERATORS(eLineArtElementNodeFlag, LRT_ELEMENT_INTERSECTION_DATA);
+ENUM_OPERATORS(eLineArtElementNodeFlag);
 
 struct LineartElementLinkNode {
   LineartElementLinkNode *next, *prev;
@@ -605,10 +605,10 @@ struct LineartBoundingArea {
 #define LRT_MIN3_INDEX_ABC(x, y, z) (x < y ? (x < z ? a : (y < z ? b : c)) : (y < z ? b : c))
 
 #define DBL_LOOSER 1e-5
-#define LRT_DOUBLE_CLOSE_LOOSER(a, b) (((a) + DBL_LOOSER) >= (b) && ((a)-DBL_LOOSER) <= (b))
-#define LRT_DOUBLE_CLOSE_ENOUGH(a, b) (((a) + DBL_EDGE_LIM) >= (b) && ((a)-DBL_EDGE_LIM) <= (b))
+#define LRT_DOUBLE_CLOSE_LOOSER(a, b) (((a) + DBL_LOOSER) >= (b) && ((a) - DBL_LOOSER) <= (b))
+#define LRT_DOUBLE_CLOSE_ENOUGH(a, b) (((a) + DBL_EDGE_LIM) >= (b) && ((a) - DBL_EDGE_LIM) <= (b))
 #define LRT_DOUBLE_CLOSE_ENOUGH_TRI(a, b) \
-  (((a) + DBL_TRIANGLE_LIM) >= (b) && ((a)-DBL_TRIANGLE_LIM) <= (b))
+  (((a) + DBL_TRIANGLE_LIM) >= (b) && ((a) - DBL_TRIANGLE_LIM) <= (b))
 
 #define LRT_CLOSE_LOOSER_v3(a, b) \
   (LRT_DOUBLE_CLOSE_LOOSER(a[0], b[0]) && LRT_DOUBLE_CLOSE_LOOSER(a[1], b[1]) && \
@@ -851,9 +851,9 @@ BLI_INLINE int lineart_line_isec_2d_ignore_line2pos(const double a1[2],
       k1 = (a2[1] - a1[1]) / x_diff;
       k2 = (b2[1] - b1[1]) / x_diff2;
 
-      if ((k1 == k2))
+      if ((k1 == k2)) {
         return 0;
-
+      }
       x = (a1[1] - b1[1] - k1 * a1[0] + k2 * b1[0]) / (k2 - k1);
 
       ratio = (x - a1[0]) / x_diff;
@@ -862,9 +862,9 @@ BLI_INLINE int lineart_line_isec_2d_ignore_line2pos(const double a1[2],
     }
   }
 
-  if (ratio <= 0 || ratio >= 1)
+  if (ratio <= 0 || ratio >= 1) {
     return 0;
-
+  }
   return 1;
 #endif
 }

@@ -29,7 +29,7 @@ static void node_declare(NodeDeclarationBuilder &b)
       .description(
           "Value shift. 0 makes the color black, 1 keeps it the same, and higher values make it "
           "brighter");
-  b.add_input<decl::Float>("Fac")
+  b.add_input<decl::Float>("Factor", "Fac")
       .default_value(1.0f)
       .min(0.0f)
       .max(1.0f)
@@ -87,9 +87,9 @@ void register_node_type_sh_hue_sat()
   ntype.enum_name_legacy = "HUE_SAT";
   ntype.nclass = NODE_CLASS_OP_COLOR;
   ntype.declare = file_ns::node_declare;
-  blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Middle);
+  blender::bke::node_type_size_preset(ntype, blender::bke::eNodeSizePreset::Middle);
   ntype.gpu_fn = file_ns::gpu_shader_hue_sat;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

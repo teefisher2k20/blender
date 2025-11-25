@@ -48,12 +48,12 @@ static LinkNode *knifeproject_poly_from_object(const bContext *C, Object *ob, Li
   bool mesh_eval_needs_free;
 
   if (ob->type == OB_MESH || ob->runtime->data_eval) {
-    const Object *ob_eval = DEG_get_evaluated_object(depsgraph, ob);
+    const Object *ob_eval = DEG_get_evaluated(depsgraph, ob);
     mesh_eval = BKE_object_get_evaluated_mesh(ob_eval);
     mesh_eval_needs_free = false;
   }
   else if (ELEM(ob->type, OB_FONT, OB_CURVES_LEGACY, OB_SURF)) {
-    const Object *ob_eval = DEG_get_evaluated_object(depsgraph, ob);
+    const Object *ob_eval = DEG_get_evaluated(depsgraph, ob);
     mesh_eval = BKE_mesh_new_nomain_from_curve(ob_eval);
     mesh_eval_needs_free = true;
   }
@@ -76,7 +76,7 @@ static LinkNode *knifeproject_poly_from_object(const bContext *C, Object *ob, Li
           int a;
           BPoint *bp;
           bool is_cyclic = (nu->flagu & CU_NURB_CYCLIC) != 0;
-          float(*mval)[2] = static_cast<float(*)[2]>(
+          float (*mval)[2] = static_cast<float (*)[2]>(
               MEM_mallocN(sizeof(*mval) * (nu->pntsu + is_cyclic), __func__));
 
           for (bp = nu->bp, a = 0; a < nu->pntsu; a++, bp++) {
@@ -101,7 +101,7 @@ static LinkNode *knifeproject_poly_from_object(const bContext *C, Object *ob, Li
   return polys;
 }
 
-static int knifeproject_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus knifeproject_exec(bContext *C, wmOperator *op)
 {
   Scene *scene = CTX_data_scene(C);
   const bool cut_through = RNA_boolean_get(op->ptr, "cut_through");

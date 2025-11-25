@@ -10,7 +10,7 @@
 
 #include "NOD_multi_function.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 namespace blender::nodes::node_shader_tex_white_noise_cc {
@@ -19,7 +19,7 @@ static void sh_node_tex_white_noise_declare(NodeDeclarationBuilder &b)
 {
   b.is_function_node();
   b.add_input<decl::Vector>("Vector").min(-10000.0f).max(10000.0f).implicit_field(
-      implicit_field_inputs::position);
+      NODE_DEFAULT_INPUT_POSITION_FIELD);
   b.add_input<decl::Float>("W")
       .min(-10000.0f)
       .max(10000.0f)
@@ -34,7 +34,7 @@ static void sh_node_tex_white_noise_declare(NodeDeclarationBuilder &b)
 
 static void node_shader_buts_white_noise(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "noise_dimensions", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
+  layout->prop(ptr, "noise_dimensions", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
 }
 
 static void node_shader_init_tex_white_noise(bNodeTree * /*ntree*/, bNode *node)
@@ -63,11 +63,11 @@ static int gpu_shader_tex_white_noise(GPUMaterial *mat,
 
 static void node_shader_update_tex_white_noise(bNodeTree *ntree, bNode *node)
 {
-  bNodeSocket *sockVector = bke::node_find_socket(node, SOCK_IN, "Vector");
-  bNodeSocket *sockW = bke::node_find_socket(node, SOCK_IN, "W");
+  bNodeSocket *sockVector = bke::node_find_socket(*node, SOCK_IN, "Vector");
+  bNodeSocket *sockW = bke::node_find_socket(*node, SOCK_IN, "W");
 
-  bke::node_set_socket_availability(ntree, sockVector, node->custom1 != 1);
-  bke::node_set_socket_availability(ntree, sockW, node->custom1 == 1 || node->custom1 == 4);
+  bke::node_set_socket_availability(*ntree, *sockVector, node->custom1 != 1);
+  bke::node_set_socket_availability(*ntree, *sockW, node->custom1 == 1 || node->custom1 == 4);
 }
 
 class WhiteNoiseFunction : public mf::MultiFunction {
@@ -238,7 +238,7 @@ NODE_SHADER_MATERIALX_BEGIN
       break;
   }
 
-  if (STREQ(socket_out_->name, "Value")) {
+  if (STREQ(socket_out_->identifier, "Value")) {
     return noise;
   }
 
@@ -260,9 +260,9 @@ void register_node_type_sh_tex_white_noise()
 
   static blender::bke::bNodeType ntype;
 
-  sh_fn_node_type_base(&ntype, "ShaderNodeTexWhiteNoise", SH_NODE_TEX_WHITE_NOISE);
+  common_node_type_base(&ntype, "ShaderNodeTexWhiteNoise", SH_NODE_TEX_WHITE_NOISE);
   ntype.ui_name = "White Noise Texture";
-  ntype.ui_description = "Return a random value or color based on an input seed";
+  ntype.ui_description = "Calculate a random value or color based on an input seed";
   ntype.enum_name_legacy = "TEX_WHITE_NOISE";
   ntype.nclass = NODE_CLASS_TEXTURE;
   ntype.declare = file_ns::sh_node_tex_white_noise_declare;
@@ -273,5 +273,5 @@ void register_node_type_sh_tex_white_noise()
   ntype.build_multi_function = file_ns::sh_node_noise_build_multi_function;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

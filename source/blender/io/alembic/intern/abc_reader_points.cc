@@ -19,7 +19,9 @@
 #include "BKE_object.hh"
 #include "BKE_pointcloud.hh"
 
-#include "BLI_math_vector.h"
+#include "BLI_color_types.hh"
+
+#include <algorithm>
 
 using namespace Alembic::AbcGeom;
 
@@ -60,21 +62,21 @@ bool AbcPointsReader::accepts_object_type(
 
 void AbcPointsReader::readObjectData(Main *bmain, const Alembic::Abc::ISampleSelector &sample_sel)
 {
-  PointCloud *point_cloud = BKE_pointcloud_add_default(bmain, m_data_name.c_str());
+  PointCloud *pointcloud = BKE_pointcloud_add(bmain, m_data_name.c_str());
 
   bke::GeometrySet geometry_set = bke::GeometrySet::from_pointcloud(
-      point_cloud, bke::GeometryOwnershipType::Editable);
+      pointcloud, bke::GeometryOwnershipType::Editable);
   read_geometry(geometry_set, sample_sel, 0, "", 1.0f, nullptr);
 
-  PointCloud *read_point_cloud =
+  PointCloud *read_pointcloud =
       geometry_set.get_component_for_write<bke::PointCloudComponent>().release();
 
-  if (read_point_cloud != point_cloud) {
-    BKE_pointcloud_nomain_to_pointcloud(read_point_cloud, point_cloud);
+  if (read_pointcloud != pointcloud) {
+    BKE_pointcloud_nomain_to_pointcloud(read_pointcloud, pointcloud);
   }
 
   m_object = BKE_object_add_only_object(bmain, OB_POINTCLOUD, m_object_name.c_str());
-  m_object->data = point_cloud;
+  m_object->data = pointcloud;
 
   if (m_settings->always_add_cache_reader || has_animations(m_schema, m_settings)) {
     addCacheModifier();
@@ -88,29 +90,108 @@ static void read_points(const P3fArraySamplePtr positions, MutableSpan<float3> r
   }
 }
 
-static N3fArraySamplePtr read_points_sample(const IPointsSchema &schema,
-                                            const ISampleSelector &selector,
-                                            MutableSpan<float3> r_points)
+static void read_points_sample(const IPointsSchema &schema,
+                               const ISampleSelector &selector,
+                               MutableSpan<float3> r_points)
 {
   Alembic::AbcGeom::IPointsSchema::Sample sample = schema.getValue(selector);
 
   const P3fArraySamplePtr &positions = sample.getPositions();
+  read_points(positions, r_points);
+}
 
-  ICompoundProperty prop = schema.getArbGeomParams();
-  N3fArraySamplePtr vnormals;
+template<typename TOut, typename TIn> static TOut convert_abc_value(const TIn &in)
+{
+  static_assert(std::is_same_v<TIn, TOut>,
+                "convert_abc_value needs to be explicitly specialized for each pair of types");
+  return in;
+}
 
-  if (has_property(prop, "N")) {
-    const Alembic::Util::uint32_t itime = static_cast<Alembic::Util::uint32_t>(
-        selector.getRequestedTime());
-    const IN3fArrayProperty &normals_prop = IN3fArrayProperty(prop, "N", itime);
+template<> float3 convert_abc_value(const V3f &in)
+{
+  float3 out;
+  copy_zup_from_yup(out, in.getValue());
+  return out;
+}
 
-    if (normals_prop) {
-      vnormals = normals_prop.getValue(selector);
+template<> ColorGeometry4f convert_abc_value(const C3f &in)
+{
+  return ColorGeometry4f(in[0], in[1], in[2], 1.0f);
+}
+
+template<> float2 convert_abc_value(const V2f &in)
+{
+  return in.getValue();
+}
+
+template<typename TArrayProperty, typename TWriteValue>
+static void read_typed_property_sample(const ICompoundProperty &parent,
+                                       const ISampleSelector &selector,
+                                       const std::string &name,
+                                       bke::MutableAttributeAccessor &attribute_accessor)
+{
+  const TArrayProperty &array_prop = TArrayProperty(parent, name);
+  if (array_prop) {
+    using SamplePtr = typename TArrayProperty::sample_ptr_type;
+    using ValueType = typename TArrayProperty::value_type;
+
+    const SamplePtr sample_ptr = array_prop.getValue(selector);
+    bke::SpanAttributeWriter<TWriteValue> writer =
+        attribute_accessor.lookup_or_add_for_write_span<TWriteValue>(name, bke::AttrDomain::Point);
+    MutableSpan<TWriteValue> span = writer.span;
+    for (const int64_t i : IndexRange(std::min(span.size(), int64_t(sample_ptr->size())))) {
+      ValueType value = (*sample_ptr)[i];
+      span[i] = convert_abc_value<TWriteValue>(value);
     }
+    writer.finish();
+  }
+}
+
+static void read_point_arb_geom_params(const IPointsSchema &schema,
+                                       const ISampleSelector &selector,
+                                       bke::MutableAttributeAccessor &attribute_accessor)
+{
+  const ICompoundProperty prop = schema.getArbGeomParams();
+  if (!prop.valid()) {
+    return;
   }
 
-  read_points(positions, r_points);
-  return vnormals;
+  for (size_t i = 0; i < prop.getNumProperties(); i++) {
+    const PropertyHeader header = prop.getPropertyHeader(i);
+    const PropertyType property_type = header.getPropertyType();
+    if (property_type != kArrayProperty) {
+      // currently unsupported
+      continue;
+    }
+
+    const DataType data_type = header.getDataType();
+    const MetaData metadata = header.getMetaData();
+    const std::string interpretation = metadata.get("interpretation");
+    const std::string name = header.getName();
+
+    if (data_type == DataType(kFloat32POD, 3)) {
+      if (interpretation == C3fTPTraits::interpretation()) {
+        read_typed_property_sample<IC3fArrayProperty, ColorGeometry4f>(
+            prop, selector, name, attribute_accessor);
+      }
+      else if (interpretation == N3fTPTraits::interpretation()) {
+        read_typed_property_sample<IN3fArrayProperty, float3>(
+            prop, selector, name, attribute_accessor);
+      }
+      else {
+        read_typed_property_sample<IV3fArrayProperty, float3>(
+            prop, selector, name, attribute_accessor);
+      }
+    }
+    else if (data_type == DataType(kFloat32POD, 2)) {
+      read_typed_property_sample<IV2fArrayProperty, float2>(
+          prop, selector, name, attribute_accessor);
+    }
+    else if (data_type == DataType(kFloat32POD, 1)) {
+      read_typed_property_sample<IFloatArrayProperty, float>(
+          prop, selector, name, attribute_accessor);
+    }
+  }
 }
 
 void AbcPointsReader::read_geometry(bke::GeometrySet &geometry_set,
@@ -136,64 +217,51 @@ void AbcPointsReader::read_geometry(bke::GeometrySet &geometry_set,
     return;
   }
 
-  PointCloud *existing_point_cloud = geometry_set.get_pointcloud_for_write();
-  PointCloud *point_cloud = existing_point_cloud;
+  PointCloud *existing_pointcloud = geometry_set.get_pointcloud_for_write();
+  PointCloud *pointcloud = existing_pointcloud;
 
   const P3fArraySamplePtr &positions = sample.getPositions();
 
   const IFloatGeomParam widths_param = m_schema.getWidthsParam();
-  FloatArraySamplePtr radii;
+  FloatArraySamplePtr widths;
 
   if (widths_param.valid()) {
     IFloatGeomParam::Sample wsample = widths_param.getExpandedValue(sample_sel);
-    radii = wsample.getVals();
+    widths = wsample.getVals();
   }
 
-  if (point_cloud->totpoint != positions->size()) {
-    point_cloud = BKE_pointcloud_new_nomain(positions->size());
+  if (pointcloud->totpoint != positions->size()) {
+    pointcloud = BKE_pointcloud_new_nomain(positions->size());
   }
 
-  bke::MutableAttributeAccessor attribute_accessor = point_cloud->attributes_for_write();
+  bke::MutableAttributeAccessor attribute_accessor = pointcloud->attributes_for_write();
 
-  bke::SpanAttributeWriter<float3> positions_writer =
-      attribute_accessor.lookup_or_add_for_write_span<float3>("position", bke::AttrDomain::Point);
-  MutableSpan<float3> point_positions = positions_writer.span;
-  N3fArraySamplePtr normals = read_points_sample(m_schema, sample_sel, point_positions);
-  positions_writer.finish();
+  MutableSpan<float3> point_positions = pointcloud->positions_for_write();
+  read_points_sample(m_schema, sample_sel, point_positions);
 
-  bke::SpanAttributeWriter<float> point_radii_writer =
-      attribute_accessor.lookup_or_add_for_write_span<float>("radius", bke::AttrDomain::Point);
-  MutableSpan<float> point_radii = point_radii_writer.span;
+  MutableSpan<float> point_radii = pointcloud->radius_for_write();
 
-  if (radii) {
-    for (size_t i = 0; i < radii->size(); i++) {
-      point_radii[i] = (*radii)[i];
+  if (widths) {
+    for (const int64_t i : IndexRange(std::min(point_radii.size(), int64_t(widths->size())))) {
+      point_radii[i] = (*widths)[i] / 2.0f;
     }
   }
   else {
     point_radii.fill(0.01f);
   }
-  point_radii_writer.finish();
 
-  if (normals) {
-    bke::SpanAttributeWriter<float3> normals_writer =
-        attribute_accessor.lookup_or_add_for_write_span<float3>("N", bke::AttrDomain::Point);
-    MutableSpan<float3> point_normals = normals_writer.span;
-    for (size_t i = 0; i < normals->size(); i++) {
-      Imath::V3f nor_in = (*normals)[i];
-      copy_zup_from_yup(point_normals[i], nor_in.getValue());
-    }
-    normals_writer.finish();
-  }
+  read_point_arb_geom_params(m_schema, sample_sel, attribute_accessor);
 
   if (velocity_name != nullptr && velocity_scale != 0.0f) {
     V3fArraySamplePtr velocities = get_velocity_prop(m_schema, sample_sel, velocity_name);
-    if (velocities && point_cloud->totpoint == int(velocities->size())) {
+    if (velocities && pointcloud->totpoint == int(velocities->size())) {
       bke::SpanAttributeWriter<float3> velocity_writer =
           attribute_accessor.lookup_or_add_for_write_span<float3>("velocity",
                                                                   bke::AttrDomain::Point);
       MutableSpan<float3> point_velocity = velocity_writer.span;
-      for (size_t i = 0; i < velocities->size(); i++) {
+      for (const int64_t i :
+           IndexRange(std::min(point_velocity.size(), int64_t(velocities->size()))))
+      {
         const Imath::V3f &vel_in = (*velocities)[i];
         copy_zup_from_yup(point_velocity[i], vel_in.getValue());
         point_velocity[i] *= velocity_scale;
@@ -202,7 +270,7 @@ void AbcPointsReader::read_geometry(bke::GeometrySet &geometry_set,
     }
   }
 
-  geometry_set.replace_pointcloud(point_cloud);
+  geometry_set.replace_pointcloud(pointcloud);
 }
 
 }  // namespace blender::io::alembic

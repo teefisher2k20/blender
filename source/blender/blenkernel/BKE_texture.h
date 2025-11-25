@@ -7,10 +7,6 @@
  * \ingroup bke
  */
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 struct Brush;
 struct ColorBand;
 struct FreestyleLineStyle;
@@ -19,7 +15,6 @@ struct LibraryForeachIDData;
 struct MTex;
 struct Main;
 struct ParticleSettings;
-struct PointDensity;
 struct Tex;
 struct TexMapping;
 struct TexResult;
@@ -63,12 +58,6 @@ void BKE_texture_mapping_init(struct TexMapping *texmap);
 struct ColorMapping *BKE_texture_colormapping_add(void);
 void BKE_texture_colormapping_default(struct ColorMapping *colormap);
 
-void BKE_texture_pointdensity_init_data(struct PointDensity *pd);
-void BKE_texture_pointdensity_free_data(struct PointDensity *pd);
-void BKE_texture_pointdensity_free(struct PointDensity *pd);
-struct PointDensity *BKE_texture_pointdensity_add(void);
-struct PointDensity *BKE_texture_pointdensity_copy(const struct PointDensity *pd, int flag);
-
 bool BKE_texture_dependsOnTime(const struct Tex *texture);
 /**
  * \returns true if this texture can use its #Texture.ima (even if its NULL).
@@ -90,7 +79,3 @@ void BKE_texture_get_value(struct Tex *texture,
  * Make sure all images used by texture are loaded into pool.
  */
 void BKE_texture_fetch_images_for_pool(struct Tex *texture, struct ImagePool *pool);
-
-#ifdef __cplusplus
-}
-#endif

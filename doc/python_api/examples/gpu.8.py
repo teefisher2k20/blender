@@ -1,6 +1,6 @@
 """
-Copy Offscreen Rendering result back to RAM
--------------------------------------------
+Copy Off-screen Rendering result back to RAM
+--------------------------------------------
 
 This will create a new image with the given name.
 If it already exists, it will override the existing one.
@@ -27,7 +27,7 @@ with offscreen.bind():
     fb = gpu.state.active_framebuffer_get()
     fb.clear(color=(0.0, 0.0, 0.0, 0.0))
     with gpu.matrix.push_pop():
-        # reset matrices -> use normalized device coordinates [-1, 1]
+        # Reset matrices -> use normalized device coordinates [-1, 1].
         gpu.matrix.load_matrix(Matrix.Identity(4))
         gpu.matrix.load_projection_matrix(Matrix.Identity(4))
 

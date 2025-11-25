@@ -7,10 +7,6 @@
  * \ingroup bke
  */
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 struct Collection;
 struct Depsgraph;
 struct ListBase;
@@ -77,7 +73,7 @@ typedef struct EffectorCache {
 
   struct PartDeflect *pd;
 
-  /** Random noise generator for e.g. wind. */
+  /** Random noise generator, e.g. for wind. */
   struct RNG *rng;
 
   /* precalculated for guides */
@@ -276,7 +272,3 @@ void BKE_sim_debug_data_remove_element(unsigned int hash);
 
 void BKE_sim_debug_data_clear(void);
 void BKE_sim_debug_data_clear_category(const char *category);
-
-#ifdef __cplusplus
-}
-#endif

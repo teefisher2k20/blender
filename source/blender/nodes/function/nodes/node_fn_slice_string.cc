@@ -10,10 +10,12 @@ namespace blender::nodes::node_fn_slice_string_cc {
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::String>("String").hide_label();
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
+  b.add_input<decl::String>("String").optional_label();
+  b.add_output<decl::String>("String").align_with_previous();
   b.add_input<decl::Int>("Position");
   b.add_input<decl::Int>("Length").min(0).default_value(10);
-  b.add_output<decl::String>("String");
 }
 
 static void node_build_multi_function(NodeMultiFunctionBuilder &builder)
@@ -34,11 +36,12 @@ static void node_register()
 
   fn_node_type_base(&ntype, "FunctionNodeSliceString", FN_NODE_SLICE_STRING);
   ntype.ui_name = "Slice String";
+  ntype.ui_description = "Extract a string segment from a larger string";
   ntype.enum_name_legacy = "SLICE_STRING";
   ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = node_declare;
   ntype.build_multi_function = node_build_multi_function;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

@@ -18,6 +18,8 @@
 #include "BLI_dial_2d.h"
 #include "BLI_math_base_safe.h"
 #include "BLI_math_matrix.h"
+#include "BLI_math_rotation.h"
+#include "BLI_math_vector.h"
 #include "BLI_math_vector_types.hh"
 #include "BLI_rect.h"
 
@@ -27,7 +29,6 @@
 #include "GPU_immediate_util.hh"
 #include "GPU_matrix.hh"
 #include "GPU_select.hh"
-#include "GPU_shader.hh"
 #include "GPU_state.hh"
 
 #include "RNA_access.hh"
@@ -48,23 +49,13 @@
 
 static int gizmo_cage2d_transform_flag_get(const wmGizmo *gz);
 
-static void gizmo_calc_rect_view_scale(const wmGizmo *gz, const float dims[2], float scale[2])
+static void gizmo_calc_rect_view_scale(const wmGizmo *gz, float scale[2])
 {
   float matrix_final_no_offset[4][4];
-  float asp[2] = {1.0f, 1.0f};
-  if (dims[0] > dims[1]) {
-    asp[0] = dims[1] / dims[0];
-  }
-  else {
-    asp[1] = dims[0] / dims[1];
-  }
   float x_axis[3], y_axis[3];
   WM_gizmo_calc_matrix_final_no_offset(gz, matrix_final_no_offset);
   mul_v3_mat3_m4v3(x_axis, matrix_final_no_offset, gz->matrix_offset[0]);
   mul_v3_mat3_m4v3(y_axis, matrix_final_no_offset, gz->matrix_offset[1]);
-
-  mul_v2_v2(x_axis, asp);
-  mul_v2_v2(y_axis, asp);
 
   float len_x_axis = len_v3(x_axis);
   float len_y_axis = len_v3(y_axis);
@@ -74,13 +65,13 @@ static void gizmo_calc_rect_view_scale(const wmGizmo *gz, const float dims[2], f
   scale[1] = safe_divide(1.0f, len_y_axis);
 }
 
-static void gizmo_calc_rect_view_margin(const wmGizmo *gz, const float dims[2], float margin[2])
+static void gizmo_calc_rect_view_margin(const wmGizmo *gz, float margin[2])
 {
   float handle_size;
   handle_size = 0.15f;
   handle_size *= gz->scale_final;
   float scale_xy[2];
-  gizmo_calc_rect_view_scale(gz, dims, scale_xy);
+  gizmo_calc_rect_view_scale(gz, scale_xy);
 
   margin[0] = (handle_size * scale_xy[0]);
   margin[1] = (handle_size * scale_xy[1]);
@@ -98,7 +89,8 @@ static void cage2d_draw_box_corners(const rctf *r,
                                     const float line_width)
 {
   /* NOTE(Metal): Prefer using 3D coordinates with 3D shader, even if rendering 2D gizmo's. */
-  uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
+  uint pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32_32);
 
   immBindBuiltinProgram(GPU_SHADER_3D_POLYLINE_UNIFORM_COLOR);
   immUniformColor3fv(color);
@@ -382,8 +374,9 @@ static void cage2d_draw_box_interaction(const float color[4],
   struct {
     uint pos, col;
   } attr_id{};
-  attr_id.pos = GPU_vertformat_attr_add(format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
-  attr_id.col = GPU_vertformat_attr_add(format, "color", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
+  attr_id.pos = GPU_vertformat_attr_add(format, "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
+  attr_id.col = GPU_vertformat_attr_add(
+      format, "color", blender::gpu::VertAttrType::SFLOAT_32_32_32);
   immBindBuiltinProgram(is_solid ? GPU_SHADER_3D_FLAT_COLOR : GPU_SHADER_3D_POLYLINE_FLAT_COLOR);
 
   {
@@ -499,7 +492,8 @@ static void cage2d_draw_rect_wire(const rctf *r,
 {
   /* NOTE(Metal): Prefer using 3D coordinates with 3D shader input, even if rendering 2D gizmo's.
    */
-  uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
+  uint pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32_32);
 
   immBindBuiltinProgram(GPU_SHADER_3D_POLYLINE_UNIFORM_COLOR);
   immUniformColor3fv(color);
@@ -554,9 +548,12 @@ static void cage2d_draw_rect_wire(const rctf *r,
 static void cage2d_draw_circle_wire(const float color[3],
                                     const float size[2],
                                     const float margin[2],
+                                    const int transform_flag,
+                                    const int draw_options,
                                     const float line_width)
 {
-  uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
+  uint pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32_32);
 
   const bool use_points = is_zero_v2(margin);
   immBindBuiltinProgram(use_points ? GPU_SHADER_3D_POINT_UNIFORM_SIZE_UNIFORM_COLOR_AA :
@@ -578,24 +575,49 @@ static void cage2d_draw_circle_wire(const float color[3],
     imm_draw_circle_wire_aspect_3d(pos, 0.0f, 0.0f, size[0], size[1], CIRCLE_RESOL);
   }
 
+  if (transform_flag & ED_GIZMO_CAGE_XFORM_FLAG_ROTATE) {
+    immBegin(GPU_PRIM_LINES, 4);
+    immVertex3f(pos, 0.0f, size[1], 0.0f);
+    immVertex3f(pos, 0.0f, size[1] + margin[1], 0.0f);
+
+    immVertex3f(pos, 0.0f, size[1] + margin[1], 0.0f);
+    immVertex3f(pos, 0.0f, size[1], 0.0f);
+    immEnd();
+  }
+
+  if (transform_flag & ED_GIZMO_CAGE_XFORM_FLAG_TRANSLATE) {
+    if (draw_options & ED_GIZMO_CAGE_DRAW_FLAG_XFORM_CENTER_HANDLE) {
+      const float rad[2] = {margin[0] / 2, margin[1] / 2};
+      const float center[2] = {0.0f, 0.0f};
+
+      immBegin(GPU_PRIM_LINES, 4);
+      immVertex3f(pos, center[0] - rad[0], center[1] - rad[1], 0.0f);
+      immVertex3f(pos, center[0] + rad[0], center[1] + rad[1], 0.0f);
+      immVertex3f(pos, center[0] + rad[0], center[1] - rad[1], 0.0f);
+      immVertex3f(pos, center[0] - rad[0], center[1] + rad[1], 0.0f);
+      immEnd();
+    }
+  }
+
   immUnbindProgram();
 }
 
-static void cage2d_draw_rect_corner_handles(const rctf *r,
-                                            const int highlighted,
-                                            const float margin[2],
-                                            const float color[3],
-                                            const int transform_flag,
-                                            bool solid)
+static bool is_corner_highlighted(const int highlighted)
 {
-  /* Only draw corner handles when hovering over the corners. */
-  if (highlighted < ED_GIZMO_CAGE2D_PART_SCALE_MIN_X_MIN_Y ||
-      highlighted > ED_GIZMO_CAGE2D_PART_SCALE_MAX_X_MAX_Y)
-  {
-    return;
-  }
+  return ELEM(highlighted,
+              ED_GIZMO_CAGE2D_PART_SCALE_MIN_X_MIN_Y,
+              ED_GIZMO_CAGE2D_PART_SCALE_MIN_X_MAX_Y,
+              ED_GIZMO_CAGE2D_PART_SCALE_MAX_X_MIN_Y,
+              ED_GIZMO_CAGE2D_PART_SCALE_MAX_X_MAX_Y);
+}
 
-  uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+static void cage2d_draw_rect_rotate_handle(const rctf *r,
+                                           const float margin[2],
+                                           const float color[3],
+                                           bool solid)
+{
+  uint pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   void (*circle_fn)(uint, float, float, float, float, int) = (solid) ?
                                                                  imm_draw_circle_fill_aspect_2d :
                                                                  imm_draw_circle_wire_aspect_2d;
@@ -605,20 +627,33 @@ static void cage2d_draw_rect_corner_handles(const rctf *r,
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
   immUniformColor3fv(color);
 
-  /* should  really divide by two, but looks too bulky. */
+  const float handle[2] = {
+      BLI_rctf_cent_x(r),
+      r->ymax + (margin[1] * GIZMO_MARGIN_OFFSET_SCALE),
+  };
+  circle_fn(pos, handle[0], handle[1], rad[0], rad[1], resolu);
+
+  immUnbindProgram();
+}
+
+static void cage2d_draw_rect_corner_handles(const rctf *r,
+                                            const float margin[2],
+                                            const float color[3],
+                                            bool solid)
+{
+  uint pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
+  const float rad[2] = {margin[0] / 3, margin[1] / 3};
+
+  immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
+  immUniformColor3fv(color);
+
+  /* Should really divide by two, but looks too bulky. */
   {
     imm_draw_point_aspect_2d(pos, r->xmin, r->ymin, rad[0], rad[1], solid);
     imm_draw_point_aspect_2d(pos, r->xmax, r->ymin, rad[0], rad[1], solid);
     imm_draw_point_aspect_2d(pos, r->xmax, r->ymax, rad[0], rad[1], solid);
     imm_draw_point_aspect_2d(pos, r->xmin, r->ymax, rad[0], rad[1], solid);
-  }
-
-  if (transform_flag & ED_GIZMO_CAGE_XFORM_FLAG_ROTATE) {
-    const float handle[2] = {
-        BLI_rctf_cent_x(r),
-        r->ymax + (margin[1] * GIZMO_MARGIN_OFFSET_SCALE),
-    };
-    circle_fn(pos, handle[0], handle[1], rad[0], rad[1], resolu);
   }
 
   immUnbindProgram();
@@ -631,7 +666,8 @@ static void cage2d_draw_rect_edge_handles(const rctf *r,
                                           const float color[3],
                                           bool solid)
 {
-  uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+  uint pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
 
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
   immUniformColor3fv(color);
@@ -680,12 +716,13 @@ static void gizmo_cage2d_draw_intern(wmGizmo *gz,
   GPU_matrix_mul(matrix_final);
 
   float margin[2];
-  gizmo_calc_rect_view_margin(gz, dims, margin);
+  gizmo_calc_rect_view_margin(gz, margin);
 
   /* Handy for quick testing draw (if it's outside bounds). */
   if (false) {
     GPU_blend(GPU_BLEND_ALPHA);
-    uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+    uint pos = GPU_vertformat_attr_add(
+        immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
     immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
     immUniformColor4f(1, 1, 1, 0.5f);
     float s = 0.5f;
@@ -701,7 +738,7 @@ static void gizmo_cage2d_draw_intern(wmGizmo *gz,
       /* Only scaling is needed for now. */
       GPU_select_load_id(select_id | ED_GIZMO_CAGE2D_PART_SCALE);
 
-      cage2d_draw_circle_wire(gz->color, size_real, margin, gz->line_width);
+      cage2d_draw_circle_wire(gz->color, size_real, margin, 0, draw_options, gz->line_width);
     }
     else {
       if (transform_flag & ED_GIZMO_CAGE_XFORM_FLAG_SCALE) {
@@ -799,15 +836,39 @@ static void gizmo_cage2d_draw_intern(wmGizmo *gz,
         cage2d_draw_rect_edge_handles(&r, gz->highlight_part, size_real, margin, color, true);
         cage2d_draw_rect_edge_handles(&r, gz->highlight_part, size_real, margin, black, false);
 
-        /* Corner handles. */
-        cage2d_draw_rect_corner_handles(
-            &r, gz->highlight_part, margin, color, transform_flag, true);
-        cage2d_draw_rect_corner_handles(
-            &r, gz->highlight_part, margin, black, transform_flag, false);
+        /* Only draw corner handles when hovering over the corners. */
+        if (is_corner_highlighted(gz->highlight_part)) {
+          cage2d_draw_rect_corner_handles(&r, margin, color, true);
+          cage2d_draw_rect_corner_handles(&r, margin, black, false);
+        }
+
+        /* Rotate handles. */
+        if (transform_flag & ED_GIZMO_CAGE_XFORM_FLAG_ROTATE) {
+          cage2d_draw_rect_rotate_handle(&r, margin, color, true);
+          cage2d_draw_rect_rotate_handle(&r, margin, black, false);
+        }
       }
       else if (draw_style == ED_GIZMO_CAGE2D_STYLE_CIRCLE) {
-        cage2d_draw_circle_wire(black, size_real, margin, outline_line_width);
-        cage2d_draw_circle_wire(color, size_real, margin, gz->line_width);
+        cage2d_draw_circle_wire(
+            black, size_real, margin, transform_flag, draw_options, outline_line_width);
+        cage2d_draw_circle_wire(
+            color, size_real, margin, transform_flag, draw_options, gz->line_width);
+
+        /* Edge handles. */
+        cage2d_draw_rect_edge_handles(&r, gz->highlight_part, size_real, margin, color, true);
+        cage2d_draw_rect_edge_handles(&r, gz->highlight_part, size_real, margin, black, false);
+
+        /* Draw corner handles. */
+        if (draw_options & ED_GIZMO_CAGE_DRAW_FLAG_CORNER_HANDLES) {
+          cage2d_draw_rect_corner_handles(&r, margin, color, true);
+          cage2d_draw_rect_corner_handles(&r, margin, black, false);
+        }
+
+        /* Rotation handles. */
+        if (transform_flag & ED_GIZMO_CAGE_XFORM_FLAG_ROTATE) {
+          cage2d_draw_rect_rotate_handle(&r, margin, color, true);
+          cage2d_draw_rect_rotate_handle(&r, margin, black, false);
+        }
       }
       else {
         BLI_assert(0);
@@ -879,7 +940,7 @@ static int gizmo_cage2d_test_select(bContext *C, wmGizmo *gz, const int mval[2])
   }
 
   float margin[2];
-  gizmo_calc_rect_view_margin(gz, dims, margin);
+  gizmo_calc_rect_view_margin(gz, margin);
 
   /* Expand for hots-pot. */
   const float size[2] = {size_real[0] + margin[0] / 2, size_real[1] + margin[1] / 2};
@@ -900,6 +961,10 @@ static int gizmo_cage2d_test_select(bContext *C, wmGizmo *gz, const int mval[2])
       r.ymin = -size[1] + margin[1];
       r.xmax = size[0] - margin[0];
       r.ymax = size[1] - margin[1];
+      if (!BLI_rctf_is_valid(&r)) {
+        /* Typically happens when gizmo width or height is very small. */
+        BLI_rctf_sanitize(&r);
+      }
     }
     bool isect = BLI_rctf_isect_pt_v(&r, point_local);
     if (isect) {
@@ -933,21 +998,27 @@ static int gizmo_cage2d_test_select(bContext *C, wmGizmo *gz, const int mval[2])
     r_ymax.xmax = size[0];
     r_ymax.ymax = size[1];
 
+    const bool draw_corners = draw_options & ED_GIZMO_CAGE_DRAW_FLAG_CORNER_HANDLES;
+
     if (BLI_rctf_isect_pt_v(&r_xmin, point_local)) {
-      if (BLI_rctf_isect_pt_v(&r_ymin, point_local)) {
-        return ED_GIZMO_CAGE2D_PART_SCALE_MIN_X_MIN_Y;
-      }
-      if (BLI_rctf_isect_pt_v(&r_ymax, point_local)) {
-        return ED_GIZMO_CAGE2D_PART_SCALE_MIN_X_MAX_Y;
+      if (draw_corners) {
+        if (BLI_rctf_isect_pt_v(&r_ymin, point_local)) {
+          return ED_GIZMO_CAGE2D_PART_SCALE_MIN_X_MIN_Y;
+        }
+        if (BLI_rctf_isect_pt_v(&r_ymax, point_local)) {
+          return ED_GIZMO_CAGE2D_PART_SCALE_MIN_X_MAX_Y;
+        }
       }
       return ED_GIZMO_CAGE2D_PART_SCALE_MIN_X;
     }
     if (BLI_rctf_isect_pt_v(&r_xmax, point_local)) {
-      if (BLI_rctf_isect_pt_v(&r_ymin, point_local)) {
-        return ED_GIZMO_CAGE2D_PART_SCALE_MAX_X_MIN_Y;
-      }
-      if (BLI_rctf_isect_pt_v(&r_ymax, point_local)) {
-        return ED_GIZMO_CAGE2D_PART_SCALE_MAX_X_MAX_Y;
+      if (draw_corners) {
+        if (BLI_rctf_isect_pt_v(&r_ymin, point_local)) {
+          return ED_GIZMO_CAGE2D_PART_SCALE_MAX_X_MIN_Y;
+        }
+        if (BLI_rctf_isect_pt_v(&r_ymax, point_local)) {
+          return ED_GIZMO_CAGE2D_PART_SCALE_MAX_X_MAX_Y;
+        }
       }
       return ED_GIZMO_CAGE2D_PART_SCALE_MAX_X;
     }
@@ -980,6 +1051,8 @@ static int gizmo_cage2d_test_select(bContext *C, wmGizmo *gz, const int mval[2])
   return -1;
 }
 
+namespace {
+
 struct RectTransformInteraction {
   float orig_mouse[2];
   float orig_matrix_offset[4][4];
@@ -987,6 +1060,8 @@ struct RectTransformInteraction {
   Dial *dial;
   bool use_temp_uniform;
 };
+
+}  // namespace
 
 static int gizmo_cage2d_transform_flag_get(const wmGizmo *gz)
 {
@@ -1005,10 +1080,9 @@ static void gizmo_cage2d_setup(wmGizmo *gz)
   gz->flag |= WM_GIZMO_DRAW_MODAL | WM_GIZMO_DRAW_NO_SCALE;
 }
 
-static int gizmo_cage2d_invoke(bContext *C, wmGizmo *gz, const wmEvent *event)
+static wmOperatorStatus gizmo_cage2d_invoke(bContext *C, wmGizmo *gz, const wmEvent *event)
 {
-  RectTransformInteraction *data = static_cast<RectTransformInteraction *>(
-      MEM_callocN(sizeof(RectTransformInteraction), "cage_interaction"));
+  RectTransformInteraction *data = MEM_callocN<RectTransformInteraction>("cage_interaction");
 
   copy_m4_m4(data->orig_matrix_offset, gz->matrix_offset);
   WM_gizmo_calc_matrix_final_no_offset(gz, data->orig_matrix_final_no_offset);
@@ -1080,10 +1154,10 @@ static void gizmo_pivot_from_scale_part(int part, float r_pt[2])
   }
 }
 
-static int gizmo_cage2d_modal(bContext *C,
-                              wmGizmo *gz,
-                              const wmEvent *event,
-                              eWM_GizmoFlagTweak /*tweak_flag*/)
+static wmOperatorStatus gizmo_cage2d_modal(bContext *C,
+                                           wmGizmo *gz,
+                                           const wmEvent *event,
+                                           eWM_GizmoFlagTweak /*tweak_flag*/)
 {
   RectTransformInteraction *data = static_cast<RectTransformInteraction *>(gz->interaction_data);
   int transform_flag = RNA_enum_get(gz->ptr, "transform");
@@ -1194,6 +1268,26 @@ static int gizmo_cage2d_modal(bContext *C,
       zero_v2(pivot);
     }
 
+    float curr_mouse[2];
+    copy_v2_v2(curr_mouse, data->orig_mouse);
+
+    /* Rotate current and original mouse coordinates around gizmo center. */
+    if (transform_flag & ED_GIZMO_CAGE_XFORM_FLAG_ROTATE) {
+      float rot[3][3];
+      float loc[3];
+      float size[3];
+      mat4_to_loc_rot_size(loc, rot, size, gz->matrix_offset);
+
+      invert_m3(rot);
+      sub_v2_v2(point_local, loc);
+      mul_m3_v2(rot, point_local);
+      add_v2_v2(point_local, loc);
+
+      sub_v2_v2(curr_mouse, loc);
+      mul_m3_v2(rot, curr_mouse);
+      add_v2_v2(curr_mouse, loc);
+    }
+
     bool constrain_axis[2] = {false};
     gizmo_constrain_from_scale_part(gz->highlight_part, constrain_axis);
 
@@ -1203,7 +1297,7 @@ static int gizmo_cage2d_modal(bContext *C,
       size_new[i] = size_orig[i];
       if (constrain_axis[i] == false) {
         /* Original cursor position relative to pivot. */
-        const float delta_orig = data->orig_mouse[i] - data->orig_matrix_offset[3][i] -
+        const float delta_orig = curr_mouse[i] - data->orig_matrix_offset[3][i] -
                                  pivot[i] * size_orig[i];
         const float delta_curr = point_local[i] - data->orig_matrix_offset[3][i] -
                                  pivot[i] * size_orig[i];
@@ -1214,7 +1308,6 @@ static int gizmo_cage2d_modal(bContext *C,
             continue;
           }
         }
-
         /* Original cursor position does not exactly lie on the cage boundary due to margin. */
         size_new[i] = delta_curr / (signf(delta_orig) * 0.5f * dims[i] - pivot[i]);
       }
@@ -1267,7 +1360,6 @@ static int gizmo_cage2d_modal(bContext *C,
 
   /* tag the region for redraw */
   ED_region_tag_redraw_editor_overlays(CTX_wm_region(C));
-  WM_event_add_mousemove(CTX_wm_window(C));
 
   return OPERATOR_RUNNING_MODAL;
 }
@@ -1291,16 +1383,21 @@ static void gizmo_cage2d_exit(bContext *C, wmGizmo *gz, const bool cancel)
 {
   RectTransformInteraction *data = static_cast<RectTransformInteraction *>(gz->interaction_data);
 
-  MEM_SAFE_FREE(data->dial);
+  if (data->dial) {
+    BLI_dial_free(data->dial);
+    data->dial = nullptr;
+  }
+
+  wmGizmoProperty *gz_prop = WM_gizmo_target_property_find(gz, "matrix");
 
   if (!cancel) {
+    if (WM_gizmo_target_property_is_valid(gz_prop)) {
+      WM_gizmo_target_property_anim_autokey(C, gz, gz_prop);
+    }
     return;
   }
 
-  wmGizmoProperty *gz_prop;
-
   /* reset properties */
-  gz_prop = WM_gizmo_target_property_find(gz, "matrix");
   if (gz_prop->type != nullptr) {
     WM_gizmo_target_property_float_set_array(C, gz, gz_prop, &data->orig_matrix_offset[0][0]);
   }
@@ -1317,7 +1414,7 @@ static void GIZMO_GT_cage_2d(wmGizmoType *gzt)
   /* identifiers */
   gzt->idname = "GIZMO_GT_cage_2d";
 
-  /* api callbacks */
+  /* API callbacks. */
   gzt->draw = gizmo_cage2d_draw;
   gzt->draw_select = gizmo_cage2d_draw_select;
   gzt->test_select = gizmo_cage2d_test_select;
@@ -1346,6 +1443,7 @@ static void GIZMO_GT_cage_2d(wmGizmoType *gzt)
   };
   static const EnumPropertyItem rna_enum_draw_options[] = {
       {ED_GIZMO_CAGE_DRAW_FLAG_XFORM_CENTER_HANDLE, "XFORM_CENTER_HANDLE", 0, "Center Handle", ""},
+      {ED_GIZMO_CAGE_DRAW_FLAG_CORNER_HANDLES, "CORNER_HANDLES", 0, "Corner Handles", ""},
       {0, nullptr, 0, nullptr, nullptr},
   };
   static const float unit_v2[2] = {1.0f, 1.0f};

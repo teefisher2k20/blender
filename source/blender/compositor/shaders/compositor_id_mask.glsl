@@ -2,14 +2,18 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "infos/compositor_id_mask_infos.hh"
+
+COMPUTE_SHADER_CREATE_INFO(compositor_id_mask)
+
 #include "gpu_shader_compositor_texture_utilities.glsl"
 
 void main()
 {
-  ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+  int2 texel = int2(gl_GlobalInvocationID.xy);
 
   float input_mask_value = texture_load(input_mask_tx, texel).x;
-  float mask = int(round(input_mask_value)) == index ? 1.0 : 0.0;
+  float mask = int(round(input_mask_value)) == index ? 1.0f : 0.0f;
 
-  imageStore(output_mask_img, texel, vec4(mask));
+  imageStore(output_mask_img, texel, float4(mask));
 }

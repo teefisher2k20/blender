@@ -2,20 +2,24 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "infos/compositor_smaa_infos.hh"
+
+COMPUTE_SHADER_CREATE_INFO(compositor_smaa_edge_detection)
+
 #include "gpu_shader_compositor_texture_utilities.glsl"
 #include "gpu_shader_smaa_lib.glsl"
 
 void main()
 {
-  ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+  int2 texel = int2(gl_GlobalInvocationID.xy);
 
   /* Add 0.5 to evaluate the input sampler at the center of the pixel and divide by the image size
    * to get the coordinates into the sampler's expected [0, 1] range. */
-  vec2 coordinates = (vec2(texel) + vec2(0.5)) / vec2(texture_size(input_tx));
+  float2 coordinates = (float2(texel) + float2(0.5f)) / float2(texture_size(input_tx));
 
   float4 offset[3];
   SMAAEdgeDetectionVS(coordinates, offset);
 
-  vec2 edge = SMAALumaEdgeDetectionPS(coordinates, offset, input_tx);
-  imageStore(edges_img, texel, vec4(edge, vec2(0.0)));
+  float2 edge = SMAALumaEdgeDetectionPS(coordinates, offset, input_tx);
+  imageStore(edges_img, texel, float4(edge, float2(0.0f)));
 }

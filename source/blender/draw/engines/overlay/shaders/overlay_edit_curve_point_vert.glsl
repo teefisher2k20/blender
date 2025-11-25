@@ -2,8 +2,12 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "common_view_clipping_lib.glsl"
+#include "infos/overlay_edit_mode_infos.hh"
+
+VERTEX_SHADER_CREATE_INFO(overlay_edit_curve_point)
+
 #include "draw_model_lib.glsl"
+#include "draw_view_clipping_lib.glsl"
 #include "draw_view_lib.glsl"
 
 void main()
@@ -12,23 +16,23 @@ void main()
   bool is_gpencil = ((data & EDGE_FREESTYLE) != 0u);
   if ((data & VERT_SELECTED) != 0u) {
     if ((data & VERT_ACTIVE) != 0u) {
-      finalColor = colorEditMeshActive;
+      final_color = theme.colors.edit_mesh_active;
     }
     else {
-      finalColor = (!is_gpencil) ? colorVertexSelect : colorGpencilVertexSelect;
+      final_color = (!is_gpencil) ? theme.colors.vert_select : theme.colors.gpencil_vertex_select;
     }
   }
   else {
-    finalColor = (!is_gpencil) ? colorVertex : colorGpencilVertex;
+    final_color = (!is_gpencil) ? theme.colors.vert : theme.colors.gpencil_vertex;
   }
 
-  vec3 world_pos = drw_point_object_to_world(pos);
+  float3 world_pos = drw_point_object_to_world(pos);
   gl_Position = drw_point_world_to_homogenous(world_pos);
-  gl_PointSize = (!is_gpencil) ? sizeVertex * 2.0 : sizeVertexGpencil * 2.0;
+  gl_PointSize = (!is_gpencil) ? theme.sizes.vert * 2.0f : theme.sizes.vertex_gpencil * 2.0f;
   view_clipping_distances(world_pos);
 
-  bool show_handle = showCurveHandles;
-  if ((uint(curveHandleDisplay) == CURVE_HANDLE_SELECTED) &&
+  bool show_handle = show_curve_handles;
+  if ((uint(curve_handle_display) == CURVE_HANDLE_SELECTED) &&
       ((data & VERT_SELECTED_BEZT_HANDLE) == 0u))
   {
     show_handle = false;
@@ -36,6 +40,6 @@ void main()
 
   if (!show_handle && ((data & BEZIER_HANDLE) != 0u)) {
     /* We set the vertex at the camera origin to generate 0 fragments. */
-    gl_Position = vec4(0.0, 0.0, -3e36, 0.0);
+    gl_Position = float4(0.0f, 0.0f, -3e36f, 0.0f);
   }
 }

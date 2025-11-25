@@ -2,13 +2,12 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BLI_math_matrix.hh"
 #include "BLI_math_quaternion.hh"
 #include "BLI_math_rotation.hh"
 #include "BLI_math_vector.h"
 #include "BLI_math_vector.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "NOD_rna_define.hh"
@@ -19,19 +18,22 @@ namespace blender::nodes::node_fn_align_rotation_to_vector_cc {
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
+  b.add_default_layout();
   b.is_function_node();
   b.add_input<decl::Rotation>("Rotation").hide_value();
+  b.add_output<decl::Rotation>("Rotation").align_with_previous();
   b.add_input<decl::Float>("Factor").default_value(1.0f).min(0.0f).max(1.0f).subtype(PROP_FACTOR);
   b.add_input<decl::Vector>("Vector").default_value({0.0, 0.0, 1.0}).subtype(PROP_XYZ);
-  b.add_output<decl::Rotation>("Rotation");
 }
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "axis", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
-  uiItemR(layout, ptr, "pivot_axis", UI_ITEM_NONE, IFACE_("Pivot"), ICON_NONE);
+  layout->prop(ptr, "axis", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
+  layout->use_property_split_set(true);
+  layout->use_property_decorate_set(false);
+  layout->prop(ptr, "pivot_axis", UI_ITEM_NONE, IFACE_("Pivot"), ICON_NONE);
 }
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
@@ -231,13 +233,14 @@ static void node_register()
 
   fn_node_type_base(&ntype, "FunctionNodeAlignRotationToVector", FN_NODE_ALIGN_ROTATION_TO_VECTOR);
   ntype.ui_name = "Align Rotation to Vector";
+  ntype.ui_description = "Orient a rotation along the given direction";
   ntype.enum_name_legacy = "ALIGN_ROTATION_TO_VECTOR";
   ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = node_declare;
   ntype.initfunc = node_init;
   ntype.draw_buttons = node_layout;
   ntype.build_multi_function = node_build_multi_function;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

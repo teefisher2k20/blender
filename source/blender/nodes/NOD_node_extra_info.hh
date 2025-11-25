@@ -13,15 +13,19 @@ namespace blender::nodes {
 struct NodeExtraInfoRow {
   std::string text;
   int icon = 0;
-  const char *tooltip = nullptr;
+  StringRef tooltip;
 
   uiButToolTipFunc tooltip_fn = nullptr;
   void *tooltip_fn_arg = nullptr;
   void (*tooltip_fn_free_arg)(void *) = nullptr;
+  void *(*tooltip_fn_copy_arg)(void *) = nullptr;
+
+  std::function<void(uiBut &)> set_execute_fn;
 };
 
 struct NodeExtraInfoParams {
   Vector<NodeExtraInfoRow> &rows;
+  const bNodeTree &tree;
   const bNode &node;
   const bContext &C;
 };

@@ -48,27 +48,45 @@ static void extract_dense_float_voxels(const VolumeGridType grid_type,
                                        float *r_voxels)
 {
   switch (grid_type) {
-    case VOLUME_GRID_BOOLEAN:
-      return extract_dense_voxels<openvdb::BoolGrid, float>(grid, bbox, r_voxels);
-    case VOLUME_GRID_FLOAT:
-      return extract_dense_voxels<openvdb::FloatGrid, float>(grid, bbox, r_voxels);
-    case VOLUME_GRID_DOUBLE:
-      return extract_dense_voxels<openvdb::DoubleGrid, float>(grid, bbox, r_voxels);
-    case VOLUME_GRID_INT:
-      return extract_dense_voxels<openvdb::Int32Grid, float>(grid, bbox, r_voxels);
-    case VOLUME_GRID_INT64:
-      return extract_dense_voxels<openvdb::Int64Grid, float>(grid, bbox, r_voxels);
-    case VOLUME_GRID_MASK:
-      return extract_dense_voxels<openvdb::MaskGrid, float>(grid, bbox, r_voxels);
-    case VOLUME_GRID_VECTOR_FLOAT:
-      return extract_dense_voxels<openvdb::Vec3fGrid, openvdb::Vec3f>(
+    case VOLUME_GRID_BOOLEAN: {
+      extract_dense_voxels<openvdb::BoolGrid, float>(grid, bbox, r_voxels);
+      return;
+    }
+    case VOLUME_GRID_FLOAT: {
+      extract_dense_voxels<openvdb::FloatGrid, float>(grid, bbox, r_voxels);
+      return;
+    }
+    case VOLUME_GRID_DOUBLE: {
+      extract_dense_voxels<openvdb::DoubleGrid, float>(grid, bbox, r_voxels);
+      return;
+    }
+    case VOLUME_GRID_INT: {
+      extract_dense_voxels<openvdb::Int32Grid, float>(grid, bbox, r_voxels);
+      return;
+    }
+    case VOLUME_GRID_INT64: {
+      extract_dense_voxels<openvdb::Int64Grid, float>(grid, bbox, r_voxels);
+      return;
+    }
+    case VOLUME_GRID_MASK: {
+      extract_dense_voxels<openvdb::MaskGrid, float>(grid, bbox, r_voxels);
+      return;
+    }
+    case VOLUME_GRID_VECTOR_FLOAT: {
+      extract_dense_voxels<openvdb::Vec3fGrid, openvdb::Vec3f>(
           grid, bbox, reinterpret_cast<openvdb::Vec3f *>(r_voxels));
-    case VOLUME_GRID_VECTOR_DOUBLE:
-      return extract_dense_voxels<openvdb::Vec3dGrid, openvdb::Vec3f>(
+      return;
+    }
+    case VOLUME_GRID_VECTOR_DOUBLE: {
+      extract_dense_voxels<openvdb::Vec3dGrid, openvdb::Vec3f>(
           grid, bbox, reinterpret_cast<openvdb::Vec3f *>(r_voxels));
-    case VOLUME_GRID_VECTOR_INT:
-      return extract_dense_voxels<openvdb::Vec3IGrid, openvdb::Vec3f>(
+      return;
+    }
+    case VOLUME_GRID_VECTOR_INT: {
+      extract_dense_voxels<openvdb::Vec3IGrid, openvdb::Vec3f>(
           grid, bbox, reinterpret_cast<openvdb::Vec3f *>(r_voxels));
+      return;
+    }
     case VOLUME_GRID_POINTS:
     case VOLUME_GRID_UNKNOWN:
       /* Zero channels to copy. */
@@ -84,7 +102,7 @@ static void create_texture_to_object_matrix(const openvdb::Mat4d &grid_transform
   memcpy(index_to_object, openvdb::Mat4s(grid_transform).asPointer(), sizeof(index_to_object));
 
   float texture_to_index[4][4];
-  const openvdb::Vec3f loc = bbox.min().asVec3s();
+  const openvdb::Vec3f loc = bbox.min().asVec3s() - openvdb::Vec3s(0.5f);
   const openvdb::Vec3f size = bbox.dim().asVec3s();
   size_to_mat4(texture_to_index, size.asV());
   copy_v3_v3(texture_to_index[3], loc.asV());
@@ -120,8 +138,7 @@ bool BKE_volume_grid_dense_floats(const Volume *volume,
   const int64_t num_voxels = int64_t(resolution[0]) * int64_t(resolution[1]) *
                              int64_t(resolution[2]);
   const int channels = blender::bke::volume_grid::get_channels_num(grid_type);
-  const int elem_size = sizeof(float) * channels;
-  float *voxels = static_cast<float *>(MEM_malloc_arrayN(num_voxels, elem_size, __func__));
+  float *voxels = MEM_malloc_arrayN<float>(size_t(channels) * size_t(num_voxels), __func__);
   if (voxels == nullptr) {
     return false;
   }
@@ -355,8 +372,8 @@ void BKE_volume_grid_wireframe(const Volume *volume,
       boxes_to_edge_mesh({box}, grid.transform(), verts, edges);
     }
     cb(cb_userdata,
-       (float(*)[3])verts.data(),
-       (int(*)[2])edges.data(),
+       (float (*)[3])verts.data(),
+       (int (*)[2])edges.data(),
        verts.size(),
        edges.size());
   }
@@ -378,8 +395,8 @@ void BKE_volume_grid_wireframe(const Volume *volume,
     }
 
     cb(cb_userdata,
-       (float(*)[3])verts.data(),
-       (int(*)[2])edges.data(),
+       (float (*)[3])verts.data(),
+       (int (*)[2])edges.data(),
        verts.size(),
        edges.size());
   }
@@ -436,7 +453,7 @@ void BKE_volume_grid_selection_surface(const Volume * /*volume*/,
   const float offset_factor = 0.01f;
   grow_triangles(verts, tris, offset_factor);
 
-  cb(cb_userdata, (float(*)[3])verts.data(), (int(*)[3])tris.data(), verts.size(), tris.size());
+  cb(cb_userdata, (float (*)[3])verts.data(), (int (*)[3])tris.data(), verts.size(), tris.size());
 #else
   UNUSED_VARS(volume_grid);
   cb(cb_userdata, nullptr, nullptr, 0, 0);

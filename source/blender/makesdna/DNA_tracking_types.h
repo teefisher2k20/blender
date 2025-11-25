@@ -68,6 +68,7 @@ typedef struct MovieTrackingCamera {
 
   /* Nuke distortion model coefficients */
   float nuke_k1, nuke_k2;
+  float nuke_p1, nuke_p2;
 
   /* Brown-Conrady distortion model coefficients */
   /** Brown-Conrady radial distortion. */
@@ -109,8 +110,7 @@ typedef struct MovieTrackingMarker {
 typedef struct MovieTrackingTrack {
   struct MovieTrackingTrack *next, *prev;
 
-  /** MAX_NAME. */
-  char name[64];
+  char name[/*MAX_NAME*/ 64];
 
   /* ** settings ** */
 
@@ -212,8 +212,7 @@ typedef struct MovieTrackingPlaneMarker {
 typedef struct MovieTrackingPlaneTrack {
   struct MovieTrackingPlaneTrack *next, *prev;
 
-  /** MAX_NAME. */
-  char name[64];
+  char name[/*MAX_NAME*/ 64];
 
   /**
    * Array of point tracks used to define this plane.
@@ -349,8 +348,8 @@ typedef struct MovieTrackingReconstruction {
 typedef struct MovieTrackingObject {
   struct MovieTrackingObject *next, *prev;
 
-  /** Name of tracking object, MAX_NAME. */
-  char name[64];
+  /** Name of tracking object. */
+  char name[/*MAX_NAME*/ 64];
   int flag;
   /** Scale of object solution in camera space. */
   float scale;
@@ -411,7 +410,7 @@ typedef struct MovieTrackingDopesheet {
 
   /** Method to be used to sort tracks. */
   short sort_method;
-  /** Dopesheet building flag such as inverted order of sort. */
+  /** Dope-sheet building flag such as inverted order of sort. */
   short flag;
 
   /* ** runtime stuff ** */
@@ -455,7 +454,7 @@ typedef struct MovieTracking {
   /** Statistics displaying in clip editor. */
   MovieTrackingStats *stats;
 
-  /** Dopesheet data. */
+  /** Dope-sheet data. */
   MovieTrackingDopesheet dopesheet;
 } MovieTracking;
 

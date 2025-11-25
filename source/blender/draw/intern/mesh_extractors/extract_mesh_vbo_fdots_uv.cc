@@ -15,7 +15,7 @@ namespace blender::draw {
 static void extract_face_dots_uv_mesh(const MeshRenderData &mr, MutableSpan<float2> vbo_data)
 {
   const Mesh &mesh = *mr.mesh;
-  const StringRef name = CustomData_get_active_layer_name(&mesh.corner_data, CD_PROP_FLOAT2);
+  const StringRef name = mesh.active_uv_map_name();
   const bke::AttributeAccessor attributes = mesh.attributes();
   if (mr.use_subsurf_fdots) {
     const BitSpan facedot_tags = mesh.runtime->subsurf_face_dot_tags;
@@ -63,17 +63,18 @@ static void extract_face_dots_uv_bm(const MeshRenderData &mr, MutableSpan<float2
   });
 }
 
-void extract_face_dots_uv(const MeshRenderData &mr, gpu::VertBuf &vbo)
+gpu::VertBufPtr extract_face_dots_uv(const MeshRenderData &mr)
 {
-  static GPUVertFormat format = {0};
-  if (format.attr_len == 0) {
-    GPU_vertformat_attr_add(&format, "u", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+  static const GPUVertFormat format = []() {
+    GPUVertFormat format{};
+    GPU_vertformat_attr_add(&format, "u", gpu::VertAttrType::SFLOAT_32_32);
     GPU_vertformat_alias_add(&format, "au");
     GPU_vertformat_alias_add(&format, "pos");
-  }
-  GPU_vertbuf_init_with_format(vbo, format);
-  GPU_vertbuf_data_alloc(vbo, mr.faces_num);
-  MutableSpan<float2> vbo_data = vbo.data<float2>();
+    return format;
+  }();
+  gpu::VertBufPtr vbo = gpu::VertBufPtr(GPU_vertbuf_create_with_format(format));
+  GPU_vertbuf_data_alloc(*vbo, mr.faces_num);
+  MutableSpan<float2> vbo_data = vbo->data<float2>();
 
   if (mr.extract_type == MeshExtractType::Mesh) {
     extract_face_dots_uv_mesh(mr, vbo_data);
@@ -81,6 +82,7 @@ void extract_face_dots_uv(const MeshRenderData &mr, gpu::VertBuf &vbo)
   else {
     extract_face_dots_uv_bm(mr, vbo_data);
   }
+  return vbo;
 }
 
 }  // namespace blender::draw

@@ -10,6 +10,7 @@
 
 #include "BLI_function_ref.hh"
 #include "BLI_ghash.h"
+#include "BLI_listbase.h"
 #include "BLI_map.hh"
 
 #include "BLI_set.hh"
@@ -279,8 +280,8 @@ static void foreach_natural_hierarchy_child(const MainIDRelations &id_relations,
                                             const ID &parent_id,
                                             FunctionRef<ForeachChildReturn(ID &)> fn)
 {
-  const MainIDRelationsEntry *relations_of_id = static_cast<MainIDRelationsEntry *>(
-      BLI_ghash_lookup(id_relations.relations_from_pointers, &parent_id));
+  const MainIDRelationsEntry *relations_of_id = id_relations.relations_from_pointers->lookup(
+      &parent_id);
 
   /* Iterate over all IDs used by the parent ID (e.g. the child-collections of a collection). */
   for (MainIDRelationsEntryItem *to_id_entry = relations_of_id->to_ids; to_id_entry;

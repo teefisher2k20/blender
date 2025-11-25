@@ -7,15 +7,18 @@
  */
 
 #include "BLI_assert.h"
+#include "BLI_listbase.h"
+
 #include "MEM_guardedalloc.h"
 
+#include "DNA_colorband_types.h"
 #include "DNA_gpencil_modifier_types.h"
 #include "DNA_modifier_types.h"
 #include "DNA_object_types.h"
+#include "DNA_texture_types.h"
 
 #include "BKE_colortools.hh"
 #include "BKE_deform.hh"
-#include "BKE_gpencil_legacy.h"
 #include "BKE_gpencil_modifier_legacy.h"
 #include "BKE_lattice.hh"
 #include "BKE_lib_id.hh"

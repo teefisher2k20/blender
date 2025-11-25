@@ -8,8 +8,6 @@
  * Functions to evaluate mesh data.
  */
 
-#include <climits>
-
 #include "MEM_guardedalloc.h"
 
 #include "DNA_mesh_types.h"
@@ -82,7 +80,7 @@ float face_area_calc(const Span<float3> vert_positions, const Span<int> face_ver
   for (const int i : face_verts.index_range()) {
     coords[i] = vert_positions[face_verts[i]];
   }
-  return area_poly_v3((const float(*)[3])coords.data(), face_verts.size());
+  return area_poly_v3((const float (*)[3])coords.data(), face_verts.size());
 }
 
 }  // namespace blender::bke::mesh
@@ -241,15 +239,15 @@ void face_angles_calc(const Span<float3> vert_positions,
 
 bool BKE_mesh_center_median(const Mesh *mesh, float r_cent[3])
 {
-  const Span<float3> positions = mesh->vert_positions();
-  zero_v3(r_cent);
-  for (const int i : positions.index_range()) {
-    add_v3_v3(r_cent, positions[i]);
-  }
+  float3 center = blender::array_utils::compute_sum<float3>(mesh->vert_positions());
+
   /* otherwise we get NAN for 0 verts */
   if (mesh->verts_num) {
-    mul_v3_fl(r_cent, 1.0f / float(mesh->verts_num));
+    mul_v3_fl(center, 1.0 / float(mesh->verts_num));
   }
+
+  copy_v3_v3(r_cent, center);
+
   return (mesh->verts_num != 0);
 }
 
@@ -468,7 +466,7 @@ void BKE_mesh_mdisp_flip(MDisps *md, const bool use_loop_mdisp_flip)
   }
 
   const int sides = int(sqrt(md->totdisp));
-  float(*co)[3] = md->disps;
+  float (*co)[3] = md->disps;
 
   for (int x = 0; x < sides; x++) {
     float *co_a, *co_b;
@@ -725,7 +723,7 @@ void BKE_mesh_calc_relative_deform(const int *face_offsets,
 {
   const blender::OffsetIndices<int> faces({face_offsets, faces_num + 1});
 
-  int *vert_accum = (int *)MEM_calloc_arrayN(size_t(totvert), sizeof(*vert_accum), __func__);
+  int *vert_accum = MEM_calloc_arrayN<int>(totvert, __func__);
 
   memset(vert_cos_new, '\0', sizeof(*vert_cos_new) * size_t(totvert));
 

@@ -10,17 +10,14 @@
 
 #include <cstring>
 
-#include "MEM_guardedalloc.h"
-
 #include "BLI_listbase.h"
+#include "BLI_string.h"
 #include "BLI_utildefines.h"
 
 #include "DNA_action_types.h"
-#include "DNA_armature_types.h"
 #include "DNA_constraint_types.h"
 #include "DNA_key_types.h"
 #include "DNA_object_types.h"
-#include "DNA_sequence_types.h"
 
 #include "BKE_constraint.h"
 
@@ -175,8 +172,7 @@ RNANodeIdentifier RNANodeQuery::construct_node_identifier(const PointerRNA *ptr,
       node_identifier.type = NodeType::PARAMETERS;
     }
     node_identifier.operation_code = OperationCode::ID_PROPERTY;
-    node_identifier.operation_name = RNA_property_identifier(
-        reinterpret_cast<const PropertyRNA *>(prop));
+    node_identifier.operation_name = RNA_property_identifier(prop);
     return node_identifier;
   }
   if (ptr->type == &RNA_PoseBone) {
@@ -277,7 +273,7 @@ RNANodeIdentifier RNANodeQuery::construct_node_identifier(const PointerRNA *ptr,
   }
   else if (RNA_struct_is_a(ptr->type, &RNA_Mesh) || RNA_struct_is_a(ptr->type, &RNA_Modifier) ||
            RNA_struct_is_a(ptr->type, &RNA_Spline) || RNA_struct_is_a(ptr->type, &RNA_TextBox) ||
-           RNA_struct_is_a(ptr->type, &RNA_GPencilLayer) ||
+           RNA_struct_is_a(ptr->type, &RNA_AnnotationLayer) ||
            RNA_struct_is_a(ptr->type, &RNA_LatticePoint) ||
            RNA_struct_is_a(ptr->type, &RNA_MeshUVLoop) ||
            RNA_struct_is_a(ptr->type, &RNA_MeshLoopColor) ||
@@ -397,7 +393,7 @@ RNANodeIdentifier RNANodeQuery::construct_node_identifier(const PointerRNA *ptr,
 
 RNANodeQueryIDData *RNANodeQuery::ensure_id_data(const ID *id)
 {
-  unique_ptr<RNANodeQueryIDData> &id_data = id_data_map_.lookup_or_add_cb(
+  std::unique_ptr<RNANodeQueryIDData> &id_data = id_data_map_.lookup_or_add_cb(
       id, [&]() { return std::make_unique<RNANodeQueryIDData>(id); });
   return id_data.get();
 }

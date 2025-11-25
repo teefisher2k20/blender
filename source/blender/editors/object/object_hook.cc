@@ -14,7 +14,7 @@
 #include "BLI_listbase.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_utildefines.h"
 
 #include "DNA_armature_types.h"
@@ -74,7 +74,7 @@ static int return_editmesh_indexar(BMEditMesh *em,
     return 0;
   }
 
-  *r_indexar = index = static_cast<int *>(MEM_mallocN(4 * indexar_num, "hook indexar"));
+  *r_indexar = index = MEM_malloc_arrayN<int>(indexar_num, "hook indexar");
   *r_indexar_num = indexar_num;
   nr = 0;
   zero_v3(r_cent);
@@ -120,7 +120,7 @@ static bool return_editmesh_vgroup(Object *obedit, BMEditMesh *em, char *r_name,
     if (indexar_num) {
       const ListBase *defbase = BKE_object_defgroup_list(obedit);
       bDeformGroup *dg = static_cast<bDeformGroup *>(BLI_findlink(defbase, defgrp_index));
-      BLI_strncpy(r_name, dg->name, sizeof(dg->name));
+      BLI_strncpy_utf8(r_name, dg->name, sizeof(dg->name));
       mul_v3_fl(r_cent, 1.0f / float(indexar_num));
       return true;
     }
@@ -152,7 +152,7 @@ static void select_editbmesh_hook(Object *ob, HookModifierData *hmd)
     nr++;
   }
 
-  EDBM_select_flush(em);
+  EDBM_select_flush_from_verts(em, true);
 }
 
 static int return_editlattice_indexar(Lattice *editlatt,
@@ -179,7 +179,7 @@ static int return_editlattice_indexar(Lattice *editlatt,
     return 0;
   }
 
-  *r_indexar = index = static_cast<int *>(MEM_mallocN(4 * indexar_num, "hook indexar"));
+  *r_indexar = index = MEM_malloc_arrayN<int>(indexar_num, "hook indexar");
   *r_indexar_num = indexar_num;
   nr = 0;
   zero_v3(r_cent);
@@ -267,8 +267,7 @@ static int return_editcurve_indexar(Object *obedit,
     return 0;
   }
 
-  *r_indexar = index = static_cast<int *>(
-      MEM_mallocN(sizeof(*index) * indexar_num, "hook indexar"));
+  *r_indexar = index = MEM_malloc_arrayN<int>(indexar_num, "hook indexar");
   *r_indexar_num = indexar_num;
   nr = 0;
   zero_v3(r_cent);
@@ -517,7 +516,6 @@ static int add_hook_object(const bContext *C,
                            ReportList *reports)
 {
   Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
-  ModifierData *md = nullptr;
   HookModifierData *hmd = nullptr;
   float cent[3];
   float pose_mat[4][4];
@@ -539,15 +537,9 @@ static int add_hook_object(const bContext *C,
     mul_v3_m4v3(ob->loc, obedit->object_to_world().ptr(), cent);
   }
 
-  md = static_cast<ModifierData *>(obedit->modifiers.first);
-  while (md && BKE_modifier_get_info(ModifierType(md->type))->type == ModifierTypeType::OnlyDeform)
-  {
-    md = md->next;
-  }
-
   hmd = (HookModifierData *)BKE_modifier_new(eModifierType_Hook);
-  BLI_insertlinkbefore(&obedit->modifiers, md, hmd);
-  SNPRINTF(hmd->modifier.name, "Hook-%s", ob->id.name + 2);
+  BKE_modifiers_add_at_end_if_possible(obedit, &hmd->modifier);
+  SNPRINTF_UTF8(hmd->modifier.name, "Hook-%s", ob->id.name + 2);
   BKE_modifier_unique_name(&obedit->modifiers, (ModifierData *)hmd);
   BKE_modifiers_persistent_uid_init(*obedit, hmd->modifier);
 
@@ -555,7 +547,7 @@ static int add_hook_object(const bContext *C,
   hmd->indexar = indexar;
   copy_v3_v3(hmd->cent, cent);
   hmd->indexar_num = indexar_num;
-  STRNCPY(hmd->name, name);
+  STRNCPY_UTF8(hmd->name, name);
 
   unit_m4(pose_mat);
 
@@ -574,7 +566,7 @@ static int add_hook_object(const bContext *C,
     if (arm->act_bone) {
       bPoseChannel *pchan_act;
 
-      STRNCPY(hmd->subtarget, arm->act_bone->name);
+      STRNCPY_UTF8(hmd->subtarget, arm->act_bone->name);
 
       pchan_act = BKE_pose_channel_active_if_bonecoll_visible(ob);
       if (LIKELY(pchan_act)) {
@@ -595,7 +587,7 @@ static int add_hook_object(const bContext *C,
    */
   /*        (parentinv) */
   Scene *scene_eval = DEG_get_evaluated_scene(depsgraph);
-  Object *object_eval = DEG_get_evaluated_object(depsgraph, ob);
+  Object *object_eval = DEG_get_evaluated(depsgraph, ob);
   BKE_object_transform_copy(object_eval, ob);
   BKE_object_where_is_calc(depsgraph, scene_eval, object_eval);
 
@@ -612,7 +604,7 @@ static int add_hook_object(const bContext *C,
   return true;
 }
 
-static int object_add_hook_selob_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus object_add_hook_selob_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
   Scene *scene = CTX_data_scene(C);
@@ -654,7 +646,7 @@ void OBJECT_OT_hook_add_selob(wmOperatorType *ot)
   ot->description = "Hook selected vertices to the first selected object";
   ot->idname = "OBJECT_OT_hook_add_selob";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = object_add_hook_selob_exec;
   ot->poll = hook_op_edit_poll;
 
@@ -668,7 +660,7 @@ void OBJECT_OT_hook_add_selob(wmOperatorType *ot)
                   "Assign the hook to the hook object's active bone");
 }
 
-static int object_add_hook_newob_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus object_add_hook_newob_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
   Scene *scene = CTX_data_scene(C);
@@ -694,7 +686,7 @@ void OBJECT_OT_hook_add_newob(wmOperatorType *ot)
   ot->description = "Hook selected vertices to a newly created object";
   ot->idname = "OBJECT_OT_hook_add_newob";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = object_add_hook_newob_exec;
   ot->poll = hook_op_edit_poll;
 
@@ -702,7 +694,7 @@ void OBJECT_OT_hook_add_newob(wmOperatorType *ot)
   ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
 }
 
-static int object_hook_remove_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus object_hook_remove_exec(bContext *C, wmOperator *op)
 {
   int num = RNA_enum_get(op->ptr, "modifier");
   Object *ob = CTX_data_edit_object(C);
@@ -766,7 +758,7 @@ void OBJECT_OT_hook_remove(wmOperatorType *ot)
   ot->idname = "OBJECT_OT_hook_remove";
   ot->description = "Remove a hook from the active object";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = object_hook_remove_exec;
   ot->invoke = WM_menu_invoke;
   ot->poll = hook_op_edit_poll;
@@ -784,7 +776,7 @@ void OBJECT_OT_hook_remove(wmOperatorType *ot)
   ot->prop = prop;
 }
 
-static int object_hook_reset_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus object_hook_reset_exec(bContext *C, wmOperator *op)
 {
   PointerRNA ptr = CTX_data_pointer_get_type(C, "modifier", &RNA_HookModifier);
   int num = RNA_enum_get(op->ptr, "modifier");
@@ -832,7 +824,7 @@ void OBJECT_OT_hook_reset(wmOperatorType *ot)
   RNA_def_property_flag(prop, PROP_ENUM_NO_TRANSLATE);
 }
 
-static int object_hook_recenter_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus object_hook_recenter_exec(bContext *C, wmOperator *op)
 {
   PointerRNA ptr = CTX_data_pointer_get_type(C, "modifier", &RNA_HookModifier);
   int num = RNA_enum_get(op->ptr, "modifier");
@@ -887,7 +879,7 @@ void OBJECT_OT_hook_recenter(wmOperatorType *ot)
   RNA_def_property_flag(prop, PROP_ENUM_NO_TRANSLATE);
 }
 
-static int object_hook_assign_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus object_hook_assign_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
   Scene *scene = CTX_data_scene(C);
@@ -954,7 +946,7 @@ void OBJECT_OT_hook_assign(wmOperatorType *ot)
   RNA_def_property_flag(prop, PROP_ENUM_NO_TRANSLATE);
 }
 
-static int object_hook_select_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus object_hook_select_exec(bContext *C, wmOperator *op)
 {
   PointerRNA ptr = CTX_data_pointer_get_type(C, "modifier", &RNA_HookModifier);
   int num = RNA_enum_get(op->ptr, "modifier");

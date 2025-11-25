@@ -6,12 +6,12 @@
  * \ingroup spstatusbar
  */
 
-#include <cstdio>
 #include <cstring>
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
+#include "BLI_listbase.h"
+#include "BLI_string_utf8.h"
 
 #include "BKE_context.hh"
 #include "BKE_screen.hh"
@@ -33,7 +33,7 @@ static SpaceLink *statusbar_create(const ScrArea * /*area*/, const Scene * /*sce
   ARegion *region;
   SpaceStatusBar *sstatusbar;
 
-  sstatusbar = static_cast<SpaceStatusBar *>(MEM_callocN(sizeof(*sstatusbar), "init statusbar"));
+  sstatusbar = MEM_callocN<SpaceStatusBar>("init statusbar");
   sstatusbar->spacetype = SPACE_STATUSBAR;
 
   /* header region */
@@ -133,7 +133,7 @@ void ED_spacetype_statusbar()
   ARegionType *art;
 
   st->spaceid = SPACE_STATUSBAR;
-  STRNCPY(st->name, "Status Bar");
+  STRNCPY_UTF8(st->name, "Status Bar");
 
   st->create = statusbar_create;
   st->free = statusbar_free;
@@ -144,7 +144,7 @@ void ED_spacetype_statusbar()
   st->blend_write = statusbar_space_blend_write;
 
   /* regions: header window */
-  art = static_cast<ARegionType *>(MEM_callocN(sizeof(*art), "spacetype statusbar header region"));
+  art = MEM_callocN<ARegionType>("spacetype statusbar header region");
   art->regionid = RGN_TYPE_HEADER;
   art->prefsizey = 0.8f * HEADERY;
   art->prefsizex = UI_UNIT_X * 5; /* Mainly to avoid glitches */

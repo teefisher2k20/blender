@@ -8,11 +8,13 @@
 
 #include "node_shader_util.hh"
 
+#include "BLI_math_base.h"
+
 #include "FN_multi_function_builder.hh"
 
 #include "NOD_multi_function.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 namespace blender::nodes::node_shader_clamp_cc {
@@ -28,7 +30,7 @@ static void sh_node_clamp_declare(NodeDeclarationBuilder &b)
 
 static void node_shader_buts_clamp(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "clamp_type", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
+  layout->prop(ptr, "clamp_type", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
 }
 
 static void node_shader_init_clamp(bNodeTree * /*ntree*/, bNode *node)
@@ -99,7 +101,7 @@ void register_node_type_sh_clamp()
 
   static blender::bke::bNodeType ntype;
 
-  sh_fn_node_type_base(&ntype, "ShaderNodeClamp", SH_NODE_CLAMP);
+  common_node_type_base(&ntype, "ShaderNodeClamp", SH_NODE_CLAMP);
   ntype.ui_name = "Clamp";
   ntype.ui_description = "Clamp a value between a minimum and a maximum";
   ntype.enum_name_legacy = "CLAMP";
@@ -111,5 +113,5 @@ void register_node_type_sh_clamp()
   ntype.build_multi_function = file_ns::sh_node_clamp_build_multi_function;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

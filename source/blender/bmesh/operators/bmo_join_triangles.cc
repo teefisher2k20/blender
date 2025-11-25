@@ -11,6 +11,8 @@
  * - convert triangles to any sided faces, not just quads.
  */
 
+#include <algorithm>
+
 #include "MEM_guardedalloc.h"
 
 #include "BLI_heap.h"
@@ -92,7 +94,7 @@ constexpr float maximum_improvement = 0.99f;
 /* -------------------------------------------------------------------- */
 /** \name Join Edges state
  * pass a struct to ensure we don't have to pass these four variables everywhere.
- \{ */
+ * \{ */
 
 struct JoinEdgesState {
   /** A priority queue of `BMEdge *` to be merged, in order of preference. */
@@ -266,6 +268,9 @@ static void bm_edge_to_quad_verts(const BMEdge *e, const BMVert *r_v_quad[4])
  * \{ */
 
 /** Cache custom-data delimiters. */
+
+namespace {
+
 struct DelimitData_CD {
   int cd_type;
   int cd_size;
@@ -288,6 +293,8 @@ struct DelimitData {
   DelimitData_CD cdata[4];
   int cdata_len;
 };
+
+}  // namespace
 
 /** Determines if the loop custom-data is contiguous. */
 static bool bm_edge_is_contiguous_loop_cd_all(const BMEdge *e, const DelimitData_CD *delimit_data)
@@ -502,7 +509,7 @@ static void add_without_duplicates(JoinEdgesNeighborInfo &neighbor_info, BMEdge 
 /**
  * Add the neighboring edges of a given loop to the `merge_edges` and `shared_loops` arrays.
  *
- * \param merge_edges: the array of mergable edges to add to.
+ * \param merge_edges: the array of mergeable edges to add to.
  * \param shared_loops: the array to shared loops to add to.
  * \param count: the number of items currently in each array.
  * \param l_in_quad: The loop to add the neighboring edges of, if they check out.
@@ -703,8 +710,7 @@ static float compute_alignment(const JoinEdgesState &s,
   }
 
   /* Pick the best option and average the four components. */
-  const float best_error = std::min(std::min(error[0], error[1]), std::min(error[2], error[3])) /
-                           4.0f;
+  const float best_error = std::min({error[0], error[1], error[2], error[3]}) / 4.0f;
 
   ASSERT_VALID_ERROR_METRIC(best_error);
 
@@ -714,9 +720,7 @@ static float compute_alignment(const JoinEdgesState &s,
   float alignment = 1.0f - (best_error / (M_PI / 4.0f));
 
   /* if alignment is *truly* awful, then do nothing. Don't make a join worse. */
-  if (alignment < 0.0f) {
-    alignment = 0.0f;
-  }
+  alignment = std::max(alignment, 0.0f);
 
   ASSERT_VALID_ERROR_METRIC(alignment);
 
@@ -835,9 +839,7 @@ static void reprioritize_join(JoinEdgesState &s,
    * the priority queue. Limiting improvement at 99% ensures those quads tend to retain their bad
    * sort, meaning they end up surrounded by quads that define a good grid,
    * then they merge last, which tends to produce better results. */
-  if (multiplier > maximum_improvement) {
-    multiplier = maximum_improvement;
-  }
+  multiplier = std::min(multiplier, maximum_improvement);
 
   ASSERT_VALID_ERROR_METRIC(multiplier);
 
@@ -871,19 +873,19 @@ static void reprioritize_face_neighbors(JoinEdgesState &s, BMFace *f, float f_er
 {
   BLI_assert(f->len == 4);
 
-  /* Identify any mergable edges of any neighbor triangles that face us.
+  /* Identify any mergeable edges of any neighbor triangles that face us.
    * - Some of our four edges... might not be manifold.
    * - Some of our neighbor faces... might not be triangles.
-   * - Some of our neighbor triangles... might have other non-manifold (un-mergable) edges.
+   * - Some of our neighbor triangles... might have other non-manifold (unmergeable) edges.
    * - Some of our neighbor triangles' manifold edges... might have non-triangle neighbors.
-   * Therefore, there can be have up to eight mergable edges, although there are often fewer. */
+   * Therefore, there can be have up to eight mergeable edges, although there are often fewer. */
   JoinEdgesNeighborInfo neighbor_info = {};
 
   /* Get the four loops around the face. */
   BMLoop *l_quad[4];
   BM_face_as_array_loop_quad(f, l_quad);
 
-  /* Add the mergable neighbors for each of those loops. */
+  /* Add the mergeable neighbors for each of those loops. */
   for (int i = 0; i < ARRAY_SIZE(l_quad); i++) {
     add_neighbors(neighbor_info, l_quad[i]);
   }
@@ -934,7 +936,7 @@ static BMFace *bm_faces_join_pair_by_edge(BMesh *bm,
   BMLoop *l_a = e->l;
   BMLoop *l_b = e->l->radial_next;
 
-  /* If previous face merges have created quads, which now make this edge un-mergable,
+  /* If previous face merges have created quads, which now make this edge unmergeable,
    * then skip it and move on. This happens frequently and that's ok.
    * It's much easier and more efficient to just skip these edges when we encounter them,
    * than it is to try to search the heap for them and remove them preemptively. */
@@ -950,8 +952,15 @@ static BMFace *bm_faces_join_pair_by_edge(BMesh *bm,
   }
 #endif
 
+  BMFace *f_double;
+
   /* Join the edge and identify the face. */
-  return BM_faces_join_pair(bm, l_a, l_b, true);
+  BMFace *f = BM_faces_join_pair(bm, l_a, l_b, true, &f_double);
+  /* See #BM_faces_join note on callers asserting when `r_double` is non-null. */
+  BLI_assert_msg(f_double == nullptr,
+                 "Doubled face detected at " AT ". Resulting mesh may be corrupt.");
+
+  return f;
 }
 
 /** Given a mesh, convert triangles to quads. */
@@ -965,14 +974,13 @@ void bmo_join_triangles_exec(BMesh *bm, BMOperator *op)
   DelimitData delimit_data = bm_edge_delmimit_data_from_op(bm, op);
 
   /* Initial setup of state. */
-  JoinEdgesState s = {0};
+  JoinEdgesState s = {nullptr};
   s.topo_influnce = BMO_slot_float_get(op->slots_in, "topology_influence");
   s.use_topo_influence = (s.topo_influnce != 0.0f);
   s.edge_queue = BLI_heap_new();
   s.select_tris_only = BMO_slot_bool_get(op->slots_in, "deselect_joined");
   if (s.use_topo_influence) {
-    s.edge_queue_nodes = static_cast<HeapNode **>(
-        MEM_malloc_arrayN(bm->totedge, sizeof(HeapNode *), __func__));
+    s.edge_queue_nodes = MEM_malloc_arrayN<HeapNode *>(bm->totedge, __func__);
   }
 
 #ifdef USE_JOIN_TRIANGLE_INTERACTIVE_TESTING

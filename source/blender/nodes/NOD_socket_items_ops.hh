@@ -9,6 +9,7 @@
 #include "WM_api.hh"
 
 #include "BKE_context.hh"
+#include "BKE_library.hh"
 #include "BKE_main_invariants.hh"
 #include "BKE_node_tree_update.hh"
 #include "BKE_node_tree_zones.hh"
@@ -23,7 +24,9 @@
 
 namespace blender::nodes::socket_items::ops {
 
-inline PointerRNA get_active_node_to_operate_on(bContext *C, const int node_type)
+inline PointerRNA get_active_node_to_operate_on(bContext *C,
+                                                wmOperator *op,
+                                                const StringRef node_idname)
 {
   SpaceNode *snode = CTX_wm_space_node(C);
   if (!snode) {
@@ -35,24 +38,36 @@ inline PointerRNA get_active_node_to_operate_on(bContext *C, const int node_type
   if (!ID_IS_EDITABLE(snode->edittree)) {
     return PointerRNA_NULL;
   }
-  const bke::bNodeTreeZones *zones = snode->edittree->zones();
-  if (!zones) {
+
+  bNode *node = nullptr;
+  if (RNA_struct_property_is_set(op->ptr, "node_identifier")) {
+    const int id = RNA_int_get(op->ptr, "node_identifier");
+    node = snode->edittree->node_by_id(id);
+  }
+  else {
+    node = bke::node_get_active(*snode->edittree);
+  }
+  if (!node) {
     return PointerRNA_NULL;
   }
-  bNode *active_node = bke::node_get_active(snode->edittree);
-  if (!active_node) {
-    return PointerRNA_NULL;
-  }
-  if (const bke::bNodeTreeZone *zone = zones->get_zone_by_node(active_node->identifier)) {
-    if (zone->input_node == active_node) {
-      /* Assume the data is generally stored on the output and not the input node. */
-      active_node = const_cast<bNode *>(zone->output_node);
+
+  if (bke::zone_type_by_node_type(node->type_legacy) != nullptr) {
+    const bke::bNodeTreeZones *zones = snode->edittree->zones();
+    if (!zones) {
+      return PointerRNA_NULL;
+    }
+    if (const bke::bNodeTreeZone *zone = zones->get_zone_by_node(node->identifier)) {
+      if (zone->input_node() == node) {
+        /* Assume the data is generally stored on the output and not the input node. */
+        node = const_cast<bNode *>(zone->output_node());
+      }
     }
   }
-  if (active_node->type_legacy != node_type) {
+
+  if (node->idname != node_idname) {
     return PointerRNA_NULL;
   }
-  return RNA_pointer_create_discrete(&snode->edittree->id, &RNA_Node, active_node);
+  return RNA_pointer_create_discrete(&snode->edittree->id, &RNA_Node, node);
 }
 
 inline void update_after_node_change(bContext *C, const PointerRNA node_ptr)
@@ -67,7 +82,30 @@ inline void update_after_node_change(bContext *C, const PointerRNA node_ptr)
 
 template<typename Accessor> inline bool editable_node_active_poll(bContext *C)
 {
-  return get_active_node_to_operate_on(C, Accessor::node_type).data != nullptr;
+  SpaceNode *snode = CTX_wm_space_node(C);
+  if (!snode) {
+    return false;
+  }
+  if (!snode->edittree) {
+    return false;
+  }
+  if (!ID_IS_EDITABLE(snode->edittree)) {
+    return false;
+  }
+  return true;
+}
+
+inline void add_node_identifier_property(wmOperatorType *ot)
+{
+  RNA_def_int(ot->srna,
+              "node_identifier",
+              0,
+              0,
+              INT32_MAX,
+              "Node Identifier",
+              "Optional identifier of the node to operate on",
+              0,
+              INT32_MAX);
 }
 
 template<typename Accessor>
@@ -80,9 +118,10 @@ inline void remove_active_item(wmOperatorType *ot,
   ot->idname = idname;
   ot->description = description;
   ot->poll = editable_node_active_poll<Accessor>;
+  ot->flag = OPTYPE_UNDO;
 
-  ot->exec = [](bContext *C, wmOperator * /*op*/) -> int {
-    PointerRNA node_ptr = get_active_node_to_operate_on(C, Accessor::node_type);
+  ot->exec = [](bContext *C, wmOperator *op) -> wmOperatorStatus {
+    PointerRNA node_ptr = get_active_node_to_operate_on(C, op, Accessor::node_idname);
     bNode &node = *static_cast<bNode *>(node_ptr.data);
     SocketItemsRef ref = Accessor::get_items_from_node(node);
     if (*ref.items_num > 0) {
@@ -92,6 +131,8 @@ inline void remove_active_item(wmOperatorType *ot,
     }
     return OPERATOR_FINISHED;
   };
+
+  add_node_identifier_property(ot);
 }
 
 template<typename Accessor>
@@ -104,9 +145,10 @@ inline void remove_item_by_index(wmOperatorType *ot,
   ot->idname = idname;
   ot->description = description;
   ot->poll = editable_node_active_poll<Accessor>;
+  ot->flag = OPTYPE_UNDO;
 
-  ot->exec = [](bContext *C, wmOperator *op) -> int {
-    PointerRNA node_ptr = get_active_node_to_operate_on(C, Accessor::node_type);
+  ot->exec = [](bContext *C, wmOperator *op) -> wmOperatorStatus {
+    PointerRNA node_ptr = get_active_node_to_operate_on(C, op, Accessor::node_idname);
     bNode &node = *static_cast<bNode *>(node_ptr.data);
     const int index_to_remove = RNA_int_get(op->ptr, "index");
     SocketItemsRef ref = Accessor::get_items_from_node(node);
@@ -130,9 +172,13 @@ inline void add_item(wmOperatorType *ot,
   ot->idname = idname;
   ot->description = description;
   ot->poll = editable_node_active_poll<Accessor>;
+  ot->flag = OPTYPE_UNDO;
 
-  ot->exec = [](bContext *C, wmOperator * /*op*/) -> int {
-    PointerRNA node_ptr = get_active_node_to_operate_on(C, Accessor::node_type);
+  ot->exec = [](bContext *C, wmOperator *op) -> wmOperatorStatus {
+    PointerRNA node_ptr = get_active_node_to_operate_on(C, op, Accessor::node_idname);
+    if (node_ptr.data == nullptr) {
+      return OPERATOR_CANCELLED;
+    }
     bNode &node = *static_cast<bNode *>(node_ptr.data);
     SocketItemsRef ref = Accessor::get_items_from_node(node);
     const typename Accessor::ItemT *active_item = nullptr;
@@ -146,13 +192,20 @@ inline void add_item(wmOperatorType *ot,
     }
 
     if constexpr (Accessor::has_type && Accessor::has_name) {
+      std::string name = active_item ? active_item->name : "";
+      if constexpr (Accessor::has_custom_initial_name) {
+        name = Accessor::custom_initial_name(node, name);
+      }
+      bNodeTree *ntree = reinterpret_cast<bNodeTree *>(node_ptr.owner_id);
       socket_items::add_item_with_socket_type_and_name<Accessor>(
+          *ntree,
           node,
           active_item ?
               Accessor::get_socket_type(*active_item) :
-              (Accessor::supports_socket_type(SOCK_GEOMETRY) ? SOCK_GEOMETRY : SOCK_FLOAT),
+              (Accessor::supports_socket_type(SOCK_GEOMETRY, ntree->type) ? SOCK_GEOMETRY :
+                                                                            SOCK_FLOAT),
           /* Empty name so it is based on the type. */
-          active_item ? active_item->name : "");
+          name.c_str());
     }
     else if constexpr (!Accessor::has_type && Accessor::has_name) {
       socket_items::add_item_with_name<Accessor>(node, active_item ? active_item->name : "");
@@ -172,6 +225,8 @@ inline void add_item(wmOperatorType *ot,
     update_after_node_change(C, node_ptr);
     return OPERATOR_FINISHED;
   };
+
+  add_node_identifier_property(ot);
 }
 
 enum class MoveDirection {
@@ -189,9 +244,10 @@ inline void move_active_item(wmOperatorType *ot,
   ot->idname = idname;
   ot->description = description;
   ot->poll = editable_node_active_poll<Accessor>;
+  ot->flag = OPTYPE_UNDO;
 
-  ot->exec = [](bContext *C, wmOperator *op) -> int {
-    PointerRNA node_ptr = get_active_node_to_operate_on(C, Accessor::node_type);
+  ot->exec = [](bContext *C, wmOperator *op) -> wmOperatorStatus {
+    PointerRNA node_ptr = get_active_node_to_operate_on(C, op, Accessor::node_idname);
     bNode &node = *static_cast<bNode *>(node_ptr.data);
     const MoveDirection direction = MoveDirection(RNA_enum_get(op->ptr, "direction"));
 
@@ -217,6 +273,7 @@ inline void move_active_item(wmOperatorType *ot,
   };
 
   RNA_def_enum(ot->srna, "direction", direction_items, 0, "Direction", "Move direction");
+  add_node_identifier_property(ot);
 }
 
 /**
@@ -227,16 +284,18 @@ inline void move_active_item(wmOperatorType *ot,
 template<typename Accessor> inline void make_common_operators()
 {
   WM_operatortype_append([](wmOperatorType *ot) {
-    socket_items::ops::add_item<Accessor>(
-        ot, "Add Item", Accessor::operator_idnames::add_item, "Add item below active item");
+    socket_items::ops::add_item<Accessor>(ot,
+                                          "Add Item",
+                                          Accessor::operator_idnames::add_item.c_str(),
+                                          "Add item below active item");
   });
   WM_operatortype_append([](wmOperatorType *ot) {
     socket_items::ops::remove_active_item<Accessor>(
-        ot, "Remove Item", Accessor::operator_idnames::remove_item, "Remove active item");
+        ot, "Remove Item", Accessor::operator_idnames::remove_item.c_str(), "Remove active item");
   });
   WM_operatortype_append([](wmOperatorType *ot) {
     socket_items::ops::move_active_item<Accessor>(
-        ot, "Move Item", Accessor::operator_idnames::move_item, "Move active item");
+        ot, "Move Item", Accessor::operator_idnames::move_item.c_str(), "Move active item");
   });
 }
 

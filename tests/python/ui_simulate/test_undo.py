@@ -3,8 +3,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 """
-This file does not run anything, it's methods are accessed for tests by: ``run.py``.
+This file does not run anything, its methods are accessed for tests by ``run_blender_setup.py``.
 """
+import datetime
 
 # FIXME: Since 2.8 or so, there is a problem with simulated events
 # where a popup needs the main-loop to cycle once before new events
@@ -14,6 +15,7 @@ _MENU_CONFIRM_HACK = True
 
 # -----------------------------------------------------------------------------
 # Utilities
+
 
 def _keep_open():
     """
@@ -26,7 +28,6 @@ def _keep_open():
 def _test_window(windows_exclude=None):
     import bpy
     wm = bpy.data.window_managers[0]
-    # Use -1 so the last added window is always used.
     if windows_exclude is None:
         return wm.windows[0]
     for window in wm.windows:
@@ -56,8 +57,20 @@ def _call_menu(e, text: str):
     yield e.ret()
 
 
-def _cursor_motion_data_x(window):
+def _window_size_in_pixels(window):
+    import sys
     size = window.width, window.height
+    # macOS window size is a multiple of the pixel_size.
+    if sys.platform == "darwin":
+        from bpy import context
+        # The value is always rounded to an int, so converting to an int is safe here.
+        pixel_size = int(context.preferences.system.pixel_size)
+        size = size[0] * pixel_size, size[1] * pixel_size
+    return size
+
+
+def _cursor_motion_data_x(window):
+    size = _window_size_in_pixels(window)
     return [
         (x, size[1] // 2) for x in
         range(int(size[0] * 0.2), int(size[0] * 0.8), 80)
@@ -65,10 +78,18 @@ def _cursor_motion_data_x(window):
 
 
 def _cursor_motion_data_y(window):
-    size = window.width, window.height
+    size = _window_size_in_pixels(window)
     return [
         (size[0] // 2, y) for y in
         range(int(size[1] * 0.2), int(size[1] * 0.8), 80)
+    ]
+
+
+def _cursor_motion_data_xy(window):
+    size = _window_size_in_pixels(window)
+    return [
+        (p, p) for p in
+        range(int(size[0] * 0.2), int(size[0] * 0.8), 80)
     ]
 
 
@@ -88,7 +109,7 @@ def _cursor_position_from_area(area):
 def _cursor_position_from_spacetype(window, space_type):
     area = _window_area_get_by_type(window, space_type)
     if area is None:
-        raise Exception("Space Type %r not found" % space_type)
+        raise Exception("Space Type {!r} not found".format(space_type))
     return _cursor_position_from_area(area)
 
 
@@ -268,6 +289,39 @@ def text_editor_edit_mode_mix():
     t.assertEqual(len(_bmesh_from_object(window.view_layer.objects.active).verts), 8 * 4)
     t.assertEqual(text.as_string(), "AABBCC")
 
+# -----------------------------------------------------------------------------
+# Node Editor
+
+
+def _compositor_startup_area(e):
+    """
+    Set up the compositor node editor
+    """
+    yield e.shift.f3(2)                # Compositor
+#    yield e.ctrl.alt.space()           # Full-screen.
+
+
+def compositor_make_group():
+    import bpy
+    e, t = _test_vars(window := _test_window())
+    yield from _compositor_startup_area(e)
+
+    # Create a node tree with multiple nodes and select all nodes.
+    # TODO: Node tree should be created through the UI
+    node_group = bpy.data.node_groups.new(name="comp ntree", type="CompositorNodeTree")
+    window.scene.compositing_node_group = node_group
+    yield from _call_menu(e, "Add -> Color -> Alpha Convert")
+    yield e.ret()  # Confirm adding node.
+    yield from _call_menu(e, "Add -> Filter -> Filter")
+    yield e.ret()
+    yield e.a()  # Select all.
+    t.assertEqual(len(window.scene.compositing_node_group.nodes), 2)
+    yield e.ctrl.g()  # Make group.
+    t.assertEqual(len(window.scene.compositing_node_group.nodes), 1)
+    yield e.ctrl.z()
+    t.assertEqual(len(window.scene.compositing_node_group.nodes), 2)
+    yield e.ctrl.z(5)  # Revert to original state
+
 
 # -----------------------------------------------------------------------------
 # 3D View
@@ -304,7 +358,20 @@ def view3d_simple():
     e, t = _test_vars(window := _test_window())
     yield from _view3d_startup_area_maximized(e)
 
-    yield from _call_menu(e, "Add -> Mesh -> Plane")
+    # NOTE: it should be possible to consider "Add -> Mesh -> Plane" an exact match.
+    # However, shortcuts are now included so without them this ends up fuzzy-matching to "Add -> Image -> Mesh Plane".
+    # To resolve that it's necessary to match the entire shortcut which... changes based on the platform (sign!).
+    use_menu_search_workaround = True
+    if use_menu_search_workaround:
+        import sys
+        yield from _call_menu(e, "Add ({:s} A) -> Mesh -> Plane".format(
+            "\u21e7" if sys.platform == "darwin" else "Shift"
+        ))
+        del sys
+    else:
+        # It would be nice if this could be restored.
+        yield from _call_menu(e, "Add -> Mesh -> Plane")
+
     # Duplicate and rotate.
     for _ in range(3):
         yield e.shift.d().x().text("3").ret()
@@ -433,6 +500,97 @@ def view3d_sculpt_dyntopo_and_edit():
     yield e.tab()                       # Object mode.
     yield e.ctrl.z(3)                   # Undo
     # yield e.ctrl.z()                    # Undo asserts (nested undo call from dyntopo)
+
+
+def view3d_sculpt_trim():
+    """
+    Test that trim functionality can be undone and redone correctly.
+    Operations that work on the entire mesh exercise a different code path from normal sculpt undo.
+    """
+
+    e, t = _test_vars(window := _test_window())
+    yield from _view3d_startup_area_maximized(e)
+    yield from _call_menu(e, "Add -> Mesh -> Torus")
+    yield e.numpad_period()             # View all.
+    yield from _call_by_name(e, "Remove UV Map")
+    yield e.ctrl.tab().s()              # Sculpt via pie menu.
+
+    # Utility to extract current mesh coordinates (used to ensure undo/redo steps are applied properly).
+    def extract_mesh_positions(window):
+        # TODO: Find/add a way to get that info when there is a multires active in Sculpt mode.
+        window.view_layer.update()
+        tmp_mesh = window.view_layer.objects.active.to_mesh(preserve_all_data_layers=True)
+        tmp_cos = [0.0] * len(tmp_mesh.vertices) * 3
+        tmp_mesh.vertices.foreach_get("co", tmp_cos)
+        window.view_layer.objects.active.to_mesh_clear()
+        return tmp_cos
+
+    beginning_positions = extract_mesh_positions(window)
+    yield from _call_by_name(e, "Box Trim")
+    yield from e.leftmouse.cursor_motion(_cursor_motion_data_xy(window))    # Perform the trim
+    after_trim_positions = extract_mesh_positions(window)
+    t.assertNotEqual(beginning_positions, after_trim_positions)
+
+    yield e.ctrl.z()                                                        # Undo Trim
+    after_undo_positions = extract_mesh_positions(window)
+    t.assertEqual(beginning_positions, after_undo_positions)
+
+    yield e.ctrl.shift.z()                                                  # Redo Trim
+    after_redo_positions = extract_mesh_positions(window)
+    t.assertEqual(after_trim_positions, after_redo_positions)
+
+
+def view3d_sculpt_dyntopo_stroke_toggle():
+    e, t = _test_vars(window := _test_window())
+    yield from _view3d_startup_area_maximized(e)
+
+    yield from _call_menu(e, "Add -> Mesh -> Torus")
+    yield e.numpad_period()             # View all.
+    yield from _call_by_name(e, "Remove UV Map")
+    yield e.ctrl.tab().s()              # Sculpt via pie menu.
+
+    # Utility to extract current mesh coordinates (used to ensure undo/redo steps are applied properly).
+    def extract_mesh_positions(window):
+        # TODO: Find/add a way to get that info when there is a multires active in Sculpt mode.
+        window.view_layer.update()
+        tmp_mesh = window.view_layer.objects.active.to_mesh(preserve_all_data_layers=True)
+        tmp_cos = [0.0] * len(tmp_mesh.vertices) * 3
+        tmp_mesh.vertices.foreach_get("co", tmp_cos)
+        window.view_layer.objects.active.to_mesh_clear()
+        return tmp_cos
+
+    original_positions = extract_mesh_positions(window)
+    yield from _call_by_name(e, "Dynamic Topology")  # On
+
+    yield from e.leftmouse.cursor_motion(_cursor_motion_data_x(window))
+
+    yield from _call_by_name(e, "Dynamic Topology")  # Off
+    after_toggle_off = extract_mesh_positions(window)
+    t.assertNotEqual(original_positions, after_toggle_off)
+
+    yield from e.leftmouse.cursor_motion(_cursor_motion_data_y(window))
+    after_normal_stroke = extract_mesh_positions(window)
+    t.assertNotEqual(after_toggle_off, after_normal_stroke)
+
+    yield e.ctrl.z()                          # Undo Stroke
+    after_first_undo = extract_mesh_positions(window)
+    t.assertEqual(after_first_undo, after_toggle_off)
+
+    yield e.ctrl.z()                          # Undo Toggle Off
+    yield e.ctrl.z()                          # Undo Dyntopo Stroke
+    yield e.ctrl.z()                          # Undo Toggle On
+    after_full_undo = extract_mesh_positions(window)
+    t.assertEqual(after_full_undo, original_positions)
+
+    yield e.ctrl.shift.z()                    # Redo Toggle On
+    yield e.ctrl.shift.z()                    # Redo Dyntopo Stroke
+    yield e.ctrl.shift.z()                    # Redo Toggle Off
+    after_toggle_off_redo = extract_mesh_positions(window)
+    t.assertEqual(after_toggle_off_redo, after_toggle_off)
+
+    yield e.ctrl.shift.z()                    # Redo Normal Stroke
+    after_normal_stroke_redo = extract_mesh_positions(window)
+    t.assertEqual(after_normal_stroke, after_normal_stroke_redo)
 
 
 def view3d_texture_paint_simple():
@@ -619,6 +777,30 @@ def view3d_multi_mode_select():
         yield e.ctrl.z()
 
 
+def _ui_hack_idle_until(until, idle=1 / 60, timeout=1.0):
+    """
+    Idle while the internal event loop runs until a specified condition is true.
+
+    This should be used sparingly as it likely represents some other failure condition inside Blender. Currently, the
+    only known needed usecase is for multi window undo tests which need separate view layers. See #148903 for further
+    information on this issue.
+
+    Note: In practice, the timeout value of 1.0 seconds should be more than enough for all cases. In testing with a
+    fixed, constant delay, the tests succeeded with a timeout of 1/6th of a second.
+    :param until: lambda to check the condition of after each sleep
+    :param idle: how long to idle between checks of the `until` lambda.
+        Defaults to 60Hz due to common refresh rates.
+    :param timeout: the max time in seconds that this busy wait will execute.
+    :return:
+    """
+    import time
+    start_time = time.time()
+    current_time = time.time()
+    while current_time - start_time < timeout or not until():
+        yield datetime.timedelta(seconds=idle)
+        current_time = time.time()
+
+
 def view3d_multi_mode_multi_window():
     e_a, t = _test_vars(window_a := _test_window())
     yield from _call_menu(e_a, "Window -> New Main Window")
@@ -628,7 +810,9 @@ def view3d_multi_mode_multi_window():
     yield from _call_menu(e_b, "New Scene")
     yield e_b.ret()
     if _MENU_CONFIRM_HACK:
-        yield
+        yield from _ui_hack_idle_until(lambda: window_a.view_layer != window_b.view_layer)
+
+    t.assertNotEqual(window_a.view_layer, window_b.view_layer, "Windows should have different view layers")
 
     for e in (e_a, e_b):
         pos_v3d = _cursor_position_from_spacetype(e.window, 'VIEW_3D')
@@ -784,7 +968,9 @@ def view3d_edit_mode_multi_window():
     yield from _call_menu(e_b, "New Scene")
     yield e_b.ret()
     if _MENU_CONFIRM_HACK:
-        yield
+        yield from _ui_hack_idle_until(lambda: window_a.view_layer != window_b.view_layer)
+
+    t.assertNotEqual(window_a.view_layer, window_b.view_layer, "Windows should have different view layers")
 
     for e in (e_a, e_b):
         pos_v3d = _cursor_position_from_spacetype(e.window, 'VIEW_3D')

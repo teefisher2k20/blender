@@ -6,8 +6,6 @@
  * \ingroup spfile
  */
 
-#include <cmath>
-#include <cstdio>
 #include <cstring>
 
 #include <sys/stat.h>
@@ -32,12 +30,13 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
+#include "BLI_fileops.h"
 #include "BLI_fnmatch.h"
 #include "BLI_math_base.h"
+#include "BLI_path_utils.hh"
+#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_utildefines.h"
-
-#include "BLO_userdef_default.h"
 
 #include "BLT_translation.hh"
 
@@ -46,6 +45,8 @@
 #include "BKE_idtype.hh"
 #include "BKE_main.hh"
 #include "BKE_preferences.h"
+
+#include "BLO_userdef_default.h"
 
 #include "BLF_api.hh"
 
@@ -61,13 +62,10 @@
 #include "UI_interface_icons.hh"
 #include "UI_view2d.hh"
 
-#include "AS_asset_representation.hh"
 #include "AS_essentials_library.hh"
 
 #include "file_intern.hh"
 #include "filelist.hh"
-
-#define VERTLIST_MAJORCOLUMN_WIDTH (25 * UI_UNIT_X)
 
 static void fileselect_initialize_params_common(SpaceFile *sfile, FileSelectParams *params)
 {
@@ -111,6 +109,7 @@ static void fileselect_ensure_updated_asset_params(SpaceFile *sfile)
     asset_params->asset_library_ref.type = ASSET_LIBRARY_ALL;
     asset_params->asset_library_ref.custom_library_index = -1;
     asset_params->import_method = FILE_ASSET_IMPORT_FOLLOW_PREFS;
+    asset_params->import_flags = FILE_ASSET_IMPORT_INSTANCE_COLLECTIONS_ON_LINK;
   }
 
   FileSelectParams *base_params = &asset_params->base_params;
@@ -122,11 +121,15 @@ static void fileselect_ensure_updated_asset_params(SpaceFile *sfile)
   base_params->filter_id = FILTER_ID_ALL;
   base_params->display = FILE_IMGDISPLAY;
   base_params->sort = FILE_SORT_ASSET_CATALOG;
+  /* No details columns supported for assets (wouldn't contain anything), disable them all. */
+  base_params->details_flags = 0;
   /* Asset libraries include all sub-directories, so enable maximal recursion. */
   base_params->recursion_level = FILE_SELECT_MAX_RECURSIONS;
   /* 'SMALL' size by default. More reasonable since this is typically used as regular editor,
    * space is more of an issue here. */
   base_params->thumbnail_size = 96;
+  base_params->list_thumbnail_size = 32;
+  base_params->list_column_size = 220;
 
   fileselect_initialize_params_common(sfile, base_params);
 }
@@ -146,8 +149,7 @@ static FileSelectParams *fileselect_ensure_updated_file_params(SpaceFile *sfile)
 
   /* create new parameters if necessary */
   if (!sfile->params) {
-    sfile->params = static_cast<FileSelectParams *>(
-        MEM_callocN(sizeof(FileSelectParams), "fileselparams"));
+    sfile->params = MEM_callocN<FileSelectParams>("fileselparams");
     /* set path to most recently opened .blend */
     BLI_path_split_dir_file(blendfile_path,
                             sfile->params->dir,
@@ -158,6 +160,8 @@ static FileSelectParams *fileselect_ensure_updated_file_params(SpaceFile *sfile)
     sfile->params->thumbnail_size = U_default.file_space_data.thumbnail_size;
     sfile->params->details_flags = U_default.file_space_data.details_flags;
     sfile->params->filter_id = U_default.file_space_data.filter_id;
+    sfile->params->list_thumbnail_size = 16;
+    sfile->params->list_column_size = 500;
   }
 
   params = sfile->params;
@@ -259,9 +263,6 @@ static FileSelectParams *fileselect_ensure_updated_file_params(SpaceFile *sfile)
     if ((prop = RNA_struct_find_property(op->ptr, "filter_btx"))) {
       params->filter |= RNA_property_boolean_get(op->ptr, prop) ? int(FILE_TYPE_BTX) : 0;
     }
-    if ((prop = RNA_struct_find_property(op->ptr, "filter_collada"))) {
-      params->filter |= RNA_property_boolean_get(op->ptr, prop) ? int(FILE_TYPE_COLLADA) : 0;
-    }
     if ((prop = RNA_struct_find_property(op->ptr, "filter_alembic"))) {
       params->filter |= RNA_property_boolean_get(op->ptr, prop) ? int(FILE_TYPE_ALEMBIC) : 0;
     }
@@ -276,17 +277,15 @@ static FileSelectParams *fileselect_ensure_updated_file_params(SpaceFile *sfile)
     }
     if ((prop = RNA_struct_find_property(op->ptr, "filter_glob"))) {
       /* Protection against Python scripts not setting proper size limit. */
-      char *tmp = RNA_property_string_get_alloc(
-          op->ptr, prop, params->filter_glob, sizeof(params->filter_glob), nullptr);
-      if (tmp != params->filter_glob) {
-        STRNCPY(params->filter_glob, tmp);
-        MEM_freeN(tmp);
-
-        /* Fix stupid things that truncating might have generated,
-         * like last group being a 'match everything' wildcard-only one... */
-        BLI_path_extension_glob_validate(params->filter_glob);
+      char *glob = RNA_property_string_get_alloc(op->ptr, prop, nullptr, 0, nullptr);
+      BLI_SCOPED_DEFER([&]() { MEM_freeN(glob); });
+      STRNCPY_UTF8(params->filter_glob, glob);
+      /* Fix stupid things that truncating might have generated,
+       * like last group being a 'match everything' wildcard-only one... */
+      BLI_path_extension_glob_validate(params->filter_glob);
+      if (glob[0] != '\0') {
+        params->filter |= (FILE_TYPE_OPERATOR | FILE_TYPE_FOLDER);
       }
-      params->filter |= (FILE_TYPE_OPERATOR | FILE_TYPE_FOLDER);
     }
     else {
       params->filter_glob[0] = '\0';
@@ -446,6 +445,7 @@ static void fileselect_refresh_asset_params(FileAssetSelectParams *asset_params)
     case ASSET_LIBRARY_CUSTOM:
       BLI_assert(user_library);
       STRNCPY(base_params->dir, user_library->dirpath);
+      BLI_path_slash_native(base_params->dir);
       base_params->type = FILE_ASSET_LIBRARY;
       break;
   }
@@ -535,6 +535,8 @@ int ED_fileselect_asset_import_method_get(const SpaceFile *sfile, const FileDirE
       return ASSET_IMPORT_APPEND;
     case FILE_ASSET_IMPORT_APPEND_REUSE:
       return ASSET_IMPORT_APPEND_REUSE;
+    case FILE_ASSET_IMPORT_PACK:
+      return ASSET_IMPORT_PACK;
 
       /* Should be handled above already. Break and fail below. */
     case FILE_ASSET_IMPORT_FOLLOW_PREFS:
@@ -619,6 +621,7 @@ void ED_fileselect_activate_by_relpath(SpaceFile *sfile, const char *relative_pa
 
 void ED_fileselect_deselect_all(SpaceFile *sfile)
 {
+  BLI_assert(sfile->files);
   file_select_deselect_all(sfile, FILE_SEL_SELECTED);
   WM_main_add_notifier(NC_SPACE | ND_SPACE_FILE_PARAMS, nullptr);
 }
@@ -630,7 +633,7 @@ void ED_fileselect_deselect_all(SpaceFile *sfile)
 void ED_fileselect_window_params_get(const wmWindow *win, int r_win_size[2], bool *r_is_maximized)
 {
   /* Get DPI/pixel-size independent size to be stored in preferences. */
-  WM_window_set_dpi(win); /* Ensure the DPI is taken from the right window. */
+  WM_window_dpi_set_userdef(win); /* Ensure the DPI is taken from the right window. */
 
   const blender::int2 win_size = WM_window_native_pixel_size(win);
   r_win_size[0] = win_size[0] / UI_SCALE_FAC;
@@ -685,9 +688,7 @@ void ED_fileselect_set_params_from_userdef(SpaceFile *sfile)
   }
 }
 
-void ED_fileselect_params_to_userdef(SpaceFile *sfile,
-                                     const int temp_win_size[2],
-                                     const bool is_maximized)
+void ED_fileselect_params_to_userdef(SpaceFile *sfile)
 {
   FileSelectParams *params = ED_fileselect_get_active_params(sfile);
   UserDef_FileSpaceData *sfile_udata_new = &U.file_space_data;
@@ -709,11 +710,6 @@ void ED_fileselect_params_to_userdef(SpaceFile *sfile,
     /* In this case also remember the invert flag. */
     sfile_udata_new->flag = (sfile_udata_new->flag & ~FILE_SORT_INVERT) |
                             (params->flag & FILE_SORT_INVERT);
-  }
-
-  if (temp_win_size && !is_maximized) {
-    sfile_udata_new->temp_win_sizex = temp_win_size[0];
-    sfile_udata_new->temp_win_sizey = temp_win_size[1];
   }
 
   /* Tag preferences as dirty if something has changed. */
@@ -781,9 +777,11 @@ FileSelection ED_fileselect_layout_offset_rect(FileLayout *layout, const rcti *r
   }
 
   colmin = (rect->xmin) / (layout->tile_w + 2 * layout->tile_border_x);
-  rowmin = (rect->ymin - layout->offset_top) / (layout->tile_h + 2 * layout->tile_border_y);
+  rowmin = (rect->ymin - layout->offset_top - layout->list_padding_top) /
+           (layout->tile_h + 2 * layout->tile_border_y);
   colmax = (rect->xmax) / (layout->tile_w + 2 * layout->tile_border_x);
-  rowmax = (rect->ymax - layout->offset_top) / (layout->tile_h + 2 * layout->tile_border_y);
+  rowmax = (rect->ymax - layout->offset_top - layout->list_padding_top) /
+           (layout->tile_h + 2 * layout->tile_border_y);
 
   if (is_inside(colmin, rowmin, layout->flow_columns, layout->rows) ||
       is_inside(colmax, rowmax, layout->flow_columns, layout->rows))
@@ -830,7 +828,8 @@ int ED_fileselect_layout_offset(FileLayout *layout, int x, int y)
   }
 
   offsetx = (x) / (layout->tile_w + 2 * layout->tile_border_x);
-  offsety = (y - layout->offset_top) / (layout->tile_h + 2 * layout->tile_border_y);
+  offsety = (y - layout->offset_top - layout->list_padding_top) /
+            (layout->tile_h + 2 * layout->tile_border_y);
 
   if (offsetx > layout->flow_columns - 1) {
     return -1;
@@ -876,13 +875,13 @@ void ED_fileselect_layout_tilepos(const FileLayout *layout, int tile, int *x, in
   if (layout->flag == FILE_LAYOUT_HOR) {
     *x = layout->tile_border_x +
          (tile / layout->rows) * (layout->tile_w + 2 * layout->tile_border_x);
-    *y = layout->offset_top + layout->tile_border_y +
+    *y = layout->offset_top + layout->list_padding_top + layout->tile_border_y +
          (tile % layout->rows) * (layout->tile_h + 2 * layout->tile_border_y);
   }
   else {
     *x = layout->tile_border_x +
          ((tile) % layout->flow_columns) * (layout->tile_w + 2 * layout->tile_border_x);
-    *y = layout->offset_top + layout->tile_border_y +
+    *y = layout->offset_top + layout->list_padding_top + layout->tile_border_y +
          ((tile) / layout->flow_columns) * (layout->tile_h + 2 * layout->tile_border_y);
   }
 }
@@ -964,18 +963,8 @@ float file_string_width(const char *str)
 
 float file_font_pointsize()
 {
-#if 0
-  float s;
-  char tmp[2] = "X";
   const uiStyle *style = UI_style_get();
-  UI_fontstyle_set(&style->widget);
-  s = BLF_height(style->widget.uifont_id, tmp);
-  return style->widget.points;
-#else
-  const uiStyle *style = UI_style_get();
-  UI_fontstyle_set(&style->widget);
-  return style->widget.points * UI_SCALE_FAC;
-#endif
+  return UI_fontstyle_height_max(&style->widget);
 }
 
 static void file_attribute_columns_widths(const FileSelectParams *params, FileLayout *layout)
@@ -989,9 +978,15 @@ static void file_attribute_columns_widths(const FileSelectParams *params, FileLa
   }
 
   /* Biggest possible reasonable values... */
-  columns[COLUMN_DATETIME].width = file_string_width(compact ? "23/08/89" : "23 Dec 6789, 23:59") +
-                                   pad;
-  columns[COLUMN_SIZE].width = file_string_width(compact ? "369G" : "098.7 MiB") + pad;
+  if (file_attribute_column_type_enabled(params, COLUMN_DATETIME, layout)) {
+    columns[COLUMN_DATETIME].width = file_string_width(compact ? "23/08/89" :
+                                                                 "23 Dec 6789, 23:59") +
+                                     pad;
+  }
+  if (file_attribute_column_type_enabled(params, COLUMN_SIZE, layout)) {
+    columns[COLUMN_SIZE].width = file_string_width(compact ? "369G" : "098.7 MiB") + pad;
+  }
+
   if (params->display == FILE_IMGDISPLAY) {
     columns[COLUMN_NAME].width = (float(params->thumbnail_size) / 8.0f) * UI_UNIT_X;
   }
@@ -1035,15 +1030,12 @@ static void file_attribute_columns_init(const FileSelectParams *params, FileLayo
 void ED_fileselect_init_layout(SpaceFile *sfile, ARegion *region)
 {
   FileSelectParams *params = ED_fileselect_get_active_params(sfile);
-  /* Request a slightly more compact layout for asset browsing. */
-  const bool compact = ED_fileselect_is_asset_browser(sfile);
   FileLayout *layout = nullptr;
   View2D *v2d = &region->v2d;
   int numfiles;
-  int textheight;
 
   if (sfile->layout == nullptr) {
-    sfile->layout = static_cast<FileLayout *>(MEM_callocN(sizeof(FileLayout), "file_layout"));
+    sfile->layout = MEM_callocN<FileLayout>("file_layout");
     sfile->layout->dirty = true;
   }
   else if (sfile->layout->dirty == false) {
@@ -1051,21 +1043,26 @@ void ED_fileselect_init_layout(SpaceFile *sfile, ARegion *region)
   }
 
   numfiles = filelist_files_ensure(sfile->files);
-  textheight = int(file_font_pointsize());
   layout = sfile->layout;
-  layout->textheight = textheight;
+  /* Slightly increased than font height for padding. */
+  layout->text_line_height = file_font_pointsize();
+  layout->text_lines_count = 1;
 
   if (params->display == FILE_IMGDISPLAY) {
-    const float pad_fac = compact ? 0.15f : 0.3f;
+    /* More compact spacing for asset browser. */
+    const float pad_fac = ED_fileselect_is_asset_browser(sfile) ? 0.15f : 0.3f;
     /* Matches UI_preview_tile_size_x()/_y() by default. */
     layout->prv_w = (float(params->thumbnail_size) / 20.0f) * UI_UNIT_X;
     layout->prv_h = (float(params->thumbnail_size) / 20.0f) * UI_UNIT_Y;
     layout->tile_border_x = pad_fac * UI_UNIT_X;
     layout->tile_border_y = pad_fac * UI_UNIT_X;
+    layout->list_padding_top = 0;
     layout->prv_border_x = pad_fac * UI_UNIT_X;
     layout->prv_border_y = pad_fac * UI_UNIT_Y;
     layout->tile_w = layout->prv_w + 2 * layout->prv_border_x;
-    layout->tile_h = layout->prv_h + 2 * layout->prv_border_y + textheight;
+    layout->text_lines_count = 2;
+    layout->tile_h = layout->prv_h + 2 * layout->prv_border_y +
+                     layout->text_lines_count * layout->text_line_height;
     layout->width = int(BLI_rctf_size_x(&v2d->cur) - 2 * layout->tile_border_x);
     layout->flow_columns = layout->width / (layout->tile_w + 2 * layout->tile_border_x);
     layout->attribute_column_header_h = 0;
@@ -1084,18 +1081,19 @@ void ED_fileselect_init_layout(SpaceFile *sfile, ARegion *region)
   else if (params->display == FILE_VERTICALDISPLAY) {
     int rowcount;
 
-    /* Matches UI_preview_tile_size_x()/_y() by default. */
-    layout->prv_w = (float(params->thumbnail_size) / 20.0f) * UI_UNIT_X;
-    layout->prv_h = (float(params->thumbnail_size) / 20.0f) * UI_UNIT_Y;
+    layout->prv_w = ICON_DEFAULT_WIDTH_SCALE;
+    layout->prv_h = ICON_DEFAULT_HEIGHT_SCALE;
     layout->tile_border_x = 0.4f * UI_UNIT_X;
-    layout->tile_border_y = 0.1f * UI_UNIT_Y;
-    layout->tile_h = textheight * 3 / 2;
+    layout->tile_border_y = 0.05f * UI_UNIT_Y;
+    layout->list_padding_top = 2 * layout->tile_border_y;
+    layout->tile_h = round_fl_to_int(layout->text_line_height * 1.4f);
     layout->width = int(BLI_rctf_size_x(&v2d->cur) - 2 * layout->tile_border_x);
     layout->tile_w = layout->width;
     layout->flow_columns = 1;
     layout->attribute_column_header_h = layout->tile_h * 1.2f + 2 * layout->tile_border_y;
     layout->offset_top = layout->attribute_column_header_h;
-    rowcount = int(BLI_rctf_size_y(&v2d->cur) - layout->offset_top - 2 * layout->tile_border_y) /
+    rowcount = int(BLI_rctf_size_y(&v2d->cur) - layout->offset_top -
+                   2 * layout->list_padding_top) /
                (layout->tile_h + 2 * layout->tile_border_y);
     file_attribute_columns_init(params, layout);
 
@@ -1104,23 +1102,24 @@ void ED_fileselect_init_layout(SpaceFile *sfile, ARegion *region)
     /* layout->rows can be zero if a very small area is changed to a File Browser. #124168. */
 
     layout->height = sfile->layout->rows * (layout->tile_h + 2 * layout->tile_border_y) +
-                     layout->tile_border_y * 2 + layout->offset_top;
+                     layout->list_padding_top * 2 + layout->offset_top;
     layout->flag = FILE_LAYOUT_VER;
   }
   else if (params->display == FILE_HORIZONTALDISPLAY) {
-    /* Matches UI_preview_tile_size_x()/_y() by default. */
-    layout->prv_w = (float(params->thumbnail_size) / 20.0f) * UI_UNIT_X;
-    layout->prv_h = (float(params->thumbnail_size) / 20.0f) * UI_UNIT_Y;
+    layout->prv_w = params->list_thumbnail_size * UI_SCALE_FAC;
+    layout->prv_h = params->list_thumbnail_size * UI_SCALE_FAC;
     layout->tile_border_x = 0.4f * UI_UNIT_X;
-    layout->tile_border_y = 0.1f * UI_UNIT_Y;
-    layout->tile_h = textheight * 3 / 2;
+    layout->tile_border_y = 0.05f * UI_UNIT_Y;
+    layout->list_padding_top = 2 * layout->tile_border_y;
+    layout->tile_h = std::max(round_fl_to_int(layout->text_line_height * 1.4f), layout->prv_h);
     layout->attribute_column_header_h = 0;
     layout->offset_top = layout->attribute_column_header_h;
     layout->height = int(BLI_rctf_size_y(&v2d->cur) - 2 * layout->tile_border_y);
     /* Padding by full scroll-bar H is too much, can overlap tile border Y. */
     layout->rows = (layout->height - V2D_SCROLL_HEIGHT + layout->tile_border_y) /
                    (layout->tile_h + 2 * layout->tile_border_y);
-    layout->tile_w = VERTLIST_MAJORCOLUMN_WIDTH;
+
+    layout->tile_w = params->list_column_size * UI_SCALE_FAC;
     file_attribute_columns_init(params, layout);
 
     if (layout->rows > 0) {
@@ -1130,8 +1129,10 @@ void ED_fileselect_init_layout(SpaceFile *sfile, ARegion *region)
       layout->rows = 1;
       layout->flow_columns = numfiles;
     }
-    layout->width = sfile->layout->flow_columns * (layout->tile_w + 2 * layout->tile_border_x) +
-                    layout->tile_border_x * 2;
+    layout->width = (numfiles > 0) ? (sfile->layout->flow_columns *
+                                          (layout->tile_w + 2 * layout->tile_border_x) +
+                                      layout->tile_border_x * 2) :
+                                     int(BLI_rctf_size_x(&v2d->cur) - 2 * layout->tile_border_x);
     layout->flag = FILE_LAYOUT_HOR;
   }
   layout->dirty = false;
@@ -1232,6 +1233,7 @@ int autocomplete_directory(bContext *C, char *str, void * /*arg_v*/)
 
     BLI_path_split_dir_part(str, dirname, sizeof(dirname));
 
+    BLI_assert(!BLI_path_is_rel(dirname));
     dir = opendir(dirname);
 
     if (dir) {
@@ -1300,26 +1302,29 @@ void ED_fileselect_clear(wmWindowManager *wm, SpaceFile *sfile)
   WM_main_add_notifier(NC_SPACE | ND_SPACE_FILE_LIST, nullptr);
 }
 
+void ED_fileselect_clear_main_assets(wmWindowManager *wm, SpaceFile *sfile)
+{
+  /* Only null in rare cases, see: #29734. */
+  if (sfile->files) {
+    filelist_readjob_stop(sfile->files, wm);
+    filelist_freelib(sfile->files);
+    filelist_tag_force_reset_mainfiles(sfile->files);
+    filelist_tag_reload_asset_library(sfile->files);
+    filelist_clear_from_reset_tag(sfile->files);
+  }
+
+  FileSelectParams *params = ED_fileselect_get_active_params(sfile);
+  params->highlight_file = -1;
+  WM_main_add_notifier(NC_SPACE | ND_SPACE_FILE_LIST, nullptr);
+}
+
 void ED_fileselect_exit(wmWindowManager *wm, SpaceFile *sfile)
 {
   if (!sfile) {
     return;
   }
   if (sfile->op) {
-    wmWindow *temp_win = (wm->winactive && WM_window_is_temp_screen(wm->winactive)) ?
-                             wm->winactive :
-                             nullptr;
-    if (temp_win) {
-      int win_size[2];
-      bool is_maximized;
-
-      ED_fileselect_window_params_get(temp_win, win_size, &is_maximized);
-      ED_fileselect_params_to_userdef(sfile, win_size, is_maximized);
-    }
-    else {
-      ED_fileselect_params_to_userdef(sfile, nullptr, false);
-    }
-
+    ED_fileselect_params_to_userdef(sfile);
     WM_event_fileselect_event(wm, sfile->op, EVT_FILESELECT_EXTERNAL_CANCEL);
     sfile->op = nullptr;
   }
@@ -1329,7 +1334,6 @@ void ED_fileselect_exit(wmWindowManager *wm, SpaceFile *sfile)
   if (sfile->files) {
     ED_fileselect_clear(wm, sfile);
     filelist_free(sfile->files);
-    MEM_freeN(sfile->files);
     sfile->files = nullptr;
   }
 }
@@ -1480,4 +1484,18 @@ void ED_fileselect_ensure_default_filepath(bContext *C, wmOperator *op, const ch
     BLI_path_extension_replace(filepath, sizeof(filepath), extension);
     RNA_string_set(op->ptr, "filepath", filepath);
   }
+}
+
+blender::Vector<std::string> ED_fileselect_selected_files_full_paths(const SpaceFile *sfile)
+{
+  blender::Vector<std::string> paths;
+  char path[FILE_MAX_LIBEXTRA];
+  for (const int i : blender::IndexRange(filelist_files_ensure(sfile->files))) {
+    if (filelist_entry_is_selected(sfile->files, i)) {
+      const FileDirEntry *entry = filelist_file(sfile->files, i);
+      filelist_file_get_full_path(sfile->files, entry, path);
+      paths.append(path);
+    }
+  }
+  return paths;
 }

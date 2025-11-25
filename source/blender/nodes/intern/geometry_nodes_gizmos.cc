@@ -2,12 +2,11 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BLI_math_base_safe.h"
-#include "BLI_math_rotation.hh"
+#include "BLI_listbase.h"
 
+#include "BKE_compute_context_cache.hh"
 #include "BKE_compute_contexts.hh"
 #include "BKE_context.hh"
-#include "BKE_modifier.hh"
 #include "BKE_node.hh"
 #include "BKE_node_legacy_types.hh"
 #include "BKE_node_runtime.hh"
@@ -16,8 +15,9 @@
 #include "BKE_workspace.hh"
 
 #include "NOD_geometry_nodes_gizmos.hh"
-#include "NOD_inverse_eval_params.hh"
 #include "NOD_inverse_eval_path.hh"
+#include "NOD_partial_eval.hh"
+#include "NOD_socket_usage_inference.hh"
 
 #include "DNA_modifier_types.h"
 #include "DNA_space_types.h"
@@ -162,7 +162,7 @@ bool update_tree_gizmo_propagation(bNodeTree &tree)
   tree.ensure_topology_cache();
 
   if (tree.has_available_link_cycle()) {
-    const bool changed = tree.runtime->gizmo_propagation.get() != nullptr;
+    const bool changed = tree.runtime->gizmo_propagation != nullptr;
     tree.runtime->gizmo_propagation.reset();
     return changed;
   }
@@ -177,25 +177,28 @@ bool update_tree_gizmo_propagation(bNodeTree &tree)
 }
 
 static void foreach_gizmo_for_input(const ie::SocketElem &input_socket,
-                                    ComputeContextBuilder &compute_context_builder,
+                                    bke::ComputeContextCache &compute_context_cache,
+                                    const ComputeContext *compute_context,
                                     const bNodeTree &tree,
                                     const ForeachGizmoInModifierFn fn);
 
 static void foreach_gizmo_for_group_input(const bNodeTree &tree,
                                           const ie::GroupInputElem &group_input,
-                                          ComputeContextBuilder &compute_context_builder,
+                                          bke::ComputeContextCache &compute_context_cache,
+                                          const ComputeContext *compute_context,
                                           const ForeachGizmoInModifierFn fn)
 {
   const TreeGizmoPropagation &gizmo_propagation = *tree.runtime->gizmo_propagation;
   for (const ie::SocketElem &gizmo_input :
        gizmo_propagation.gizmo_inputs_by_group_inputs.lookup(group_input))
   {
-    foreach_gizmo_for_input(gizmo_input, compute_context_builder, tree, fn);
+    foreach_gizmo_for_input(gizmo_input, compute_context_cache, compute_context, tree, fn);
   }
 }
 
 static void foreach_gizmo_for_input(const ie::SocketElem &input_socket,
-                                    ComputeContextBuilder &compute_context_builder,
+                                    bke::ComputeContextCache &compute_context_cache,
+                                    const ComputeContext *compute_context,
                                     const bNodeTree &tree,
                                     const ForeachGizmoInModifierFn fn)
 {
@@ -214,19 +217,20 @@ static void foreach_gizmo_for_input(const ie::SocketElem &input_socket,
       return;
     }
     /* Found an actual built-in gizmo node. */
-    fn(*compute_context_builder.current(), node, *input_socket.socket);
+    fn(*compute_context, node, *input_socket.socket);
     return;
   }
   if (node.is_group()) {
     const bNodeTree &group = *reinterpret_cast<const bNodeTree *>(node.id);
     group.ensure_topology_cache();
-    compute_context_builder.push<bke::GroupNodeComputeContext>(node, tree);
+    const ComputeContext &group_compute_context = compute_context_cache.for_group_node(
+        compute_context, node.identifier, &tree);
     foreach_gizmo_for_group_input(
         group,
         ie::GroupInputElem{input_socket.socket->index(), input_socket.elem},
-        compute_context_builder,
+        compute_context_cache,
+        &group_compute_context,
         fn);
-    compute_context_builder.pop();
   }
 }
 
@@ -234,7 +238,7 @@ static void foreach_active_gizmo_in_open_node_editor(
     const SpaceNode &snode,
     const Object *object_filter,
     const NodesModifierData *nmd_filter,
-    ComputeContextBuilder &compute_context_builder,
+    bke::ComputeContextCache &compute_context_cache,
     const ForeachGizmoFn fn)
 {
   if (snode.nodetree == nullptr) {
@@ -267,13 +271,12 @@ static void foreach_active_gizmo_in_open_node_editor(
     return;
   }
 
-  const ComputeContext *prev_compute_context = compute_context_builder.current();
-  compute_context_builder.push<bke::ModifierComputeContext>(nmd.modifier.name);
-  BLI_SCOPED_DEFER([&]() { compute_context_builder.pop_until(prev_compute_context); });
-
-  if (!ed::space_node::push_compute_context_for_tree_path(snode, compute_context_builder)) {
+  const ComputeContext *current_compute_context = ed::space_node::compute_context_for_edittree(
+      snode, compute_context_cache);
+  if (!current_compute_context) {
     return;
   }
+
   snode.edittree->ensure_topology_cache();
   const TreeGizmoPropagation &gizmo_propagation = *snode.edittree->runtime->gizmo_propagation;
   Set<ie::SocketElem> used_gizmo_inputs;
@@ -295,6 +298,9 @@ static void foreach_active_gizmo_in_open_node_editor(
   /* Check gizmos on input sockets. */
   for (auto &&item : gizmo_propagation.gizmo_inputs_by_node_inputs.items()) {
     const bNodeSocket &socket = *item.key.socket;
+    if (socket.is_inactive()) {
+      continue;
+    }
     const bNode &node = socket.owner_node();
     if ((node.flag & NODE_SELECT) || (socket.flag & SOCK_GIZMO_PIN)) {
       used_gizmo_inputs.add_multiple(item.value);
@@ -320,7 +326,8 @@ static void foreach_active_gizmo_in_open_node_editor(
   }
   for (const ie::SocketElem &gizmo_input : used_gizmo_inputs) {
     foreach_gizmo_for_input(gizmo_input,
-                            compute_context_builder,
+                            compute_context_cache,
+                            current_compute_context,
                             *snode.edittree,
                             [&](const ComputeContext &compute_context,
                                 const bNode &gizmo_node,
@@ -333,7 +340,7 @@ static void foreach_active_gizmo_in_open_node_editor(
 static void foreach_active_gizmo_in_open_editors(const wmWindowManager &wm,
                                                  const Object *object_filter,
                                                  const NodesModifierData *nmd_filter,
-                                                 ComputeContextBuilder &compute_context_builder,
+                                                 bke::ComputeContextCache &compute_context_cache,
                                                  const ForeachGizmoFn fn)
 {
   LISTBASE_FOREACH (const wmWindow *, window, &wm.windows) {
@@ -354,7 +361,7 @@ static void foreach_active_gizmo_in_open_editors(const wmWindowManager &wm,
         }
         const SpaceNode &snode = *reinterpret_cast<const SpaceNode *>(sl);
         foreach_active_gizmo_in_open_node_editor(
-            snode, object_filter, nmd_filter, compute_context_builder, fn);
+            snode, object_filter, nmd_filter, compute_context_cache, fn);
       }
     }
   }
@@ -362,7 +369,7 @@ static void foreach_active_gizmo_in_open_editors(const wmWindowManager &wm,
 
 static void foreach_active_gizmo_exposed_to_modifier(
     const NodesModifierData &nmd,
-    ComputeContextBuilder &compute_context_builder,
+    bke::ComputeContextCache &compute_context_cache,
     const ForeachGizmoInModifierFn fn)
 {
   if (!nmd.node_group) {
@@ -372,12 +379,32 @@ static void foreach_active_gizmo_exposed_to_modifier(
   if (!tree.runtime->gizmo_propagation) {
     return;
   }
-  compute_context_builder.push<bke::ModifierComputeContext>(nmd.modifier.name);
-  BLI_SCOPED_DEFER([&]() { compute_context_builder.pop(); });
 
+  tree.ensure_interface_cache();
+
+  ResourceScope scope;
+  const Vector<InferenceValue> input_values = get_geometry_nodes_input_inference_values(
+      *nmd.node_group, nmd.settings.properties, scope);
+
+  const auto get_input_value = [&](const int group_input_i) {
+    return input_values[group_input_i];
+  };
+  SocketValueInferencer value_inferencer{
+      *nmd.node_group, scope, compute_context_cache, get_input_value};
+  socket_usage_inference::SocketUsageInferencer usage_inferencer(
+      *nmd.node_group, scope, value_inferencer, compute_context_cache);
+
+  const ComputeContext &root_compute_context = compute_context_cache.for_modifier(nullptr, nmd);
   for (auto &&item : tree.runtime->gizmo_propagation->gizmo_inputs_by_group_inputs.items()) {
+    const ie::GroupInputElem &group_input_elem = item.key;
+    if (item.value.is_empty()) {
+      continue;
+    }
+    if (!usage_inferencer.is_group_input_used(group_input_elem.group_input_index)) {
+      continue;
+    }
     for (const ie::SocketElem &socket_elem : item.value) {
-      foreach_gizmo_for_input(socket_elem, compute_context_builder, tree, fn);
+      foreach_gizmo_for_input(socket_elem, compute_context_cache, &root_compute_context, tree, fn);
     }
   }
 }
@@ -385,7 +412,7 @@ static void foreach_active_gizmo_exposed_to_modifier(
 void foreach_active_gizmo_in_modifier(const Object &object,
                                       const NodesModifierData &nmd,
                                       const wmWindowManager &wm,
-                                      ComputeContextBuilder &compute_context_builder,
+                                      bke::ComputeContextCache &compute_context_cache,
                                       const ForeachGizmoInModifierFn fn)
 {
   if (!nmd.node_group) {
@@ -395,7 +422,7 @@ void foreach_active_gizmo_in_modifier(const Object &object,
   foreach_active_gizmo_in_open_editors(wm,
                                        &object,
                                        &nmd,
-                                       compute_context_builder,
+                                       compute_context_cache,
                                        [&](const Object &object_with_gizmo,
                                            const NodesModifierData &nmd_with_gizmo,
                                            const ComputeContext &compute_context,
@@ -407,18 +434,18 @@ void foreach_active_gizmo_in_modifier(const Object &object,
                                          fn(compute_context, gizmo_node, gizmo_socket);
                                        });
 
-  foreach_active_gizmo_exposed_to_modifier(nmd, compute_context_builder, fn);
+  foreach_active_gizmo_exposed_to_modifier(nmd, compute_context_cache, fn);
 }
 
 void foreach_active_gizmo(const bContext &C,
-                          ComputeContextBuilder &compute_context_builder,
+                          bke::ComputeContextCache &compute_context_cache,
                           const ForeachGizmoFn fn)
 {
   const wmWindowManager *wm = CTX_wm_manager(&C);
   if (!wm) {
     return;
   }
-  foreach_active_gizmo_in_open_editors(*wm, nullptr, nullptr, compute_context_builder, fn);
+  foreach_active_gizmo_in_open_editors(*wm, nullptr, nullptr, compute_context_cache, fn);
 
   if (const Base *active_base = CTX_data_active_base(&C)) {
     if (!(active_base->flag & BASE_SELECTED)) {
@@ -434,7 +461,7 @@ void foreach_active_gizmo(const bContext &C,
         const NodesModifierData &nmd = *reinterpret_cast<const NodesModifierData *>(md);
         foreach_active_gizmo_exposed_to_modifier(
             nmd,
-            compute_context_builder,
+            compute_context_cache,
             [&](const ComputeContext &compute_context,
                 const bNode &gizmo_node,
                 const bNodeSocket &gizmo_socket) {
@@ -490,7 +517,7 @@ void apply_gizmo_change(
     bContext &C,
     Object &object,
     NodesModifierData &nmd,
-    geo_eval_log::GeoModifierLog &eval_log,
+    geo_eval_log::GeoNodesLog &eval_log,
     const ComputeContext &gizmo_context,
     const bNodeSocket &gizmo_socket,
     const FunctionRef<void(bke::SocketValueVariant &value)> apply_on_gizmo_value_fn)
@@ -527,6 +554,15 @@ void apply_gizmo_change(
 
   /* Actually backpropagate the socket values. */
   ie::backpropagate_socket_values(C, object, nmd, eval_log, sockets_to_update);
+}
+
+bool value_node_has_gizmo(const bNodeTree &tree, const bNode &node)
+{
+  BLI_assert(partial_eval::is_supported_value_node(node));
+  if (!tree.runtime->gizmo_propagation) {
+    return false;
+  }
+  return tree.runtime->gizmo_propagation->gizmo_endpoint_sockets.contains(&node.output_socket(0));
 }
 
 }  // namespace blender::nodes::gizmos

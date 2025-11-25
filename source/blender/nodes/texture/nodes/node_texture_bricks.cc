@@ -70,8 +70,8 @@ static void colorfn(float *out, TexParams *p, bNode *node, bNodeStack **in, shor
   rownum = int(floor(y / row_height));
 
   if (node->custom1 && node->custom2) {
-    brick_width *= (int(rownum) % node->custom2) ? 1.0f : node->custom4;        /* squash */
-    offset = (int(rownum) % node->custom1) ? 0 : (brick_width * node->custom3); /* offset */
+    brick_width *= (rownum % node->custom2) ? 1.0f : node->custom4;        /* squash */
+    offset = (rownum % node->custom1) ? 0 : (brick_width * node->custom3); /* offset */
   }
 
   bricknum = int(floor((x + offset) / brick_width));
@@ -112,10 +112,10 @@ void register_node_type_tex_bricks()
   ntype.enum_name_legacy = "BRICKS";
   ntype.nclass = NODE_CLASS_PATTERN;
   blender::bke::node_type_socket_templates(&ntype, inputs, outputs);
-  blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Middle);
+  blender::bke::node_type_size_preset(ntype, blender::bke::eNodeSizePreset::Middle);
   ntype.initfunc = init;
   ntype.exec_fn = exec;
   ntype.flag |= NODE_PREVIEW;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

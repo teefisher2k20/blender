@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <optional>
+
 #include "BLI_index_range.hh"
 #include "BLI_math_vector_types.hh"
 #include "BLI_task.hh"
@@ -19,6 +21,9 @@ namespace blender::compositor {
 
 using namespace nodes::derived_node_tree_types;
 
+/* Returns true if the socket is available and not virtual. Returns false otherwise. */
+bool is_socket_available(const bNodeSocket *socket);
+
 /**
  * Get the origin socket of the given node input. If the input is not linked, the socket itself is
  * returned. If the input is linked, the socket that is linked to it is returned, which could
@@ -32,6 +37,11 @@ DSocket get_input_origin_socket(DInputSocket input);
  * a null output is returned.
  */
 DOutputSocket get_output_linked_to_input(DInputSocket input);
+
+/** Get the result type that corresponds to the given socket data type. For vector sockets, the
+ * dimensions of the socket can be provided, but if not provided, 3 will be assumed. */
+ResultType socket_data_type_to_result_type(const eNodeSocketDatatype data_type,
+                                           const std::optional<int> dimensions = std::nullopt);
 
 /** Get the result type that corresponds to the type of the given socket. */
 ResultType get_node_socket_result_type(const bNodeSocket *socket);
@@ -47,7 +57,7 @@ bool is_output_linked_to_node_conditioned(DOutputSocket output,
 int number_of_inputs_linked_to_output_conditioned(DOutputSocket output,
                                                   FunctionRef<bool(DInputSocket)> condition);
 
-/** A node is a pixel node if it defines a method to get a shader node operation. */
+/** A node is a pixel node if it defines a method to get a pixel node operation. */
 bool is_pixel_node(DNode node);
 
 /** Get the input descriptor of the given input socket. */
@@ -61,7 +71,7 @@ InputDescriptor input_descriptor_from_input_socket(const bNodeSocket *socket);
  * default local size of 16x16 is assumed, which is the optimal local size for many image
  * processing shaders.
  */
-void compute_dispatch_threads_at_least(GPUShader *shader,
+void compute_dispatch_threads_at_least(gpu::Shader *shader,
                                        int2 threads_range,
                                        int2 local_size = int2(16));
 

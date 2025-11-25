@@ -6,8 +6,6 @@
  * \ingroup modifiers
  */
 
-#include <vector>
-
 #include "BKE_lib_query.hh"
 #include "BKE_mesh.hh"
 #include "BKE_modifier.hh"
@@ -23,10 +21,11 @@
 #include "DNA_object_types.h"
 #include "DNA_screen_types.h"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "RNA_prototypes.hh"
+#include "RNA_types.hh"
 
 #include "BLI_math_matrix_types.hh"
 #include "BLI_span.hh"
@@ -81,33 +80,33 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
   VolumeToMeshModifierData *vmmd = static_cast<VolumeToMeshModifierData *>(ptr->data);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
   {
-    uiLayout *col = uiLayoutColumn(layout, false);
-    uiItemR(col, ptr, "object", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "grid_name", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    uiLayout *col = &layout->column(false);
+    col->prop(ptr, "object", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col->prop(ptr, "grid_name", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 
   {
-    uiLayout *col = uiLayoutColumn(layout, false);
-    uiItemR(col, ptr, "resolution_mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    uiLayout *col = &layout->column(false);
+    col->prop(ptr, "resolution_mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     if (vmmd->resolution_mode == VOLUME_TO_MESH_RESOLUTION_MODE_VOXEL_AMOUNT) {
-      uiItemR(col, ptr, "voxel_amount", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+      col->prop(ptr, "voxel_amount", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     }
     else if (vmmd->resolution_mode == VOLUME_TO_MESH_RESOLUTION_MODE_VOXEL_SIZE) {
-      uiItemR(col, ptr, "voxel_size", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+      col->prop(ptr, "voxel_size", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     }
   }
 
   {
-    uiLayout *col = uiLayoutColumn(layout, false);
-    uiItemR(col, ptr, "threshold", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "adaptivity", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "use_smooth_shade", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    uiLayout *col = &layout->column(false);
+    col->prop(ptr, "threshold", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col->prop(ptr, "adaptivity", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col->prop(ptr, "use_smooth_shade", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void panel_register(ARegionType *region_type)
@@ -225,4 +224,5 @@ ModifierTypeInfo modifierType_VolumeToMesh = {
     /*blend_write*/ nullptr,
     /*blend_read*/ nullptr,
     /*foreach_cache*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
 };

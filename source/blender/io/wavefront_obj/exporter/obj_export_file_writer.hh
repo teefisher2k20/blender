@@ -14,11 +14,12 @@
 
 #include "IO_wavefront_obj.hh"
 #include "obj_export_io.hh"
+#include "obj_export_mesh.hh"
 #include "obj_export_mtl.hh"
 
 namespace blender::io::obj {
 
-class OBJCurve;
+class IOBJCurve;
 class OBJMesh;
 /**
  * Total vertices/ UV vertices/ normals of previous Objects
@@ -57,7 +58,7 @@ class OBJWriter : NonMovable, NonCopyable {
   /**
    * Write file name of Material Library in `.OBJ` file.
    */
-  void write_mtllib_name(const StringRefNull mtl_filepath) const;
+  void write_mtllib_name(StringRefNull mtl_filepath) const;
   /**
    * Write vertex coordinates for all vertices as "v x y z" or "v x y z r g b".
    */
@@ -94,7 +95,7 @@ class OBJWriter : NonMovable, NonCopyable {
   /**
    * Write a NURBS curve to the `.OBJ` file in parameter form.
    */
-  void write_nurbs_curve(FormatHandler &fh, const OBJCurve &obj_nurbs_data) const;
+  void write_nurbs_curve(FormatHandler &fh, const IOBJCurve &obj_nurbs_data) const;
 
  private:
   using func_vert_uv_normal_indices = void (OBJWriter::*)(FormatHandler &fh,

@@ -6,12 +6,9 @@
  * \ingroup modifiers
  */
 
-#include "MEM_guardedalloc.h"
-
 #include "BLI_math_matrix.hh"
 
 #include "DNA_defaults.h"
-#include "DNA_material_types.h"
 #include "DNA_modifier_types.h"
 #include "DNA_scene_types.h"
 
@@ -20,8 +17,6 @@
 #include "BKE_geometry_set.hh"
 #include "BKE_grease_pencil.hh"
 #include "BKE_instances.hh"
-#include "BKE_lib_query.hh"
-#include "BKE_material.hh"
 #include "BKE_modifier.hh"
 #include "BKE_screen.hh"
 
@@ -31,7 +26,7 @@
 
 #include "GEO_realize_instances.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "BLT_translation.hh"
@@ -94,13 +89,15 @@ static bke::CurvesGeometry duplicate_strokes(const bke::CurvesGeometry &curves,
                                              const IndexMask curves_mask,
                                              const IndexMask unselected_mask,
                                              const int count,
-                                             int &r_original_point_count)
+                                             int &r_original_point_count,
+                                             int &r_original_curve_count)
 {
   bke::CurvesGeometry masked_curves = bke::curves_copy_curve_selection(curves, curves_mask, {});
   bke::CurvesGeometry unselected_curves = bke::curves_copy_curve_selection(
       curves, unselected_mask, {});
 
   r_original_point_count = masked_curves.points_num();
+  r_original_curve_count = masked_curves.curves_num();
 
   Curves *masked_curves_id = bke::curves_new_nomain(masked_curves);
   Curves *unselected_curves_id = bke::curves_new_nomain(unselected_curves);
@@ -121,7 +118,8 @@ static bke::CurvesGeometry duplicate_strokes(const bke::CurvesGeometry &curves,
   options.keep_original_ids = true;
   options.realize_instance_attributes = true;
   bke::GeometrySet result_geo = geometry::realize_instances(
-      bke::GeometrySet::from_instances(instances.release()), options);
+                                    bke::GeometrySet::from_instances(instances.release()), options)
+                                    .geometry;
   return std::move(result_geo.get_curves_for_write()->geometry.wrap());
 }
 
@@ -141,9 +139,9 @@ static void generate_curves(GreasePencilMultiModifierData &mmd,
 
   const IndexMask unselected_mask = curves_mask.complement(curves.curves_range(), mask_memory);
 
-  int src_point_count;
-  bke::CurvesGeometry duplicated_strokes = duplicate_strokes(
-      curves, curves_mask, unselected_mask, mmd.duplications, src_point_count);
+  int src_point_count, src_curve_count;
+  curves = duplicate_strokes(
+      curves, curves_mask, unselected_mask, mmd.duplications, src_point_count, src_curve_count);
 
   const float offset = math::length(math::to_scale(ctx.object->object_to_world())) * mmd.offset;
   const float distance = mmd.distance;
@@ -152,11 +150,11 @@ static void generate_curves(GreasePencilMultiModifierData &mmd,
   const float fading_opacity = mmd.fading_opacity;
   const float fading_center = mmd.fading_center;
 
-  MutableSpan<float3> positions = duplicated_strokes.positions_for_write();
-  const Span<float3> tangents = duplicated_strokes.evaluated_tangents();
+  MutableSpan<float3> positions = curves.positions_for_write();
+  const Span<float3> tangents = curves.evaluated_tangents();
   const Span<float3> normals = drawing.curve_plane_normals();
 
-  bke::MutableAttributeAccessor attributes = duplicated_strokes.attributes_for_write();
+  bke::MutableAttributeAccessor attributes = curves.attributes_for_write();
   bke::SpanAttributeWriter<float> opacities = attributes.lookup_or_add_for_write_span<float>(
       "opacity", bke::AttrDomain::Point);
   bke::SpanAttributeWriter<float> radii = attributes.lookup_or_add_for_write_span<float>(
@@ -167,15 +165,15 @@ static void generate_curves(GreasePencilMultiModifierData &mmd,
   Array<float3> pos_l(src_point_count);
   Array<float3> pos_r(src_point_count);
 
-  threading::parallel_for(curves.curves_range(), 128, [&](const IndexRange range) {
-    for (const int curve : range) {
-      for (const int point : points_by_curve[curve]) {
-        const float3 miter = math::cross(normals[curve], tangents[point]) * distance;
-        pos_l[point] = positions[point] + miter;
-        pos_r[point] = positions[point] - miter;
-      }
+  int src_point_i = 0;
+  for (const int src_curve_i : IndexRange(src_curve_count)) {
+    for (const int point : points_by_curve[src_curve_i]) {
+      const float3 miter = math::cross(normals[src_curve_i], tangents[point]) * distance;
+      pos_l[src_point_i] = positions[point] + miter;
+      pos_r[src_point_i] = positions[point] - miter;
+      src_point_i++;
     }
-  });
+  }
 
   const Span<float3> stroke_pos_l = pos_l.as_span();
   const Span<float3> stroke_pos_r = pos_r.as_span();
@@ -184,7 +182,6 @@ static void generate_curves(GreasePencilMultiModifierData &mmd,
     using bke::attribute_math::mix2;
     const IndexRange stroke = IndexRange(src_point_count * i, src_point_count);
     MutableSpan<float3> instance_positions = positions.slice(stroke);
-    MutableSpan<float> instance_opacity = opacities.span.slice(stroke);
     MutableSpan<float> instance_radii = radii.span.slice(stroke);
     const float offset_fac = (mmd.duplications == 1) ?
                                  0.5f :
@@ -192,22 +189,30 @@ static void generate_curves(GreasePencilMultiModifierData &mmd,
     const float fading_fac = fabsf(offset_fac - fading_center);
     const float thickness_factor = use_fading ? mix2(fading_fac, 1.0f, 1.0f - fading_thickness) :
                                                 1.0f;
-    const float opacity_factor = use_fading ? mix2(fading_fac, 1.0f, 1.0f - fading_opacity) : 1.0f;
     threading::parallel_for(instance_positions.index_range(), 512, [&](const IndexRange range) {
       for (const int point : range) {
         const float fac = mix2(float(i) / float(mmd.duplications - 1), 1 + offset, offset);
         const int old_point = point % src_point_count;
         instance_positions[point] = mix2(fac, stroke_pos_l[old_point], stroke_pos_r[old_point]);
         instance_radii[point] *= thickness_factor;
-        instance_opacity[point] *= opacity_factor;
       }
     });
+
+    if (opacities) {
+      MutableSpan<float> instance_opacity = opacities.span.slice(stroke);
+      const float opacity_factor = use_fading ? mix2(fading_fac, 1.0f, 1.0f - fading_opacity) :
+                                                1.0f;
+      threading::parallel_for(instance_positions.index_range(), 512, [&](const IndexRange range) {
+        for (const int point : range) {
+          instance_opacity[point] *= opacity_factor;
+        }
+      });
+    }
   }
 
   radii.finish();
   opacities.finish();
 
-  curves = std::move(duplicated_strokes);
   drawing.tag_topology_changed();
 }
 
@@ -239,34 +244,33 @@ static void panel_draw(const bContext *C, Panel *panel)
   PointerRNA ob_ptr;
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, &ob_ptr);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiItemR(layout, ptr, "duplicates", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "duplicates", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  uiLayout *col = uiLayoutColumn(layout, false);
-  uiLayoutSetActive(col, RNA_int_get(ptr, "duplicates") > 0);
-  uiItemR(col, ptr, "distance", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "offset", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
+  uiLayout *col = &layout->column(false);
+  col->active_set(RNA_int_get(ptr, "duplicates") > 0);
+  col->prop(ptr, "distance", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col->prop(ptr, "offset", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
+  PanelLayout fade_panel_layout = layout->panel_prop_with_bool_header(
+      C, ptr, "open_fading_panel", ptr, "use_fade", IFACE_("Fade"));
+  if (uiLayout *fade_panel = fade_panel_layout.body) {
+    uiLayout *sub = &fade_panel->column(false);
+    sub->active_set(RNA_boolean_get(ptr, "use_fade"));
 
-  if (uiLayout *fade_panel = uiLayoutPanelPropWithBoolHeader(
-          C, layout, ptr, "open_fading_panel", "use_fade", IFACE_("Fade")))
-  {
-    uiLayout *sub = uiLayoutColumn(fade_panel, false);
-    uiLayoutSetActive(sub, RNA_boolean_get(ptr, "use_fade"));
-
-    uiItemR(sub, ptr, "fading_center", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(sub, ptr, "fading_thickness", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
-    uiItemR(sub, ptr, "fading_opacity", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
+    sub->prop(ptr, "fading_center", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    sub->prop(ptr, "fading_thickness", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
+    sub->prop(ptr, "fading_opacity", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
   }
 
-  if (uiLayout *influence_panel = uiLayoutPanelProp(
-          C, layout, ptr, "open_influence_panel", IFACE_("Influence")))
+  if (uiLayout *influence_panel = layout->panel_prop(
+          C, ptr, "open_influence_panel", IFACE_("Influence")))
   {
     modifier::greasepencil::draw_layer_filter_settings(C, influence_panel, ptr);
     modifier::greasepencil::draw_material_filter_settings(C, influence_panel, ptr);
   }
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void panel_register(ARegionType *region_type)

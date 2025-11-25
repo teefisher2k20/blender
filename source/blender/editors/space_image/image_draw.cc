@@ -10,27 +10,19 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "MEM_guardedalloc.h"
-
-#include "DNA_brush_types.h"
-#include "DNA_camera_types.h"
 #include "DNA_mask_types.h"
-#include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 #include "DNA_screen_types.h"
 #include "DNA_space_types.h"
 #include "DNA_view2d_types.h"
 
-#include "BLI_listbase.h"
 #include "BLI_rect.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_threads.h"
-#include "BLI_time.h"
 #include "BLI_utildefines.h"
 
 #include "IMB_colormanagement.hh"
-#include "IMB_imbuf.hh"
-#include "IMB_imbuf_types.hh"
+#include "IMB_imbuf_enums.h"
 #include "IMB_moviecache.hh"
 
 #include "BKE_context.hh"
@@ -39,7 +31,6 @@
 
 #include "BIF_glutil.hh"
 
-#include "GPU_framebuffer.hh"
 #include "GPU_immediate.hh"
 #include "GPU_immediate_util.hh"
 #include "GPU_matrix.hh"
@@ -69,7 +60,7 @@ static void draw_render_info(
   Render *re = RE_GetSceneRender(scene);
   Scene *stats_scene = ED_render_job_get_scene(C);
   if (stats_scene == nullptr) {
-    stats_scene = CTX_data_scene(C);
+    stats_scene = scene;
   }
 
   RenderResult *rr = BKE_image_acquire_renderresult(stats_scene, ima);
@@ -95,7 +86,7 @@ static void draw_render_info(
       GPU_matrix_scale_2f(zoomx, zoomy);
 
       uint pos = GPU_vertformat_attr_add(
-          immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+          immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
       immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
       immUniformThemeColor(TH_FACE_SELECT);
 
@@ -149,12 +140,12 @@ void ED_image_draw_info(Scene *scene,
   GPU_blend(GPU_BLEND_ALPHA);
 
   uint pos = GPU_vertformat_attr_add(
-      immVertexFormat(), "pos", GPU_COMP_I32, 2, GPU_FETCH_INT_TO_FLOAT);
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
 
   /* noisy, high contrast make impossible to read if lower alpha is used. */
   immUniformColor4ub(0, 0, 0, 190);
-  immRecti(pos, 0, ymin, BLI_rcti_size_x(&region->winrct) + 1, ymin + UI_UNIT_Y);
+  immRectf(pos, 0, ymin, BLI_rcti_size_x(&region->winrct) + 1, ymin + UI_UNIT_Y);
 
   immUnbindProgram();
 
@@ -163,17 +154,17 @@ void ED_image_draw_info(Scene *scene,
   BLF_size(blf_mono_font, 11.0f * UI_SCALE_FAC);
 
   BLF_color3ub(blf_mono_font, 255, 255, 255);
-  SNPRINTF(str, "X:%-4d  Y:%-4d |", x, y);
+  SNPRINTF_UTF8(str, "X:%-4d  Y:%-4d |", x, y);
   BLF_position(blf_mono_font, dx, dy, 0);
   BLF_draw(blf_mono_font, str, sizeof(str));
   dx += BLF_width(blf_mono_font, str, sizeof(str));
 
   if (channels == 1 && (cp != nullptr || fp != nullptr)) {
     if (fp != nullptr) {
-      SNPRINTF(str, " Val:%-.3f |", fp[0]);
+      SNPRINTF_UTF8(str, " Val:%-.3f |", fp[0]);
     }
     else if (cp != nullptr) {
-      SNPRINTF(str, " Val:%-.3f |", cp[0] / 255.0f);
+      SNPRINTF_UTF8(str, " Val:%-.3f |", cp[0] / 255.0f);
     }
     BLF_color3ub(blf_mono_font, 255, 255, 255);
     BLF_position(blf_mono_font, dx, dy, 0);
@@ -184,13 +175,13 @@ void ED_image_draw_info(Scene *scene,
   if (channels >= 3) {
     BLF_color3ubv(blf_mono_font, red);
     if (fp) {
-      SNPRINTF(str, "  R:%-.5f", fp[0]);
+      SNPRINTF_UTF8(str, "  R:%-.5f", fp[0]);
     }
     else if (cp) {
-      SNPRINTF(str, "  R:%-3d", cp[0]);
+      SNPRINTF_UTF8(str, "  R:%-3d", cp[0]);
     }
     else {
-      STRNCPY(str, "  R:-");
+      STRNCPY_UTF8(str, "  R:-");
     }
     BLF_position(blf_mono_font, dx, dy, 0);
     BLF_draw(blf_mono_font, str, sizeof(str));
@@ -198,13 +189,13 @@ void ED_image_draw_info(Scene *scene,
 
     BLF_color3ubv(blf_mono_font, green);
     if (fp) {
-      SNPRINTF(str, "  G:%-.5f", fp[1]);
+      SNPRINTF_UTF8(str, "  G:%-.5f", fp[1]);
     }
     else if (cp) {
-      SNPRINTF(str, "  G:%-3d", cp[1]);
+      SNPRINTF_UTF8(str, "  G:%-3d", cp[1]);
     }
     else {
-      STRNCPY(str, "  G:-");
+      STRNCPY_UTF8(str, "  G:-");
     }
     BLF_position(blf_mono_font, dx, dy, 0);
     BLF_draw(blf_mono_font, str, sizeof(str));
@@ -212,13 +203,13 @@ void ED_image_draw_info(Scene *scene,
 
     BLF_color3ubv(blf_mono_font, blue);
     if (fp) {
-      SNPRINTF(str, "  B:%-.5f", fp[2]);
+      SNPRINTF_UTF8(str, "  B:%-.5f", fp[2]);
     }
     else if (cp) {
-      SNPRINTF(str, "  B:%-3d", cp[2]);
+      SNPRINTF_UTF8(str, "  B:%-3d", cp[2]);
     }
     else {
-      STRNCPY(str, "  B:-");
+      STRNCPY_UTF8(str, "  B:-");
     }
     BLF_position(blf_mono_font, dx, dy, 0);
     BLF_draw(blf_mono_font, str, sizeof(str));
@@ -227,13 +218,13 @@ void ED_image_draw_info(Scene *scene,
     if (channels == 4) {
       BLF_color3ub(blf_mono_font, 255, 255, 255);
       if (fp) {
-        SNPRINTF(str, "  A:%-.4f", fp[3]);
+        SNPRINTF_UTF8(str, "  A:%-.4f", fp[3]);
       }
       else if (cp) {
-        SNPRINTF(str, "  A:%-3d", cp[3]);
+        SNPRINTF_UTF8(str, "  A:%-3d", cp[3]);
       }
       else {
-        STRNCPY(str, "- ");
+        STRNCPY_UTF8(str, "- ");
       }
       BLF_position(blf_mono_font, dx, dy, 0);
       BLF_draw(blf_mono_font, str, sizeof(str));
@@ -251,16 +242,14 @@ void ED_image_draw_info(Scene *scene,
         rgba[3] = linearcol[3];
       }
 
-      if (use_default_view) {
-        IMB_colormanagement_pixel_to_display_space_v4(
-            rgba, rgba, nullptr, &scene->display_settings);
-      }
-      else {
-        IMB_colormanagement_pixel_to_display_space_v4(
-            rgba, rgba, &scene->view_settings, &scene->display_settings);
-      }
+      IMB_colormanagement_pixel_to_display_space_v4(rgba,
+                                                    rgba,
+                                                    (use_default_view) ? nullptr :
+                                                                         &scene->view_settings,
+                                                    &scene->display_settings,
+                                                    DISPLAY_SPACE_COLOR_INSPECTION);
 
-      SNPRINTF(str, "  |  CM  R:%-.4f  G:%-.4f  B:%-.4f", rgba[0], rgba[1], rgba[2]);
+      SNPRINTF_UTF8(str, "  |  Display  R:%-.4f  G:%-.4f  B:%-.4f", rgba[0], rgba[1], rgba[2]);
       BLF_position(blf_mono_font, dx, dy, 0);
       BLF_draw(blf_mono_font, str, sizeof(str));
       dx += BLF_width(blf_mono_font, str, sizeof(str));
@@ -293,14 +282,11 @@ void ED_image_draw_info(Scene *scene,
   }
 
   if (color_manage) {
-    if (use_default_view) {
-      IMB_colormanagement_pixel_to_display_space_v4(
-          finalcol, col, nullptr, &scene->display_settings);
-    }
-    else {
-      IMB_colormanagement_pixel_to_display_space_v4(
-          finalcol, col, &scene->view_settings, &scene->display_settings);
-    }
+    IMB_colormanagement_pixel_to_display_space_v4(finalcol,
+                                                  col,
+                                                  (use_default_view) ? nullptr :
+                                                                       &scene->view_settings,
+                                                  &scene->display_settings);
   }
   else {
     copy_v4_v4(finalcol, col);
@@ -316,7 +302,8 @@ void ED_image_draw_info(Scene *scene,
                 ymin + 0.85f * UI_UNIT_Y);
 
   /* BLF uses immediate mode too, so we must reset our vertex format */
-  pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_I32, 2, GPU_FETCH_INT_TO_FLOAT);
+  pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
 
   if (channels == 4) {
@@ -326,7 +313,7 @@ void ED_image_draw_info(Scene *scene,
     color_rect_half = color_rect;
     color_rect_half.xmax = BLI_rcti_cent_x(&color_rect);
     /* what color ??? */
-    immRecti(pos, color_rect.xmin, color_rect.ymin, color_rect.xmax, color_rect.ymax);
+    immRectf(pos, color_rect.xmin, color_rect.ymin, color_rect.xmax, color_rect.ymax);
 
     color_rect_half = color_rect;
     color_rect_half.xmin = BLI_rcti_cent_x(&color_rect);
@@ -335,31 +322,32 @@ void ED_image_draw_info(Scene *scene,
     color_quater_y = BLI_rcti_cent_y(&color_rect_half);
 
     immUniformColor3ub(UI_ALPHA_CHECKER_DARK, UI_ALPHA_CHECKER_DARK, UI_ALPHA_CHECKER_DARK);
-    immRecti(pos,
+    immRectf(pos,
              color_rect_half.xmin,
              color_rect_half.ymin,
              color_rect_half.xmax,
              color_rect_half.ymax);
 
     immUniformColor3ub(UI_ALPHA_CHECKER_LIGHT, UI_ALPHA_CHECKER_LIGHT, UI_ALPHA_CHECKER_LIGHT);
-    immRecti(pos, color_quater_x, color_quater_y, color_rect_half.xmax, color_rect_half.ymax);
-    immRecti(pos, color_rect_half.xmin, color_rect_half.ymin, color_quater_x, color_quater_y);
+    immRectf(pos, color_quater_x, color_quater_y, color_rect_half.xmax, color_rect_half.ymax);
+    immRectf(pos, color_rect_half.xmin, color_rect_half.ymin, color_quater_x, color_quater_y);
 
     if (fp != nullptr || cp != nullptr) {
       GPU_blend(GPU_BLEND_ALPHA);
       immUniformColor3fvAlpha(finalcol, fp ? fp[3] : (cp[3] / 255.0f));
-      immRecti(pos, color_rect.xmin, color_rect.ymin, color_rect.xmax, color_rect.ymax);
+      immRectf(pos, color_rect.xmin, color_rect.ymin, color_rect.xmax, color_rect.ymax);
       GPU_blend(GPU_BLEND_NONE);
     }
   }
   else {
     immUniformColor3fv(finalcol);
-    immRecti(pos, color_rect.xmin, color_rect.ymin, color_rect.xmax, color_rect.ymax);
+    immRectf(pos, color_rect.xmin, color_rect.ymin, color_rect.xmax, color_rect.ymax);
   }
   immUnbindProgram();
 
   /* draw outline */
-  pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+  pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
   immUniformColor3ub(128, 128, 128);
   imm_draw_box_wire_2d(pos, color_rect.xmin, color_rect.ymin, color_rect.xmax, color_rect.ymax);
@@ -385,12 +373,12 @@ void ED_image_draw_info(Scene *scene,
                  BLI_YUV_ITU_BT709);
     }
 
-    SNPRINTF(str, "V:%-.4f", val);
+    SNPRINTF_UTF8(str, "V:%-.4f", val);
     BLF_position(blf_mono_font, dx, dy, 0);
     BLF_draw(blf_mono_font, str, sizeof(str));
     dx += BLF_width(blf_mono_font, str, sizeof(str));
 
-    SNPRINTF(str, "   L:%-.4f", lum);
+    SNPRINTF_UTF8(str, "   L:%-.4f", lum);
     BLF_position(blf_mono_font, dx, dy, 0);
     BLF_draw(blf_mono_font, str, sizeof(str));
   }
@@ -398,22 +386,22 @@ void ED_image_draw_info(Scene *scene,
     rgb_to_hsv(finalcol[0], finalcol[1], finalcol[2], &hue, &sat, &val);
     rgb_to_yuv(finalcol[0], finalcol[1], finalcol[2], &lum, &u, &v, BLI_YUV_ITU_BT709);
 
-    SNPRINTF(str, "H:%-.4f", hue);
+    SNPRINTF_UTF8(str, "H:%-.4f", hue);
     BLF_position(blf_mono_font, dx, dy, 0);
     BLF_draw(blf_mono_font, str, sizeof(str));
     dx += BLF_width(blf_mono_font, str, sizeof(str));
 
-    SNPRINTF(str, "  S:%-.4f", sat);
+    SNPRINTF_UTF8(str, "  S:%-.4f", sat);
     BLF_position(blf_mono_font, dx, dy, 0);
     BLF_draw(blf_mono_font, str, sizeof(str));
     dx += BLF_width(blf_mono_font, str, sizeof(str));
 
-    SNPRINTF(str, "  V:%-.4f", val);
+    SNPRINTF_UTF8(str, "  V:%-.4f", val);
     BLF_position(blf_mono_font, dx, dy, 0);
     BLF_draw(blf_mono_font, str, sizeof(str));
     dx += BLF_width(blf_mono_font, str, sizeof(str));
 
-    SNPRINTF(str, "   L:%-.4f", lum);
+    SNPRINTF_UTF8(str, "   L:%-.4f", lum);
     BLF_position(blf_mono_font, dx, dy, 0);
     BLF_draw(blf_mono_font, str, sizeof(str));
   }
@@ -425,7 +413,7 @@ void draw_image_sample_line(SpaceImage *sima)
 
     GPUVertFormat *format = immVertexFormat();
     uint shdr_dashed_pos = GPU_vertformat_attr_add(
-        format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+        format, "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
 
     immBindBuiltinProgram(GPU_SHADER_3D_LINE_DASHED_UNIFORM_COLOR);
 
@@ -460,6 +448,14 @@ void draw_image_main_helpers(const bContext *C, ARegion *region)
     float zoomx, zoomy;
     ED_space_image_get_zoom(sima, region, &zoomx, &zoomy);
     draw_render_info(C, sima->iuser.scene, ima, region, zoomx, zoomy);
+  }
+
+  if (sima->mode == SI_MODE_UV) {
+    const Scene *scene = CTX_data_scene(C);
+    const ToolSettings *ts = scene->toolsettings;
+    if (ts->uv_flag & UV_FLAG_CUSTOM_REGION) {
+      draw_image_uv_custom_region(region, ts->uv_custom_region);
+    }
   }
 }
 
@@ -517,15 +513,15 @@ void draw_image_cache(const bContext *C, ARegion *region)
   ED_region_cache_draw_background(region);
 
   /* Draw cached segments. */
-  if (image != nullptr && image->cache != nullptr &&
+  if (image != nullptr && image->runtime->cache != nullptr &&
       ELEM(image->source, IMA_SRC_SEQUENCE, IMA_SRC_MOVIE))
   {
     int num_segments = 0;
     int *points = nullptr;
 
-    BLI_mutex_lock(static_cast<ThreadMutex *>(image->runtime.cache_mutex));
-    IMB_moviecache_get_cache_segments(image->cache, IMB_PROXY_NONE, 0, &num_segments, &points);
-    BLI_mutex_unlock(static_cast<ThreadMutex *>(image->runtime.cache_mutex));
+    std::scoped_lock lock(image->runtime->cache_mutex);
+    IMB_moviecache_get_cache_segments(
+        image->runtime->cache, IMB_PROXY_NONE, 0, &num_segments, &points);
 
     ED_region_cache_draw_cached_segments(
         region, num_segments, points, sfra + sima->iuser.offset, efra + sima->iuser.offset);
@@ -537,10 +533,10 @@ void draw_image_cache(const bContext *C, ARegion *region)
   x = (cfra - sfra) / (efra - sfra + 1) * region->winx;
 
   uint pos = GPU_vertformat_attr_add(
-      immVertexFormat(), "pos", GPU_COMP_I32, 2, GPU_FETCH_INT_TO_FLOAT);
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
   immUniformThemeColor(TH_CFRAME);
-  immRecti(pos, x, region_bottom, x + ceilf(framelen), region_bottom + 8 * UI_SCALE_FAC);
+  immRectf(pos, x, region_bottom, x + ceilf(framelen), region_bottom + 8 * UI_SCALE_FAC);
   immUnbindProgram();
 
   ED_region_cache_draw_curfra_label(
@@ -618,4 +614,31 @@ float ED_space_image_increment_snap_value(const int grid_dimensions,
 
   /* Fallback */
   return grid_steps[0];
+}
+
+void draw_image_uv_custom_region(const ARegion *region, const rctf &custom_region)
+{
+  const uint shdr_pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
+
+  GPU_line_width(1.0f);
+
+  immBindBuiltinProgram(GPU_SHADER_3D_LINE_DASHED_UNIFORM_COLOR);
+
+  float viewport_size[4];
+  GPU_viewport_size_get_f(viewport_size);
+  immUniform2f("viewport_size", viewport_size[2] / UI_SCALE_FAC, viewport_size[3] / UI_SCALE_FAC);
+
+  immUniform1i("colors_len", 0); /* "simple" mode */
+  immUniform4f("color", 1.0f, 0.25f, 0.25f, 1.0f);
+  immUniform1f("dash_width", 6.0f);
+  immUniform1f("udash_factor", 0.5f);
+  rcti region_rect;
+
+  UI_view2d_view_to_region_rcti(&region->v2d, &custom_region, &region_rect);
+
+  imm_draw_box_wire_2d(
+      shdr_pos, region_rect.xmin, region_rect.ymin, region_rect.xmax, region_rect.ymax);
+
+  immUnbindProgram();
 }

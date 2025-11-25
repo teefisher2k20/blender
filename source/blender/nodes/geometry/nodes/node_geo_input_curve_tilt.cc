@@ -13,7 +13,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_geo_exec(GeoNodeExecParams params)
 {
-  Field<float> tilt_field = AttributeFieldInput::Create<float>("tilt");
+  Field<float> tilt_field = AttributeFieldInput::from<float>("tilt");
   params.set_output("Tilt", std::move(tilt_field));
 }
 
@@ -30,7 +30,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_INPUT;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

@@ -24,6 +24,7 @@
 #include "DNA_modifier_types.h"
 #include "DNA_object_types.h"
 #include "DNA_screen_types.h"
+#include "DNA_texture_types.h"
 
 #include "BKE_bvhutils.hh"
 #include "BKE_colortools.hh" /* CurveMapping. */
@@ -36,6 +37,7 @@
 #include "BKE_texture.h" /* Texture masking. */
 
 #include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "BLO_read_write.hh"
@@ -458,7 +460,7 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
   if (defgrp_index == -1) {
     return mesh;
   }
-  const bool has_mdef = CustomData_has_layer(&mesh->vert_data, CD_MDEFORMVERT);
+  const bool has_mdef = !mesh->deform_verts().is_empty();
   /* If no vertices were ever added to an object's vgroup, dvert might be nullptr. */
   /* As this modifier never add vertices to vgroup, just return. */
   if (!has_mdef) {
@@ -472,10 +474,9 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
   }
 
   /* Find out which vertices to work on (all vertices in vgroup), and get their relevant weight. */
-  tidx = static_cast<int *>(MEM_malloc_arrayN(verts_num, sizeof(int), __func__));
-  tw = static_cast<float *>(MEM_malloc_arrayN(verts_num, sizeof(float), __func__));
-  tdw = static_cast<MDeformWeight **>(
-      MEM_malloc_arrayN(verts_num, sizeof(MDeformWeight *), __func__));
+  tidx = MEM_malloc_arrayN<int>(size_t(verts_num), __func__);
+  tw = MEM_malloc_arrayN<float>(size_t(verts_num), __func__);
+  tdw = MEM_malloc_arrayN<MDeformWeight *>(size_t(verts_num), __func__);
   for (i = 0; i < verts_num; i++) {
     MDeformWeight *_dw = BKE_defvert_find_index(&dvert[i], defgrp_index);
     if (_dw) {
@@ -492,12 +493,11 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
     return mesh;
   }
   if (index_num != verts_num) {
-    indices = static_cast<int *>(MEM_malloc_arrayN(index_num, sizeof(int), __func__));
+    indices = MEM_malloc_arrayN<int>(size_t(index_num), __func__);
     memcpy(indices, tidx, sizeof(int) * index_num);
-    org_w = static_cast<float *>(MEM_malloc_arrayN(index_num, sizeof(float), __func__));
+    org_w = MEM_malloc_arrayN<float>(size_t(index_num), __func__);
     memcpy(org_w, tw, sizeof(float) * index_num);
-    dw = static_cast<MDeformWeight **>(
-        MEM_malloc_arrayN(index_num, sizeof(MDeformWeight *), __func__));
+    dw = MEM_malloc_arrayN<MDeformWeight *>(size_t(index_num), __func__);
     memcpy(dw, tdw, sizeof(MDeformWeight *) * index_num);
     MEM_freeN(tw);
     MEM_freeN(tdw);
@@ -506,7 +506,7 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
     org_w = tw;
     dw = tdw;
   }
-  new_w = static_cast<float *>(MEM_malloc_arrayN(index_num, sizeof(float), __func__));
+  new_w = MEM_malloc_arrayN<float>(size_t(index_num), __func__);
   MEM_freeN(tidx);
 
   const blender::Span<blender::float3> positions = mesh->vert_positions();
@@ -534,14 +534,11 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
         BKE_mesh_wrapper_ensure_mdata(target_mesh);
 
         SpaceTransform loc2trgt;
-        float *dists_v = use_trgt_verts ? static_cast<float *>(MEM_malloc_arrayN(
-                                              index_num, sizeof(float), __func__)) :
+        float *dists_v = use_trgt_verts ? MEM_malloc_arrayN<float>(size_t(index_num), __func__) :
                                           nullptr;
-        float *dists_e = use_trgt_edges ? static_cast<float *>(MEM_malloc_arrayN(
-                                              index_num, sizeof(float), __func__)) :
+        float *dists_e = use_trgt_edges ? MEM_malloc_arrayN<float>(size_t(index_num), __func__) :
                                           nullptr;
-        float *dists_f = use_trgt_faces ? static_cast<float *>(MEM_malloc_arrayN(
-                                              index_num, sizeof(float), __func__)) :
+        float *dists_f = use_trgt_faces ? MEM_malloc_arrayN<float>(size_t(index_num), __func__) :
                                           nullptr;
 
         BLI_SPACE_TRANSFORM_SETUP(&loc2trgt, ob, obr);
@@ -636,25 +633,25 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   PointerRNA ob_ptr;
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, &ob_ptr);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiItemPointerR(
-      layout, ptr, "vertex_group", &ob_ptr, "vertex_groups", std::nullopt, ICON_GROUP_VERTEX);
+  layout->prop_search(
+      ptr, "vertex_group", &ob_ptr, "vertex_groups", std::nullopt, ICON_GROUP_VERTEX);
 
-  uiItemR(layout, ptr, "target", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "target", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  uiItemS(layout);
+  layout->separator();
 
-  uiItemR(layout, ptr, "proximity_mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "proximity_mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   if (RNA_enum_get(ptr, "proximity_mode") == MOD_WVG_PROXIMITY_GEOMETRY) {
-    uiItemR(layout, ptr, "proximity_geometry", UI_ITEM_R_EXPAND, IFACE_("Geometry"), ICON_NONE);
+    layout->prop(ptr, "proximity_geometry", UI_ITEM_R_EXPAND, IFACE_("Geometry"), ICON_NONE);
   }
 
-  col = uiLayoutColumn(layout, true);
-  uiItemR(col, ptr, "min_dist", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "max_dist", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col = &layout->column(true);
+  col->prop(ptr, "min_dist", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col->prop(ptr, "max_dist", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  uiItemR(layout, ptr, "normalize", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "normalize", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
 static void falloff_panel_draw(const bContext * /*C*/, Panel *panel)
@@ -665,17 +662,17 @@ static void falloff_panel_draw(const bContext * /*C*/, Panel *panel)
   PointerRNA ob_ptr;
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, &ob_ptr);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  row = uiLayoutRow(layout, true);
-  uiItemR(row, ptr, "falloff_type", UI_ITEM_NONE, IFACE_("Type"), ICON_NONE);
-  sub = uiLayoutRow(row, true);
-  uiLayoutSetPropSep(sub, false);
-  uiItemR(row, ptr, "invert_falloff", UI_ITEM_NONE, "", ICON_ARROW_LEFTRIGHT);
+  row = &layout->row(true);
+  row->prop(ptr, "falloff_type", UI_ITEM_NONE, IFACE_("Type"), ICON_NONE);
+  sub = &row->row(true);
+  sub->use_property_split_set(false);
+  row->prop(ptr, "invert_falloff", UI_ITEM_NONE, "", ICON_ARROW_LEFTRIGHT);
   if (RNA_enum_get(ptr, "falloff_type") == MOD_WVG_MAPPING_CURVE) {
-    uiTemplateCurveMapping(layout, ptr, "map_curve", 0, false, false, false, false);
+    uiTemplateCurveMapping(layout, ptr, "map_curve", 0, false, false, false, false, false);
   }
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void influence_panel_draw(const bContext *C, Panel *panel)
@@ -753,4 +750,5 @@ ModifierTypeInfo modifierType_WeightVGProximity = {
     /*blend_write*/ blend_write,
     /*blend_read*/ blend_read,
     /*foreach_cache*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
 };

@@ -8,6 +8,7 @@
  * Instead of transforming the selection, move the 2D/3D cursor.
  */
 
+#include "DNA_screen_types.h"
 #include "DNA_space_types.h"
 
 #include "MEM_guardedalloc.h"
@@ -16,10 +17,13 @@
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
 
+#include "BKE_library.hh"
 #include "BKE_report.hh"
 
 #include "transform.hh"
 #include "transform_convert.hh"
+
+namespace blender::ed::transform {
 
 /* -------------------------------------------------------------------- */
 /** \name Shared 2D Cursor Utilities
@@ -33,11 +37,8 @@ static void createTransCursor_2D_impl(TransInfo *t, float cursor_location[2])
     BLI_assert(t->data_container_len == 1);
     TransDataContainer *tc = t->data_container;
     tc->data_len = 1;
-    td = tc->data = static_cast<TransData *>(MEM_callocN(sizeof(TransData), "TransTexspace"));
-    td2d = tc->data_2d = static_cast<TransData2D *>(
-        MEM_callocN(tc->data_len * sizeof(TransData2D), "TransObData2D(Cursor)"));
-    td->ext = tc->data_ext = static_cast<TransDataExtension *>(
-        MEM_callocN(sizeof(TransDataExtension), "TransCursorExt"));
+    td = tc->data = MEM_callocN<TransData>("TransTexspace");
+    td2d = tc->data_2d = MEM_calloc_arrayN<TransData2D>(tc->data_len, "TransObData2D(Cursor)");
   }
 
   td->flag = TD_SELECTED;
@@ -123,10 +124,11 @@ static void recalcData_cursor_sequencer(TransInfo *t)
 static void createTransCursor_view3d(bContext * /*C*/, TransInfo *t)
 {
   TransData *td;
+  TransDataExtension *td_ext;
 
   Scene *scene = t->scene;
   if (!ID_IS_EDITABLE(scene)) {
-    BKE_report(t->reports, RPT_ERROR, "Linked data can't text-space transform");
+    BKE_report(t->reports, RPT_ERROR, "Cannot create transform on linked data");
     return;
   }
 
@@ -135,16 +137,15 @@ static void createTransCursor_view3d(bContext * /*C*/, TransInfo *t)
     BLI_assert(t->data_container_len == 1);
     TransDataContainer *tc = t->data_container;
     tc->data_len = 1;
-    td = tc->data = static_cast<TransData *>(MEM_callocN(sizeof(TransData), "TransTexspace"));
-    td->ext = tc->data_ext = static_cast<TransDataExtension *>(
-        MEM_callocN(sizeof(TransDataExtension), "TransTexspace"));
+    td = tc->data = MEM_callocN<TransData>("TransTexspace");
+    td_ext = tc->data_ext = MEM_callocN<TransDataExtension>("TransTexspace");
   }
 
   td->flag = TD_SELECTED;
   copy_v3_v3(td->center, cursor->location);
 
   unit_m3(td->mtx);
-  copy_m3_m3(td->axismtx, cursor->matrix<blender::float3x3>().ptr());
+  copy_m3_m3(td->axismtx, cursor->matrix<float3x3>().ptr());
   normalize_m3(td->axismtx);
   pseudoinverse_m3_m3(td->smtx, td->mtx, PSEUDOINVERSE_EPSILON);
 
@@ -152,31 +153,31 @@ static void createTransCursor_view3d(bContext * /*C*/, TransInfo *t)
   copy_v3_v3(td->iloc, cursor->location);
 
   if (cursor->rotation_mode > 0) {
-    td->ext->rot = cursor->rotation_euler;
-    td->ext->rotAxis = nullptr;
-    td->ext->rotAngle = nullptr;
-    td->ext->quat = nullptr;
+    td_ext->rot = cursor->rotation_euler;
+    td_ext->rotAxis = nullptr;
+    td_ext->rotAngle = nullptr;
+    td_ext->quat = nullptr;
 
-    copy_v3_v3(td->ext->irot, cursor->rotation_euler);
+    copy_v3_v3(td_ext->irot, cursor->rotation_euler);
   }
   else if (cursor->rotation_mode == ROT_MODE_AXISANGLE) {
-    td->ext->rot = nullptr;
-    td->ext->rotAxis = cursor->rotation_axis;
-    td->ext->rotAngle = &cursor->rotation_angle;
-    td->ext->quat = nullptr;
+    td_ext->rot = nullptr;
+    td_ext->rotAxis = cursor->rotation_axis;
+    td_ext->rotAngle = &cursor->rotation_angle;
+    td_ext->quat = nullptr;
 
-    td->ext->irotAngle = cursor->rotation_angle;
-    copy_v3_v3(td->ext->irotAxis, cursor->rotation_axis);
+    td_ext->irotAngle = cursor->rotation_angle;
+    copy_v3_v3(td_ext->irotAxis, cursor->rotation_axis);
   }
   else {
-    td->ext->rot = nullptr;
-    td->ext->rotAxis = nullptr;
-    td->ext->rotAngle = nullptr;
-    td->ext->quat = cursor->rotation_quaternion;
+    td_ext->rot = nullptr;
+    td_ext->rotAxis = nullptr;
+    td_ext->rotAngle = nullptr;
+    td_ext->quat = cursor->rotation_quaternion;
 
-    copy_qt_qt(td->ext->iquat, cursor->rotation_quaternion);
+    copy_qt_qt(td_ext->iquat, cursor->rotation_quaternion);
   }
-  td->ext->rotOrder = cursor->rotation_mode;
+  td_ext->rotOrder = cursor->rotation_mode;
 }
 
 static void recalcData_cursor_view3d(TransInfo *t)
@@ -206,3 +207,5 @@ TransConvertTypeInfo TransConvertType_Cursor3D = {
     /*recalc_data*/ recalcData_cursor_view3d,
     /*special_aftertrans_update*/ nullptr,
 };
+
+}  // namespace blender::ed::transform

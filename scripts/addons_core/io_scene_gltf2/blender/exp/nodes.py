@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import math
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
@@ -42,6 +41,13 @@ def gather_node(vnode, export_settings):
         mesh = __gather_mesh(vnode, blender_object, export_settings)
     else:
         mesh = None
+
+    # If mesh is skined, but failed to export
+    # We should ignore the skin too,
+    # As it will generate a not valid glTF file
+    if mesh is None and skin is not None:
+        skin = None
+        vnode.skin = None
 
     node = gltf2_io.Node(
         camera=__gather_camera(vnode, export_settings),
@@ -204,8 +210,10 @@ def __gather_extensions(vnode, export_settings):
         blender_lamp = blender_object.data
 
     if blender_lamp is not None:
+        world_matrix = blender_object.matrix_world.copy().freeze()
         light = gltf2_blender_gather_lights.gather_lights_punctual(
             blender_lamp,
+            world_matrix,
             export_settings
         )
         if light is not None:
@@ -254,8 +262,10 @@ def __gather_mesh(vnode, blender_object, export_settings):
         blender_mesh = vnode.data
         # Keep materials from the tmp mesh, but if no material, keep from object
         materials = tuple(mat for mat in blender_mesh.materials)
+        __keep_material_info(materials, False, export_settings)
         if len(materials) == 1 and materials[0] is None:
             materials = tuple(ms.material for ms in vnode.original_object.material_slots)
+            __keep_material_info(materials, True, export_settings)
 
         uuid_for_skined_data = None
         modifiers = None
@@ -285,6 +295,7 @@ def __gather_mesh(vnode, blender_object, export_settings):
                 # Keep materials from object, as no modifiers are applied, so no risk that
                 # modifiers changed them
                 materials = tuple(ms.material for ms in blender_object.material_slots)
+                __keep_material_info(materials, True, export_settings)
             else:
                 armature_modifiers = {}
                 if export_settings['gltf_skins']:
@@ -301,11 +312,11 @@ def __gather_mesh(vnode, blender_object, export_settings):
                 # so no need to copy them in that case, because overwriting them will crash
                 if len(blender_mesh.keys()) == 0:
                     # Copy custom properties
-                    for prop in [p for p in blender_object.data.keys() if p not in BLACK_LIST]:
+                    for prop in [p for p in blender_object.data.keys() if ((p not in BLACK_LIST) or p.startswith("gltf"))]:
                         blender_mesh[prop] = blender_object.data[prop]
                 else:
                     # But we need to remove some properties that are not needed
-                    for prop in [p for p in blender_object.data.keys() if p in BLACK_LIST]:
+                    for prop in [p for p in blender_object.data.keys() if (p in BLACK_LIST and not p.startswith("gltf"))]:
                         del blender_mesh[prop]
                 # Store that this evaluated mesh has been created by the exporter, and is not a GN instance mesh
                 blender_mesh['gltf2_mesh_applied'] = True
@@ -317,8 +328,12 @@ def __gather_mesh(vnode, blender_object, export_settings):
 
                 # Keep materials from the newly created tmp mesh, but if no materials, keep from object
                 materials = tuple(mat for mat in blender_mesh.materials)
+                # We need to store link between the original material and the tmp mesh material,
+                # Because of animation pointer NLA that will still have the original
+                __keep_material_info(materials, False, export_settings)
                 if len(materials) == 1 and materials[0] is None:
                     materials = tuple(ms.material for ms in blender_object.material_slots)
+                    __keep_material_info(materials, True, export_settings)
 
         else:
             blender_mesh = blender_object.data
@@ -332,6 +347,7 @@ def __gather_mesh(vnode, blender_object, export_settings):
             # Keep materials from object, as no modifiers are applied, so no risk that
             # modifiers changed them
             materials = tuple(ms.material for ms in blender_object.material_slots)
+            __keep_material_info(materials, True, export_settings)
 
         # retrieve armature
         # Because mesh data will be transforms to skeleton space,
@@ -355,6 +371,14 @@ def __gather_mesh(vnode, blender_object, export_settings):
 
     return result
 
+def __keep_material_info(materials, originals, export_settings):
+    for m in [m for m in materials if m is not None]:
+        if 'material_identifiers' not in export_settings.keys():
+            export_settings['material_identifiers'] = {}
+        if originals is True:
+            export_settings['material_identifiers'][id(m)] = m
+        else:
+            export_settings['material_identifiers'][id(m)] = m.original
 
 def __gather_mesh_from_nonmesh(blender_object, export_settings):
     """Handles curves, surfaces, text, etc."""

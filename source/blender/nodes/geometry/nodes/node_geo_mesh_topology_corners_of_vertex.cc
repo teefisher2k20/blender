@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BKE_mesh.hh"
+#include "DNA_mesh_types.h"
 
 #include "BLI_array_utils.hh"
 
@@ -13,8 +13,9 @@ namespace blender::nodes::node_geo_mesh_topology_corners_of_vertex_cc {
 static void node_declare(NodeDeclarationBuilder &b)
 {
   b.add_input<decl::Int>("Vertex Index")
-      .implicit_field(implicit_field_inputs::index)
-      .description("The vertex to retrieve data from. Defaults to the vertex from the context");
+      .implicit_field(NODE_DEFAULT_INPUT_INDEX_FIELD)
+      .description("The vertex to retrieve data from. Defaults to the vertex from the context")
+      .structure_type(StructureType::Field);
   b.add_input<decl::Float>("Weights").supports_field().hide_value().description(
       "Values used to sort corners attached to the vertex. Uses indices by default");
   b.add_input<decl::Int>("Sort Index")
@@ -110,7 +111,7 @@ class CornersOfVertInput final : public bke::MeshFieldInput {
       }
     });
 
-    return VArray<int>::ForContainer(std::move(corner_of_vertex));
+    return VArray<int>::from_container(std::move(corner_of_vertex));
   }
 
   void for_each_field_input_recursive(FunctionRef<void(const FieldInput &)> fn) const override
@@ -156,7 +157,7 @@ class CornersOfVertCountInput final : public bke::MeshFieldInput {
     }
     Array<int> counts(mesh.verts_num, 0);
     array_utils::count_indices(mesh.corner_verts(), counts);
-    return VArray<int>::ForContainer(std::move(counts));
+    return VArray<int>::from_container(std::move(counts));
   }
 
   uint64_t hash() const final
@@ -205,7 +206,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_INPUT;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

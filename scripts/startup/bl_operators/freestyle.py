@@ -4,6 +4,9 @@
 
 import bpy
 
+from bpy.app.translations import (
+    pgettext_rpt as rpt_,
+)
 from bpy.types import (
     Operator,
 )
@@ -67,7 +70,7 @@ class SCENE_OT_freestyle_fill_range_by_selection(Operator):
             ref = m.target
             target_location = ref.location
         else:
-            self.report({'ERROR'}, "Unexpected modifier type: " + m.type)
+            self.report({'ERROR'}, rpt_("Unexpected modifier type: {:s}").format(m.type))
             return {'CANCELLED'}
         # Find selected vertices in edit-mesh.
         ob = context.active_object
@@ -147,7 +150,7 @@ class SCENE_OT_freestyle_add_edge_marks_to_keying_set(Operator):
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
         for i, edge in enumerate(mesh.edges):
             if not edge.hide and edge.select:
-                path = "edges[{:d}].use_freestyle_mark".format(i)
+                path = "attributes[\"freestyle_edge\"].data[{:d}].value".format(i)
                 ks.paths.add(mesh, path, index=0)
         bpy.ops.object.mode_set(mode=ob_mode, toggle=False)
         return {'FINISHED'}
@@ -178,7 +181,7 @@ class SCENE_OT_freestyle_add_face_marks_to_keying_set(Operator):
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
         for i, polygon in enumerate(mesh.polygons):
             if not polygon.hide and polygon.select:
-                path = "polygons[{:d}].use_freestyle_mark".format(i)
+                path = "attributes[\"freestyle_face\"].data[{:d}].value".format(i)
                 ks.paths.add(mesh, path, index=0)
         bpy.ops.object.mode_set(mode=ob_mode, toggle=False)
         return {'FINISHED'}

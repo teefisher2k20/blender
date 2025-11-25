@@ -10,10 +10,12 @@
 
 #include "NOD_rna_define.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "RNA_enum_types.hh"
+
+#include "GEO_foreach_geometry.hh"
 
 #include "node_geometry_util.hh"
 
@@ -23,27 +25,38 @@ NODE_STORAGE_FUNCS(NodeGeometrySetCurveHandlePositions)
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Geometry>("Curve").supported_type(GeometryComponent::Type::Curve);
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
+  b.add_default_layout();
+
+  const bNode *node = b.node_or_null();
+
+  b.add_input<decl::Geometry>("Curve")
+      .supported_type(GeometryComponent::Type::Curve)
+      .description("Curves to change the handles on");
+  b.add_output<decl::Geometry>("Curve").propagate_all().align_with_previous();
   b.add_input<decl::Bool>("Selection").default_value(true).hide_value().field_on_all();
-  b.add_input<decl::Vector>("Position")
-      .implicit_field_on_all([](const bNode &node, void *r_value) {
-        const StringRef side = node_storage(node).mode == GEO_NODE_CURVE_HANDLE_LEFT ?
-                                   "handle_left" :
-                                   "handle_right";
-        new (r_value) SocketValueVariant(bke::AttributeFieldInput::Create<float3>(side));
-      });
-  b.add_input<decl::Vector>("Offset").default_value(float3(0.0f, 0.0f, 0.0f)).field_on_all();
-  b.add_output<decl::Geometry>("Curve").propagate_all();
+  auto &position = b.add_input<decl::Vector>("Position");
+  if (node) {
+    const NodeGeometrySetCurveHandlePositions &storage = node_storage(*node);
+    position.implicit_field_on_all(storage.mode == GEO_NODE_CURVE_HANDLE_LEFT ?
+                                       NODE_DEFAULT_INPUT_HANDLE_LEFT_FIELD :
+                                       NODE_DEFAULT_INPUT_HANDLE_RIGHT_FIELD);
+  }
+  b.add_input<decl::Vector>("Offset")
+      .default_value(float3(0.0f, 0.0f, 0.0f))
+      .subtype(PROP_TRANSLATION)
+      .field_on_all();
 }
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 }
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
 {
-  NodeGeometrySetCurveHandlePositions *data = MEM_cnew<NodeGeometrySetCurveHandlePositions>(
+  NodeGeometrySetCurveHandlePositions *data = MEM_callocN<NodeGeometrySetCurveHandlePositions>(
       __func__);
 
   data->mode = GEO_NODE_CURVE_HANDLE_LEFT;
@@ -132,7 +145,7 @@ static void set_position_in_component(Curves &curves_id,
         });
         return changed;
       },
-      std::logical_or<bool>());
+      std::logical_or<>());
 
   selection.foreach_segment(GrainSize(2048), [&](const IndexMaskSegment segment) {
     for (const int i : segment) {
@@ -165,7 +178,7 @@ static void node_geo_exec(GeoNodeExecParams params)
   std::atomic<bool> has_curves = false;
   std::atomic<bool> has_bezier = false;
 
-  geometry_set.modify_geometry_sets([&](GeometrySet &geometry_set) {
+  geometry::foreach_real_geometry(geometry_set, [&](GeometrySet &geometry_set) {
     if (Curves *curves_id = geometry_set.get_curves_for_write()) {
       bke::CurvesGeometry &curves = curves_id->geometry.wrap();
       has_curves = true;
@@ -210,12 +223,12 @@ static void node_register()
   ntype.declare = node_declare;
   ntype.minwidth = 100.0f;
   ntype.initfunc = node_init;
-  blender::bke::node_type_storage(&ntype,
+  blender::bke::node_type_storage(ntype,
                                   "NodeGeometrySetCurveHandlePositions",
                                   node_free_standard_storage,
                                   node_copy_standard_storage);
   ntype.draw_buttons = node_layout;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

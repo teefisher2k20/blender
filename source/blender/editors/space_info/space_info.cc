@@ -6,12 +6,12 @@
  * \ingroup spinfo
  */
 
-#include <cstdio>
 #include <cstring>
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
+#include "BLI_listbase.h"
+#include "BLI_string_utf8.h"
 #include "BLI_utildefines.h"
 
 #include "BKE_context.hh"
@@ -38,7 +38,7 @@ static SpaceLink *info_create(const ScrArea * /*area*/, const Scene * /*scene*/)
   ARegion *region;
   SpaceInfo *sinfo;
 
-  sinfo = static_cast<SpaceInfo *>(MEM_callocN(sizeof(SpaceInfo), "initinfo"));
+  sinfo = MEM_callocN<SpaceInfo>("initinfo");
   sinfo->spacetype = SPACE_INFO;
 
   sinfo->rpt_mask = INFO_RPT_OP;
@@ -57,7 +57,7 @@ static SpaceLink *info_create(const ScrArea * /*area*/, const Scene * /*scene*/)
   region->regiontype = RGN_TYPE_WINDOW;
 
   /* keep in sync with console */
-  region->v2d.scroll |= V2D_SCROLL_RIGHT;
+  region->v2d.scroll |= V2D_SCROLL_RIGHT | V2D_SCROLL_VERTICAL_HIDE;
   region->v2d.align |= V2D_ALIGN_NO_NEG_X | V2D_ALIGN_NO_NEG_Y; /* align bottom left */
   region->v2d.keepofs |= V2D_LOCKOFS_X;
   region->v2d.keepzoom = (V2D_LOCKZOOM_X | V2D_LOCKZOOM_Y | V2D_LIMITZOOM | V2D_KEEPASPECT);
@@ -93,13 +93,10 @@ static void info_main_region_init(wmWindowManager *wm, ARegion *region)
 {
   wmKeyMap *keymap;
 
-  /* force it on init, for old files, until it becomes config */
-  region->v2d.scroll = (V2D_SCROLL_RIGHT);
-
   UI_view2d_region_reinit(&region->v2d, V2D_COMMONVIEW_CUSTOM, region->winx, region->winy);
 
   /* own keymap */
-  keymap = WM_keymap_ensure(wm->defaultconf, "Info", SPACE_INFO, RGN_TYPE_WINDOW);
+  keymap = WM_keymap_ensure(wm->runtime->defaultconf, "Info", SPACE_INFO, RGN_TYPE_WINDOW);
   WM_event_add_keymap_handler(&region->runtime->handlers, keymap);
 }
 
@@ -258,7 +255,7 @@ void ED_spacetype_info()
   ARegionType *art;
 
   st->spaceid = SPACE_INFO;
-  STRNCPY(st->name, "Info");
+  STRNCPY_UTF8(st->name, "Info");
 
   st->create = info_create;
   st->free = info_free;
@@ -269,7 +266,7 @@ void ED_spacetype_info()
   st->blend_write = info_space_blend_write;
 
   /* regions: main window */
-  art = static_cast<ARegionType *>(MEM_callocN(sizeof(ARegionType), "spacetype info region"));
+  art = MEM_callocN<ARegionType>("spacetype info region");
   art->regionid = RGN_TYPE_WINDOW;
   art->keymapflag = ED_KEYMAP_UI | ED_KEYMAP_VIEW2D | ED_KEYMAP_FRAMES;
 
@@ -280,7 +277,7 @@ void ED_spacetype_info()
   BLI_addhead(&st->regiontypes, art);
 
   /* regions: header */
-  art = static_cast<ARegionType *>(MEM_callocN(sizeof(ARegionType), "spacetype info region"));
+  art = MEM_callocN<ARegionType>("spacetype info region");
   art->regionid = RGN_TYPE_HEADER;
   art->prefsizey = HEADERY;
 

@@ -8,10 +8,6 @@
 
 #include "BPy_ContourUP1D.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -32,7 +28,6 @@ PyDoc_STRVAR(
     "   :type inter: :class:`freestyle.types.Interface1D`\n"
     "   :return: True if the Interface1D is a contour, false otherwise.\n"
     "   :rtype: bool\n");
-
 static int ContourUP1D___init__(BPy_ContourUP1D *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {nullptr};
@@ -88,7 +83,3 @@ PyTypeObject ContourUP1D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

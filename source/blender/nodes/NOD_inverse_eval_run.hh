@@ -4,8 +4,6 @@
 
 #pragma once
 
-#include "NOD_inverse_eval_params.hh"
-
 #include "BKE_node_socket_value.hh"
 
 #include "BLI_compute_context.hh"
@@ -37,7 +35,7 @@ struct SocketToUpdate {
 bool backpropagate_socket_values(bContext &C,
                                  Object &object,
                                  NodesModifierData &nmd,
-                                 geo_eval_log::GeoModifierLog &eval_log,
+                                 geo_eval_log::GeoNodesLog &eval_log,
                                  Span<SocketToUpdate> sockets_to_update);
 
 /**

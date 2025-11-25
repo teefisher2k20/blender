@@ -17,7 +17,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 static void node_exec(GeoNodeExecParams params)
 {
   const Scene *scene = DEG_get_evaluated_scene(params.depsgraph());
-  Object *camera = DEG_get_evaluated_object(params.depsgraph(), scene->camera);
+  Object *camera = DEG_get_evaluated(params.depsgraph(), scene->camera);
   params.set_output("Active Camera", camera);
 }
 
@@ -31,7 +31,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_INPUT;
   ntype.geometry_node_execute = node_exec;
   ntype.declare = node_declare;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

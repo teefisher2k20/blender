@@ -11,9 +11,9 @@
 #pragma once
 
 #include "BLI_assert.h"
-#include "GPU_common.hh"
+#include "BLI_sys_types.h"
 
-enum GPUPrimType {
+enum GPUPrimType : int8_t {
   GPU_PRIM_POINTS,
   GPU_PRIM_LINES,
   GPU_PRIM_TRIS,

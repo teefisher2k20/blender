@@ -10,13 +10,13 @@
 
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "BKE_unit.hh"
 
 #include "ED_screen.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_types.hh"
 
 #include "BLT_translation.hh"
 
@@ -26,6 +26,8 @@
 #include "transform_snap.hh"
 
 #include "transform_mode.hh"
+
+namespace blender::ed::transform {
 
 /* -------------------------------------------------------------------- */
 /** \name Transform (EditBone B-Bone width scaling)
@@ -38,37 +40,37 @@ static void headerBoneSize(TransInfo *t, const float vec[3], char str[UI_MAX_DRA
     outputNumInput(&(t->num), tvec, t->scene->unit);
   }
   else {
-    BLI_snprintf(&tvec[0], NUM_STR_REP_LEN, "%.4f", vec[0]);
-    BLI_snprintf(&tvec[NUM_STR_REP_LEN], NUM_STR_REP_LEN, "%.4f", vec[1]);
-    BLI_snprintf(&tvec[NUM_STR_REP_LEN * 2], NUM_STR_REP_LEN, "%.4f", vec[2]);
+    BLI_snprintf_utf8(&tvec[0], NUM_STR_REP_LEN, "%.4f", vec[0]);
+    BLI_snprintf_utf8(&tvec[NUM_STR_REP_LEN], NUM_STR_REP_LEN, "%.4f", vec[1]);
+    BLI_snprintf_utf8(&tvec[NUM_STR_REP_LEN * 2], NUM_STR_REP_LEN, "%.4f", vec[2]);
   }
 
   /* Hmm... perhaps the y-axis values don't need to be shown? */
   if (t->con.mode & CON_APPLY) {
     if (t->num.idx_max == 0) {
-      BLI_snprintf(
+      BLI_snprintf_utf8(
           str, UI_MAX_DRAW_STR, IFACE_("ScaleB: %s%s %s"), &tvec[0], t->con.text, t->proptext);
     }
     else {
-      BLI_snprintf(str,
-                   UI_MAX_DRAW_STR,
-                   IFACE_("ScaleB: %s : %s : %s%s %s"),
-                   &tvec[0],
-                   &tvec[NUM_STR_REP_LEN],
-                   &tvec[NUM_STR_REP_LEN * 2],
-                   t->con.text,
-                   t->proptext);
+      BLI_snprintf_utf8(str,
+                        UI_MAX_DRAW_STR,
+                        IFACE_("ScaleB: %s : %s : %s%s %s"),
+                        &tvec[0],
+                        &tvec[NUM_STR_REP_LEN],
+                        &tvec[NUM_STR_REP_LEN * 2],
+                        t->con.text,
+                        t->proptext);
     }
   }
   else {
-    BLI_snprintf(str,
-                 UI_MAX_DRAW_STR,
-                 IFACE_("ScaleB X: %s  Y: %s  Z: %s%s %s"),
-                 &tvec[0],
-                 &tvec[NUM_STR_REP_LEN],
-                 &tvec[NUM_STR_REP_LEN * 2],
-                 t->con.text,
-                 t->proptext);
+    BLI_snprintf_utf8(str,
+                      UI_MAX_DRAW_STR,
+                      IFACE_("ScaleB X: %s  Y: %s  Z: %s%s %s"),
+                      &tvec[0],
+                      &tvec[NUM_STR_REP_LEN],
+                      &tvec[NUM_STR_REP_LEN * 2],
+                      t->con.text,
+                      t->proptext);
   }
 }
 
@@ -160,10 +162,10 @@ static void initBoneSize(TransInfo *t, wmOperator * /*op*/)
   t->num.val_flag[1] |= NUM_NULL_ONE;
   t->num.val_flag[2] |= NUM_NULL_ONE;
   t->num.flag |= NUM_AFFECT_ALL;
-  t->snap[0] = 0.1f;
-  t->snap[1] = t->snap[0] * 0.1f;
+  t->increment = float3(0.1f);
+  t->increment_precision = 0.1f;
 
-  copy_v3_fl(t->num.val_inc, t->snap[0]);
+  copy_v3_fl(t->num.val_inc, t->increment[0]);
   t->num.unit_sys = t->scene->unit.system;
   t->num.unit_type[0] = B_UNIT_NONE;
   t->num.unit_type[1] = B_UNIT_NONE;
@@ -182,3 +184,5 @@ TransModeInfo TransMode_bboneresize = {
     /*snap_apply_fn*/ nullptr,
     /*draw_fn*/ nullptr,
 };
+
+}  // namespace blender::ed::transform

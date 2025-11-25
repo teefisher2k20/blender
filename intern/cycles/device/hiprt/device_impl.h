@@ -46,6 +46,8 @@ class HIPRTDevice : public HIPDevice {
 
   void build_bvh(BVH *bvh, Progress &progress, bool refit) override;
 
+  void release_bvh(BVH *bvh) override;
+
   hiprtContext get_hiprt_context()
   {
     return hiprt_context;
@@ -62,10 +64,10 @@ class HIPRTDevice : public HIPDevice {
   hiprtGeometryBuildInput prepare_point_blas(BVHHIPRT *bvh, PointCloud *pointcloud);
   void build_blas(BVHHIPRT *bvh, Geometry *geom, hiprtBuildOptions options);
   hiprtScene build_tlas(BVHHIPRT *bvh,
-                        vector<Object *> objects,
+                        const vector<Object *> &objects,
                         hiprtBuildOptions options,
                         bool refit);
-
+  void free_bvh_memory_delayed();
   hiprtContext hiprt_context;
   hiprtScene scene;
   hiprtFuncTable functions_table;
@@ -73,6 +75,17 @@ class HIPRTDevice : public HIPDevice {
   thread_mutex hiprt_mutex;
   size_t scratch_buffer_size;
   device_vector<char> scratch_buffer;
+
+  /* This vector tracks the hiprt_geom members of BVHRT so that device memory
+   * can be managed/released in HIPRTDevice.
+   * Even if synchronization occurs before memory release, a GPU job may still
+   * launch between synchronization and release, potentially causing the GPU
+   * to access unmapped memory. */
+  vector<hiprtGeometry> stale_bvh;
+
+  /* Is this scene using motion blur? Note there might exist motion data even if
+   * motion blur is disabled, for render passes. */
+  bool use_motion_blur = false;
 
   /* The following vectors are to transfer scene information available on the host to the GPU
    * visibility, instance_transform_matrix, transform_headers, and hiprt_blas_ptr are passed to

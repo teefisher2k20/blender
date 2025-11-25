@@ -7,7 +7,7 @@
 
 #include "testing/testing.h"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 namespace blender::tests {
 
@@ -25,6 +25,12 @@ TEST(vector_set, InitializerListConstructor_WithoutDuplicates)
   EXPECT_EQ(set[0], 1);
   EXPECT_EQ(set[1], 4);
   EXPECT_EQ(set[2], 5);
+  VectorSet<int> set_bigger_than_inline = {1, 4, 5, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19};
+  EXPECT_EQ(set_bigger_than_inline.size(), 14);
+  EXPECT_EQ(set_bigger_than_inline[0], 1);
+  EXPECT_EQ(set_bigger_than_inline[1], 4);
+  EXPECT_EQ(set_bigger_than_inline[2], 5);
+  EXPECT_EQ(set_bigger_than_inline.as_span().last(), 19);
 }
 
 TEST(vector_set, InitializerListConstructor_WithDuplicates)
@@ -60,10 +66,26 @@ TEST(vector_set, CopyAssignment)
 
 TEST(vector_set, Move)
 {
-  VectorSet<int> set1 = {1, 2, 3};
+  {
+    VectorSet<int> set1 = {1, 2, 3};
+    VectorSet<int> set2 = std::move(set1);
+    EXPECT_EQ(set1.size(), 0); /* NOLINT: bugprone-use-after-move */
+    EXPECT_EQ(set2.size(), 3);
+  }
+  {
+    VectorSet<int, 24> set1 = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+    VectorSet<int> set2 = std::move(set1);
+    EXPECT_EQ(set1.size(), 0); /* NOLINT: bugprone-use-after-move */
+    EXPECT_EQ(set2.size(), 9);
+  }
+}
+
+TEST(vector_set, MoveNonInline)
+{
+  VectorSet<int> set1 = {1, 2, 3, 5, 1, 6, 7, 8, 1, 4, 57, 8, 7, 34, 57, 8, 1231};
   VectorSet<int> set2 = std::move(set1);
   EXPECT_EQ(set1.size(), 0); /* NOLINT: bugprone-use-after-move */
-  EXPECT_EQ(set2.size(), 3);
+  EXPECT_EQ(set2.size(), 11);
 }
 
 TEST(vector_set, MoveAssignment)
@@ -286,6 +308,8 @@ TEST(vector_set, LookupKey)
   EXPECT_EQ(set.lookup_key_ptr_as("d"), nullptr);
   EXPECT_EQ(set.lookup_key_ptr_as("b")->size(), 1);
   EXPECT_EQ(set.lookup_key_ptr("a"), set.lookup_key_ptr_as("a"));
+  EXPECT_EQ(set.lookup_key_default("d", "default"), "default");
+  EXPECT_EQ(set.lookup_key_default("c", "default"), "c");
 }
 
 TEST(vector_set, GrowWhenEmpty)
@@ -308,6 +332,31 @@ TEST(vector_set, ExtractVector)
   Vector<int> vec = set.extract_vector();
   EXPECT_EQ(vec.size(), 5);
   EXPECT_EQ(vec.data(), data_ptr);
+  EXPECT_TRUE(set.is_empty());
+}
+
+TEST(vector_set, ExtractVectorInline)
+{
+  VectorSet<int, 32> set;
+  set.add_multiple({5, 2, 7, 4, 8, 5, 4, 5});
+  EXPECT_EQ(set.size(), 5);
+
+  Vector<int> vec = set.extract_vector();
+  EXPECT_EQ(vec.size(), 5);
+  EXPECT_EQ(vec[2], 7);
+  EXPECT_TRUE(set.is_empty());
+}
+
+TEST(vector_set, ExtractVectorInlineExceptions)
+{
+  VectorSet<ExceptionThrower, 32> set;
+  set.add_multiple({5, 2, 7, 4, 8, 5, 4, 5});
+  set[3].throw_during_copy = true;
+  set[3].throw_during_move = true;
+  EXPECT_EQ(set.size(), 5);
+
+  EXPECT_ANY_THROW({ Vector<ExceptionThrower> vec = set.extract_vector(); });
+  EXPECT_EQ(set.size(), 5);
 }
 
 TEST(vector_set, ExtractVectorEmpty)
@@ -315,6 +364,121 @@ TEST(vector_set, ExtractVectorEmpty)
   VectorSet<int> set;
   Vector<int> vec = set.extract_vector();
   EXPECT_TRUE(vec.is_empty());
+}
+
+TEST(vector_set, CustomIDVectorSet)
+{
+  struct ThingWithID {
+    int a;
+    std::string b;
+    int c;
+  };
+  struct ThingGetter {
+    StringRef operator()(const ThingWithID &value) const
+    {
+      return value.b;
+    }
+  };
+  CustomIDVectorSet<ThingWithID, ThingGetter> set;
+  set.add_new(ThingWithID{0, "test", 54});
+  EXPECT_TRUE(set.contains_as("test"));
+  set.add_new(ThingWithID{4333, "other", 2});
+  EXPECT_EQ(set.size(), 2);
+  set.add(ThingWithID{3333, "test", 27});
+  EXPECT_EQ(set.size(), 2);
+
+  /* Add more elements than the inline capacity. */
+  CustomIDVectorSet<ThingWithID, ThingGetter> larger_set;
+  larger_set.add_new(ThingWithID{12, "test", 9});
+  EXPECT_EQ(larger_set.index_of_as("test"), 0);
+  larger_set.add_new(ThingWithID{123, "other", 8});
+  larger_set.add(ThingWithID{1234, "test", 7});
+  larger_set.add_new(ThingWithID{12345, "test_2", 6});
+  larger_set.add_new(ThingWithID{123456, "test_4", 5});
+  larger_set.add_new(ThingWithID{1234567, "test_5", 4});
+  EXPECT_EQ(larger_set.index_of_as("test_4"), 3);
+  larger_set.add_new(ThingWithID{12345678, "test_6", 3});
+  EXPECT_TRUE(larger_set.size() == 6);
+}
+
+TEST(vector_set, CustomIDVectorSetMove)
+{
+
+  struct ThingWithID {
+    int a;
+    std::string b;
+    int c;
+  };
+  struct ThingGetter {
+    StringRef operator()(const std::unique_ptr<ThingWithID> &value) const
+    {
+      return value->b;
+    }
+  };
+  CustomIDVectorSet<std::unique_ptr<ThingWithID>, ThingGetter> set;
+  set.add(std::make_unique<ThingWithID>(ThingWithID{1, "hug", 2}));
+  set.add(std::make_unique<ThingWithID>(ThingWithID{2, "a", 2}));
+  set.add(std::make_unique<ThingWithID>(ThingWithID{3, "bug", 4}));
+  auto set_new = std::move(set);
+  EXPECT_EQ(set.size(), 0); /* NOLINT: bugprone-use-after-move */
+  EXPECT_EQ(set_new.size(), 3);
+}
+
+namespace {
+struct KeyWithData {
+  int key;
+  std::string data;
+
+  KeyWithData(int key, std::string data) : key(key), data(data) {}
+  KeyWithData(const StringRef data) : key(0), data(data) {}
+
+  uint64_t hash() const
+  {
+    return uint64_t(this->key);
+  }
+
+  friend bool operator==(const KeyWithData &a, const KeyWithData &b)
+  {
+    return a.key == b.key;
+  }
+};
+}  // namespace
+
+TEST(vector_set, AddOverwrite)
+{
+  VectorSet<KeyWithData> set;
+  EXPECT_TRUE(set.add_overwrite(KeyWithData{1, "a"}));
+  EXPECT_EQ(set.size(), 1);
+  EXPECT_EQ(set[0].data, "a");
+  EXPECT_FALSE(set.add(KeyWithData{1, "b"}));
+  EXPECT_EQ(set.size(), 1);
+  EXPECT_EQ(set[0].data, "a");
+  EXPECT_EQ(set.lookup_key(KeyWithData{1, "_"}).data, "a");
+  EXPECT_FALSE(set.add_overwrite(KeyWithData{1, "c"}));
+  EXPECT_EQ(set.size(), 1);
+  EXPECT_EQ(set[0].data, "c");
+  EXPECT_EQ(set.lookup_key(KeyWithData{1, "_"}).data, "c");
+
+  const KeyWithData key{2, "d"};
+  EXPECT_TRUE(set.add_overwrite(key));
+  EXPECT_EQ(set.size(), 2);
+  EXPECT_EQ(set[0].data, "c");
+  EXPECT_EQ(set[1].data, "d");
+  EXPECT_EQ(set.lookup_key(key).data, "d");
+}
+
+TEST(vector_set, LookupDefault)
+{
+  VectorSet<KeyWithData> set;
+  EXPECT_TRUE(set.add(KeyWithData{1, "b"}));
+  EXPECT_TRUE(set.add(KeyWithData{423, "s"}));
+  EXPECT_TRUE(set.add(KeyWithData{2, "t"}));
+  KeyWithData default_key{1, "default"};
+  EXPECT_EQ(set.lookup_key_default(KeyWithData{1221, "3"}, default_key), default_key);
+  KeyWithData other_s{0, "testing"};
+  EXPECT_EQ(set.lookup_key_default(KeyWithData{2398745, "fffff"}, StringRef("testing")), other_s);
+  EXPECT_EQ(set.lookup_key_default(KeyWithData{1, "s"}, StringRef("testing")), set[0]);
+  EXPECT_EQ(set.lookup_key_default(KeyWithData{2, "t"}, {1, "default"}), set[2]);
 }
 
 }  // namespace blender::tests

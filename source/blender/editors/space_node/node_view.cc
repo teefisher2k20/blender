@@ -134,7 +134,7 @@ bool space_node_view_flag(
   return true;
 }
 
-static int node_view_all_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus node_view_all_exec(bContext *C, wmOperator *op)
 {
   ARegion *region = CTX_wm_region(C);
   SpaceNode *snode = CTX_wm_space_node(C);
@@ -157,7 +157,7 @@ void NODE_OT_view_all(wmOperatorType *ot)
   ot->idname = "NODE_OT_view_all";
   ot->description = "Resize view so you can see all nodes";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = node_view_all_exec;
   ot->poll = space_node_active_view_poll;
 
@@ -171,7 +171,7 @@ void NODE_OT_view_all(wmOperatorType *ot)
 /** \name View Selected Operator
  * \{ */
 
-static int node_view_selected_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus node_view_selected_exec(bContext *C, wmOperator *op)
 {
   ARegion *region = CTX_wm_region(C);
   SpaceNode *snode = CTX_wm_space_node(C);
@@ -190,7 +190,7 @@ void NODE_OT_view_selected(wmOperatorType *ot)
   ot->idname = "NODE_OT_view_selected";
   ot->description = "Resize view so you can see selected nodes";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = node_view_selected_exec;
   ot->poll = space_node_active_view_poll;
 
@@ -211,7 +211,7 @@ struct NodeViewMove {
   float xof_orig, yof_orig;
 };
 
-static int snode_bg_viewmove_modal(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus snode_bg_viewmove_modal(bContext *C, wmOperator *op, const wmEvent *event)
 {
   SpaceNode *snode = CTX_wm_space_node(C);
   ARegion *region = CTX_wm_region(C);
@@ -255,12 +255,15 @@ static int snode_bg_viewmove_modal(bContext *C, wmOperator *op, const wmEvent *e
       op->customdata = nullptr;
 
       return OPERATOR_CANCELLED;
+    default: {
+      break;
+    }
   }
 
   return OPERATOR_RUNNING_MODAL;
 }
 
-static int snode_bg_viewmove_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus snode_bg_viewmove_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
   Main *bmain = CTX_data_main(C);
   SpaceNode *snode = CTX_wm_space_node(C);
@@ -280,7 +283,7 @@ static int snode_bg_viewmove_invoke(bContext *C, wmOperator *op, const wmEvent *
     return OPERATOR_CANCELLED;
   }
 
-  nvm = MEM_cnew<NodeViewMove>(__func__);
+  nvm = MEM_callocN<NodeViewMove>(__func__);
   op->customdata = nvm;
   nvm->mvalo.x = event->mval[0];
   nvm->mvalo.y = event->mval[1];
@@ -303,7 +306,8 @@ static int snode_bg_viewmove_invoke(bContext *C, wmOperator *op, const wmEvent *
 
 static void snode_bg_viewmove_cancel(bContext * /*C*/, wmOperator *op)
 {
-  MEM_freeN(op->customdata);
+  NodeViewMove *nvm = (NodeViewMove *)op->customdata;
+  MEM_freeN(nvm);
   op->customdata = nullptr;
 }
 
@@ -314,7 +318,7 @@ void NODE_OT_backimage_move(wmOperatorType *ot)
   ot->description = "Move node backdrop";
   ot->idname = "NODE_OT_backimage_move";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = snode_bg_viewmove_invoke;
   ot->modal = snode_bg_viewmove_modal;
   ot->poll = space_node_composite_active_view_poll;
@@ -330,7 +334,7 @@ void NODE_OT_backimage_move(wmOperatorType *ot)
 /** \name Background Image Zoom
  * \{ */
 
-static int backimage_zoom_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus backimage_zoom_exec(bContext *C, wmOperator *op)
 {
   SpaceNode *snode = CTX_wm_space_node(C);
   ARegion *region = CTX_wm_region(C);
@@ -352,7 +356,7 @@ void NODE_OT_backimage_zoom(wmOperatorType *ot)
   ot->idname = "NODE_OT_backimage_zoom";
   ot->description = "Zoom in/out the background image";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = backimage_zoom_exec;
   ot->poll = space_node_composite_active_view_poll;
 
@@ -369,7 +373,7 @@ void NODE_OT_backimage_zoom(wmOperatorType *ot)
 /** \name Background Image Fit
  * \{ */
 
-static int backimage_fit_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus backimage_fit_exec(bContext *C, wmOperator * /*op*/)
 {
   Main *bmain = CTX_data_main(C);
   SpaceNode *snode = CTX_wm_space_node(C);
@@ -417,7 +421,7 @@ void NODE_OT_backimage_fit(wmOperatorType *ot)
   ot->idname = "NODE_OT_backimage_fit";
   ot->description = "Fit the background image to the view";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = backimage_fit_exec;
   ot->poll = space_node_composite_active_view_poll;
 
@@ -569,7 +573,7 @@ static void sample_apply(bContext *C, wmOperator *op, const wmEvent *event)
   }
 
   if (!ibuf->byte_buffer.data) {
-    IMB_rect_from_float(ibuf);
+    IMB_byte_from_float(ibuf);
   }
 
   /* map the mouse coords to the backdrop image space */
@@ -645,7 +649,7 @@ static void sample_exit(bContext *C, wmOperator *op)
   MEM_freeN(info);
 }
 
-static int sample_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus sample_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
   SpaceNode *snode = CTX_wm_space_node(C);
   ARegion *region = CTX_wm_region(C);
@@ -661,7 +665,7 @@ static int sample_invoke(bContext *C, wmOperator *op, const wmEvent *event)
     return OPERATOR_CANCELLED;
   }
 
-  info = MEM_cnew<ImageSampleInfo>("ImageSampleInfo");
+  info = MEM_callocN<ImageSampleInfo>("ImageSampleInfo");
   info->art = region->runtime->type;
   info->draw_handle = ED_region_draw_cb_activate(
       region->runtime->type, sample_draw, info, REGION_DRAW_POST_PIXEL);
@@ -674,7 +678,7 @@ static int sample_invoke(bContext *C, wmOperator *op, const wmEvent *event)
   return OPERATOR_RUNNING_MODAL;
 }
 
-static int sample_modal(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus sample_modal(bContext *C, wmOperator *op, const wmEvent *event)
 {
   switch (event->type) {
     case LEFTMOUSE:
@@ -687,6 +691,9 @@ static int sample_modal(bContext *C, wmOperator *op, const wmEvent *event)
     case MOUSEMOVE:
       sample_apply(C, op, event);
       break;
+    default: {
+      break;
+    }
   }
 
   return OPERATOR_RUNNING_MODAL;
@@ -704,7 +711,7 @@ void NODE_OT_backimage_sample(wmOperatorType *ot)
   ot->idname = "NODE_OT_backimage_sample";
   ot->description = "Use mouse to sample background image";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = sample_invoke;
   ot->modal = sample_modal;
   ot->cancel = sample_cancel;

@@ -32,7 +32,6 @@
 #include "IMB_imbuf.hh"
 #include "IMB_imbuf_types.hh"
 
-#include "GHOST_DisplayManagerWin32.hh"
 #include "GHOST_EventButton.hh"
 #include "GHOST_EventCursor.hh"
 #include "GHOST_EventKey.hh"
@@ -163,13 +162,9 @@ static void initRawInput()
 
 typedef BOOL(API *GHOST_WIN32_EnableNonClientDpiScaling)(HWND);
 
-GHOST_SystemWin32::GHOST_SystemWin32() : m_hasPerformanceCounter(false), m_freq(0)
+GHOST_SystemWin32::GHOST_SystemWin32() : has_performance_counter_(false), freq_(0)
 {
-  m_displayManager = new GHOST_DisplayManagerWin32();
-  GHOST_ASSERT(m_displayManager, "GHOST_SystemWin32::GHOST_SystemWin32(): m_displayManager==0\n");
-  m_displayManager->initialize();
-
-  m_consoleStatus = true;
+  console_status_ = true;
 
   /* Tell Windows we are per monitor DPI aware. This disables the default
    * blurry scaling and enables WM_DPICHANGED to allow us to draw at proper DPI. */
@@ -188,7 +183,7 @@ GHOST_SystemWin32::GHOST_SystemWin32() : m_hasPerformanceCounter(false), m_freq(
   OleInitialize(0);
 
 #ifdef WITH_INPUT_NDOF
-  m_ndofManager = new GHOST_NDOFManagerWin32(*this);
+  ndof_manager_ = new GHOST_NDOFManagerWin32(*this);
 #endif
 }
 
@@ -200,6 +195,10 @@ GHOST_SystemWin32::~GHOST_SystemWin32()
   if (isStartedFromCommandPrompt()) {
     setConsoleWindowState(GHOST_kConsoleWindowStateShow);
   }
+
+  /* We must call exit from here, since by the time ~GHOST_System calls it, the GHOST_SystemWin32
+   * override is no longer reachable.   */
+  exit();
 }
 
 uint64_t GHOST_SystemWin32::performanceCounterToMillis(__int64 perf_ticks) const
@@ -207,14 +206,14 @@ uint64_t GHOST_SystemWin32::performanceCounterToMillis(__int64 perf_ticks) const
   /* Calculate the time passed since system initialization. */
   __int64 delta = perf_ticks * 1000;
 
-  uint64_t t = uint64_t(delta / m_freq);
+  uint64_t t = uint64_t(delta / freq_);
   return t;
 }
 
 uint64_t GHOST_SystemWin32::getMilliSeconds() const
 {
   /* Hardware does not support high resolution timers. We will use GetTickCount instead then. */
-  if (!m_hasPerformanceCounter) {
+  if (!has_performance_counter_) {
     return ::GetTickCount64();
   }
 
@@ -246,10 +245,7 @@ static uint64_t getMessageTime(GHOST_SystemWin32 *system)
 
 uint8_t GHOST_SystemWin32::getNumDisplays() const
 {
-  GHOST_ASSERT(m_displayManager, "GHOST_SystemWin32::getNumDisplays(): m_displayManager==0\n");
-  uint8_t numDisplays;
-  m_displayManager->getNumDisplays(numDisplays);
-  return numDisplays;
+  return ::GetSystemMetrics(SM_CMONITORS);
 }
 
 void GHOST_SystemWin32::getMainDisplayDimensions(uint32_t &width, uint32_t &height) const
@@ -270,31 +266,29 @@ GHOST_IWindow *GHOST_SystemWin32::createWindow(const char *title,
                                                uint32_t width,
                                                uint32_t height,
                                                GHOST_TWindowState state,
-                                               GHOST_GPUSettings gpuSettings,
+                                               GHOST_GPUSettings gpu_settings,
                                                const bool /*exclusive*/,
                                                const bool is_dialog,
-                                               const GHOST_IWindow *parentWindow)
+                                               const GHOST_IWindow *parent_window)
 {
-  GHOST_WindowWin32 *window = new GHOST_WindowWin32(
-      this,
-      title,
-      left,
-      top,
-      width,
-      height,
-      state,
-      gpuSettings.context_type,
-      ((gpuSettings.flags & GHOST_gpuStereoVisual) != 0),
-      false,
-      (GHOST_WindowWin32 *)parentWindow,
-      ((gpuSettings.flags & GHOST_gpuDebugContext) != 0),
-      is_dialog,
-      gpuSettings.preferred_device);
+  const GHOST_ContextParams context_params = GHOST_CONTEXT_PARAMS_FROM_GPU_SETTINGS(gpu_settings);
+  GHOST_WindowWin32 *window = new GHOST_WindowWin32(this,
+                                                    title,
+                                                    left,
+                                                    top,
+                                                    width,
+                                                    height,
+                                                    state,
+                                                    gpu_settings.context_type,
+                                                    context_params,
+                                                    (GHOST_WindowWin32 *)parent_window,
+                                                    is_dialog,
+                                                    gpu_settings.preferred_device);
 
   if (window->getValid()) {
     /* Store the pointer to the window */
-    m_windowManager->addWindow(window);
-    m_windowManager->setActiveWindow(window);
+    window_manager_->addWindow(window);
+    window_manager_->setActiveWindow(window);
   }
   else {
     GHOST_PRINT("GHOST_SystemWin32::createWindow(): window invalid\n");
@@ -310,15 +304,16 @@ GHOST_IWindow *GHOST_SystemWin32::createWindow(const char *title,
  * Never explicitly delete the window, use #disposeContext() instead.
  * \return The new context (or 0 if creation failed).
  */
-GHOST_IContext *GHOST_SystemWin32::createOffscreenContext(GHOST_GPUSettings gpuSettings)
+GHOST_IContext *GHOST_SystemWin32::createOffscreenContext(GHOST_GPUSettings gpu_settings)
 {
-  const bool debug_context = (gpuSettings.flags & GHOST_gpuDebugContext) != 0;
+  const GHOST_ContextParams context_params_offscreen =
+      GHOST_CONTEXT_PARAMS_FROM_GPU_SETTINGS_OFFSCREEN(gpu_settings);
 
-  switch (gpuSettings.context_type) {
+  switch (gpu_settings.context_type) {
 #ifdef WITH_VULKAN_BACKEND
     case GHOST_kDrawingContextTypeVulkan: {
       GHOST_Context *context = new GHOST_ContextVK(
-          false, (HWND)0, 1, 2, debug_context, gpuSettings.preferred_device);
+          context_params_offscreen, (HWND)0, 1, 2, gpu_settings.preferred_device);
       if (context->initializeDrawingContext()) {
         return context;
       }
@@ -349,14 +344,14 @@ GHOST_IContext *GHOST_SystemWin32::createOffscreenContext(GHOST_GPUSettings gpuS
 
       for (int minor = 6; minor >= 3; --minor) {
         GHOST_Context *context = new GHOST_ContextWGL(
-            false,
+            context_params_offscreen,
             true,
             wnd,
             mHDC,
             WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
             4,
             minor,
-            (debug_context ? WGL_CONTEXT_DEBUG_BIT_ARB : 0),
+            (context_params_offscreen.is_debug ? WGL_CONTEXT_DEBUG_BIT_ARB : 0),
             GHOST_OPENGL_WGL_RESET_NOTIFICATION_STRATEGY);
 
         if (context->initializeDrawingContext()) {
@@ -394,6 +389,8 @@ GHOST_TSuccess GHOST_SystemWin32::disposeContext(GHOST_IContext *context)
  */
 GHOST_ContextD3D *GHOST_SystemWin32::createOffscreenContextD3D()
 {
+  /* NOTE: the `gpu_settings` could be passed in here, as it is with similar functions. */
+  const GHOST_ContextParams context_params_offscreen = GHOST_CONTEXT_PARAMS_NONE;
   HWND wnd = CreateWindowA("STATIC",
                            "Blender XR",
                            WS_OVERLAPPEDWINDOW | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
@@ -406,7 +403,7 @@ GHOST_ContextD3D *GHOST_SystemWin32::createOffscreenContextD3D()
                            GetModuleHandle(nullptr),
                            nullptr);
 
-  GHOST_ContextD3D *context = new GHOST_ContextD3D(false, wnd);
+  GHOST_ContextD3D *context = new GHOST_ContextD3D(context_params_offscreen, wnd);
   if (context->initializeDrawingContext()) {
     return context;
   }
@@ -467,7 +464,7 @@ bool GHOST_SystemWin32::processEvents(bool waitForEvent)
     /* `PeekMessage` above is allowed to dispatch messages to the `wndproc` without us
      * noticing, so we need to check the event manager here to see if there are
      * events waiting in the queue. */
-    hasEventHandled |= this->m_eventManager->getNumEvents() > 0;
+    hasEventHandled |= this->event_manager_->getNumEvents() > 0;
 
   } while (waitForEvent && !hasEventHandled);
 
@@ -518,6 +515,40 @@ GHOST_TSuccess GHOST_SystemWin32::getPixelAtCursor(float r_color[3]) const
   return GHOST_kSuccess;
 }
 
+uint32_t GHOST_SystemWin32::getCursorPreferredLogicalSize() const
+{
+  int size = -1;
+
+  HKEY hKey;
+  if (RegOpenKeyEx(HKEY_CURRENT_USER, "Control Panel\\Cursors", 0, KEY_READ, &hKey) ==
+      ERROR_SUCCESS)
+  {
+    DWORD cursorSizeSetting;
+    DWORD setting_size = sizeof(cursorSizeSetting);
+    if (RegQueryValueEx(hKey,
+                        "CursorBaseSize",
+                        nullptr,
+                        nullptr,
+                        reinterpret_cast<BYTE *>(&cursorSizeSetting),
+                        &setting_size) == ERROR_SUCCESS &&
+        setting_size == sizeof(cursorSizeSetting))
+    {
+      size = cursorSizeSetting;
+    }
+    RegCloseKey(hKey);
+  }
+
+  if (size == -1) {
+    size = GetSystemMetrics(SM_CXCURSOR);
+  }
+
+  /* Default size is 32 even though the cursor is smaller than this. Scale
+   * so that 32 returns 21 to better match our size to OS-supplied cursors. */
+  size = int(roundf(float(size) * 0.65f));
+
+  return size;
+}
+
 GHOST_IWindow *GHOST_SystemWin32::getWindowUnderCursor(int32_t /*x*/, int32_t /*y*/)
 {
   /* Get cursor position from the OS. Do not use the supplied positions as those
@@ -532,7 +563,7 @@ GHOST_IWindow *GHOST_SystemWin32::getWindowUnderCursor(int32_t /*x*/, int32_t /*
     return nullptr;
   }
 
-  return m_windowManager->getWindowAssociatedWithOSWindow((const void *)win);
+  return window_manager_->getWindowAssociatedWithOSWindow((const void *)win);
 }
 
 GHOST_TSuccess GHOST_SystemWin32::getModifierKeys(GHOST_ModifierKeys &keys) const
@@ -583,10 +614,19 @@ GHOST_TSuccess GHOST_SystemWin32::getButtons(GHOST_Buttons &buttons) const
 
 GHOST_TCapabilityFlag GHOST_SystemWin32::getCapabilities() const
 {
-  return GHOST_TCapabilityFlag(GHOST_CAPABILITY_FLAG_ALL &
-                               ~(
-                                   /* WIN32 has no support for a primary selection clipboard. */
-                                   GHOST_kCapabilityPrimaryClipboard));
+  return GHOST_TCapabilityFlag(
+      GHOST_CAPABILITY_FLAG_ALL &
+      /* NOTE: order the following flags as they they're declared in the source. */
+      ~(
+          /* WIN32 has no support for a primary selection clipboard. */
+          GHOST_kCapabilityClipboardPrimary |
+          /* WIN32 doesn't define a Hyper modifier key,
+           * it's possible another modifier could be optionally used in it's place. */
+          GHOST_kCapabilityKeyboardHyperKey |
+          /* No support yet for cursors generated on demand. */
+          GHOST_kCapabilityCursorGenerator |
+          /* No support for window path meta-data. */
+          GHOST_kCapabilityWindowPath));
 }
 
 GHOST_TSuccess GHOST_SystemWin32::init()
@@ -599,7 +639,7 @@ GHOST_TSuccess GHOST_SystemWin32::init()
   initRawInput();
 
   /* Determine whether this system has a high frequency performance counter. */
-  m_hasPerformanceCounter = ::QueryPerformanceFrequency((LARGE_INTEGER *)&m_freq) == TRUE;
+  has_performance_counter_ = ::QueryPerformanceFrequency((LARGE_INTEGER *)&freq_) == TRUE;
 
   if (success) {
     WNDCLASSW wc = {0};
@@ -614,11 +654,7 @@ GHOST_TSuccess GHOST_SystemWin32::init()
       ::LoadIcon(nullptr, IDI_APPLICATION);
     }
     wc.hCursor = ::LoadCursor(0, IDC_ARROW);
-    wc.hbrBackground =
-#ifdef INW32_COMPISITING
-        (HBRUSH)CreateSolidBrush
-#endif
-        (0x00000000);
+    wc.hbrBackground = (HBRUSH)GetStockObject(DKGRAY_BRUSH);
     wc.lpszMenuName = 0;
     wc.lpszClassName = L"GHOST_WindowClass";
 
@@ -633,7 +669,10 @@ GHOST_TSuccess GHOST_SystemWin32::init()
 
 GHOST_TSuccess GHOST_SystemWin32::exit()
 {
-  return GHOST_System::exit();
+  GHOST_TSuccess success = GHOST_System::exit();
+  /* All windows created with the specified class must be destroyed before unregistering it. */
+  ::UnregisterClassW(L"GHOST_WindowClass", ::GetModuleHandle(0));
+  return success;
 }
 
 GHOST_TKey GHOST_SystemWin32::hardKey(RAWINPUT const &raw, bool *r_key_down)
@@ -686,7 +725,7 @@ GHOST_TKey GHOST_SystemWin32::processSpecialKey(short vKey, short /*scanCode*/) 
         key = GHOST_kKeyQuote;
       }
       else if (vKey == VK_OEM_8) {
-        if (PRIMARYLANGID(m_langId) == LANG_FRENCH) {
+        if (PRIMARYLANGID(lang_id_) == LANG_FRENCH) {
           /* OEM key; used purely for shortcuts. */
           key = GHOST_kKeyF13;
         }
@@ -1226,13 +1265,13 @@ GHOST_EventCursor *GHOST_SystemWin32::processCursorEvent(GHOST_WindowWin32 *wind
                                GHOST_TABLET_DATA_NONE);
 }
 
-void GHOST_SystemWin32::processWheelEvent(GHOST_WindowWin32 *window,
-                                          WPARAM wParam,
-                                          LPARAM /*lParam*/)
+void GHOST_SystemWin32::processWheelEventVertical(GHOST_WindowWin32 *window,
+                                                  WPARAM wParam,
+                                                  LPARAM /*lParam*/)
 {
   GHOST_SystemWin32 *system = (GHOST_SystemWin32 *)getSystem();
 
-  int acc = system->m_wheelDeltaAccum;
+  int acc = system->wheel_delta_accum_vertical_;
   int delta = GET_WHEEL_DELTA_WPARAM(wParam);
 
   if (acc * delta < 0) {
@@ -1244,10 +1283,37 @@ void GHOST_SystemWin32::processWheelEvent(GHOST_WindowWin32 *window,
   acc = abs(acc);
 
   while (acc >= WHEEL_DELTA) {
-    system->pushEvent(new GHOST_EventWheel(getMessageTime(system), window, direction));
+    system->pushEvent(new GHOST_EventWheel(
+        getMessageTime(system), window, GHOST_kEventWheelAxisVertical, direction));
     acc -= WHEEL_DELTA;
   }
-  system->m_wheelDeltaAccum = acc * direction;
+  system->wheel_delta_accum_vertical_ = acc * direction;
+}
+
+/** This is almost the same as #processWheelEventVertical. */
+void GHOST_SystemWin32::processWheelEventHorizontal(GHOST_WindowWin32 *window,
+                                                    WPARAM wParam,
+                                                    LPARAM /*lParam*/)
+{
+  GHOST_SystemWin32 *system = (GHOST_SystemWin32 *)getSystem();
+
+  int acc = system->wheel_delta_accum_horizontal_;
+  int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+
+  if (acc * delta < 0) {
+    /* Scroll direction reversed. */
+    acc = 0;
+  }
+  acc += delta;
+  int direction = (acc >= 0) ? 1 : -1;
+  acc = abs(acc);
+
+  while (acc >= WHEEL_DELTA) {
+    system->pushEvent(new GHOST_EventWheel(
+        getMessageTime(system), window, GHOST_kEventWheelAxisHorizontal, direction));
+    acc -= WHEEL_DELTA;
+  }
+  system->wheel_delta_accum_horizontal_ = acc * direction;
 }
 
 GHOST_EventKey *GHOST_SystemWin32::processKeyEvent(GHOST_WindowWin32 *window, RAWINPUT const &raw)
@@ -1265,7 +1331,7 @@ GHOST_EventKey *GHOST_SystemWin32::processKeyEvent(GHOST_WindowWin32 *window, RA
   /* If the keyboard layout includes AltGr and the virtual key is Control, yet the
    * scan-code is actually for Right Alt (ALTGR_MAKE_CODE scan code with E0 prefix).
    * Ignore these, so treating AltGR as regular Alt. #68256 */
-  if (system->m_hasAltGr && vk == VK_CONTROL && raw.data.keyboard.MakeCode == ALTGR_MAKE_CODE &&
+  if (system->has_alt_gr_ && vk == VK_CONTROL && raw.data.keyboard.MakeCode == ALTGR_MAKE_CODE &&
       (raw.data.keyboard.Flags & RI_KEY_E0))
   {
     return nullptr;
@@ -1287,9 +1353,9 @@ GHOST_EventKey *GHOST_SystemWin32::processKeyEvent(GHOST_WindowWin32 *window, RA
     }
   }
 
-  /* We used to check `if (key != GHOST_kKeyUnknown)`, but since the message
-   * values `WM_SYSKEYUP`, `WM_KEYUP` and `WM_CHAR` are ignored, we capture
-   * those events here as well. */
+  /* We used to check `if (key != GHOST_kKeyUnknown)`, however,
+   * given the message values `WM_SYSKEYUP`, `WM_KEYUP` and `WM_CHAR` are ignored,
+   * we capture those events here as well. */
   if (!is_repeated_modifier) {
     char utf8_char[6] = {0};
     BYTE state[256];
@@ -1308,15 +1374,15 @@ GHOST_EventKey *GHOST_SystemWin32::processKeyEvent(GHOST_WindowWin32 *window, RA
       /* Pass. No text if either Win key is pressed. #79702. */
     }
     /* Don't call #ToUnicodeEx on dead keys as it clears the buffer and so won't allow diacritical
-     * composition. XXX: we are not checking return of MapVirtualKeyW for high bit set, which is
+     * composition. XXX: we are not checking return of #MapVirtualKeyW for high bit set, which is
      * what is supposed to indicate dead keys. But this is working now so approach cautiously. */
     else if (MapVirtualKeyW(vk, MAPVK_VK_TO_CHAR) != 0) {
       wchar_t utf16[3] = {0};
       int r;
-      /* TODO: #ToUnicodeEx can respond with up to 4 utf16 chars (only 2 here).
-       * Could be up to 24 utf8 bytes. */
+      /* TODO: #ToUnicodeEx can respond with up to 4 UTF16 chars (only 2 here).
+       * Could be up to 24 UTF8 bytes. */
       if ((r = ToUnicodeEx(
-               vk, raw.data.keyboard.MakeCode, state, utf16, 2, 0, system->m_keylayout)))
+               vk, raw.data.keyboard.MakeCode, state, utf16, 2, 0, system->keylayout_)))
       {
         if ((r > 0 && r < 3)) {
           utf16[r] = 0;
@@ -1365,11 +1431,13 @@ GHOST_Event *GHOST_SystemWin32::processWindowSizeEvent(GHOST_WindowWin32 *window
   GHOST_Event *sizeEvent = new GHOST_Event(getMessageTime(system), GHOST_kEventWindowSize, window);
 
   /* We get WM_SIZE before we fully init. Do not dispatch before we are continuously resizing. */
-  if (window->m_inLiveResize) {
+  if (window->in_live_resize_) {
     system->pushEvent(sizeEvent);
     system->dispatchEvents();
     return nullptr;
   }
+
+  window->updateHDRInfo();
   return sizeEvent;
 }
 
@@ -1381,6 +1449,9 @@ GHOST_Event *GHOST_SystemWin32::processWindowEvent(GHOST_TEventType type,
   if (type == GHOST_kEventWindowActivate) {
     system->getWindowManager()->setActiveWindow(window);
   }
+  else if (type == GHOST_kEventWindowDeactivate) {
+    system->getWindowManager()->setWindowInactive(window);
+  }
 
   return new GHOST_Event(getMessageTime(system), type, window);
 }
@@ -1388,7 +1459,7 @@ GHOST_Event *GHOST_SystemWin32::processWindowEvent(GHOST_TEventType type,
 #ifdef WITH_INPUT_IME
 GHOST_Event *GHOST_SystemWin32::processImeEvent(GHOST_TEventType type,
                                                 GHOST_WindowWin32 *window,
-                                                GHOST_TEventImeData *data)
+                                                const GHOST_TEventImeData *data)
 {
   GHOST_SystemWin32 *system = (GHOST_SystemWin32 *)getSystem();
   return new GHOST_EventIME(getMessageTime(system), type, window, data);
@@ -1457,7 +1528,7 @@ bool GHOST_SystemWin32::processNDOF(RAWINPUT const &raw)
   GetRawInputDeviceInfo(raw.header.hDevice, RIDI_DEVICEINFO, &info, &infoSize);
   /* Since there can be multiple NDOF devices connected, always set the current device. */
   if (info.dwType == RIM_TYPEHID) {
-    m_ndofManager->setDevice(info.hid.dwVendorId, info.hid.dwProductId);
+    ndof_manager_->setDevice(info.hid.dwVendorId, info.hid.dwProductId);
   }
   else {
     GHOST_PRINT("<!> not a HID device... mouse/kb perhaps?\n");
@@ -1475,12 +1546,12 @@ bool GHOST_SystemWin32::processNDOF(RAWINPUT const &raw)
       const short *axis = (short *)(data + 1);
       /* Massage into blender view coords (same goes for rotation). */
       const int t[3] = {axis[0], -axis[2], axis[1]};
-      m_ndofManager->updateTranslation(t, now);
+      ndof_manager_->updateTranslation(t, now);
 
       if (raw.data.hid.dwSizeHid == 13) {
         /* This report also includes rotation. */
         const int r[3] = {-axis[3], axis[5], -axis[4]};
-        m_ndofManager->updateRotation(r, now);
+        ndof_manager_->updateRotation(r, now);
 
         /* I've never gotten one of these, has anyone else? */
         GHOST_PRINT("ndof: combined T + R\n");
@@ -1491,13 +1562,13 @@ bool GHOST_SystemWin32::processNDOF(RAWINPUT const &raw)
 
       const short *axis = (short *)(data + 1);
       const int r[3] = {-axis[0], axis[2], -axis[1]};
-      m_ndofManager->updateRotation(r, now);
+      ndof_manager_->updateRotation(r, now);
       break;
     }
     case 0x3: { /* Buttons bitmask (older devices). */
       int button_bits;
       memcpy(&button_bits, data + 1, sizeof(button_bits));
-      m_ndofManager->updateButtonsBitmask(button_bits, now);
+      ndof_manager_->updateButtonsBitmask(button_bits, now);
       break;
     }
     case 0x1c: { /* Buttons numbers (newer devices). */
@@ -1506,7 +1577,7 @@ bool GHOST_SystemWin32::processNDOF(RAWINPUT const &raw)
       for (int i = 0; i < buttons.size(); i++) {
         buttons[i] = static_cast<GHOST_NDOF_ButtonT>(*(payload + i));
       }
-      m_ndofManager->updateButtonsArray(buttons, now, NDOF_Button_Type::ShortButton);
+      ndof_manager_->updateButtonsArray(buttons, now, NDOF_Button_Type::ShortButton);
       break;
     }
     case 0x1d: { /* Buttons (long press, newer devices). */
@@ -1515,7 +1586,7 @@ bool GHOST_SystemWin32::processNDOF(RAWINPUT const &raw)
       for (int i = 0; i < buttons.size(); i++) {
         buttons[i] = translateLongButtonToNDOFButton(*(payload + i));
       }
-      m_ndofManager->updateButtonsArray(buttons, now, NDOF_Button_Type::LongButton);
+      ndof_manager_->updateButtonsArray(buttons, now, NDOF_Button_Type::LongButton);
       break;
     }
   }
@@ -1586,10 +1657,10 @@ LRESULT WINAPI GHOST_SystemWin32::s_wndProc(HWND hwnd, uint msg, WPARAM wParam, 
     if (msg == WM_NCCREATE) {
       /* Tell Windows to automatically handle scaling of non-client areas
        * such as the caption bar. #EnableNonClientDpiScaling was introduced in Windows 10. */
-      HMODULE m_user32 = ::LoadLibrary("User32.dll");
-      if (m_user32) {
+      HMODULE user32_ = ::LoadLibrary("User32.dll");
+      if (user32_) {
         GHOST_WIN32_EnableNonClientDpiScaling fpEnableNonClientDpiScaling =
-            (GHOST_WIN32_EnableNonClientDpiScaling)::GetProcAddress(m_user32,
+            (GHOST_WIN32_EnableNonClientDpiScaling)::GetProcAddress(user32_,
                                                                     "EnableNonClientDpiScaling");
         if (fpEnableNonClientDpiScaling) {
           fpEnableNonClientDpiScaling(hwnd);
@@ -1673,7 +1744,7 @@ LRESULT WINAPI GHOST_SystemWin32::s_wndProc(HWND hwnd, uint msg, WPARAM wParam, 
           eventHandled = true;
           ime->UpdateImeWindow(hwnd);
           ime->UpdateInfo(hwnd);
-          if (ime->eventImeData.result_len) {
+          if (ime->eventImeData.result.size()) {
             /* remove redundant IME event */
             eventManager->removeTypeEvents(GHOST_kEventImeComposition, window);
           }
@@ -1930,19 +2001,19 @@ LRESULT WINAPI GHOST_SystemWin32::s_wndProc(HWND hwnd, uint msg, WPARAM wParam, 
           break;
         }
         case WM_MOUSEMOVE: {
-          if (!window->m_mousePresent) {
+          if (!window->mouse_present_) {
             WINTAB_PRINTF("HWND %p mouse enter\n", window->getHWND());
             TRACKMOUSEEVENT tme = {sizeof(tme)};
             /* Request WM_MOUSELEAVE message when the cursor leaves the client area. */
             tme.dwFlags = TME_LEAVE;
-            if (system->m_autoFocus) {
+            if (system->auto_focus_) {
               /* Request WM_MOUSEHOVER message after 100ms when in the client area. */
               tme.dwFlags |= TME_HOVER;
               tme.dwHoverTime = 100;
             }
             tme.hwndTrack = hwnd;
             TrackMouseEvent(&tme);
-            window->m_mousePresent = true;
+            window->mouse_present_ = true;
             GHOST_Wintab *wt = window->getWintab();
             if (wt) {
               wt->gainFocus();
@@ -1958,7 +2029,7 @@ LRESULT WINAPI GHOST_SystemWin32::s_wndProc(HWND hwnd, uint msg, WPARAM wParam, 
         }
         case WM_MOUSEHOVER: {
           /* Mouse Tracking is now off. TrackMouseEvent restarts in MouseMove. */
-          window->m_mousePresent = false;
+          window->mouse_present_ = false;
 
           /* Auto-focus only occurs within Blender windows, not with _other_ applications. We are
            * notified of change of focus from our console, but it returns null from GetFocus. */
@@ -2000,11 +2071,16 @@ LRESULT WINAPI GHOST_SystemWin32::s_wndProc(HWND hwnd, uint msg, WPARAM wParam, 
            * since DefWindowProc propagates it up the parent chain
            * until it finds a window that processes it.
            */
-          processWheelEvent(window, wParam, lParam);
+          processWheelEventVertical(window, wParam, lParam);
           eventHandled = true;
 #ifdef BROKEN_PEEK_TOUCHPAD
           PostMessage(hwnd, WM_USER, 0, 0);
 #endif
+          break;
+        }
+        case WM_MOUSEHWHEEL: {
+          processWheelEventHorizontal(window, wParam, lParam);
+          eventHandled = true;
           break;
         }
         case WM_SETCURSOR: {
@@ -2028,7 +2104,7 @@ LRESULT WINAPI GHOST_SystemWin32::s_wndProc(HWND hwnd, uint msg, WPARAM wParam, 
         }
         case WM_MOUSELEAVE: {
           WINTAB_PRINTF("HWND %p mouse leave\n", window->getHWND());
-          window->m_mousePresent = false;
+          window->mouse_present_ = false;
           if (window->getTabletData().Active == GHOST_kTabletModeNone) {
             /* FIXME: document why the cursor motion event on mouse leave is needed. */
             int32_t screen_co[2] = {0, 0};
@@ -2078,13 +2154,17 @@ LRESULT WINAPI GHOST_SystemWin32::s_wndProc(HWND hwnd, uint msg, WPARAM wParam, 
            * If the windows use different input queues, the message is sent asynchronously,
            * so the window is activated immediately. */
 
-          system->m_wheelDeltaAccum = 0;
+          system->wheel_delta_accum_vertical_ = 0;
+          system->wheel_delta_accum_horizontal_ = 0;
           event = processWindowEvent(
               LOWORD(wParam) ? GHOST_kEventWindowActivate : GHOST_kEventWindowDeactivate, window);
           /* WARNING: Let DefWindowProc handle WM_ACTIVATE, otherwise WM_MOUSEWHEEL
            * will not be dispatched to OUR active window if we minimize one of OUR windows. */
           if (LOWORD(wParam) == WA_INACTIVE) {
             window->lostMouseCapture();
+          }
+          else {
+            window->updateHDRInfo();
           }
 
           lResult = ::DefWindowProc(hwnd, msg, wParam, lParam);
@@ -2098,11 +2178,12 @@ LRESULT WINAPI GHOST_SystemWin32::s_wndProc(HWND hwnd, uint msg, WPARAM wParam, 
            * message specifies the SC_MOVE or SC_SIZE value. The operation is complete when
            * DefWindowProc returns.
            */
-          window->m_inLiveResize = 1;
+          window->in_live_resize_ = 1;
           break;
         }
         case WM_EXITSIZEMOVE: {
-          window->m_inLiveResize = 0;
+          window->in_live_resize_ = 0;
+          window->updateHDRInfo();
           break;
         }
         case WM_PAINT: {
@@ -2112,7 +2193,7 @@ LRESULT WINAPI GHOST_SystemWin32::s_wndProc(HWND hwnd, uint msg, WPARAM wParam, 
            * function when the application obtains a WM_PAINT message by using the GetMessage or
            * PeekMessage function.
            */
-          if (!window->m_inLiveResize) {
+          if (!window->in_live_resize_) {
             event = processWindowEvent(GHOST_kEventWindowUpdate, window);
             ::ValidateRect(hwnd, nullptr);
           }
@@ -2161,12 +2242,13 @@ LRESULT WINAPI GHOST_SystemWin32::s_wndProc(HWND hwnd, uint msg, WPARAM wParam, 
            * message without calling DefWindowProc.
            */
           /* See #WM_SIZE comment. */
-          if (window->m_inLiveResize) {
+          if (window->in_live_resize_) {
             system->pushEvent(processWindowEvent(GHOST_kEventWindowMove, window));
             system->dispatchEvents();
           }
           else {
             event = processWindowEvent(GHOST_kEventWindowMove, window);
+            window->updateHDRInfo();
           }
 
           break;
@@ -2202,6 +2284,7 @@ LRESULT WINAPI GHOST_SystemWin32::s_wndProc(HWND hwnd, uint msg, WPARAM wParam, 
           if (wt) {
             wt->remapCoordinates();
           }
+          window->updateHDRInfo();
           break;
         }
         case WM_KILLFOCUS: {
@@ -2220,6 +2303,7 @@ LRESULT WINAPI GHOST_SystemWin32::s_wndProc(HWND hwnd, uint msg, WPARAM wParam, 
           {
             window->ThemeRefresh();
           }
+          window->updateHDRInfo();
           break;
         }
         /* ======================
@@ -2238,6 +2322,18 @@ LRESULT WINAPI GHOST_SystemWin32::s_wndProc(HWND hwnd, uint msg, WPARAM wParam, 
           /* An application sends the WM_ERASEBKGND message when the window background must be
            * erased (for example, when a window is resized). The message is sent to prepare an
            * invalidated portion of a window for painting. */
+          {
+            HBRUSH bgBrush = (HBRUSH)GetClassLongPtr(hwnd, GCLP_HBRBACKGROUND);
+            if (bgBrush) {
+              RECT rect;
+              GetClientRect(hwnd, &rect);
+              FillRect((HDC)(wParam), &rect, bgBrush);
+              /* Clear the background brush after the initial fill as we don't
+               * need or want any default Windows fill behavior on redraw. */
+              SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR) nullptr);
+            }
+            break;
+          }
         case WM_NCPAINT:
           /* An application sends the WM_NCPAINT message to a window
            * when its frame must be painted. */
@@ -2267,6 +2363,7 @@ LRESULT WINAPI GHOST_SystemWin32::s_wndProc(HWND hwnd, uint msg, WPARAM wParam, 
            * another window-management function. */
         case WM_SETFOCUS: {
           /* The WM_SETFOCUS message is sent to a window after it has gained the keyboard focus. */
+          window->updateHDRInfo();
           break;
         }
         /* ============
@@ -2295,7 +2392,7 @@ LRESULT WINAPI GHOST_SystemWin32::s_wndProc(HWND hwnd, uint msg, WPARAM wParam, 
           /* The DM_POINTERHITTEST message is sent to a window, when pointer input is first
            * detected, in order to determine the most probable input target for Direct
            * Manipulation. */
-          if (system->m_multitouchGestures) {
+          if (system->multitouch_gestures_) {
             window->onPointerHitTest(wParam);
           }
           break;
@@ -2371,8 +2468,7 @@ char *GHOST_SystemWin32::getClipboard(bool /*selection*/) const
 
     len = strlen(buffer);
     char *temp_buff = (char *)malloc(len + 1);
-    strncpy(temp_buff, buffer, len);
-    temp_buff[len] = '\0';
+    memcpy(temp_buff, buffer, len + 1);
 
     /* Buffer mustn't be accessed after CloseClipboard
      * it would like accessing free-d memory */
@@ -2429,7 +2525,8 @@ GHOST_TSuccess GHOST_SystemWin32::hasClipboardImage(void) const
             WCHAR lpszFile[MAX_PATH] = {0};
             DragQueryFileW(hDrop, 0, lpszFile, MAX_PATH);
             char *filepath = alloc_utf_8_from_16(lpszFile, 0);
-            ImBuf *ibuf = IMB_testiffname(filepath, IB_rect | IB_multilayer);
+            ImBuf *ibuf = IMB_load_image_from_filepath(filepath,
+                                                       IB_byte_data | IB_multilayer | IB_test);
             free(filepath);
             if (ibuf) {
               IMB_freeImBuf(ibuf);
@@ -2465,7 +2562,7 @@ static uint *getClipboardImageFilepath(int *r_width, int *r_height)
   }
 
   if (filepath) {
-    ImBuf *ibuf = IMB_loadiffname(filepath, IB_rect | IB_multilayer, nullptr);
+    ImBuf *ibuf = IMB_load_image_from_filepath(filepath, IB_byte_data | IB_multilayer);
     free(filepath);
     if (ibuf) {
       *r_width = ibuf->x;
@@ -2583,8 +2680,8 @@ static uint *getClipboardImageImBuf(int *r_width, int *r_height, UINT format)
 
   uint *rgba = nullptr;
 
-  ImBuf *ibuf = IMB_ibImageFromMemory(
-      (uchar *)pMem, GlobalSize(hGlobal), IB_rect, nullptr, "<clipboard>");
+  ImBuf *ibuf = IMB_load_image_from_memory(
+      (uchar *)pMem, GlobalSize(hGlobal), IB_byte_data, "<clipboard>");
 
   if (ibuf) {
     *r_width = ibuf->x;
@@ -2695,7 +2792,7 @@ static bool putClipboardImagePNG(uint *rgba, int width, int height)
   ImBuf *ibuf = IMB_allocFromBuffer(reinterpret_cast<uint8_t *>(rgba), nullptr, width, height, 32);
   ibuf->ftype = IMB_FTYPE_PNG;
   ibuf->foptions.quality = 15;
-  if (!IMB_saveiff(ibuf, "<memory>", IB_rect | IB_mem)) {
+  if (!IMB_save_image(ibuf, "<memory>", IB_byte_data | IB_mem)) {
     IMB_freeImBuf(ibuf);
     return false;
   }
@@ -2865,13 +2962,13 @@ bool GHOST_SystemWin32::setConsoleWindowState(GHOST_TConsoleWindowState action)
     case GHOST_kConsoleWindowStateHideForNonConsoleLaunch: {
       if (!isStartedFromCommandPrompt()) {
         ShowWindow(wnd, SW_HIDE);
-        m_consoleStatus = false;
+        console_status_ = false;
       }
       break;
     }
     case GHOST_kConsoleWindowStateHide: {
       ShowWindow(wnd, SW_HIDE);
-      m_consoleStatus = false;
+      console_status_ = false;
       break;
     }
     case GHOST_kConsoleWindowStateShow: {
@@ -2879,18 +2976,18 @@ bool GHOST_SystemWin32::setConsoleWindowState(GHOST_TConsoleWindowState action)
       if (!isStartedFromCommandPrompt()) {
         DeleteMenu(GetSystemMenu(wnd, FALSE), SC_CLOSE, MF_BYCOMMAND);
       }
-      m_consoleStatus = true;
+      console_status_ = true;
       break;
     }
     case GHOST_kConsoleWindowStateToggle: {
-      ShowWindow(wnd, m_consoleStatus ? SW_HIDE : SW_SHOW);
-      m_consoleStatus = !m_consoleStatus;
-      if (m_consoleStatus && !isStartedFromCommandPrompt()) {
+      ShowWindow(wnd, console_status_ ? SW_HIDE : SW_SHOW);
+      console_status_ = !console_status_;
+      if (console_status_ && !isStartedFromCommandPrompt()) {
         DeleteMenu(GetSystemMenu(wnd, FALSE), SC_CLOSE, MF_BYCOMMAND);
       }
       break;
     }
   }
 
-  return m_consoleStatus;
+  return console_status_;
 }

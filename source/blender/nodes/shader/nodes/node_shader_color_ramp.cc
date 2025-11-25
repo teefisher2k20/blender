@@ -22,7 +22,7 @@ namespace blender::nodes::node_shader_color_ramp_cc {
 static void sh_node_valtorgb_declare(NodeDeclarationBuilder &b)
 {
   b.is_function_node();
-  b.add_input<decl::Float>("Fac")
+  b.add_input<decl::Float>("Factor", "Fac")
       .default_value(0.5f)
       .min(0.0f)
       .max(1.0f)
@@ -53,7 +53,7 @@ static int gpu_shader_valtorgb(GPUMaterial *mat,
   if (coba->tot == 1) {
     return GPU_link(mat, "set_rgba", GPU_uniform(&coba->data[0].r), &out[0].link);
   }
-  else if ((coba->tot == 2) && (coba->color_mode == COLBAND_BLEND_RGB)) {
+  if ((coba->tot == 2) && (coba->color_mode == COLBAND_BLEND_RGB)) {
     float mul_bias[2];
     switch (coba->ipotype) {
       case COLBAND_INTERP_LINEAR:
@@ -162,19 +162,19 @@ void register_node_type_sh_valtorgb()
 
   static blender::bke::bNodeType ntype;
 
-  sh_fn_node_type_base(&ntype, "ShaderNodeValToRGB", SH_NODE_VALTORGB);
+  common_node_type_base(&ntype, "ShaderNodeValToRGB", SH_NODE_VALTORGB);
   ntype.ui_name = "Color Ramp";
   ntype.ui_description = "Map values to colors with the use of a gradient";
   ntype.enum_name_legacy = "VALTORGB";
   ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = file_ns::sh_node_valtorgb_declare;
   ntype.initfunc = file_ns::node_shader_init_valtorgb;
-  blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Large);
+  blender::bke::node_type_size_preset(ntype, blender::bke::eNodeSizePreset::Large);
   blender::bke::node_type_storage(
-      &ntype, "ColorBand", node_free_standard_storage, node_copy_standard_storage);
+      ntype, "ColorBand", node_free_standard_storage, node_copy_standard_storage);
   ntype.gpu_fn = file_ns::gpu_shader_valtorgb;
   ntype.build_multi_function = file_ns::sh_node_valtorgb_build_multi_function;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

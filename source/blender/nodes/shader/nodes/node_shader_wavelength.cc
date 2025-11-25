@@ -25,7 +25,7 @@ static int node_shader_gpu_wavelength(GPUMaterial *mat,
                                       GPUNodeStack *out)
 {
   const int size = CM_TABLE + 1;
-  float *data = static_cast<float *>(MEM_mallocN(sizeof(float) * size * 4, "cie_xyz texture"));
+  float *data = MEM_malloc_arrayN<float>(size * 4, "cie_xyz texture");
 
   IMB_colormanagement_wavelength_to_rgb_table(data, size);
 
@@ -49,8 +49,8 @@ void register_node_type_sh_wavelength()
   ntype.enum_name_legacy = "WAVELENGTH";
   ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = file_ns::node_declare;
-  blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Middle);
+  blender::bke::node_type_size_preset(ntype, blender::bke::eNodeSizePreset::Middle);
   ntype.gpu_fn = file_ns::node_shader_gpu_wavelength;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

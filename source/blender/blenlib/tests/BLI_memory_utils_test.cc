@@ -7,12 +7,12 @@
 #include "BLI_math_vector_types.hh"
 #include "BLI_memory_utils.hh"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 namespace blender::tests {
 
 class TestBaseClass {
-  virtual void mymethod(){};
+  virtual void mymethod() {};
 };
 
 class TestChildClass : public TestBaseClass {

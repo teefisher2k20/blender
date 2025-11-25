@@ -21,19 +21,15 @@ DeviceScene::DeviceScene(Device *device)
       tri_shader(device, "tri_shader", MEM_GLOBAL),
       tri_vnormal(device, "tri_vnormal", MEM_GLOBAL),
       tri_vindex(device, "tri_vindex", MEM_GLOBAL),
-      tri_patch(device, "tri_patch", MEM_GLOBAL),
-      tri_patch_uv(device, "tri_patch_uv", MEM_GLOBAL),
       curves(device, "curves", MEM_GLOBAL),
       curve_keys(device, "curve_keys", MEM_GLOBAL),
       curve_segments(device, "curve_segments", MEM_GLOBAL),
-      patches(device, "patches", MEM_GLOBAL),
       points(device, "points", MEM_GLOBAL),
       points_shader(device, "points_shader", MEM_GLOBAL),
       objects(device, "objects", MEM_GLOBAL),
       object_motion_pass(device, "object_motion_pass", MEM_GLOBAL),
       object_motion(device, "object_motion", MEM_GLOBAL),
       object_flag(device, "object_flag", MEM_GLOBAL),
-      object_volume_step(device, "object_volume_step", MEM_GLOBAL),
       object_prim_offset(device, "object_prim_offset", MEM_GLOBAL),
       camera_motion(device, "camera_motion", MEM_GLOBAL),
       attributes_map(device, "attributes_map", MEM_GLOBAL),
@@ -57,7 +53,11 @@ DeviceScene::DeviceScene(Device *device)
       shaders(device, "shaders", MEM_GLOBAL),
       lookup_table(device, "lookup_table", MEM_GLOBAL),
       sample_pattern_lut(device, "sample_pattern_lut", MEM_GLOBAL),
-      ies_lights(device, "ies", MEM_GLOBAL)
+      ies_lights(device, "ies", MEM_GLOBAL),
+      volume_tree_nodes(device, "volume_tree_nodes", MEM_GLOBAL),
+      volume_tree_roots(device, "volume_tree_roots", MEM_GLOBAL),
+      volume_tree_root_ids(device, "volume_tree_root_ids", MEM_GLOBAL),
+      volume_step_size(device, "volume_step_size", MEM_GLOBAL)
 {
   memset((void *)&data, 0, sizeof(data));
 }

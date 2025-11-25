@@ -15,6 +15,10 @@
 #include "vk_state_manager.hh"
 #include "vk_vertex_buffer.hh"
 
+#include "CLG_log.h"
+
+static CLG_LogRef LOG = {"gpu.vulkan"};
+
 namespace blender::gpu {
 
 VKVertexBuffer::~VKVertexBuffer()
@@ -48,11 +52,9 @@ void VKVertexBuffer::ensure_buffer_view()
   }
 
   VkBufferViewCreateInfo buffer_view_info = {};
-  eGPUTextureFormat texture_format = to_texture_format(&format);
-
   buffer_view_info.sType = VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO;
   buffer_view_info.buffer = buffer_.vk_handle();
-  buffer_view_info.format = to_vk_format(texture_format);
+  buffer_view_info.format = to_vk_format();
   buffer_view_info.range = buffer_.size_in_bytes();
 
   const VKDevice &device = VKBackend::get().device;
@@ -65,9 +67,24 @@ void VKVertexBuffer::wrap_handle(uint64_t /*handle*/)
   NOT_YET_IMPLEMENTED
 }
 
-void VKVertexBuffer::update_sub(uint /*start*/, uint /*len*/, const void * /*data*/)
+void VKVertexBuffer::update_sub(uint start_offset, uint data_size_in_bytes, const void *data)
 {
-  NOT_YET_IMPLEMENTED
+  if (!buffer_.is_allocated()) {
+    /* Allocating huge buffers can fail, in that case we skip copying data. */
+    return;
+  }
+  BLI_assert_msg(start_offset + data_size_in_bytes <= buffer_.size_in_bytes(),
+                 "Out of bound write to vertex buffer");
+  if (buffer_.is_mapped()) {
+    buffer_.update_sub_immediately(start_offset, data_size_in_bytes, data);
+  }
+  else {
+    VKContext &context = *VKContext::get();
+    VKStagingBuffer staging_buffer(
+        buffer_, VKStagingBuffer::Direction::HostToDevice, start_offset, data_size_in_bytes);
+    memcpy(staging_buffer.host_buffer_get().mapped_memory_get(), data, data_size_in_bytes);
+    staging_buffer.copy_to_device(context);
+  }
 }
 
 void VKVertexBuffer::read(void *data) const
@@ -78,9 +95,21 @@ void VKVertexBuffer::read(void *data) const
     return;
   }
 
-  VKStagingBuffer staging_buffer(buffer_, VKStagingBuffer::Direction::DeviceToHost);
-  staging_buffer.copy_from_device(context);
-  staging_buffer.host_buffer_get().read(context, data);
+  /* Allocating huge buffers can fail, in that case we skip copying data. */
+  if (buffer_.is_allocated()) {
+    VKStagingBuffer staging_buffer(buffer_, VKStagingBuffer::Direction::DeviceToHost);
+    VKBuffer &buffer = staging_buffer.host_buffer_get();
+    if (buffer.is_mapped()) {
+      staging_buffer.copy_from_device(context);
+      staging_buffer.host_buffer_get().read(context, data);
+    }
+    else {
+      CLOG_ERROR(
+          &LOG,
+          "Unable to read data from vertex buffer via a staging buffer as the staging buffer "
+          "could not be allocated. ");
+    }
+  }
 }
 
 void VKVertexBuffer::acquire_data()
@@ -92,7 +121,7 @@ void VKVertexBuffer::acquire_data()
   /* Discard previous data if any. */
   /* TODO: Use mapped memory. */
   MEM_SAFE_FREE(data_);
-  data_ = (uchar *)MEM_mallocN(sizeof(uchar) * this->size_alloc_get(), __func__);
+  data_ = MEM_malloc_arrayN<uchar>(this->size_alloc_get(), __func__);
 }
 
 void VKVertexBuffer::resize_data()
@@ -107,8 +136,7 @@ void VKVertexBuffer::resize_data()
 void VKVertexBuffer::release_data()
 {
   if (vk_buffer_view_ != VK_NULL_HANDLE) {
-    const VKDevice &device = VKBackend::get().device;
-    vkDestroyBufferView(device.vk_handle(), vk_buffer_view_, nullptr);
+    VKDiscardPool::discard_pool_get().discard_buffer_view(vk_buffer_view_);
     vk_buffer_view_ = VK_NULL_HANDLE;
   }
 
@@ -117,37 +145,43 @@ void VKVertexBuffer::release_data()
 
 void VKVertexBuffer::upload_data_direct(const VKBuffer &host_buffer)
 {
-  device_format_ensure();
-  if (vertex_format_converter.needs_conversion()) {
-    if (G.debug & G_DEBUG_GPU) {
-      std::cout << "PERFORMANCE: Vertex buffer requires conversion.\n";
-    }
-    vertex_format_converter.convert(host_buffer.mapped_memory_get(), data_, vertex_len);
-    host_buffer.flush();
-  }
-  else {
-    host_buffer.update_immediately(data_);
-  }
+  host_buffer.update_immediately(data_);
 }
 
 void VKVertexBuffer::upload_data_via_staging_buffer(VKContext &context)
 {
-  VKStagingBuffer staging_buffer(buffer_, VKStagingBuffer::Direction::HostToDevice);
-  upload_data_direct(staging_buffer.host_buffer_get());
-  staging_buffer.copy_to_device(context);
+  VKStagingBuffer staging_buffer(
+      buffer_, VKStagingBuffer::Direction::HostToDevice, 0, this->size_used_get());
+  VKBuffer &buffer = staging_buffer.host_buffer_get();
+  if (buffer.is_allocated()) {
+    upload_data_direct(buffer);
+    staging_buffer.copy_to_device(context);
+  }
+  else {
+    CLOG_ERROR(&LOG,
+               "Unable to upload data to vertex buffer via a staging buffer as the staging buffer "
+               "could not be allocated. Vertex buffer will be filled with on zeros to reduce "
+               "drawing artifacts due to read from uninitialized memory.");
+    buffer_.clear(context, 0u);
+  }
 }
 
 void VKVertexBuffer::upload_data()
 {
   if (!buffer_.is_allocated()) {
     allocate();
+    /* If allocation fails, don't upload. */
+    if (!buffer_.is_allocated()) {
+      CLOG_ERROR(&LOG, "Unable to allocate vertex buffer. Most likely an out of memory issue.");
+      return;
+    }
   }
+
   if (!ELEM(usage_, GPU_USAGE_STATIC, GPU_USAGE_STREAM, GPU_USAGE_DYNAMIC)) {
     return;
   }
 
   if (flag & GPU_VERTBUF_DATA_DIRTY) {
-    device_format_ensure();
     if (buffer_.is_mapped() && !data_uploaded_) {
       upload_data_direct(buffer_);
     }
@@ -165,24 +199,6 @@ void VKVertexBuffer::upload_data()
   }
 }
 
-void VKVertexBuffer::duplicate_data(VertBuf * /*dst*/)
-{
-  NOT_YET_IMPLEMENTED
-}
-
-void VKVertexBuffer::device_format_ensure()
-{
-  if (!vertex_format_converter.is_initialized()) {
-    const VKWorkarounds &workarounds = VKBackend::get().device.workarounds_get();
-    vertex_format_converter.init(&format, workarounds);
-  }
-}
-
-const GPUVertFormat &VKVertexBuffer::device_format_get() const
-{
-  return vertex_format_converter.device_format_get();
-}
-
 void VKVertexBuffer::allocate()
 {
   VkBufferUsageFlags vk_buffer_usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
@@ -191,11 +207,8 @@ void VKVertexBuffer::allocate()
                                        VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT |
                                        VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
-  buffer_.create(size_alloc_get(),
-                 vk_buffer_usage,
-                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-                 VmaAllocationCreateFlags(0));
+  buffer_.create(
+      size_alloc_get(), vk_buffer_usage, VMA_MEMORY_USAGE_AUTO, VmaAllocationCreateFlags(0), 0.8f);
   debug::object_label(buffer_.vk_handle(), "VertexBuffer");
 }
 

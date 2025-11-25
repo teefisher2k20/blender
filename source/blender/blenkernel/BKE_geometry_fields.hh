@@ -127,7 +127,7 @@ class GreasePencilLayerFieldContext : public fn::FieldContext {
 
   GVArray get_varray_for_input(const fn::FieldInput &field_input,
                                const IndexMask &mask,
-                               ResourceScope &scope) const;
+                               ResourceScope &scope) const override;
 };
 
 class InstancesFieldContext : public fn::FieldContext {
@@ -286,20 +286,20 @@ class AttributeFieldInput : public GeometryFieldInput {
                                                      Category::NamedAttribute;
   }
 
-  static fn::GField Create(std::string name,
-                           const CPPType &type,
-                           std::optional<std::string> socket_inspection_name = std::nullopt)
+  static fn::GField from(std::string name,
+                         const CPPType &type,
+                         std::optional<std::string> socket_inspection_name = std::nullopt)
   {
     auto field_input = std::make_shared<AttributeFieldInput>(
         std::move(name), type, std::move(socket_inspection_name));
     return fn::GField(field_input);
   }
   template<typename T>
-  static fn::Field<T> Create(std::string name,
-                             std::optional<std::string> socket_inspection_name = std::nullopt)
+  static fn::Field<T> from(std::string name,
+                           std::optional<std::string> socket_inspection_name = std::nullopt)
   {
     return fn::Field<T>(
-        Create(std::move(name), CPPType::get<T>(), std::move(socket_inspection_name)));
+        from(std::move(name), CPPType::get<T>(), std::move(socket_inspection_name)));
   }
 
   StringRefNull attribute_name() const
@@ -328,7 +328,7 @@ class AttributeExistsFieldInput final : public bke::GeometryFieldInput {
     category_ = Category::Generated;
   }
 
-  static fn::Field<bool> Create(std::string name)
+  static fn::Field<bool> from(std::string name)
   {
     const CPPType &type = CPPType::get<bool>();
     auto field_input = std::make_shared<AttributeExistsFieldInput>(std::move(name), type);
@@ -379,14 +379,18 @@ VArray<float3> curve_normals_varray(const CurvesGeometry &curves, AttrDomain dom
 VArray<float3> mesh_normals_varray(const Mesh &mesh,
                                    const IndexMask &mask,
                                    AttrDomain domain,
-                                   bool no_corner_normals = false);
+                                   bool no_corner_normals = false,
+                                   bool true_normals = false);
 
 class NormalFieldInput : public GeometryFieldInput {
   bool legacy_corner_normals_ = false;
+  bool true_normals_ = false;
 
  public:
-  NormalFieldInput(const bool legacy_corner_normals = false)
-      : GeometryFieldInput(CPPType::get<float3>()), legacy_corner_normals_(legacy_corner_normals)
+  NormalFieldInput(const bool legacy_corner_normals = false, const bool true_normals = false)
+      : GeometryFieldInput(CPPType::get<float3>()),
+        legacy_corner_normals_(legacy_corner_normals),
+        true_normals_(true_normals)
   {
     category_ = Category::Generated;
   }

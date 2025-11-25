@@ -8,13 +8,17 @@
 
 #pragma once
 
+#include <cstddef>
+
 struct Depsgraph;
 struct Main;
 struct Mesh;
 struct Object;
+struct RegionView3D;
 struct ReportList;
 struct Scene;
 struct UndoType;
+struct UndoStep;
 struct bContext;
 struct wmKeyConfig;
 struct wmOperator;
@@ -47,6 +51,7 @@ void keymap_sculpt(wmKeyConfig *keyconf);
 /* `sculpt_transform.cc` */
 
 void update_modal_transform(bContext *C, Object &ob);
+void cancel_modal_transform(bContext *C, Object &ob);
 void init_transform(bContext *C, Object &ob, const float mval_fl[2], const char *undo_name);
 void end_transform(bContext *C, Object &ob);
 
@@ -72,6 +77,8 @@ void geometry_end(Object &ob);
 void push_multires_mesh_begin(bContext *C, const char *str);
 void push_multires_mesh_end(bContext *C, const char *str);
 
+size_t step_memory_size_get(UndoStep *step);
+
 }  // namespace undo
 
 namespace face_set {
@@ -90,5 +97,20 @@ int active_update_and_get(bContext *C, Object &ob, const float mval_fl[2]);
  * \return #true if successful.
  */
 bool object_active_color_fill(Object &ob, const float fill_color[4], bool only_selected);
+
+/**
+ * Fully replace the sculpt mesh with a mesh outside of #Main. This implements various checks to
+ * avoid pushing full geometry-type undo steps when possible, allowing for better performance.
+ *
+ * \warning To avoid false negatives when detecting mesh changes, it is critical that the caller
+ * adds an owner to the attribute data arrays before modifying the original object's mesh. This
+ * allows constant time checks for whether the mesh has changed.
+ */
+void store_mesh_from_eval(const wmOperator &op,
+                          const Scene &scene,
+                          const Depsgraph &depsgraph,
+                          const RegionView3D *rv3d,
+                          Object &object,
+                          Mesh *new_mesh);
 
 }  // namespace blender::ed::sculpt_paint

@@ -2,8 +2,6 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "DNA_gpencil_legacy_types.h"
-
 #include "BKE_context.hh"
 #include "BKE_crazyspace.hh"
 #include "BKE_curves.hh"
@@ -38,7 +36,6 @@ void PinchOperation::on_stroke_begin(const bContext &C, const InputSample &start
 
 void PinchOperation::on_stroke_extended(const bContext &C, const InputSample &extension_sample)
 {
-  const Scene &scene = *CTX_data_scene(&C);
   Paint &paint = *BKE_paint_get_active_from_context(&C);
   const Brush &brush = *BKE_paint_brush(&paint);
   const bool invert = this->is_inverted(brush);
@@ -49,7 +46,7 @@ void PinchOperation::on_stroke_extended(const bContext &C, const InputSample &ex
           const IndexMask &point_mask,
           const DeltaProjectionFunc &projection_fn) {
         bke::crazyspace::GeometryDeformation deformation = get_drawing_deformation(params);
-        Array<float2> view_positions = calculate_view_positions(params, point_mask);
+        const Array<float2> view_positions = view_positions_from_point_mask(params, point_mask);
         bke::CurvesGeometry &curves = params.drawing.strokes_for_write();
         MutableSpan<float3> positions = curves.positions_for_write();
 
@@ -58,7 +55,7 @@ void PinchOperation::on_stroke_extended(const bContext &C, const InputSample &ex
         point_mask.foreach_index(GrainSize(4096), [&](const int64_t point_i) {
           const float2 &co = view_positions[point_i];
           const float influence = brush_point_influence(
-              scene, brush, co, extension_sample, params.multi_frame_falloff);
+              paint, brush, co, extension_sample, params.multi_frame_falloff);
           if (influence <= 0.0f) {
             return;
           }

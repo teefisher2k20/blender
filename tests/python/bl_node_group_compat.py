@@ -48,6 +48,8 @@ subtype_idname = {
     ("BOOLEAN", "NONE"): "NodeSocketBool",
     ("ROTATION", "NONE"): "NodeSocketRotation",
     ("VECTOR", "NONE"): "NodeSocketVector",
+    ("VECTOR", "FACTOR"): "NodeSocketVectorFactor",
+    ("VECTOR", "PERCENTAGE"): "NodeSocketVectorPercentage",
     ("VECTOR", "TRANSLATION"): "NodeSocketVectorTranslation",
     ("VECTOR", "DIRECTION"): "NodeSocketVectorDirection",
     ("VECTOR", "VELOCITY"): "NodeSocketVectorVelocity",
@@ -215,7 +217,7 @@ class NodeGroupVersioning36Test(AbstractNodeGroupInterfaceTest):
     def test_load_compositor_nodes(self):
         self.open_file()
 
-        tree = bpy.data.scenes['Scene'].node_tree
+        tree = bpy.data.scenes['Scene'].compositing_node_group
         group = bpy.data.node_groups.get('NodeGroup')
         self.assertIsNotNone(group, "Compositor node group not found")
         node = tree.nodes['Group']
@@ -224,11 +226,11 @@ class NodeGroupVersioning36Test(AbstractNodeGroupInterfaceTest):
         # autopep8: off
         self.compare_group_to_specs(group, node, [
             SocketSpec("Output Float", "Output_9", "VALUE", hide_value=True, default_value=3.0, min_value=1.0, max_value=1.0),
-            SocketSpec("Output Vector", "Output_10", "VECTOR", subtype="EULER", default_value=( 10, 20, 30), min_value=-10.0, max_value=10.0),
+            SocketSpec("Output Vector", "Output_10", "VECTOR", subtype="EULER", default_value=(10, 20, 30), min_value=-10.0, max_value=10.0),
             SocketSpec("Output Color", "Output_11", "RGBA", default_value=(0, 1, 1, 1)),
 
             SocketSpec("Input Float", "Input_6", "VALUE", subtype="ANGLE", default_value=-20.0, min_value=5.0, max_value=6.0),
-            SocketSpec("Input Vector", "Input_7", "VECTOR", hide_value=True, default_value=( 2, 4, 6), min_value=-4.0, max_value=100.0),
+            SocketSpec("Input Vector", "Input_7", "VECTOR", hide_value=True, default_value=(2, 4, 6), min_value=-4.0, max_value=100.0),
             SocketSpec("Input Color", "Input_8", "RGBA", default_value=(0.5, 0.4, 0.3, 0.2)),
         ])
         # autopep8: on
@@ -245,12 +247,12 @@ class NodeGroupVersioning36Test(AbstractNodeGroupInterfaceTest):
         # autopep8: off
         self.compare_group_to_specs(group, node, [
             SocketSpec("Output Float", "Output_30", "VALUE", hide_value=True, default_value=3.0, min_value=1.0, max_value=1.0),
-            SocketSpec("Output Vector", "Output_31", "VECTOR", subtype="EULER", default_value=( 10, 20, 30), min_value=-10.0, max_value=10.0),
+            SocketSpec("Output Vector", "Output_31", "VECTOR", subtype="EULER", default_value=(10, 20, 30), min_value=-10.0, max_value=10.0),
             SocketSpec("Output Color", "Output_32", "RGBA", default_value=(0, 1, 1, 1)),
             SocketSpec("Output Shader", "Output_33", "SHADER"),
 
             SocketSpec("Input Float", "Input_26", "VALUE", subtype="ANGLE", default_value=-20.0, min_value=5.0, max_value=6.0),
-            SocketSpec("Input Vector", "Input_27", "VECTOR", hide_value=True, default_value=( 2, 4, 6), min_value=-4.0, max_value=100.0),
+            SocketSpec("Input Vector", "Input_27", "VECTOR", hide_value=True, default_value=(2, 4, 6), min_value=-4.0, max_value=100.0),
             SocketSpec("Input Color", "Input_28", "RGBA", default_value=(0.5, 0.4, 0.3, 0.2)),
             SocketSpec("Input Shader", "Input_29", "SHADER"),
         ])
@@ -268,7 +270,7 @@ class NodeGroupVersioning36Test(AbstractNodeGroupInterfaceTest):
         # autopep8: off
         self.compare_group_to_specs(group, node, [
             SocketSpec("Output Float", "Output_7", "VALUE", hide_value=True, default_value=3.0, min_value=1.0, max_value=1.0),
-            SocketSpec("Output Vector", "Output_8", "VECTOR", subtype="EULER", default_value=( 10, 20, 30), min_value=-10.0, max_value=10.0),
+            SocketSpec("Output Vector", "Output_8", "VECTOR", subtype="EULER", default_value=(10, 20, 30), min_value=-10.0, max_value=10.0),
             SocketSpec("Output Color", "Output_9", "RGBA", default_value=(0, 1, 1, 1)),
             SocketSpec("Output String", "Output_19", "STRING", default_value=""),
             SocketSpec("Output Bool", "Output_20", "BOOLEAN", default_value=False),
@@ -281,7 +283,7 @@ class NodeGroupVersioning36Test(AbstractNodeGroupInterfaceTest):
             SocketSpec("Output Image", "Output_27", "IMAGE", default_value=bpy.data.images['TestImage']),
 
             SocketSpec("Input Float", "Input_4", "VALUE", subtype="ANGLE", default_value=-20.0, min_value=5.0, max_value=6.0),
-            SocketSpec("Input Vector", "Input_5", "VECTOR", hide_value=True, default_value=( 2, 4, 6), min_value=-4.0, max_value=100.0),
+            SocketSpec("Input Vector", "Input_5", "VECTOR", hide_value=True, default_value=(2, 4, 6), min_value=-4.0, max_value=100.0),
             SocketSpec("Input Color", "Input_6", "RGBA", default_value=(0.5, 0.4, 0.3, 0.2)),
             SocketSpec("Input String", "Input_10", "STRING", default_value="hello world!"),
             SocketSpec("Input Bool", "Input_11", "BOOLEAN", default_value=True, hide_in_modifier=True),
@@ -304,7 +306,7 @@ class NodeGroupVersioning25Test(AbstractNodeGroupInterfaceTest):
     def test_load_compositor_nodes(self):
         self.open_file()
 
-        tree = bpy.data.scenes['Scene'].node_tree
+        tree = bpy.data.scenes['Scene'].compositing_node_group
         group = bpy.data.node_groups.get('NodeGroup.002')
         self.assertIsNotNone(group, "Compositor node group not found")
         node = tree.nodes['NodeGroup.002']

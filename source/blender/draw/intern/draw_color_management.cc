@@ -8,7 +8,7 @@
 
 #include "GPU_viewport.hh"
 
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "DRW_render.hh"
 
@@ -129,15 +129,15 @@ static void viewport_settings_apply(GPUViewport &viewport,
     case eDRWColorManagementType::ViewTransform: {
       /* For workbench use only default view transform in configuration,
        * using no scene settings. */
-      BKE_color_managed_view_settings_init_render(&view_settings, display_settings, nullptr);
+      BKE_color_managed_view_settings_init(&view_settings, display_settings, nullptr);
       break;
     }
     case eDRWColorManagementType::ViewTransformAndLook: {
       /* Use only view transform + look and nothing else for lookdev without
        * scene lighting, as exposure depends on scene light intensity. */
-      BKE_color_managed_view_settings_init_render(&view_settings, display_settings, nullptr);
-      STRNCPY(view_settings.view_transform, scene.view_settings.view_transform);
-      STRNCPY(view_settings.look, scene.view_settings.look);
+      BKE_color_managed_view_settings_init(&view_settings, display_settings, nullptr);
+      STRNCPY_UTF8(view_settings.view_transform, scene.view_settings.view_transform);
+      STRNCPY_UTF8(view_settings.look, scene.view_settings.look);
       break;
     }
     case eDRWColorManagementType::UseRenderSettings: {
@@ -151,26 +151,14 @@ static void viewport_settings_apply(GPUViewport &viewport,
   GPU_viewport_colorspace_set(&viewport, &view_settings, display_settings, dither);
 }
 
-static void viewport_color_management_set(GPUViewport &viewport)
+void viewport_color_management_set(GPUViewport &viewport, DRWContext &draw_ctx)
 {
-  const DRWContextState *draw_ctx = DRW_context_state_get();
-  const Depsgraph *depsgraph = draw_ctx->depsgraph;
+  const Depsgraph *depsgraph = draw_ctx.depsgraph;
   Main *bmain = DEG_get_bmain(depsgraph);
 
   const eDRWColorManagementType color_management_type = drw_color_management_type_get(
-      bmain, *draw_ctx->scene, draw_ctx->v3d, draw_ctx->space_data);
-  viewport_settings_apply(viewport, *draw_ctx->scene, color_management_type);
+      bmain, *draw_ctx.scene, draw_ctx.v3d, draw_ctx.space_data);
+  viewport_settings_apply(viewport, *draw_ctx.scene, color_management_type);
 }
 
 }  // namespace blender::draw::color_management
-
-/* -------------------------------------------------------------------- */
-/** \name Color Management
- * \{ */
-
-void DRW_viewport_colormanagement_set(GPUViewport *viewport)
-{
-  blender::draw::color_management::viewport_color_management_set(*viewport);
-}
-
-/** \} */

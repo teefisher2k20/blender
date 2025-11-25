@@ -17,6 +17,7 @@
 
 #include "GPU_debug.hh"
 #include "GPU_platform.hh"
+#include "gpu_profile_report.hh"
 
 #include "CLG_log.h"
 
@@ -25,8 +26,6 @@
 #include "gl_uniform_buffer.hh"
 
 #include "gl_debug.hh"
-
-#include <cstdio>
 
 static CLG_LogRef LOG = {"gpu.debug"};
 
@@ -71,29 +70,31 @@ static void APIENTRY debug_callback(GLenum /*source*/,
   if (TRIM_NVIDIA_BUFFER_INFO && STRPREFIX(message, "Buffer detailed info") &&
       GPU_type_matches(GPU_DEVICE_NVIDIA, GPU_OS_ANY, GPU_DRIVER_OFFICIAL))
   {
-    /* Suppress buffer infos flooding the output. */
+    /* Suppress buffer information flooding the output. */
     return;
   }
 
   if (TRIM_SHADER_STATS_INFO && STRPREFIX(message, "Shader Stats")) {
-    /* Suppress buffer infos flooding the output. */
+    /* Suppress buffer information flooding the output. */
     return;
   }
 
   const bool use_color = CLG_color_support_get(&LOG);
 
   if (ELEM(severity, GL_DEBUG_SEVERITY_LOW, GL_DEBUG_SEVERITY_NOTIFICATION)) {
-    if ((LOG.type->flag & CLG_FLAG_USE) && (LOG.type->level >= CLG_SEVERITY_INFO)) {
+    if (CLOG_CHECK(&LOG, CLG_LEVEL_INFO)) {
       const char *format = use_color ? "\033[2m%s\033[0m" : "%s";
-      CLG_logf(LOG.type, CLG_SEVERITY_INFO, "Notification", "", format, message);
+      CLG_logf(LOG.type, CLG_LEVEL_INFO, "Notification", "", format, message);
     }
   }
   else {
     char debug_groups[512] = "";
     GPU_debug_get_groups_names(sizeof(debug_groups), debug_groups);
-    CLG_Severity clog_severity;
+    CLG_Level clog_level;
 
-    if (GPU_debug_group_match(GPU_DEBUG_SHADER_COMPILATION_GROUP)) {
+    if (GPU_debug_group_match(GPU_DEBUG_SHADER_COMPILATION_GROUP) ||
+        GPU_debug_group_match(GPU_DEBUG_SHADER_SPECIALIZATION_GROUP))
+    {
       /* Do not duplicate shader compilation error/warnings. */
       return;
     }
@@ -102,19 +103,19 @@ static void APIENTRY debug_callback(GLenum /*source*/,
       case GL_DEBUG_TYPE_ERROR:
       case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR:
       case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR:
-        clog_severity = CLG_SEVERITY_ERROR;
+        clog_level = CLG_LEVEL_ERROR;
         break;
       case GL_DEBUG_TYPE_PORTABILITY:
       case GL_DEBUG_TYPE_PERFORMANCE:
       case GL_DEBUG_TYPE_OTHER:
       case GL_DEBUG_TYPE_MARKER: /* KHR has this, ARB does not */
       default:
-        clog_severity = CLG_SEVERITY_WARN;
+        clog_level = CLG_LEVEL_WARN;
         break;
     }
 
-    if ((LOG.type->flag & CLG_FLAG_USE) && (LOG.type->level <= clog_severity)) {
-      CLG_logf(LOG.type, clog_severity, debug_groups, "", "%s", message);
+    if (CLOG_CHECK(&LOG, clog_level)) {
+      CLG_logf(LOG.type, clog_level, debug_groups, "", "%s", message);
       if (severity == GL_DEBUG_SEVERITY_HIGH) {
         /* Focus on error message. */
         if (use_color) {
@@ -134,40 +135,16 @@ static void APIENTRY debug_callback(GLenum /*source*/,
 
 void init_gl_callbacks()
 {
-  CLOG_ENSURE(&LOG);
-
-  char msg[256] = "";
-  const char format[] = "Successfully hooked OpenGL debug callback using %s";
-
-  if (epoxy_gl_version() >= 43 || epoxy_has_gl_extension("GL_KHR_debug")) {
-    SNPRINTF(msg, format, epoxy_gl_version() >= 43 ? "OpenGL 4.3" : "KHR_debug extension");
-    glEnable(GL_DEBUG_OUTPUT);
-    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-    glDebugMessageCallback((GLDEBUGPROC)debug_callback, nullptr);
-    glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE);
-    glDebugMessageInsert(GL_DEBUG_SOURCE_APPLICATION,
-                         GL_DEBUG_TYPE_MARKER,
-                         0,
-                         GL_DEBUG_SEVERITY_NOTIFICATION,
-                         -1,
-                         msg);
-  }
-  else if (epoxy_has_gl_extension("GL_ARB_debug_output")) {
-    SNPRINTF(msg, format, "ARB_debug_output");
-    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-    glDebugMessageCallbackARB((GLDEBUGPROCARB)debug_callback, nullptr);
-    glDebugMessageControlARB(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE);
-    glDebugMessageInsertARB(GL_DEBUG_SOURCE_APPLICATION_ARB,
-                            GL_DEBUG_TYPE_OTHER_ARB,
-                            0,
-                            GL_DEBUG_SEVERITY_LOW_ARB,
-                            -1,
-                            msg);
-  }
-  else {
-    CLOG_STR_WARN(&LOG, "Failed to hook OpenGL debug callback. Use fallback debug layer.");
-    init_debug_layer();
-  }
+  glEnable(GL_DEBUG_OUTPUT);
+  glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+  glDebugMessageCallback((GLDEBUGPROC)debug_callback, nullptr);
+  glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE);
+  glDebugMessageInsert(GL_DEBUG_SOURCE_APPLICATION,
+                       GL_DEBUG_TYPE_MARKER,
+                       0,
+                       GL_DEBUG_SEVERITY_NOTIFICATION,
+                       -1,
+                       "Successfully hooked OpenGL debug callback");
 }
 
 /** \} */
@@ -214,7 +191,7 @@ void check_gl_error(const char *info)
 
 void check_gl_resources(const char *info)
 {
-  if (!(G.debug & G_DEBUG_GPU) || GPU_bgl_get()) {
+  if (!(G.debug & G_DEBUG_GPU)) {
     return;
   }
 
@@ -398,6 +375,24 @@ void GLContext::debug_group_begin(const char *name, int index)
     index += 10;
     glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, index, -1, name);
   }
+
+  if (!G.profile_gpu) {
+    return;
+  }
+
+  TimeQuery query = {};
+  query.name = name;
+  query.finished = false;
+
+  glGetInteger64v(GL_TIMESTAMP, &query.cpu_start);
+  /* Use GL_TIMESTAMP instead of GL_ELAPSED_TIME to support nested debug groups */
+  glGenQueries(2, query.handles);
+  glQueryCounter(query.handle_start, GL_TIMESTAMP);
+
+  if (frame_timings.is_empty()) {
+    frame_timings.append({});
+  }
+  frame_timings.last().queries.append(query);
 }
 
 void GLContext::debug_group_end()
@@ -407,6 +402,77 @@ void GLContext::debug_group_end()
   {
     glPopDebugGroup();
   }
+
+  if (!G.profile_gpu) {
+    return;
+  }
+
+  Vector<TimeQuery> &queries = frame_timings.last().queries;
+  for (int i = queries.size() - 1; i >= 0; i--) {
+    TimeQuery &query = queries[i];
+    if (!query.finished) {
+      query.finished = true;
+      glQueryCounter(query.handle_end, GL_TIMESTAMP);
+      glGetInteger64v(GL_TIMESTAMP, &query.cpu_end);
+      break;
+    }
+    if (i == 0) {
+      CLOG_ERROR(&LOG, "Profile GPU error: Extra GPU_debug_group_end() call.");
+    }
+  }
+}
+
+void GLContext::process_frame_timings()
+{
+  if (!G.profile_gpu) {
+    return;
+  }
+
+  for (int frame_i = 0; frame_i < frame_timings.size(); frame_i++) {
+    Vector<TimeQuery> &queries = frame_timings[frame_i].queries;
+
+    GLint frame_is_ready = 0;
+    bool frame_is_valid = !queries.is_empty();
+
+    for (int i = queries.size() - 1; i >= 0; i--) {
+      if (!queries[i].finished) {
+        frame_is_valid = false;
+        CLOG_ERROR(&LOG, "Profile GPU error: Missing GPU_debug_group_end() call");
+      }
+      else {
+        glGetQueryObjectiv(queries.last().handle_end, GL_QUERY_RESULT_AVAILABLE, &frame_is_ready);
+      }
+      break;
+    }
+
+    if (!frame_is_valid) {
+      /* Cleanup. */
+      for (TimeQuery &query : queries) {
+        glDeleteQueries(2, query.handles);
+      }
+      frame_timings.remove(frame_i--);
+      continue;
+    }
+
+    if (!frame_is_ready) {
+      break;
+    }
+
+    for (TimeQuery &query : queries) {
+      GLuint64 gpu_start = 0;
+      GLuint64 gpu_end = 0;
+      glGetQueryObjectui64v(query.handle_start, GL_QUERY_RESULT, &gpu_start);
+      glGetQueryObjectui64v(query.handle_end, GL_QUERY_RESULT, &gpu_end);
+      glDeleteQueries(2, query.handles);
+
+      ProfileReport::get().add_group(
+          query.name, gpu_start, gpu_end, query.cpu_start, query.cpu_end);
+    }
+
+    frame_timings.remove(frame_i--);
+  }
+
+  frame_timings.append({});
 }
 
 bool GLContext::debug_capture_begin(const char *title)

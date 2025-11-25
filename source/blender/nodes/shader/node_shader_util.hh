@@ -9,8 +9,10 @@
 #pragma once
 
 #include <cfloat>
-#include <cmath>
 #include <optional>
+
+#include "BLI_listbase.h"        // IWYU pragma: export
+#include "BLI_math_constants.h"  // IWYU pragma: export
 
 #include "BKE_node.hh"
 #include "BKE_node_legacy_types.hh"  // IWYU pragma: export
@@ -19,12 +21,12 @@
 
 #include "GPU_material.hh"
 
-#include "NOD_socket_declarations.hh"
+#include "NOD_socket_declarations.hh"  // IWYU pragma: export
 
-#include "node_shader_register.hh"
+#include "node_shader_register.hh"  // IWYU pragma: export
 
 #ifdef WITH_MATERIALX
-#  include "materialx/node_parser.h"
+#  include "materialx/node_parser.h"  // IWYU pragma: export
 #else
 #  define NODE_SHADER_MATERIALX_BEGIN \
     blender::bke::NodeMaterialXFunction node_shader_materialx = nullptr;
@@ -44,9 +46,12 @@ bool sh_node_poll_default(const blender::bke::bNodeType *ntype,
 void sh_node_type_base(blender::bke::bNodeType *ntype,
                        std::string idname,
                        std::optional<int16_t> legacy_type = std::nullopt);
-void sh_fn_node_type_base(blender::bke::bNodeType *ntype,
-                          std::string idname,
-                          std::optional<int16_t> legacy_type = std::nullopt);
+void sh_geo_node_type_base(blender::bke::bNodeType *ntype,
+                           std::string idname,
+                           std::optional<int16_t> legacy_type = std::nullopt);
+void common_node_type_base(blender::bke::bNodeType *ntype,
+                           std::string idname,
+                           std::optional<int16_t> legacy_type = std::nullopt);
 bool line_style_shader_nodes_poll(const bContext *C);
 bool world_shader_nodes_poll(const bContext *C);
 bool object_shader_nodes_poll(const bContext *C);
@@ -60,7 +65,7 @@ struct XYZ_to_RGB /* Transposed #imbuf_xyz_to_rgb, passed as 3x vec3. */
   float r[3], g[3], b[3];
 };
 
-void node_gpu_stack_from_data(GPUNodeStack *gs, int type, bNodeStack *ns);
+void node_gpu_stack_from_data(GPUNodeStack *gs, bNodeSocket *socket, bNodeStack *ns);
 void node_data_from_gpu_stack(bNodeStack *ns, GPUNodeStack *gs);
 void node_shader_gpu_bump_tex_coord(GPUMaterial *mat, bNode *node, GPUNodeLink **link);
 void node_shader_gpu_default_tex_coord(GPUMaterial *mat, bNode *node, GPUNodeLink **link);
@@ -80,7 +85,7 @@ void ntreeShaderEndExecTree_internal(bNodeTreeExec *exec);
 void ntreeExecGPUNodes(bNodeTreeExec *exec,
                        GPUMaterial *mat,
                        bNode *output_node,
-                       int *depth_level = nullptr);
+                       const int *depth_level = nullptr);
 
 void get_XYZ_to_RGB_for_gpu(XYZ_to_RGB *data);
 

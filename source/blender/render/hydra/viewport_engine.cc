@@ -22,6 +22,9 @@
 #include "BKE_context.hh"
 
 #include "GPU_matrix.hh"
+#include "GPU_texture.hh"
+
+#include "DEG_depsgraph_query.hh"
 
 #include "RE_engine.h"
 
@@ -44,20 +47,19 @@ ViewSettings::ViewSettings(bContext *context)
   View3D *view3d = CTX_wm_view3d(context);
   RegionView3D *region_data = static_cast<RegionView3D *>(CTX_wm_region_data(context));
   ARegion *region = CTX_wm_region(context);
+  Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(context);
+  Scene *scene = DEG_get_evaluated_scene(depsgraph);
 
   screen_width = region->winx;
   screen_height = region->winy;
-
-  Scene *scene = CTX_data_scene(context);
 
   /* Getting render border. */
   int x1 = 0, y1 = 0;
   int x2 = screen_width, y2 = screen_height;
 
   if (region_data->persp == RV3D_CAMOB) {
-    if (scene->r.mode & R_BORDER) {
-      Object *camera_obj = scene->camera;
-
+    Object *camera_obj = scene->camera;
+    if ((scene->r.mode & R_BORDER) && camera_obj && camera_obj->type == OB_CAMERA) {
       float camera_points[4][3];
       BKE_camera_view_frame(scene, static_cast<Camera *>(camera_obj->data), camera_points);
 
@@ -113,7 +115,7 @@ ViewSettings::ViewSettings(bContext *context)
 
   border = pxr::GfVec4i(x1, y1, x2, y2);
 
-  camera = gf_camera(CTX_data_ensure_evaluated_depsgraph(context),
+  camera = gf_camera(depsgraph,
                      view3d,
                      region,
                      pxr::GfVec4f(float(border[0]) / screen_width,
@@ -137,8 +139,8 @@ DrawTexture::DrawTexture()
   float coords[8] = {0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0};
 
   GPUVertFormat format = {0};
-  GPU_vertformat_attr_add(&format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
-  GPU_vertformat_attr_add(&format, "texCoord", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+  GPU_vertformat_attr_add(&format, "pos", gpu::VertAttrType::SFLOAT_32_32);
+  GPU_vertformat_attr_add(&format, "texCoord", gpu::VertAttrType::SFLOAT_32_32);
   gpu::VertBuf *vbo = GPU_vertbuf_create_with_format(format);
   GPU_vertbuf_data_alloc(*vbo, 4);
   GPU_vertbuf_attr_fill(vbo, 0, coords);
@@ -155,29 +157,50 @@ DrawTexture::~DrawTexture()
   GPU_batch_discard(batch_);
 }
 
-void DrawTexture::write_data(int width, int height, const void *data)
+void DrawTexture::create_from_buffer(pxr::HdRenderBuffer *buffer)
 {
-  if (texture_ && width == GPU_texture_width(texture_) && height == GPU_texture_height(texture_)) {
-    if (data) {
-      GPU_texture_update(texture_, GPU_DATA_FLOAT, data);
-    }
+  if (buffer == nullptr) {
     return;
   }
 
-  if (texture_) {
-    GPU_texture_free(texture_);
+  blender::gpu::TextureFormat texture_format;
+  eGPUDataFormat data_format;
+
+  if (buffer->GetFormat() == pxr::HdFormat::HdFormatFloat16Vec4) {
+    texture_format = blender::gpu::TextureFormat::SFLOAT_16_16_16_16;
+    data_format = GPU_DATA_HALF_FLOAT;
+  }
+  else {
+    texture_format = blender::gpu::TextureFormat::SFLOAT_32_32_32_32;
+    data_format = GPU_DATA_FLOAT;
   }
 
-  texture_ = GPU_texture_create_2d("tex_hydra_render_viewport",
-                                   width,
-                                   height,
-                                   1,
-                                   GPU_RGBA32F,
-                                   GPU_TEXTURE_USAGE_GENERAL,
-                                   (float *)data);
+  if (texture_ && (GPU_texture_width(texture_) != buffer->GetWidth() ||
+                   GPU_texture_height(texture_) != buffer->GetHeight() ||
+                   GPU_texture_format(texture_) != texture_format))
+  {
+    GPU_texture_free(texture_);
+    texture_ = nullptr;
+  }
+
+  if (texture_ == nullptr) {
+    texture_ = GPU_texture_create_2d("tex_hydra_render_viewport",
+                                     buffer->GetWidth(),
+                                     buffer->GetHeight(),
+                                     1,
+                                     texture_format,
+                                     GPU_TEXTURE_USAGE_GENERAL,
+                                     nullptr);
+  }
+
+  void *data = buffer->Map();
+  GPU_texture_update(texture_, data_format, data);
+  buffer->Unmap();
 }
 
-void DrawTexture::draw(GPUShader *shader, const pxr::GfVec4d &viewport, GPUTexture *tex)
+void DrawTexture::draw(gpu::Shader *shader,
+                       const pxr::GfVec4d &viewport,
+                       blender::gpu::Texture *tex)
 {
   if (!tex) {
     tex = texture_;
@@ -194,7 +217,7 @@ void DrawTexture::draw(GPUShader *shader, const pxr::GfVec4d &viewport, GPUTextu
   GPU_matrix_pop();
 }
 
-GPUTexture *DrawTexture::texture() const
+blender::gpu::Texture *DrawTexture::texture() const
 {
   return texture_;
 }
@@ -217,7 +240,7 @@ void ViewportEngine::render()
   render_task_delegate_->add_aov(pxr::HdAovTokens->color);
   render_task_delegate_->add_aov(pxr::HdAovTokens->depth);
 
-  GPUFrameBuffer *view_framebuffer = GPU_framebuffer_active_get();
+  blender::gpu::FrameBuffer *view_framebuffer = GPU_framebuffer_active_get();
   render_task_delegate_->bind();
 
   auto t = tasks();
@@ -226,7 +249,7 @@ void ViewportEngine::render()
   render_task_delegate_->unbind();
 
   GPU_framebuffer_bind(view_framebuffer);
-  GPUShader *shader = GPU_shader_get_builtin_shader(GPU_SHADER_3D_IMAGE);
+  gpu::Shader *shader = GPU_shader_get_builtin_shader(GPU_SHADER_3D_IMAGE);
   GPU_shader_bind(shader);
 
   pxr::GfVec4d draw_viewport(view_settings.border[0],
@@ -236,11 +259,11 @@ void ViewportEngine::render()
   GPURenderTaskDelegate *gpu_task = dynamic_cast<GPURenderTaskDelegate *>(
       render_task_delegate_.get());
   if (gpu_task) {
-    draw_texture_.draw(shader, draw_viewport, gpu_task->aov_texture(pxr::HdAovTokens->color));
+    draw_texture_.draw(shader, draw_viewport, gpu_task->get_aov_texture(pxr::HdAovTokens->color));
   }
   else {
-    draw_texture_.write_data(view_settings.width(), view_settings.height(), nullptr);
-    render_task_delegate_->read_aov(pxr::HdAovTokens->color, draw_texture_.texture());
+    draw_texture_.create_from_buffer(
+        render_task_delegate_->get_aov_buffer(pxr::HdAovTokens->color));
     draw_texture_.draw(shader, draw_viewport);
   }
 

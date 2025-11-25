@@ -15,13 +15,13 @@
 
 #include "DNA_screen_types.h"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "RNA_access.hh"
 
-#include "FX_shader_types.h"
-#include "FX_ui_common.h"
+#include "FX_shader_types.hh"
+#include "FX_ui_common.hh"
 
 static void init_data(ShaderFxData *fx)
 {
@@ -43,15 +43,15 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
 
   PointerRNA *ptr = shaderfx_panel_get_property_pointers(panel, nullptr);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiItemR(layout, ptr, "samples", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "samples", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  uiItemR(layout, ptr, "use_dof_mode", UI_ITEM_NONE, IFACE_("Use Depth of Field"), ICON_NONE);
-  col = uiLayoutColumn(layout, false);
-  uiLayoutSetActive(col, !RNA_boolean_get(ptr, "use_dof_mode"));
-  uiItemR(col, ptr, "size", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "rotation", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "use_dof_mode", UI_ITEM_NONE, IFACE_("Use Depth of Field"), ICON_NONE);
+  col = &layout->column(false);
+  col->active_set(!RNA_boolean_get(ptr, "use_dof_mode"));
+  col->prop(ptr, "size", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col->prop(ptr, "rotation", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   shaderfx_panel_end(layout, ptr);
 }
@@ -76,5 +76,6 @@ ShaderFxTypeInfo shaderfx_Type_Blur = {
     /*update_depsgraph*/ nullptr,
     /*depends_on_time*/ nullptr,
     /*foreach_ID_link*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
     /*panel_register*/ panel_register,
 };

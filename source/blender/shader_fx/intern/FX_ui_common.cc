@@ -7,13 +7,14 @@
  */
 
 #include "BLI_listbase.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "MEM_guardedalloc.h"
 
 #include "BKE_context.hh"
+#include "BKE_library.hh"
 #include "BKE_screen.hh"
-#include "BKE_shader_fx.h"
+#include "BKE_shader_fx.hh"
 
 #include "DNA_object_types.h"
 #include "DNA_screen_types.h"
@@ -24,6 +25,7 @@
 #include "BLT_translation.hh"
 
 #include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "RNA_access.hh"
@@ -32,7 +34,7 @@
 #include "WM_api.hh"
 #include "WM_types.hh"
 
-#include "FX_ui_common.h" /* Self include */
+#include "FX_ui_common.hh" /* Self include */
 
 /* -------------------------------------------------------------------- */
 /** \name Panel Drag and Drop, Expansion Saving
@@ -51,7 +53,7 @@ static void shaderfx_reorder(bContext *C, Panel *panel, int new_index)
   WM_operator_properties_create_ptr(&props_ptr, ot);
   RNA_string_set(&props_ptr, "shaderfx", fx->name);
   RNA_int_set(&props_ptr, "index", new_index);
-  WM_operator_name_call_ptr(C, ot, WM_OP_INVOKE_DEFAULT, &props_ptr, nullptr);
+  WM_operator_name_call_ptr(C, ot, blender::wm::OpCallContext::InvokeDefault, &props_ptr, nullptr);
   WM_operator_properties_free(&props_ptr);
 }
 
@@ -85,8 +87,8 @@ void shaderfx_panel_end(uiLayout *layout, PointerRNA *ptr)
 {
   ShaderFxData *fx = static_cast<ShaderFxData *>(ptr->data);
   if (fx->error) {
-    uiLayout *row = uiLayoutRow(layout, false);
-    uiItemL(row, RPT_(fx->error), ICON_ERROR);
+    uiLayout *row = &layout->row(false);
+    row->label(RPT_(fx->error), ICON_ERROR);
   }
 }
 
@@ -114,47 +116,40 @@ static void gpencil_shaderfx_ops_extra_draw(bContext *C, uiLayout *layout, void 
 
   Object *ob = blender::ed::object::context_active_object(C);
   PointerRNA ptr = RNA_pointer_create_discrete(&ob->id, &RNA_ShaderFx, fx);
-  uiLayoutSetContextPointer(layout, "shaderfx", &ptr);
-  uiLayoutSetOperatorContext(layout, WM_OP_INVOKE_DEFAULT);
+  layout->context_ptr_set("shaderfx", &ptr);
+  layout->operator_context_set(blender::wm::OpCallContext::InvokeDefault);
 
-  uiLayoutSetUnitsX(layout, 4.0f);
+  layout->ui_units_x_set(4.0f);
 
   /* Duplicate. */
-  uiItemO(layout,
-          CTX_IFACE_(BLT_I18NCONTEXT_OPERATOR_DEFAULT, "Duplicate"),
-          ICON_DUPLICATE,
-          "OBJECT_OT_shaderfx_copy");
+  layout->op("OBJECT_OT_shaderfx_copy",
+             CTX_IFACE_(BLT_I18NCONTEXT_OPERATOR_DEFAULT, "Duplicate"),
+             ICON_DUPLICATE);
 
-  uiItemS(layout);
+  layout->separator();
 
   /* Move to first. */
-  row = uiLayoutColumn(layout, false);
-  uiItemFullO(row,
-              "OBJECT_OT_shaderfx_move_to_index",
-              IFACE_("Move to First"),
-              ICON_TRIA_UP,
-              nullptr,
-              WM_OP_INVOKE_DEFAULT,
-              UI_ITEM_NONE,
-              &op_ptr);
+  row = &layout->column(false);
+  op_ptr = row->op("OBJECT_OT_shaderfx_move_to_index",
+                   IFACE_("Move to First"),
+                   ICON_TRIA_UP,
+                   blender::wm::OpCallContext::InvokeDefault,
+                   UI_ITEM_NONE);
   RNA_int_set(&op_ptr, "index", 0);
   if (!fx->prev) {
-    uiLayoutSetEnabled(row, false);
+    row->enabled_set(false);
   }
 
   /* Move to last. */
-  row = uiLayoutColumn(layout, false);
-  uiItemFullO(row,
-              "OBJECT_OT_shaderfx_move_to_index",
-              IFACE_("Move to Last"),
-              ICON_TRIA_DOWN,
-              nullptr,
-              WM_OP_INVOKE_DEFAULT,
-              UI_ITEM_NONE,
-              &op_ptr);
+  row = &layout->column(false);
+  op_ptr = row->op("OBJECT_OT_shaderfx_move_to_index",
+                   IFACE_("Move to Last"),
+                   ICON_TRIA_DOWN,
+                   blender::wm::OpCallContext::InvokeDefault,
+                   UI_ITEM_NONE);
   RNA_int_set(&op_ptr, "index", BLI_listbase_count(&ob->shader_fx) - 1);
   if (!fx->next) {
-    uiLayoutSetEnabled(row, false);
+    row->enabled_set(false);
   }
 }
 
@@ -169,39 +164,39 @@ static void shaderfx_panel_header(const bContext * /*C*/, Panel *panel)
 
   const ShaderFxTypeInfo *fxti = BKE_shaderfx_get_info(ShaderFxType(fx->type));
 
-  UI_block_lock_set(uiLayoutGetBlock(layout), (ob && !ID_IS_EDITABLE(ob)), ERROR_LIBDATA_MESSAGE);
+  UI_block_lock_set(layout->block(), (ob && !ID_IS_EDITABLE(ob)), ERROR_LIBDATA_MESSAGE);
 
   /* Effect type icon. */
-  uiLayout *row = uiLayoutRow(layout, false);
+  uiLayout *row = &layout->row(false);
   if (fxti->is_disabled && fxti->is_disabled(fx, false)) {
-    uiLayoutSetRedAlert(row, true);
+    row->red_alert_set(true);
   }
-  uiItemL(row, "", RNA_struct_ui_icon(ptr->type));
+  row->label("", RNA_struct_ui_icon(ptr->type));
 
   /* Effect name. */
-  row = uiLayoutRow(layout, true);
+  row = &layout->row(true);
   if (!narrow_panel) {
-    uiItemR(row, ptr, "name", UI_ITEM_NONE, "", ICON_NONE);
+    row->prop(ptr, "name", UI_ITEM_NONE, "", ICON_NONE);
   }
 
   /* Mode enabling buttons. */
   if (fxti->flags & eShaderFxTypeFlag_SupportsEditmode) {
-    uiLayout *sub = uiLayoutRow(row, true);
-    uiLayoutSetActive(sub, false);
-    uiItemR(sub, ptr, "show_in_editmode", UI_ITEM_NONE, "", ICON_NONE);
+    uiLayout *sub = &row->row(true);
+    sub->active_set(false);
+    sub->prop(ptr, "show_in_editmode", UI_ITEM_NONE, "", ICON_NONE);
   }
-  uiItemR(row, ptr, "show_viewport", UI_ITEM_NONE, "", ICON_NONE);
-  uiItemR(row, ptr, "show_render", UI_ITEM_NONE, "", ICON_NONE);
+  row->prop(ptr, "show_viewport", UI_ITEM_NONE, "", ICON_NONE);
+  row->prop(ptr, "show_render", UI_ITEM_NONE, "", ICON_NONE);
 
   /* Extra operators. */
-  uiItemMenuF(row, "", ICON_DOWNARROW_HLT, gpencil_shaderfx_ops_extra_draw, fx);
+  row->menu_fn("", ICON_DOWNARROW_HLT, gpencil_shaderfx_ops_extra_draw, fx);
 
-  row = uiLayoutRow(row, false);
-  uiLayoutSetEmboss(row, UI_EMBOSS_NONE);
-  uiItemO(row, "", ICON_X, "OBJECT_OT_shaderfx_remove");
+  row = &row->row(false);
+  row->emboss_set(blender::ui::EmbossType::None);
+  row->op("OBJECT_OT_shaderfx_remove", "", ICON_X);
 
   /* Some padding so the X isn't too close to the drag icon. */
-  uiItemS(layout);
+  layout->separator();
 }
 
 /** \} */
@@ -219,12 +214,12 @@ static bool shaderfx_ui_poll(const bContext *C, PanelType * /*pt*/)
 
 PanelType *shaderfx_panel_register(ARegionType *region_type, ShaderFxType type, PanelDrawFn draw)
 {
-  PanelType *panel_type = static_cast<PanelType *>(MEM_callocN(sizeof(PanelType), __func__));
+  PanelType *panel_type = MEM_callocN<PanelType>(__func__);
 
   BKE_shaderfxType_panel_id(type, panel_type->idname);
-  STRNCPY(panel_type->label, "");
-  STRNCPY(panel_type->context, "shaderfx");
-  STRNCPY(panel_type->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
+  STRNCPY_UTF8(panel_type->label, "");
+  STRNCPY_UTF8(panel_type->context, "shaderfx");
+  STRNCPY_UTF8(panel_type->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
 
   panel_type->draw_header = shaderfx_panel_header;
   panel_type->draw = draw;
@@ -249,20 +244,20 @@ PanelType *shaderfx_subpanel_register(ARegionType *region_type,
                                       PanelDrawFn draw,
                                       PanelType *parent)
 {
-  PanelType *panel_type = static_cast<PanelType *>(MEM_callocN(sizeof(PanelType), __func__));
+  PanelType *panel_type = MEM_callocN<PanelType>(__func__);
 
   BLI_assert(parent != nullptr);
-  SNPRINTF(panel_type->idname, "%s_%s", parent->idname, name);
-  STRNCPY(panel_type->label, label);
-  STRNCPY(panel_type->context, "shaderfx");
-  STRNCPY(panel_type->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
+  SNPRINTF_UTF8(panel_type->idname, "%s_%s", parent->idname, name);
+  STRNCPY_UTF8(panel_type->label, label);
+  STRNCPY_UTF8(panel_type->context, "shaderfx");
+  STRNCPY_UTF8(panel_type->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
 
   panel_type->draw_header = draw_header;
   panel_type->draw = draw;
   panel_type->poll = shaderfx_ui_poll;
   panel_type->flag = PANEL_TYPE_DEFAULT_CLOSED;
 
-  STRNCPY(panel_type->parent_id, parent->idname);
+  STRNCPY_UTF8(panel_type->parent_id, parent->idname);
   panel_type->parent = parent;
   BLI_addtail(&parent->children, BLI_genericNodeN(panel_type));
   BLI_addtail(&region_type->paneltypes, panel_type);

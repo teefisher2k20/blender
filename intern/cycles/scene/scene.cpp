@@ -5,8 +5,9 @@
 #include <cstdlib>
 
 #include "bvh/bvh.h"
+
 #include "device/device.h"
-#include "scene/alembic.h"
+
 #include "scene/background.h"
 #include "scene/bake.h"
 #include "scene/camera.h"
@@ -27,6 +28,7 @@
 #include "scene/svm.h"
 #include "scene/tables.h"
 #include "scene/volume.h"
+
 #include "session/session.h"
 
 #include "util/guarded_allocator.h"
@@ -53,8 +55,9 @@ Scene ::Scene(const SceneParams &params_, Device *device)
 {
   memset((void *)&dscene.data, 0, sizeof(dscene.data));
 
-  shader_manager = ShaderManager::create(
-      device->info.has_osl ? params.shadingsystem : SHADINGSYSTEM_SVM, device);
+  osl_manager = make_unique<OSLManager>(device);
+  shader_manager = ShaderManager::create(device->info.has_osl ? params.shadingsystem :
+                                                                SHADINGSYSTEM_SVM);
 
   light_manager = make_unique<LightManager>();
   geometry_manager = make_unique<GeometryManager>();
@@ -63,6 +66,7 @@ Scene ::Scene(const SceneParams &params_, Device *device)
   particle_system_manager = make_unique<ParticleSystemManager>();
   bake_manager = make_unique<BakeManager>();
   procedural_manager = make_unique<ProceduralManager>();
+  volume_manager = make_unique<VolumeManager>();
 
   /* Create nodes after managers, since create_node() can tag the managers. */
   camera = create_node<Camera>();
@@ -99,7 +103,6 @@ void Scene::free_memory(bool final)
   procedurals.clear();
   objects.clear();
   geometry.clear();
-  lights.clear();
   particle_systems.clear();
   passes.clear();
 
@@ -133,11 +136,11 @@ void Scene::free_memory(bool final)
     object_manager->device_free(device, &dscene, true);
     geometry_manager->device_free(device, &dscene, true);
     shader_manager->device_free(device, &dscene, this);
+    osl_manager->device_free(device, &dscene, this);
     light_manager->device_free(device, &dscene);
-
     particle_system_manager->device_free(device, &dscene);
-
     bake_manager->device_free(device, &dscene);
+    volume_manager->device_free(&dscene);
 
     if (final) {
       image_manager->device_free(device);
@@ -154,12 +157,14 @@ void Scene::free_memory(bool final)
     object_manager.reset();
     geometry_manager.reset();
     shader_manager.reset();
+    osl_manager.reset();
     light_manager.reset();
     particle_system_manager.reset();
     image_manager.reset();
     bake_manager.reset();
     update_stats.reset();
     procedural_manager.reset();
+    volume_manager.reset();
   }
 }
 
@@ -170,43 +175,79 @@ void Scene::device_update(Device *device_, Progress &progress)
   }
 
   const bool print_stats = need_data_update();
+  bool kernels_reloaded = false;
 
-  if (update_stats) {
-    update_stats->clear();
-  }
-
-  const scoped_callback_timer timer([this, print_stats](double time) {
+  while (true) {
     if (update_stats) {
-      update_stats->scene.times.add_entry({"device_update", time});
-
-      if (print_stats) {
-        printf("Update statistics:\n%s\n", update_stats->full_report().c_str());
-      }
+      update_stats->clear();
     }
-  });
 
-  /* The order of updates is important, because there's dependencies between
-   * the different managers, using data computed by previous managers.
-   *
-   * - Image manager uploads images used by shaders.
-   * - Camera may be used for adaptive subdivision.
-   * - Displacement shader must have all shader data available.
-   * - Light manager needs lookup tables and final mesh data to compute emission
-   * CDF.
-   * - Lookup tables are done a second time to handle film tables
-   */
+    const scoped_callback_timer timer([this, print_stats](double time) {
+      if (update_stats) {
+        update_stats->scene.times.add_entry({"device_update", time});
 
-  if (film->update_lightgroups(this)) {
-    light_manager->tag_update(this, ccl::LightManager::LIGHT_MODIFIED);
-    object_manager->tag_update(this, ccl::ObjectManager::OBJECT_MODIFIED);
-    background->tag_modified();
+        if (print_stats) {
+          printf("Update statistics:\n%s\n", update_stats->full_report().c_str());
+        }
+      }
+    });
+
+    /* The order of updates is important, because there's dependencies between
+     * the different managers, using data computed by previous managers. */
+
+    if (film->update_lightgroups(this)) {
+      light_manager->tag_update(this, ccl::LightManager::LIGHT_MODIFIED);
+      object_manager->tag_update(this, ccl::ObjectManager::OBJECT_MODIFIED);
+      background->tag_modified();
+    }
+    if (film->exposure_is_modified()) {
+      integrator->tag_modified();
+    }
+
+    /* Compile shaders and get information about features they used. */
+    progress.set_status("Updating Shaders");
+    osl_manager->device_update_pre(device, this);
+    shader_manager->device_update_pre(device, &dscene, this, progress);
+
+    if (progress.get_cancel() || device->have_error()) {
+      return;
+    }
+
+    /* Passes. After shader manager as this depends on the shaders. */
+    film->update_passes(this);
+
+    /* Update kernel features. After shaders and passes since those affect features. */
+    update_kernel_features();
+
+    /* Load render kernels, before uploading most data to the GPU, and before displacement and
+     * background light need to run kernels.
+     *
+     * Do it outside of the scene mutex since the heavy part of the loading (i.e. kernel
+     * compilation) does not depend on the scene and some other functionality (like display
+     * driver) might be waiting on the scene mutex to synchronize display pass.
+     *
+     * This does mean the scene might have gotten updated in the meantime, in which case
+     * we have to redo the first part of the scene update. */
+    const uint kernel_features = dscene.data.kernel_features;
+    scene_updated_while_loading_kernels = false;
+    if (!kernels_loaded || loaded_kernel_features != kernel_features) {
+      mutex.unlock();
+      kernels_reloaded |= load_kernels(progress);
+      mutex.lock();
+    }
+
+    if (progress.get_cancel() || device->have_error()) {
+      return;
+    }
+
+    if (!scene_updated_while_loading_kernels) {
+      break;
+    }
   }
-  if (film->exposure_is_modified()) {
-    integrator->tag_modified();
-  }
 
-  progress.set_status("Updating Shaders");
-  shader_manager->device_update(device, &dscene, this, progress);
+  /* Upload shaders to GPU and compile OSL kernels, after kernels have been loaded. */
+  shader_manager->device_update_post(device, &dscene, this, progress);
+  osl_manager->device_update_post(device, this, progress, kernels_reloaded);
 
   if (progress.get_cancel() || device->have_error()) {
     return;
@@ -225,6 +266,7 @@ void Scene::device_update(Device *device_, Progress &progress)
     return;
   }
 
+  /* Camera will be used by adaptive subdivision, so do early. */
   progress.set_status("Updating Camera");
   camera->device_update(device, &dscene, this);
 
@@ -233,11 +275,11 @@ void Scene::device_update(Device *device_, Progress &progress)
   }
 
   geometry_manager->device_update_preprocess(device, this, progress);
-
   if (progress.get_cancel() || device->have_error()) {
     return;
   }
 
+  /* Update objects after geometry preprocessing. */
   progress.set_status("Updating Objects");
   object_manager->device_update(device, &dscene, this, progress);
 
@@ -252,6 +294,7 @@ void Scene::device_update(Device *device_, Progress &progress)
     return;
   }
 
+  /* Camera and shaders must be ready here for adaptive subdivision and displacement. */
   progress.set_status("Updating Meshes");
   geometry_manager->device_update(device, &dscene, this, progress);
 
@@ -259,6 +302,7 @@ void Scene::device_update(Device *device_, Progress &progress)
     return;
   }
 
+  /* Update object flags with final geometry. */
   progress.set_status("Updating Objects Flags");
   object_manager->device_update_flags(device, &dscene, this, progress);
 
@@ -266,6 +310,7 @@ void Scene::device_update(Device *device_, Progress &progress)
     return;
   }
 
+  /* Update BVH primitive objects with final geometry. */
   progress.set_status("Updating Primitive Offsets");
   object_manager->device_update_prim_offsets(device, &dscene, this);
 
@@ -273,8 +318,18 @@ void Scene::device_update(Device *device_, Progress &progress)
     return;
   }
 
+  /* Images last, as they should be more likely to use host memory fallback than geometry.
+   * Some images may have been uploaded early for displacement already at this point. */
   progress.set_status("Updating Images");
   image_manager->device_update(device, this, progress);
+
+  if (progress.get_cancel() || device->have_error()) {
+    return;
+  }
+
+  /* Evaluate volume shader to build volume octrees. */
+  progress.set_status("Updating Volume");
+  volume_manager->device_update(device, &dscene, this, progress);
 
   if (progress.get_cancel() || device->have_error()) {
     return;
@@ -294,6 +349,7 @@ void Scene::device_update(Device *device_, Progress &progress)
     return;
   }
 
+  /* Light manager needs shaders and final meshes for triangles in light tree. */
   progress.set_status("Updating Lights");
   light_manager->device_update(device, &dscene, this, progress);
 
@@ -315,6 +371,7 @@ void Scene::device_update(Device *device_, Progress &progress)
     return;
   }
 
+  /* Update lookup tables a second time for film tables. */
   progress.set_status("Updating Lookup Tables");
   lookup_tables->device_update(device, &dscene, this);
 
@@ -342,11 +399,11 @@ void Scene::device_update(Device *device_, Progress &progress)
     const size_t mem_used = util_guarded_get_mem_used();
     const size_t mem_peak = util_guarded_get_mem_peak();
 
-    VLOG_INFO << "System memory statistics after full device sync:\n"
-              << "  Usage: " << string_human_readable_number(mem_used) << " ("
-              << string_human_readable_size(mem_used) << ")\n"
-              << "  Peak: " << string_human_readable_number(mem_peak) << " ("
-              << string_human_readable_size(mem_peak) << ")";
+    LOG_INFO << "System memory statistics after full device sync:\n"
+             << "  Usage: " << string_human_readable_number(mem_used) << " ("
+             << string_human_readable_size(mem_used) << ")\n"
+             << "  Peak: " << string_human_readable_number(mem_peak) << " ("
+             << string_human_readable_size(mem_peak) << ")";
   }
 }
 
@@ -420,8 +477,8 @@ bool Scene::need_reset(const bool check_camera)
 
 void Scene::reset()
 {
-  shader_manager->reset(this);
-  ccl::ShaderManager::add_default(this);
+  osl_manager->reset(this);
+  ShaderManager::add_default(this);
 
   /* ensure all objects are updated */
   camera->tag_modified();
@@ -462,17 +519,16 @@ void Scene::update_kernel_features()
     return;
   }
 
-  const thread_scoped_lock scene_lock(mutex);
-
   /* These features are not being tweaked as often as shaders,
    * so could be done selective magic for the viewport as well. */
   uint kernel_features = shader_manager->get_kernel_features(this);
 
   const bool use_motion = need_motion() == Scene::MotionType::MOTION_BLUR;
   kernel_features |= KERNEL_FEATURE_PATH_TRACING;
-  if (params.hair_shape == CURVE_THICK) {
-    kernel_features |= KERNEL_FEATURE_HAIR_THICK;
-  }
+
+  /* Track the max prim count in case the backend needs to rebuild BVHs or
+   * kernels to support different limits. */
+  size_t kernel_max_prim_count = 0;
 
   /* Figure out whether the scene will use shader ray-trace we need at least
    * one caustic light, one caustic caster and one caustic receiver to use
@@ -494,40 +550,34 @@ void Scene::update_kernel_features()
         kernel_features |= KERNEL_FEATURE_OBJECT_MOTION;
       }
     }
-    if (object->get_is_shadow_catcher()) {
+    if (object->get_is_shadow_catcher() && !geom->is_light()) {
       kernel_features |= KERNEL_FEATURE_SHADOW_CATCHER;
     }
-    if (geom->is_mesh()) {
-#ifdef WITH_OPENSUBDIV
-      Mesh *mesh = static_cast<Mesh *>(geom);
-      if (mesh->get_subdivision_type() != Mesh::SUBDIVISION_NONE) {
-        kernel_features |= KERNEL_FEATURE_PATCH_EVALUATION;
-      }
-#endif
-    }
-    else if (geom->is_hair()) {
-      kernel_features |= KERNEL_FEATURE_HAIR;
+    if (geom->is_hair()) {
+      const Hair *hair = static_cast<const Hair *>(geom);
+      kernel_features |= (hair->curve_shape == CURVE_RIBBON) ? KERNEL_FEATURE_HAIR_RIBBON :
+                                                               KERNEL_FEATURE_HAIR_THICK;
+      kernel_max_prim_count = max(kernel_max_prim_count, hair->num_segments());
     }
     else if (geom->is_pointcloud()) {
       kernel_features |= KERNEL_FEATURE_POINTCLOUD;
+      kernel_max_prim_count = max(kernel_max_prim_count,
+                                  static_cast<PointCloud *>(geom)->num_points());
+    }
+    else if (geom->is_mesh()) {
+      kernel_max_prim_count = max(kernel_max_prim_count,
+                                  static_cast<Mesh *>(geom)->num_triangles());
+    }
+    else if (geom->is_light()) {
+      const Light *light = static_cast<const Light *>(object->get_geometry());
+      if (light->get_use_caustics()) {
+        has_caustics_light = true;
+      }
     }
     if (object->has_light_linking()) {
       kernel_features |= KERNEL_FEATURE_LIGHT_LINKING;
     }
     if (object->has_shadow_linking()) {
-      kernel_features |= KERNEL_FEATURE_SHADOW_LINKING;
-    }
-  }
-
-  for (Light *light : lights) {
-    if (light->get_use_caustics()) {
-      has_caustics_light = true;
-    }
-
-    if (light->has_light_linking()) {
-      kernel_features |= KERNEL_FEATURE_LIGHT_LINKING;
-    }
-    if (light->has_shadow_linking()) {
       kernel_features |= KERNEL_FEATURE_SHADOW_LINKING;
     }
   }
@@ -549,6 +599,7 @@ void Scene::update_kernel_features()
 
   kernel_features |= film->get_kernel_features(this);
   kernel_features |= integrator->get_kernel_features();
+  kernel_features |= camera->get_kernel_features();
 
   dscene.data.kernel_features = kernel_features;
 
@@ -557,6 +608,16 @@ void Scene::update_kernel_features()
   const uint max_closures = (params.background) ? get_max_closure_count() : MAX_CLOSURE;
   dscene.data.max_closures = max_closures;
   dscene.data.max_shaders = shaders.size();
+
+  /* Inform the device of the BVH limits. If this returns true, all BVHs
+   * and kernels need to be rebuilt. */
+  if (device->set_bvh_limits(objects.size(), kernel_max_prim_count)) {
+    kernels_loaded = false;
+    for (Geometry *geom : geometry) {
+      geom->need_update_rebuild = true;
+      geom->tag_modified();
+    }
+  }
 }
 
 bool Scene::update(Progress &progress)
@@ -572,67 +633,65 @@ bool Scene::update(Progress &progress)
   return true;
 }
 
+bool Scene::update_camera_resolution(Progress &progress, int width, int height)
+{
+  if (!camera->set_screen_size(width, height)) {
+    return false;
+  }
+
+  camera->device_update(device, &dscene, this);
+
+  progress.set_status("Updating Device", "Writing constant memory");
+  device->const_copy_to("data", &dscene.data, sizeof(dscene.data));
+  return true;
+}
+
 static void log_kernel_features(const uint features)
 {
-  VLOG_INFO << "Requested features:\n";
-  VLOG_INFO << "Use BSDF " << string_from_bool(features & KERNEL_FEATURE_NODE_BSDF) << "\n";
-  VLOG_INFO << "Use Emission " << string_from_bool(features & KERNEL_FEATURE_NODE_EMISSION)
-            << "\n";
-  VLOG_INFO << "Use Volume " << string_from_bool(features & KERNEL_FEATURE_NODE_VOLUME) << "\n";
-  VLOG_INFO << "Use Bump " << string_from_bool(features & KERNEL_FEATURE_NODE_BUMP) << "\n";
-  VLOG_INFO << "Use Voronoi " << string_from_bool(features & KERNEL_FEATURE_NODE_VORONOI_EXTRA)
-            << "\n";
-  VLOG_INFO << "Use Shader Raytrace " << string_from_bool(features & KERNEL_FEATURE_NODE_RAYTRACE)
-            << "\n";
-  VLOG_INFO << "Use MNEE " << string_from_bool(features & KERNEL_FEATURE_MNEE) << "\n";
-  VLOG_INFO << "Use Transparent " << string_from_bool(features & KERNEL_FEATURE_TRANSPARENT)
-            << "\n";
-  VLOG_INFO << "Use Denoising " << string_from_bool(features & KERNEL_FEATURE_DENOISING) << "\n";
-  VLOG_INFO << "Use Path Tracing " << string_from_bool(features & KERNEL_FEATURE_PATH_TRACING)
-            << "\n";
-  VLOG_INFO << "Use Hair " << string_from_bool(features & KERNEL_FEATURE_HAIR) << "\n";
-  VLOG_INFO << "Use Pointclouds " << string_from_bool(features & KERNEL_FEATURE_POINTCLOUD)
-            << "\n";
-  VLOG_INFO << "Use Object Motion " << string_from_bool(features & KERNEL_FEATURE_OBJECT_MOTION)
-            << "\n";
-  VLOG_INFO << "Use Baking " << string_from_bool(features & KERNEL_FEATURE_BAKING) << "\n";
-  VLOG_INFO << "Use Subsurface " << string_from_bool(features & KERNEL_FEATURE_SUBSURFACE) << "\n";
-  VLOG_INFO << "Use Volume " << string_from_bool(features & KERNEL_FEATURE_VOLUME) << "\n";
-  VLOG_INFO << "Use Patch Evaluation "
-            << string_from_bool(features & KERNEL_FEATURE_PATCH_EVALUATION) << "\n";
-  VLOG_INFO << "Use Shadow Catcher " << string_from_bool(features & KERNEL_FEATURE_SHADOW_CATCHER)
-            << "\n";
+  LOG_INFO << "Requested features:";
+  LOG_INFO << "Use BSDF " << string_from_bool(features & KERNEL_FEATURE_NODE_BSDF);
+  LOG_INFO << "Use Emission " << string_from_bool(features & KERNEL_FEATURE_NODE_EMISSION);
+  LOG_INFO << "Use Volume " << string_from_bool(features & KERNEL_FEATURE_NODE_VOLUME);
+  LOG_INFO << "Use Bump " << string_from_bool(features & KERNEL_FEATURE_NODE_BUMP);
+  LOG_INFO << "Use Voronoi " << string_from_bool(features & KERNEL_FEATURE_NODE_VORONOI_EXTRA);
+  LOG_INFO << "Use Shader Raytrace " << string_from_bool(features & KERNEL_FEATURE_NODE_RAYTRACE);
+  LOG_INFO << "Use MNEE " << string_from_bool(features & KERNEL_FEATURE_MNEE);
+  LOG_INFO << "Use Transparent " << string_from_bool(features & KERNEL_FEATURE_TRANSPARENT);
+  LOG_INFO << "Use Denoising " << string_from_bool(features & KERNEL_FEATURE_DENOISING);
+  LOG_INFO << "Use Path Tracing " << string_from_bool(features & KERNEL_FEATURE_PATH_TRACING);
+  LOG_INFO << "Use Hair " << string_from_bool(features & KERNEL_FEATURE_HAIR);
+  LOG_INFO << "Use Pointclouds " << string_from_bool(features & KERNEL_FEATURE_POINTCLOUD);
+  LOG_INFO << "Use Object Motion " << string_from_bool(features & KERNEL_FEATURE_OBJECT_MOTION);
+  LOG_INFO << "Use Baking " << string_from_bool(features & KERNEL_FEATURE_BAKING);
+  LOG_INFO << "Use Subsurface " << string_from_bool(features & KERNEL_FEATURE_SUBSURFACE);
+  LOG_INFO << "Use Volume " << string_from_bool(features & KERNEL_FEATURE_VOLUME);
+  LOG_INFO << "Use Shadow Catcher " << string_from_bool(features & KERNEL_FEATURE_SHADOW_CATCHER);
+  LOG_INFO << "Use Portal Node " << string_from_bool(features & KERNEL_FEATURE_NODE_PORTAL);
 }
 
 bool Scene::load_kernels(Progress &progress)
 {
-  update_kernel_features();
+  progress.set_status("Loading render kernels (may take a few minutes the first time)");
+
+  const scoped_timer timer;
 
   const uint kernel_features = dscene.data.kernel_features;
-
-  if (!kernels_loaded || loaded_kernel_features != kernel_features) {
-    progress.set_status("Loading render kernels (may take a few minutes the first time)");
-
-    const scoped_timer timer;
-
-    log_kernel_features(kernel_features);
-    if (!device->load_kernels(kernel_features)) {
-      string message = device->error_message();
-      if (message.empty()) {
-        message = "Failed loading render kernel, see console for errors";
-      }
-
-      progress.set_error(message);
-      progress.set_status(message);
-      progress.set_update();
-      return false;
+  log_kernel_features(kernel_features);
+  if (!device->load_kernels(kernel_features)) {
+    string message = device->error_message();
+    if (message.empty()) {
+      message = "Failed loading render kernel, see console for errors";
     }
 
-    kernels_loaded = true;
-    loaded_kernel_features = kernel_features;
-    return true;
+    progress.set_error(message);
+    progress.set_status(message);
+    progress.set_update();
+    return false;
   }
-  return false;
+
+  kernels_loaded = true;
+  loaded_kernel_features = kernel_features;
+  return true;
 }
 
 int Scene::get_max_closure_count()
@@ -658,8 +717,8 @@ int Scene::get_max_closure_count()
      * closures discarded due to mixing or low weights. We need to limit
      * to MAX_CLOSURE as this is hardcoded in CPU/mega kernels, and it
      * avoids excessive memory usage for split kernels. */
-    VLOG_WARNING << "Maximum number of closures exceeded: " << max_closure_global << " > "
-                 << MAX_CLOSURE;
+    LOG_WARNING << "Maximum number of closures exceeded: " << max_closure_global << " > "
+                << MAX_CLOSURE;
 
     max_closure_global = MAX_CLOSURE;
   }
@@ -709,7 +768,7 @@ int Scene::get_volume_stack_size() const
 
   volume_stack_size = min(volume_stack_size, MAX_VOLUME_STACK_SIZE);
 
-  VLOG_WORK << "Detected required volume stack size " << volume_stack_size;
+  LOG_DEBUG << "Detected required volume stack size " << volume_stack_size;
 
   return volume_stack_size;
 }
@@ -719,7 +778,10 @@ bool Scene::has_shadow_catcher()
   if (shadow_catcher_modified_) {
     has_shadow_catcher_ = false;
     for (Object *object : objects) {
-      if (object->get_is_shadow_catcher()) {
+      /* Shadow catcher flags on lights only controls effect on other objects, it's
+       * not catching shadows itself. This is on by default, so ignore to avoid
+       * performance impact when there is no actual shadow catcher. */
+      if (object->get_is_shadow_catcher() && !object->get_geometry()->is_light()) {
         has_shadow_catcher_ = true;
         break;
       }
@@ -736,12 +798,28 @@ void Scene::tag_shadow_catcher_modified()
   shadow_catcher_modified_ = true;
 }
 
+bool Scene::has_volume()
+{
+  has_volume_modified_ = false;
+  return dscene.data.integrator.use_volumes;
+}
+
+bool Scene::has_volume_modified() const
+{
+  return has_volume_modified_;
+}
+
+void Scene::tag_has_volume_modified()
+{
+  has_volume_modified_ = true;
+}
+
 template<> Light *Scene::create_node<Light>()
 {
   unique_ptr<Light> node = make_unique<Light>();
   Light *node_ptr = node.get();
   node->set_owner(this);
-  lights.push_back(std::move(node));
+  geometry.push_back(std::move(node));
   light_manager->tag_update(this, LightManager::LIGHT_ADDED);
   return node_ptr;
 }
@@ -816,20 +894,6 @@ template<> Shader *Scene::create_node<Shader>()
   return node_ptr;
 }
 
-template<> AlembicProcedural *Scene::create_node<AlembicProcedural>()
-{
-#ifdef WITH_ALEMBIC
-  unique_ptr<AlembicProcedural> node = make_unique<AlembicProcedural>();
-  AlembicProcedural *node_ptr = node.get();
-  node->set_owner(this);
-  procedurals.push_back(std::move(node));
-  procedural_manager->tag_update();
-  return node_ptr;
-#else
-  return nullptr;
-#endif
-}
-
 template<> Pass *Scene::create_node<Pass>()
 {
   unique_ptr<Pass> node = make_unique<Pass>();
@@ -879,7 +943,7 @@ template<> Film *Scene::create_node<Film>()
 template<> void Scene::delete_node(Light *node)
 {
   assert(node->get_owner() == this);
-  lights.erase_by_swap(node);
+  geometry.erase_by_swap(node);
   light_manager->tag_update(this, LightManager::LIGHT_REMOVED);
 }
 
@@ -921,6 +985,9 @@ template<> void Scene::delete_node(Geometry *node)
   }
   else {
     flag = GeometryManager::MESH_REMOVED;
+    if (node->has_volume) {
+      volume_manager->tag_update(node);
+    }
   }
 
   geometry.erase_by_swap(node);
@@ -930,8 +997,14 @@ template<> void Scene::delete_node(Geometry *node)
 template<> void Scene::delete_node(Object *node)
 {
   assert(node->get_owner() == this);
+
+  uint flag = ObjectManager::OBJECT_REMOVED;
+  if (node->get_geometry()->has_volume) {
+    volume_manager->tag_update(node, flag);
+  }
+
   objects.erase_by_swap(node);
-  object_manager->tag_update(this, ObjectManager::OBJECT_REMOVED);
+  object_manager->tag_update(this, flag);
 }
 
 template<> void Scene::delete_node(ParticleSystem *node)
@@ -955,15 +1028,6 @@ template<> void Scene::delete_node(Procedural *node)
   procedural_manager->tag_update();
 }
 
-template<> void Scene::delete_node(AlembicProcedural *node)
-{
-#ifdef WITH_ALEMBIC
-  delete_node(static_cast<Procedural *>(node));
-#else
-  (void)node;
-#endif
-}
-
 template<> void Scene::delete_node(Pass *node)
 {
   assert(node->get_owner() == this);
@@ -983,18 +1047,12 @@ template<typename T> static void assert_same_owner(const set<T *> &nodes, const 
 #endif
 }
 
-template<> void Scene::delete_nodes(const set<Light *> &nodes, const NodeOwner *owner)
-{
-  assert_same_owner(nodes, owner);
-  lights.erase_in_set(nodes);
-  light_manager->tag_update(this, LightManager::LIGHT_REMOVED);
-}
-
 template<> void Scene::delete_nodes(const set<Geometry *> &nodes, const NodeOwner *owner)
 {
   assert_same_owner(nodes, owner);
   geometry.erase_in_set(nodes);
   geometry_manager->tag_update(this, GeometryManager::GEOMETRY_REMOVED);
+  light_manager->tag_update(this, LightManager::LIGHT_REMOVED);
 }
 
 template<> void Scene::delete_nodes(const set<Object *> &nodes, const NodeOwner *owner)

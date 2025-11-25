@@ -12,18 +12,19 @@
 
 namespace blender::draw {
 
-void extract_face_dots_edituv_data(const MeshRenderData &mr, gpu::VertBuf &vbo)
+gpu::VertBufPtr extract_face_dots_edituv_data(const MeshRenderData &mr)
 {
-  static GPUVertFormat format = {0};
-  if (format.attr_len == 0) {
-    GPU_vertformat_attr_add(&format, "data", GPU_COMP_U8, 4, GPU_FETCH_INT);
+  static const GPUVertFormat format = []() {
+    GPUVertFormat format{};
+    GPU_vertformat_attr_add(&format, "data", gpu::VertAttrType::UINT_8_8_8_8);
     GPU_vertformat_alias_add(&format, "flag");
-  }
-  GPU_vertbuf_init_with_format(vbo, format);
-  GPU_vertbuf_data_alloc(vbo, mr.faces_num);
-  MutableSpan vbo_data = vbo.data<EditLoopData>();
+    return format;
+  }();
+  gpu::VertBufPtr vbo = gpu::VertBufPtr(GPU_vertbuf_create_with_format(format));
+  GPU_vertbuf_data_alloc(*vbo, mr.faces_num);
+  MutableSpan vbo_data = vbo->data<EditLoopData>();
   const BMesh &bm = *mr.bm;
-  const BMUVOffsets offsets = BM_uv_map_get_offsets(&bm);
+  const BMUVOffsets offsets = BM_uv_map_offsets_get(&bm);
   if (mr.extract_type == MeshExtractType::BMesh) {
     threading::parallel_for(IndexRange(bm.totface), 2048, [&](const IndexRange range) {
       for (const int face_index : range) {
@@ -51,6 +52,7 @@ void extract_face_dots_edituv_data(const MeshRenderData &mr, gpu::VertBuf &vbo)
       vbo_data.fill({});
     }
   }
+  return vbo;
 }
 
 }  // namespace blender::draw

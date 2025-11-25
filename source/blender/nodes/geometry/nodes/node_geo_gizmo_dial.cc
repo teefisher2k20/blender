@@ -8,7 +8,7 @@
 
 #include "RNA_enum_types.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 namespace blender::nodes::node_geo_gizmo_dial_cc {
@@ -30,13 +30,13 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
 {
-  NodeGeometryDialGizmo *storage = MEM_cnew<NodeGeometryDialGizmo>(__func__);
+  NodeGeometryDialGizmo *storage = MEM_callocN<NodeGeometryDialGizmo>(__func__);
   node->storage = storage;
 }
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "color_id", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "color_id", UI_ITEM_NONE, "", ICON_NONE);
 }
 
 static void node_rna(StructRNA *srna)
@@ -58,11 +58,11 @@ static void node_register()
   ntype.enum_name_legacy = "GIZMO_DIAL";
   ntype.nclass = NODE_CLASS_INTERFACE;
   bke::node_type_storage(
-      &ntype, "NodeGeometryDialGizmo", node_free_standard_storage, node_copy_standard_storage);
+      ntype, "NodeGeometryDialGizmo", node_free_standard_storage, node_copy_standard_storage);
   ntype.declare = node_declare;
   ntype.draw_buttons = node_layout;
   ntype.initfunc = node_init;
-  bke::node_register_type(&ntype);
+  bke::node_register_type(ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

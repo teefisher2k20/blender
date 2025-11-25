@@ -77,7 +77,7 @@ NodeGraph::NodeGraph(const NodeGraph &parent, const StringRef child_name)
   MaterialX::NodeGraphPtr graph = parent.graph_element_->getChildOfType<MaterialX::NodeGraph>(
       valid_child_name);
   if (!graph) {
-    CLOG_INFO(LOG_MATERIALX_SHADER, 1, "<nodegraph name=%s>", valid_child_name.c_str());
+    CLOG_DEBUG(LOG_IO_MATERIALX, "<nodegraph name=%s>", valid_child_name.c_str());
     graph = parent.graph_element_->addChild<MaterialX::NodeGraph>(valid_child_name);
   }
   graph_element_ = graph.get();
@@ -142,15 +142,18 @@ std::string NodeGraph::unique_node_name(const bNode *node,
   }
 
   /* Ensure the name does not conflict with other nodes in the graph, which may happen when
-   * another Blender node name happens to match the complete name here. */
+   * another Blender node name happens to match the complete name here. Can not just check
+   * the graph because the node with this name might not get added to it immediately. */
   name = BLI_uniquename_cb(
       [this](const StringRef check_name) {
         return check_name == export_params.output_node_name ||
-               graph_element_->getNode(check_name) != nullptr;
+               graph_element_->getNode(check_name) != nullptr ||
+               used_node_names_.contains(check_name);
       },
       '_',
       name);
 
+  used_node_names_.add(name);
   key_to_name_map_.add_new(key, name);
   return name;
 }

@@ -44,18 +44,25 @@ static Vector<std::unique_ptr<bNodeTreeZone>> find_zone_nodes(
     auto zone = std::make_unique<bNodeTreeZone>();
     zone->owner = &owner;
     zone->index = zones.size();
-    zone->output_node = node;
+    zone->output_node_id = node->identifier;
     r_zone_by_inout_node.add(node, zone.get());
-    zones.append_and_get_index(std::move(zone));
+    zones.append(std::move(zone));
   }
   for (const bNodeZoneType *zone_type : zone_types) {
     for (const bNode *input_node : tree.nodes_by_type(zone_type->input_idname)) {
       if (const bNode *output_node = zone_type->get_corresponding_output(tree, *input_node)) {
         if (bNodeTreeZone *zone = r_zone_by_inout_node.lookup_default(output_node, nullptr)) {
-          zone->input_node = input_node;
+          zone->input_node_id = input_node->identifier;
           r_zone_by_inout_node.add(input_node, zone);
         }
       }
+    }
+  }
+  /* Avoid incomplete zones, all zones must have a valid input and output node. */
+  for (const std::unique_ptr<bNodeTreeZone> &zone : zones) {
+    if (!zone->input_node_id || !zone->output_node_id) {
+      r_zone_by_inout_node.clear();
+      return {};
     }
   }
   return zones;
@@ -81,7 +88,7 @@ static std::optional<Vector<ZoneRelation>> get_direct_zone_relations(
   /* Gather all relations, even the transitive once. */
   for (bNodeTreeZone *zone : all_zones) {
     const int zone_i = zone->index;
-    for (const bNode *node : {zone->output_node}) {
+    for (const bNode *node : {zone->output_node()}) {
       if (node == nullptr) {
         continue;
       }
@@ -136,7 +143,7 @@ static bool update_zone_per_node(const Span<const bNode *> all_nodes,
                                  const BitGroupVector<> &depend_on_input_flag_array,
                                  const Map<const bNode *, bNodeTreeZone *> &zone_by_inout_node,
                                  Map<int, int> &r_zone_by_node_id,
-                                 Vector<const bNode *> &r_node_outside_zones)
+                                 Vector<int> &r_node_outside_zones)
 {
   bool found_node_in_multiple_zones = false;
   for (const int node_i : all_nodes.index_range()) {
@@ -145,7 +152,7 @@ static bool update_zone_per_node(const Span<const bNode *> all_nodes,
     bNodeTreeZone *parent_zone = nullptr;
     bits::foreach_1_index(depend_on_input_flags, [&](const int parent_zone_i) {
       bNodeTreeZone *zone = all_zones[parent_zone_i];
-      if (ELEM(&node, zone->input_node, zone->output_node)) {
+      if (ELEM(&node, zone->input_node(), zone->output_node())) {
         return;
       }
       if (parent_zone == nullptr) {
@@ -173,7 +180,7 @@ static bool update_zone_per_node(const Span<const bNode *> all_nodes,
     });
     if (parent_zone == nullptr) {
       if (!zone_by_inout_node.contains(&node)) {
-        r_node_outside_zones.append(&node);
+        r_node_outside_zones.append(node.identifier);
       }
     }
     else {
@@ -224,6 +231,7 @@ static std::unique_ptr<bNodeTreeZones> discover_tree_zones(const bNodeTree &tree
   const Span<int> output_types = all_zone_output_node_types();
 
   std::unique_ptr<bNodeTreeZones> tree_zones = std::make_unique<bNodeTreeZones>();
+  tree_zones->tree = &tree;
 
   const Span<const bNode *> all_nodes = tree.all_nodes();
   Map<const bNode *, bNodeTreeZone *> zone_by_inout_node;
@@ -269,7 +277,7 @@ static std::unique_ptr<bNodeTreeZones> discover_tree_zones(const bNodeTree &tree
     else if (output_types.contains(node->type_legacy)) {
       if (const bNodeTreeZone *zone = zone_by_inout_node.lookup_default(node, nullptr)) {
         /* The output is implicitly linked to the input, so also propagate the bits from there. */
-        if (const bNode *zone_input_node = zone->input_node) {
+        if (const bNode *zone_input_node = zone->input_node()) {
           const int input_node_i = zone_input_node->index();
           depend_on_input_flags |= depend_on_input_flag_array[input_node_i];
           depend_on_output_flags |= depend_on_output_flag_array[input_node_i];
@@ -322,20 +330,28 @@ static std::unique_ptr<bNodeTreeZones> discover_tree_zones(const bNodeTree &tree
     }
   }
 
-  const bool found_node_in_multiple_zones = update_zone_per_node(all_nodes,
-                                                                 tree_zones->zones,
-                                                                 depend_on_input_flag_array,
-                                                                 zone_by_inout_node,
-                                                                 tree_zones->zone_by_node_id,
-                                                                 tree_zones->nodes_outside_zones);
+  const bool found_node_in_multiple_zones = update_zone_per_node(
+      all_nodes,
+      tree_zones->zones,
+      depend_on_input_flag_array,
+      zone_by_inout_node,
+      tree_zones->zone_by_node_id,
+      tree_zones->node_ids_outside_zones);
   if (found_node_in_multiple_zones) {
     return {};
   }
 
-  for (const bNode *node : tree.nodes_by_type("NodeGroupOutput")) {
-    if (tree_zones->zone_by_node_id.contains(node->identifier)) {
-      /* Group output nodes must not be in a zone. */
-      return {};
+  for (const StringRefNull output_idname : {"NodeGroupOutput",
+                                            "ShaderNodeOutputMaterial",
+                                            "ShaderNodeOutputLight",
+                                            "ShaderNodeOutputWorld",
+                                            "ShaderNodeOutputAOV"})
+  {
+    for (const bNode *node : tree.nodes_by_type(output_idname)) {
+      if (tree_zones->zone_by_node_id.contains(node->identifier)) {
+        /* Output nodes must not be in a zone. */
+        return {};
+      }
     }
   }
 
@@ -345,11 +361,11 @@ static std::unique_ptr<bNodeTreeZones> discover_tree_zones(const bNodeTree &tree
     if (zone_i == -1) {
       continue;
     }
-    const bNodeTreeZone &zone = *tree_zones->zones[zone_i];
-    if (ELEM(node, zone.input_node, zone.output_node)) {
+    bNodeTreeZone &zone = *tree_zones->zones[zone_i];
+    if (ELEM(node->identifier, zone.input_node_id, zone.output_node_id)) {
       continue;
     }
-    tree_zones->zones[zone_i]->child_nodes.append(node);
+    zone.child_node_ids.append(node->identifier);
   }
 
   update_zone_border_links(tree, *tree_zones);
@@ -361,8 +377,12 @@ static std::unique_ptr<bNodeTreeZones> discover_tree_zones(const bNodeTree &tree
 const bNodeTreeZones *get_tree_zones(const bNodeTree &tree)
 {
   tree.ensure_topology_cache();
-  tree.runtime->tree_zones_cache_mutex.ensure(
-      [&]() { tree.runtime->tree_zones = discover_tree_zones(tree); });
+  tree.runtime->tree_zones_cache_mutex.ensure([&]() {
+    tree.runtime->tree_zones = discover_tree_zones(tree);
+    if (tree.runtime->tree_zones) {
+      tree.runtime->last_valid_zones = tree.runtime->tree_zones;
+    }
+  });
   return tree.runtime->tree_zones.get();
 }
 
@@ -398,12 +418,12 @@ const bNodeTreeZone *bNodeTreeZones::get_zone_by_socket(const bNodeSocket &socke
   if (zone == nullptr) {
     return zone;
   }
-  if (zone->input_node == &node) {
+  if (zone->input_node_id == node.identifier) {
     if (socket.is_input()) {
       return zone->parent_zone;
     }
   }
-  if (zone->output_node == &node) {
+  if (zone->output_node_id == node.identifier) {
     if (socket.is_output()) {
       return zone->parent_zone;
     }
@@ -420,18 +440,50 @@ const bNodeTreeZone *bNodeTreeZones::get_zone_by_node(const int32_t node_id) con
   return this->zones[zone_i];
 }
 
-Vector<const bNodeTreeZone *> bNodeTreeZones::get_zone_stack_for_node(const int node_id) const
+bool bNodeTreeZones::link_between_zones_is_allowed(const bNodeTreeZone *from_zone,
+                                                   const bNodeTreeZone *to_zone) const
 {
-  const bNodeTreeZone *zone = this->get_zone_by_node(node_id);
-  if (zone == nullptr) {
-    return {};
+  if (from_zone == to_zone) {
+    /* Links between zones in the same zone are always allowed. */
+    return true;
   }
-  Vector<const bNodeTreeZone *> zone_stack;
-  for (; zone; zone = zone->parent_zone) {
-    zone_stack.append(zone);
+  if (!from_zone) {
+    /* Links from the root tree can go to any zone. */
+    return true;
   }
-  std::reverse(zone_stack.begin(), zone_stack.end());
-  return zone_stack;
+  if (!to_zone) {
+    /* Links can not leave a zone and connect to a socket in the root tree. */
+    return false;
+  }
+  return from_zone->contains_zone_recursively(*to_zone);
+}
+
+bool bNodeTreeZones::link_between_sockets_is_allowed(const bNodeSocket &from,
+                                                     const bNodeSocket &to) const
+{
+  BLI_assert(from.in_out == SOCK_OUT);
+  BLI_assert(to.in_out == SOCK_IN);
+  const bNodeTreeZone *from_zone = this->get_zone_by_socket(from);
+  const bNodeTreeZone *to_zone = this->get_zone_by_socket(to);
+  return this->link_between_zones_is_allowed(from_zone, to_zone);
+}
+
+Vector<const bNodeTreeZone *> bNodeTreeZones::get_zones_to_enter(
+    const bNodeTreeZone *outer_zone, const bNodeTreeZone *inner_zone) const
+{
+  BLI_assert(this->link_between_zones_is_allowed(outer_zone, inner_zone));
+  Vector<const bNodeTreeZone *> zones_to_enter;
+  for (const bNodeTreeZone *zone = inner_zone; zone != outer_zone; zone = zone->parent_zone) {
+    zones_to_enter.append(zone);
+  }
+  std::reverse(zones_to_enter.begin(), zones_to_enter.end());
+  return zones_to_enter;
+}
+
+Vector<const bNodeTreeZone *> bNodeTreeZones::get_zones_to_enter_from_root(
+    const bNodeTreeZone *zone) const
+{
+  return this->get_zones_to_enter(nullptr, zone);
 }
 
 const bNode *bNodeZoneType::get_corresponding_input(const bNodeTree &tree,
@@ -526,6 +578,41 @@ const bNodeZoneType *zone_type_by_node_type(const int node_type)
   return nullptr;
 }
 
+const bNode *bNodeTreeZone::input_node() const
+{
+  if (!this->input_node_id) {
+    return nullptr;
+  }
+  return this->owner->tree->node_by_id(*this->input_node_id);
+}
+
+const bNode *bNodeTreeZone::output_node() const
+{
+  if (!this->output_node_id) {
+    return nullptr;
+  }
+  return this->owner->tree->node_by_id(*this->output_node_id);
+}
+
+static Vector<const bNode *> node_ids_to_vector(const bNodeTree &tree, const Vector<int> &node_ids)
+{
+  Vector<const bNode *> nodes(node_ids.size());
+  for (const int i : nodes.index_range()) {
+    nodes[i] = tree.node_by_id(node_ids[i]);
+  }
+  return nodes;
+}
+
+Vector<const bNode *> bNodeTreeZone::child_nodes() const
+{
+  return node_ids_to_vector(*this->owner->tree, this->child_node_ids);
+}
+
+Vector<const bNode *> bNodeTreeZones::nodes_outside_zones() const
+{
+  return node_ids_to_vector(*this->tree, this->node_ids_outside_zones);
+}
+
 std::ostream &operator<<(std::ostream &stream, const bNodeTreeZones &zones)
 {
   for (const bNodeTreeZone *zone : zones.zones) {
@@ -547,8 +634,8 @@ std::ostream &operator<<(std::ostream &stream, const bNodeTreeZone &zone)
     stream << "*";
   }
 
-  stream << "; Input: " << (zone.input_node ? zone.input_node->name : "null");
-  stream << ", Output: " << (zone.output_node ? zone.output_node->name : "null");
+  stream << "; Input: " << (zone.input_node() ? zone.input_node()->name : "null");
+  stream << ", Output: " << (zone.output_node() ? zone.output_node()->name : "null");
 
   stream << "; Border Links: {\n";
   for (const bNodeLink *border_link : zone.border_links) {

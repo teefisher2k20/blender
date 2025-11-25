@@ -6,6 +6,8 @@
 
 #include "usd.hh"
 #include "usd_asset_utils.hh"
+#include "usd_hash_types.hh"
+#include "usd_hierarchy_iterator.hh"
 #include "usd_reader_prim.hh"
 #include "usd_reader_stage.hh"
 #include "usd_writer_material.hh"
@@ -14,6 +16,7 @@
 #include "BLI_utildefines.h"
 #include "BLI_vector.hh"
 
+#include "BKE_lib_id.hh"
 #include "BKE_report.hh"
 
 #include "DNA_material_types.h"
@@ -26,38 +29,24 @@
 
 #include <list>
 #include <memory>
+#include <string>
 
-#if PXR_VERSION >= 2411
-#  include <pxr/external/boost/python/call_method.hpp>
-#  include <pxr/external/boost/python/class.hpp>
-#  include <pxr/external/boost/python/dict.hpp>
-#  include <pxr/external/boost/python/import.hpp>
-#  include <pxr/external/boost/python/list.hpp>
-#  include <pxr/external/boost/python/ref.hpp>
-#  include <pxr/external/boost/python/return_value_policy.hpp>
-#  include <pxr/external/boost/python/to_python_converter.hpp>
-#  include <pxr/external/boost/python/tuple.hpp>
-#  define PYTHON_NS pxr::pxr_boost::python
-#  define REF pxr::pxr_boost::python::ref
+#include <pxr/external/boost/python/call_method.hpp>
+#include <pxr/external/boost/python/class.hpp>
+#include <pxr/external/boost/python/dict.hpp>
+#include <pxr/external/boost/python/import.hpp>
+#include <pxr/external/boost/python/list.hpp>
+#include <pxr/external/boost/python/ref.hpp>
+#include <pxr/external/boost/python/return_value_policy.hpp>
+#include <pxr/external/boost/python/to_python_converter.hpp>
+#include <pxr/external/boost/python/tuple.hpp>
 
 using namespace pxr::pxr_boost;
-#else
-#  include <boost/python/call_method.hpp>
-#  include <boost/python/class.hpp>
-#  include <boost/python/import.hpp>
-#  include <boost/python/return_value_policy.hpp>
-#  include <boost/python/to_python_converter.hpp>
-#  include <boost/python/tuple.hpp>
-#  define PYTHON_NS boost::python
-#  define REF boost::ref
-
-using namespace boost;
-#endif
 
 namespace blender::io::usd {
 
 using USDHookList = std::list<std::unique_ptr<USDHook>>;
-using ImportedPrimMap = Map<std::string, Vector<PointerRNA>>;
+using ImportedPrimMap = Map<pxr::SdfPath, Vector<PointerRNA>>;
 
 /* USD hook type declarations */
 static USDHookList &hook_list()
@@ -77,7 +66,7 @@ void USD_register_hook(std::unique_ptr<USDHook> hook)
   hook_list().push_back(std::move(hook));
 }
 
-void USD_unregister_hook(USDHook *hook)
+void USD_unregister_hook(const USDHook *hook)
 {
   hook_list().remove_if(
       [hook](const std::unique_ptr<USDHook> &item) { return item.get() == hook; });
@@ -110,89 +99,110 @@ struct PointerRNAToPython {
 };
 
 /* Encapsulate arguments for scene export. */
-struct USDSceneExportContext {
+class USDSceneExportContext {
+ private:
+  pxr::UsdStageRefPtr stage_;
+  PointerRNA depsgraph_ptr_;
+  const USDHierarchyIterator *hierarchy_iterator_ = nullptr;
 
-  USDSceneExportContext() = default;
-
-  USDSceneExportContext(pxr::UsdStageRefPtr in_stage, Depsgraph *depsgraph) : stage(in_stage)
+ public:
+  USDSceneExportContext(const USDHierarchyIterator *iter, Depsgraph *depsgraph)
+      : stage_(iter->get_stage()), hierarchy_iterator_(iter)
   {
-    depsgraph_ptr = RNA_pointer_create_discrete(nullptr, &RNA_Depsgraph, depsgraph);
+    depsgraph_ptr_ = RNA_pointer_create_discrete(nullptr, &RNA_Depsgraph, depsgraph);
   }
 
   pxr::UsdStageRefPtr get_stage() const
   {
-    return stage;
+    return stage_;
   }
 
   const PointerRNA &get_depsgraph() const
   {
-    return depsgraph_ptr;
+    return depsgraph_ptr_;
   }
 
-  pxr::UsdStageRefPtr stage;
-  PointerRNA depsgraph_ptr{};
+  python::dict get_prim_map() const
+  {
+    python::dict result;
+
+    const auto &exported_prim_map = hierarchy_iterator_->get_exported_prim_map();
+    exported_prim_map.foreach_item([&](const pxr::SdfPath &path, const Vector<ID *> &ids) {
+      python::list id_list;
+      for (ID *id : ids) {
+        if (id) {
+          PointerRNA ptr_rna = RNA_id_pointer_create(id);
+          id_list.append(ptr_rna);
+        }
+      }
+      result[path] = id_list;
+    });
+    return result;
+  }
 };
 
 /* Encapsulate arguments for scene import. */
-struct USDSceneImportContext {
-  USDSceneImportContext() = default;
+class USDSceneImportContext {
+ private:
+  pxr::UsdStageRefPtr stage_;
+  ImportedPrimMap prim_map_;
+  python::dict *prim_map_dict_ = nullptr;
 
+ public:
   USDSceneImportContext(pxr::UsdStageRefPtr in_stage, const ImportedPrimMap &in_prim_map)
-      : stage(in_stage), prim_map(in_prim_map)
+      : stage_(in_stage), prim_map_(in_prim_map)
   {
   }
 
   void release()
   {
-    if (prim_map_dict) {
-      delete prim_map_dict;
-    }
+    delete prim_map_dict_;
   }
 
   pxr::UsdStageRefPtr get_stage() const
   {
-    return stage;
+    return stage_;
   }
 
-  PYTHON_NS::dict get_prim_map()
+  python::dict get_prim_map()
   {
-    if (!prim_map_dict) {
-      prim_map_dict = new PYTHON_NS::dict;
+    if (!prim_map_dict_) {
+      prim_map_dict_ = new python::dict;
 
-      prim_map.foreach_item([&](const std::string &path, const Vector<PointerRNA> &ids) {
-        if (!prim_map_dict->has_key(path)) {
-          (*prim_map_dict)[path] = PYTHON_NS::list();
+      prim_map_.foreach_item([&](const pxr::SdfPath &path, const Vector<PointerRNA> &ids) {
+        if (!prim_map_dict_->has_key(path)) {
+          (*prim_map_dict_)[path] = python::list();
         }
-        PYTHON_NS::list list = PYTHON_NS::extract<PYTHON_NS::list>((*prim_map_dict)[path]);
 
-        for (auto &ptr_rna : ids) {
+        python::list list = python::extract<python::list>((*prim_map_dict_)[path]);
+        for (const auto &ptr_rna : ids) {
           list.append(ptr_rna);
         }
       });
     }
 
-    return *prim_map_dict;
+    return *prim_map_dict_;
   }
-
-  pxr::UsdStageRefPtr stage;
-  ImportedPrimMap prim_map;
-  PYTHON_NS::dict *prim_map_dict = nullptr;
 };
 
 /* Encapsulate arguments for material export. */
-struct USDMaterialExportContext {
-  USDMaterialExportContext() : reports(nullptr) {}
+class USDMaterialExportContext {
+ private:
+  pxr::UsdStageRefPtr stage_;
+  USDExportParams params_ = {};
+  ReportList *reports_ = nullptr;
 
-  USDMaterialExportContext(pxr::UsdStageRefPtr in_stage,
-                           const USDExportParams &in_params,
-                           ReportList *in_reports)
-      : stage(in_stage), params(in_params), reports(in_reports)
+ public:
+  USDMaterialExportContext(pxr::UsdStageRefPtr stage,
+                           const USDExportParams &params,
+                           ReportList *reports)
+      : stage_(stage), params_(params), reports_(reports)
   {
   }
 
   pxr::UsdStageRefPtr get_stage() const
   {
-    return stage;
+    return stage_;
   }
 
   /**
@@ -200,7 +210,7 @@ struct USDMaterialExportContext {
    * to the export directory if exporting textures is enabled in the export options.  The
    * function may return an empty string in case of an error.
    */
-  std::string export_texture(PYTHON_NS::object obj) const
+  std::string export_texture(python::object obj) const
   {
     ID *id;
     if (!pyrna_id_FromPyObject(obj.ptr(), &id)) {
@@ -217,34 +227,34 @@ struct USDMaterialExportContext {
 
     Image *ima = reinterpret_cast<Image *>(id);
 
-    std::string asset_path = get_tex_image_asset_filepath(ima, stage, params);
+    std::string asset_path = get_tex_image_asset_filepath(ima, stage_, params_);
 
-    if (params.export_textures) {
-      blender::io::usd::export_texture(ima, stage, params.overwrite_textures, reports);
+    if (params_.export_textures) {
+      blender::io::usd::export_texture(ima, stage_, params_.overwrite_textures, reports_);
     }
 
     return asset_path;
   }
-
-  pxr::UsdStageRefPtr stage;
-  USDExportParams params;
-  ReportList *reports;
 };
 
 /* Encapsulate arguments for material import. */
-struct USDMaterialImportContext {
-  USDMaterialImportContext() : reports(nullptr) {}
+class USDMaterialImportContext {
+ private:
+  pxr::UsdStageRefPtr stage_;
+  USDImportParams params_ = {};
+  ReportList *reports_ = nullptr;
 
-  USDMaterialImportContext(pxr::UsdStageRefPtr in_stage,
-                           const USDImportParams &in_params,
-                           ReportList *in_reports)
-      : stage(in_stage), params(in_params), reports(in_reports)
+ public:
+  USDMaterialImportContext(pxr::UsdStageRefPtr stage,
+                           const USDImportParams &params,
+                           ReportList *reports)
+      : stage_(stage), params_(params), reports_(reports)
   {
   }
 
   pxr::UsdStageRefPtr get_stage() const
   {
-    return stage;
+    return stage_;
   }
 
   /**
@@ -255,37 +265,33 @@ struct USDMaterialImportContext {
    * The original asset path will be returned unchanged if it's already a local file
    * or if it could not be copied to a local destination.
    */
-  PYTHON_NS::tuple import_texture(const std::string &asset_path) const
+  python::tuple import_texture(const std::string &asset_path) const
   {
     if (!should_import_asset(asset_path)) {
       /* This path does not need to be imported, so return it unchanged. */
-      return PYTHON_NS::make_tuple(asset_path, false);
+      return python::make_tuple(asset_path, false);
     }
 
-    const char *textures_dir = params.import_textures_mode == USD_TEX_IMPORT_PACK ?
+    const char *textures_dir = params_.import_textures_mode == USD_TEX_IMPORT_PACK ?
                                    temp_textures_dir() :
-                                   params.import_textures_dir;
+                                   params_.import_textures_dir;
 
-    const eUSDTexNameCollisionMode name_collision_mode = params.import_textures_mode ==
+    const eUSDTexNameCollisionMode name_collision_mode = params_.import_textures_mode ==
                                                                  USD_TEX_IMPORT_PACK ?
                                                              USD_TEX_NAME_COLLISION_OVERWRITE :
-                                                             params.tex_name_collision_mode;
+                                                             params_.tex_name_collision_mode;
 
     std::string import_path = import_asset(
-        asset_path.c_str(), textures_dir, name_collision_mode, reports);
+        asset_path, textures_dir, name_collision_mode, reports_);
 
     if (import_path == asset_path) {
       /* Path is unchanged. */
-      return PYTHON_NS::make_tuple(asset_path, false);
+      return python::make_tuple(asset_path, false);
     }
 
-    const bool is_temporary = params.import_textures_mode == USD_TEX_IMPORT_PACK;
-    return PYTHON_NS::make_tuple(import_path, is_temporary);
+    const bool is_temporary = params_.import_textures_mode == USD_TEX_IMPORT_PACK;
+    return python::make_tuple(import_path, is_temporary);
   }
-
-  pxr::UsdStageRefPtr stage;
-  USDImportParams params;
-  ReportList *reports;
 };
 
 void register_hook_converters()
@@ -313,21 +319,22 @@ void register_hook_converters()
   python::to_python_converter<PointerRNA, PointerRNAToPython>();
 
   /* Register context class converters. */
-  python::class_<USDSceneExportContext>("USDSceneExportContext")
+  python::class_<USDSceneExportContext>("USDSceneExportContext", python::no_init)
       .def("get_stage", &USDSceneExportContext::get_stage)
       .def("get_depsgraph",
            &USDSceneExportContext::get_depsgraph,
-           python::return_value_policy<python::return_by_value>());
+           python::return_value_policy<python::return_by_value>())
+      .def("get_prim_map", &USDSceneExportContext::get_prim_map);
 
-  python::class_<USDMaterialExportContext>("USDMaterialExportContext")
+  python::class_<USDMaterialExportContext>("USDMaterialExportContext", python::no_init)
       .def("get_stage", &USDMaterialExportContext::get_stage)
       .def("export_texture", &USDMaterialExportContext::export_texture);
 
-  python::class_<USDSceneImportContext>("USDSceneImportContext")
+  python::class_<USDSceneImportContext>("USDSceneImportContext", python::no_init)
       .def("get_stage", &USDSceneImportContext::get_stage)
       .def("get_prim_map", &USDSceneImportContext::get_prim_map);
 
-  python::class_<USDMaterialImportContext>("USDMaterialImportContext")
+  python::class_<USDMaterialImportContext>("USDMaterialImportContext", python::no_init)
       .def("get_stage", &USDMaterialImportContext::get_stage)
       .def("import_texture", &USDMaterialImportContext::import_texture);
 
@@ -355,8 +362,12 @@ static void handle_python_error(USDHook *hook, ReportList *reports)
  * call the hook with the required arguments.
  */
 class USDHookInvoker {
+ private:
+  ReportList *reports_;
+
  public:
-  USDHookInvoker(ReportList *reports) : reports_(reports) {}
+  explicit USDHookInvoker(ReportList *reports) : reports_(reports) {}
+  virtual ~USDHookInvoker() = default;
 
   /* Attempt to call the function, if defined by the registered hooks. */
   void call()
@@ -415,24 +426,21 @@ class USDHookInvoker {
    * python::call_method<void>(hook_obj, function_name(), arg1, arg2); */
   virtual void call_hook(PyObject *hook_obj) = 0;
 
-  virtual void init_in_gil(){};
-  virtual void release_in_gil(){};
-
-  /* Reports list provided when constructing the subclass, used by #call() to store reports. */
-  ReportList *reports_;
+  virtual void init_in_gil() {};
+  virtual void release_in_gil() {};
 };
 
-class OnExportInvoker : public USDHookInvoker {
+class OnExportInvoker final : public USDHookInvoker {
  private:
   USDSceneExportContext hook_context_;
 
  public:
-  OnExportInvoker(pxr::UsdStageRefPtr stage, Depsgraph *depsgraph, ReportList *reports)
-      : USDHookInvoker(reports), hook_context_(stage, depsgraph)
+  OnExportInvoker(const USDHierarchyIterator *iter, Depsgraph *depsgraph, ReportList *reports)
+      : USDHookInvoker(reports), hook_context_(iter, depsgraph)
   {
   }
 
- protected:
+ private:
   const char *function_name() const override
   {
     return "on_export";
@@ -440,11 +448,11 @@ class OnExportInvoker : public USDHookInvoker {
 
   void call_hook(PyObject *hook_obj) override
   {
-    python::call_method<bool>(hook_obj, function_name(), REF(hook_context_));
+    python::call_method<bool>(hook_obj, function_name(), python::ref(hook_context_));
   }
 };
 
-class OnMaterialExportInvoker : public USDHookInvoker {
+class OnMaterialExportInvoker final : public USDHookInvoker {
  private:
   USDMaterialExportContext hook_context_;
   pxr::UsdShadeMaterial usd_material_;
@@ -463,7 +471,7 @@ class OnMaterialExportInvoker : public USDHookInvoker {
     material_ptr_ = RNA_pointer_create_discrete(nullptr, &RNA_Material, material);
   }
 
- protected:
+ private:
   const char *function_name() const override
   {
     return "on_material_export";
@@ -472,11 +480,11 @@ class OnMaterialExportInvoker : public USDHookInvoker {
   void call_hook(PyObject *hook_obj) override
   {
     python::call_method<bool>(
-        hook_obj, function_name(), REF(hook_context_), material_ptr_, usd_material_);
+        hook_obj, function_name(), python::ref(hook_context_), material_ptr_, usd_material_);
   }
 };
 
-class OnImportInvoker : public USDHookInvoker {
+class OnImportInvoker final : public USDHookInvoker {
  private:
   USDSceneImportContext hook_context_;
 
@@ -486,7 +494,7 @@ class OnImportInvoker : public USDHookInvoker {
   {
   }
 
- protected:
+ private:
   const char *function_name() const override
   {
     return "on_import";
@@ -494,7 +502,7 @@ class OnImportInvoker : public USDHookInvoker {
 
   void call_hook(PyObject *hook_obj) override
   {
-    python::call_method<bool>(hook_obj, function_name(), REF(hook_context_));
+    python::call_method<bool>(hook_obj, function_name(), python::ref(hook_context_));
   }
 
   void release_in_gil() override
@@ -503,11 +511,11 @@ class OnImportInvoker : public USDHookInvoker {
   }
 };
 
-class MaterialImportPollInvoker : public USDHookInvoker {
+class MaterialImportPollInvoker final : public USDHookInvoker {
  private:
   USDMaterialImportContext hook_context_;
   pxr::UsdShadeMaterial usd_material_;
-  bool result_;
+  bool result_ = false;
 
  public:
   MaterialImportPollInvoker(pxr::UsdStageRefPtr stage,
@@ -516,8 +524,7 @@ class MaterialImportPollInvoker : public USDHookInvoker {
                             ReportList *reports)
       : USDHookInvoker(reports),
         hook_context_(stage, import_params, reports),
-        usd_material_(usd_material),
-        result_(false)
+        usd_material_(usd_material)
   {
   }
 
@@ -526,7 +533,7 @@ class MaterialImportPollInvoker : public USDHookInvoker {
     return result_;
   }
 
- protected:
+ private:
   const char *function_name() const override
   {
     return "material_import_poll";
@@ -534,21 +541,21 @@ class MaterialImportPollInvoker : public USDHookInvoker {
 
   void call_hook(PyObject *hook_obj) override
   {
-    // If we already know that one of the registered hook classes can import the material
-    // because it returned true in a previous invocation of the callback, we skip the call.
+    /* If we already know that one of the registered hook classes can import the material
+     * because it returned true in a previous invocation of the callback, we skip the call. */
     if (!result_) {
       result_ = python::call_method<bool>(
-          hook_obj, function_name(), REF(hook_context_), usd_material_);
+          hook_obj, function_name(), python::ref(hook_context_), usd_material_);
     }
   }
 };
 
-class OnMaterialImportInvoker : public USDHookInvoker {
+class OnMaterialImportInvoker final : public USDHookInvoker {
  private:
   USDMaterialImportContext hook_context_;
   pxr::UsdShadeMaterial usd_material_;
   PointerRNA material_ptr_;
-  bool result_;
+  bool result_ = false;
 
  public:
   OnMaterialImportInvoker(pxr::UsdStageRefPtr stage,
@@ -558,8 +565,7 @@ class OnMaterialImportInvoker : public USDHookInvoker {
                           ReportList *reports)
       : USDHookInvoker(reports),
         hook_context_(stage, import_params, reports),
-        usd_material_(usd_material),
-        result_(false)
+        usd_material_(usd_material)
   {
     material_ptr_ = RNA_pointer_create_discrete(nullptr, &RNA_Material, material);
   }
@@ -569,7 +575,7 @@ class OnMaterialImportInvoker : public USDHookInvoker {
     return result_;
   }
 
- protected:
+ private:
   const char *function_name() const override
   {
     return "on_material_import";
@@ -578,17 +584,17 @@ class OnMaterialImportInvoker : public USDHookInvoker {
   void call_hook(PyObject *hook_obj) override
   {
     result_ |= python::call_method<bool>(
-        hook_obj, function_name(), REF(hook_context_), material_ptr_, usd_material_);
+        hook_obj, function_name(), python::ref(hook_context_), material_ptr_, usd_material_);
   }
 };
 
-void call_export_hooks(pxr::UsdStageRefPtr stage, Depsgraph *depsgraph, ReportList *reports)
+void call_export_hooks(Depsgraph *depsgraph, const USDHierarchyIterator *iter, ReportList *reports)
 {
   if (hook_list().empty()) {
     return;
   }
 
-  OnExportInvoker on_export(stage, depsgraph, reports);
+  OnExportInvoker on_export(iter, depsgraph, reports);
   on_export.call();
 }
 
@@ -636,7 +642,7 @@ void call_import_hooks(USDStageReader *archive, ReportList *reports)
     }
   }
 
-  settings.usd_path_to_mat.foreach_item([&prim_map](const std::string &path, Material *mat) {
+  settings.usd_path_to_mat.foreach_item([&prim_map](const pxr::SdfPath &path, Material *mat) {
     prim_map.lookup_or_add_default(path).append(RNA_id_pointer_create(&mat->id));
   });
 
@@ -676,6 +682,3 @@ bool call_material_import_hooks(pxr::UsdStageRefPtr stage,
 }
 
 }  // namespace blender::io::usd
-
-#undef REF
-#undef PYTHON_NS

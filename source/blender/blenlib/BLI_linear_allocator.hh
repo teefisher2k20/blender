@@ -4,14 +4,11 @@
 
 /** \file
  * \ingroup bli
- *
- * A linear allocator is the simplest form of an allocator. It never reuses any memory, and
- * therefore does not need a deallocation method. It simply hands out consecutive buffers of
- * memory. When the current buffer is full, it reallocates a new larger buffer and continues.
  */
 
 #pragma once
 
+#include "BLI_cpp_type.hh"
 #include "BLI_string_ref.hh"
 #include "BLI_utility_mixins.hh"
 #include "BLI_vector.hh"
@@ -24,6 +21,11 @@ namespace blender {
  */
 // #define BLI_DEBUG_LINEAR_ALLOCATOR_SIZE
 
+/**
+ * A linear allocator is the simplest form of an allocator. It never reuses any memory, and
+ * therefore does not need a deallocation method. It simply hands out consecutive buffers of
+ * memory. When the current buffer is full, it allocates a new larger buffer and continues.
+ */
 template<typename Allocator = GuardedAllocator> class LinearAllocator : NonCopyable, NonMovable {
  private:
   BLI_NO_UNIQUE_ADDRESS Allocator allocator_;
@@ -34,7 +36,7 @@ template<typename Allocator = GuardedAllocator> class LinearAllocator : NonCopya
 
   /* Buffers larger than that are not packed together with smaller allocations to avoid wasting
    * memory. */
-  constexpr static inline int64_t large_buffer_threshold = 4096;
+  constexpr static int64_t large_buffer_threshold = 4096;
 
  public:
 #ifdef BLI_DEBUG_LINEAR_ALLOCATOR_SIZE
@@ -99,6 +101,12 @@ template<typename Allocator = GuardedAllocator> class LinearAllocator : NonCopya
     return static_cast<T *>(this->allocate(sizeof(T), alignof(T)));
   }
 
+  /** Same as above but uses a runtime #CPPType. */
+  void *allocate(const CPPType &type)
+  {
+    return this->allocate(type.size, type.alignment);
+  }
+
   /**
    * Allocate a memory buffer that can hold T array with the given size.
    *
@@ -108,6 +116,12 @@ template<typename Allocator = GuardedAllocator> class LinearAllocator : NonCopya
   {
     T *array = static_cast<T *>(this->allocate(sizeof(T) * size, alignof(T)));
     return MutableSpan<T>(array, size);
+  }
+
+  /** Same as above but uses a runtime #CPPType. */
+  void *allocate_array(const CPPType &type, const int64_t size)
+  {
+    return this->allocate(type.size * size, type.alignment);
   }
 
   /**

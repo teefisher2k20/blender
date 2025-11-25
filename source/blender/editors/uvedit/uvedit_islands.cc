@@ -89,18 +89,17 @@ static bool bm_loop_uv_shared_edge_check(const BMLoop *l_a, const BMLoop *l_b, v
  * Loosely based on `uvedit_is_face_affected`, but "bug-compatible" with previous code.
  */
 static bool uvedit_is_face_affected_for_calc_uv_islands(const Scene *scene,
+                                                        const BMesh *bm,
                                                         BMFace *efa,
                                                         const bool only_selected_faces,
-                                                        const bool only_selected_uvs,
-                                                        const BMUVOffsets &uv_offsets)
+                                                        const bool only_selected_uvs)
 {
   if (BM_elem_flag_test(efa, BM_ELEM_HIDDEN)) {
     return false;
   }
   if (only_selected_faces) {
     if (only_selected_uvs) {
-      return BM_elem_flag_test(efa, BM_ELEM_SELECT) &&
-             uvedit_face_select_test(scene, efa, uv_offsets);
+      return BM_elem_flag_test(efa, BM_ELEM_SELECT) && uvedit_face_select_test(scene, bm, efa);
     }
     return BM_elem_flag_test(efa, BM_ELEM_SELECT);
   }
@@ -114,23 +113,22 @@ int bm_mesh_calc_uv_islands(const Scene *scene,
                             const bool only_selected_uvs,
                             const bool use_seams,
                             const float aspect_y,
-                            const BMUVOffsets uv_offsets)
+                            const BMUVOffsets &uv_offsets)
 {
   BLI_assert(uv_offsets.uv >= 0);
   int island_added = 0;
   BM_mesh_elem_table_ensure(bm, BM_FACE);
 
-  int *groups_array = static_cast<int *>(
-      MEM_mallocN(sizeof(*groups_array) * size_t(bm->totface), __func__));
+  int *groups_array = MEM_malloc_arrayN<int>(bm->totface, __func__);
 
-  int(*group_index)[2];
+  int (*group_index)[2];
 
   /* Set the tag for `BM_mesh_calc_face_groups`. */
   BMFace *f;
   BMIter iter;
   BM_ITER_MESH (f, &iter, bm, BM_FACES_OF_MESH) {
     const bool face_affected = uvedit_is_face_affected_for_calc_uv_islands(
-        scene, f, only_selected_faces, only_selected_uvs, uv_offsets);
+        scene, bm, f, only_selected_faces, only_selected_uvs);
     BM_elem_flag_set(f, BM_ELEM_TAG, face_affected);
   }
 
@@ -150,13 +148,13 @@ int bm_mesh_calc_uv_islands(const Scene *scene,
   for (int i = 0; i < group_len; i++) {
     const int faces_start = group_index[i][0];
     const int faces_len = group_index[i][1];
-    BMFace **faces = static_cast<BMFace **>(MEM_mallocN(sizeof(*faces) * faces_len, __func__));
+    BMFace **faces = MEM_malloc_arrayN<BMFace *>(faces_len, __func__);
 
     for (int j = 0; j < faces_len; j++) {
       faces[j] = BM_face_at_index(bm, groups_array[faces_start + j]);
     }
 
-    FaceIsland *island = static_cast<FaceIsland *>(MEM_callocN(sizeof(*island), __func__));
+    FaceIsland *island = MEM_callocN<FaceIsland>(__func__);
     island->faces = faces;
     island->faces_len = faces_len;
     island->offsets = uv_offsets;

@@ -23,36 +23,46 @@ namespace blender::bke {
 
 template<typename T>
 static void adapt_mesh_domain_corner_to_point_impl(const Mesh &mesh,
-                                                   const VArray<T> &old_values,
-                                                   MutableSpan<T> r_values)
+                                                   const VArray<T> &src,
+                                                   MutableSpan<T> r_dst)
 {
-  BLI_assert(r_values.size() == mesh.verts_num);
+  BLI_assert(r_dst.size() == mesh.verts_num);
+  const GroupedSpan<int> vert_to_face_map = mesh.vert_to_face_map();
   const Span<int> corner_verts = mesh.corner_verts();
+  const OffsetIndices<int> faces = mesh.faces();
 
-  attribute_math::DefaultMixer<T> mixer(r_values);
-  for (const int corner : IndexRange(mesh.corners_num)) {
-    mixer.mix_in(corner_verts[corner], old_values[corner]);
-  }
-  mixer.finalize();
+  threading::parallel_for(vert_to_face_map.index_range(), 2048, [&](const IndexRange range) {
+    for (const int64_t vert : range) {
+      const Span<int> vert_faces = vert_to_face_map[vert];
+
+      attribute_math::DefaultMixer<T> mixer({&r_dst[vert], 1});
+      for (const int face : vert_faces) {
+        const int corner = mesh::face_find_corner_from_vert(faces[face], corner_verts, int(vert));
+        mixer.mix_in(0, src[corner]);
+      }
+      mixer.finalize();
+    }
+  });
 }
 
 /* A vertex is selected if all connected face corners were selected and it is not loose. */
 template<>
 void adapt_mesh_domain_corner_to_point_impl(const Mesh &mesh,
-                                            const VArray<bool> &old_values,
-                                            MutableSpan<bool> r_values)
+                                            const VArray<bool> &src,
+                                            MutableSpan<bool> r_dst)
 {
-  BLI_assert(r_values.size() == mesh.verts_num);
+  BLI_assert(r_dst.size() == mesh.verts_num);
   const Span<int> corner_verts = mesh.corner_verts();
 
-  r_values.fill(true);
-  for (const int corner : IndexRange(mesh.corners_num)) {
-    const int point_index = corner_verts[corner];
-
-    if (!old_values[corner]) {
-      r_values[point_index] = false;
+  r_dst.fill(true);
+  threading::parallel_for(IndexRange(mesh.corners_num), 4096, [&](const IndexRange range) {
+    for (const int corner : range) {
+      const int vert = corner_verts[corner];
+      if (!src[corner]) {
+        r_dst[vert] = false;
+      }
     }
-  }
+  });
 
   /* Deselect loose vertices without corners that are still selected from the 'true' default. */
   const LooseVertCache &loose_verts = mesh.verts_no_face();
@@ -61,7 +71,7 @@ void adapt_mesh_domain_corner_to_point_impl(const Mesh &mesh,
     threading::parallel_for(bits.index_range(), 2048, [&](const IndexRange range) {
       for (const int vert_index : range) {
         if (bits[vert_index]) {
-          r_values[vert_index] = false;
+          r_dst[vert_index] = false;
         }
       }
     });
@@ -80,7 +90,7 @@ static GVArray adapt_mesh_domain_corner_to_point(const Mesh &mesh, const GVArray
           mesh, varray.typed<T>(), values.as_mutable_span().typed<T>());
     }
   });
-  return GVArray::ForGArray(std::move(values));
+  return GVArray::from_garray(std::move(values));
 }
 
 /**
@@ -93,7 +103,7 @@ static GVArray adapt_mesh_domain_point_to_corner(const Mesh &mesh, const GVArray
   GVArray new_varray;
   attribute_math::convert_to_static_type(varray.type(), [&](auto dummy) {
     using T = decltype(dummy);
-    new_varray = VArray<T>::ForFunc(
+    new_varray = VArray<T>::from_func(
         mesh.corners_num, [corner_verts, varray = varray.typed<T>()](const int64_t corner) {
           return varray[corner_verts[corner]];
         });
@@ -110,11 +120,11 @@ static GVArray adapt_mesh_domain_corner_to_face(const Mesh &mesh, const GVArray 
     using T = decltype(dummy);
     if constexpr (!std::is_void_v<attribute_math::DefaultMixer<T>>) {
       if constexpr (std::is_same_v<T, bool>) {
-        new_varray = VArray<T>::ForFunc(
+        new_varray = VArray<T>::from_func(
             faces.size(), [faces, varray = varray.typed<bool>()](const int face_index) {
               /* A face is selected if all of its corners were selected. */
-              for (const int loop_index : faces[face_index]) {
-                if (!varray[loop_index]) {
+              for (const int corner : faces[face_index]) {
+                if (!varray[corner]) {
                   return false;
                 }
               }
@@ -122,12 +132,12 @@ static GVArray adapt_mesh_domain_corner_to_face(const Mesh &mesh, const GVArray 
             });
       }
       else {
-        new_varray = VArray<T>::ForFunc(
+        new_varray = VArray<T>::from_func(
             faces.size(), [faces, varray = varray.typed<T>()](const int face_index) {
               T return_value;
               attribute_math::DefaultMixer<T> mixer({&return_value, 1});
-              for (const int loop_index : faces[face_index]) {
-                const T value = varray[loop_index];
+              for (const int corner : faces[face_index]) {
+                const T value = varray[corner];
                 mixer.mix_in(0, value);
               }
               mixer.finalize();
@@ -211,63 +221,42 @@ static GVArray adapt_mesh_domain_corner_to_edge(const Mesh &mesh, const GVArray 
           mesh, varray.typed<T>(), values.as_mutable_span().typed<T>());
     }
   });
-  return GVArray::ForGArray(std::move(values));
-}
-
-template<typename T>
-void adapt_mesh_domain_face_to_point_impl(const Mesh &mesh,
-                                          const VArray<T> &old_values,
-                                          MutableSpan<T> r_values)
-{
-  BLI_assert(r_values.size() == mesh.verts_num);
-  const OffsetIndices faces = mesh.faces();
-  const Span<int> corner_verts = mesh.corner_verts();
-
-  attribute_math::DefaultMixer<T> mixer(r_values);
-
-  for (const int face_index : faces.index_range()) {
-    const T value = old_values[face_index];
-    for (const int vert : corner_verts.slice(faces[face_index])) {
-      mixer.mix_in(vert, value);
-    }
-  }
-
-  mixer.finalize();
-}
-
-/* A vertex is selected if any of the connected faces were selected. */
-template<>
-void adapt_mesh_domain_face_to_point_impl(const Mesh &mesh,
-                                          const VArray<bool> &old_values,
-                                          MutableSpan<bool> r_values)
-{
-  BLI_assert(r_values.size() == mesh.verts_num);
-  const OffsetIndices faces = mesh.faces();
-  const Span<int> corner_verts = mesh.corner_verts();
-
-  r_values.fill(false);
-  threading::parallel_for(faces.index_range(), 2048, [&](const IndexRange range) {
-    for (const int face_index : range) {
-      if (old_values[face_index]) {
-        for (const int vert : corner_verts.slice(faces[face_index])) {
-          r_values[vert] = true;
-        }
-      }
-    }
-  });
+  return GVArray::from_garray(std::move(values));
 }
 
 static GVArray adapt_mesh_domain_face_to_point(const Mesh &mesh, const GVArray &varray)
 {
-  GArray<> values(varray.type(), mesh.verts_num);
+  GVArray new_varray;
   attribute_math::convert_to_static_type(varray.type(), [&](auto dummy) {
     using T = decltype(dummy);
     if constexpr (!std::is_void_v<attribute_math::DefaultMixer<T>>) {
-      adapt_mesh_domain_face_to_point_impl<T>(
-          mesh, varray.typed<T>(), values.as_mutable_span().typed<T>());
+      VArray<T> src = varray.typed<T>();
+      const GroupedSpan<int> vert_to_face_map = mesh.vert_to_face_map();
+      if constexpr (std::is_same_v<T, bool>) {
+        new_varray = VArray<T>::from_func(
+            mesh.verts_num, [vert_to_face_map, src](const int point_i) {
+              const Span<int> vert_faces = vert_to_face_map[point_i];
+              /* A vertex is selected if any of the connected faces were selected. */
+              return std::any_of(
+                  vert_faces.begin(), vert_faces.end(), [&](const int face) { return src[face]; });
+            });
+      }
+      else {
+        new_varray = VArray<T>::from_func(
+            mesh.verts_num, [vert_to_face_map, src](const int point_i) {
+              const Span<int> vert_faces = vert_to_face_map[point_i];
+              T return_value;
+              attribute_math::DefaultMixer<T> mixer({&return_value, 1});
+              for (const int face : vert_faces) {
+                mixer.mix_in(0, src[face]);
+              }
+              mixer.finalize();
+              return return_value;
+            });
+      }
     }
   });
-  return GVArray::ForGArray(std::move(values));
+  return new_varray;
 }
 
 /* Each corner's value is simply a copy of the value at its face. */
@@ -297,7 +286,7 @@ static GVArray adapt_mesh_domain_face_to_corner(const Mesh &mesh, const GVArray 
           mesh, varray.typed<T>(), values.as_mutable_span().typed<T>());
     }
   });
-  return GVArray::ForGArray(std::move(values));
+  return GVArray::from_garray(std::move(values));
 }
 
 template<typename T>
@@ -352,7 +341,7 @@ static GVArray adapt_mesh_domain_face_to_edge(const Mesh &mesh, const GVArray &v
           mesh, varray.typed<T>(), values.as_mutable_span().typed<T>());
     }
   });
-  return GVArray::ForGArray(std::move(values));
+  return GVArray::from_garray(std::move(values));
 }
 
 static GVArray adapt_mesh_domain_point_to_face(const Mesh &mesh, const GVArray &varray)
@@ -365,7 +354,7 @@ static GVArray adapt_mesh_domain_point_to_face(const Mesh &mesh, const GVArray &
     using T = decltype(dummy);
     if constexpr (!std::is_void_v<attribute_math::DefaultMixer<T>>) {
       if constexpr (std::is_same_v<T, bool>) {
-        new_varray = VArray<T>::ForFunc(
+        new_varray = VArray<T>::from_func(
             mesh.faces_num,
             [corner_verts, faces, varray = varray.typed<bool>()](const int face_index) {
               /* A face is selected if all of its vertices were selected. */
@@ -378,7 +367,7 @@ static GVArray adapt_mesh_domain_point_to_face(const Mesh &mesh, const GVArray &
             });
       }
       else {
-        new_varray = VArray<T>::ForFunc(
+        new_varray = VArray<T>::from_func(
             mesh.faces_num,
             [corner_verts, faces, varray = varray.typed<T>()](const int face_index) {
               T return_value;
@@ -405,22 +394,17 @@ static GVArray adapt_mesh_domain_point_to_edge(const Mesh &mesh, const GVArray &
     if constexpr (!std::is_void_v<attribute_math::DefaultMixer<T>>) {
       if constexpr (std::is_same_v<T, bool>) {
         /* An edge is selected if both of its vertices were selected. */
-        new_varray = VArray<bool>::ForFunc(
+        new_varray = VArray<bool>::from_func(
             edges.size(), [edges, varray = varray.typed<bool>()](const int edge_index) {
               const int2 &edge = edges[edge_index];
               return varray[edge[0]] && varray[edge[1]];
             });
       }
       else {
-        new_varray = VArray<T>::ForFunc(
+        new_varray = VArray<T>::from_func(
             edges.size(), [edges, varray = varray.typed<T>()](const int edge_index) {
-              T return_value;
-              attribute_math::DefaultMixer<T> mixer({&return_value, 1});
               const int2 &edge = edges[edge_index];
-              mixer.mix_in(0, varray[edge[0]]);
-              mixer.mix_in(0, varray[edge[1]]);
-              mixer.finalize();
-              return return_value;
+              return attribute_math::mix2(0.5f, varray[edge[0]], varray[edge[1]]);
             });
       }
     }
@@ -443,12 +427,12 @@ void adapt_mesh_domain_edge_to_corner_impl(const Mesh &mesh,
     const IndexRange face = faces[face_index];
 
     /* For every corner, mix the values from the adjacent edges on the face. */
-    for (const int loop_index : face) {
-      const int loop_index_prev = mesh::face_corner_prev(face, loop_index);
-      const int edge = corner_edges[loop_index];
-      const int edge_prev = corner_edges[loop_index_prev];
-      mixer.mix_in(loop_index, old_values[edge]);
-      mixer.mix_in(loop_index, old_values[edge_prev]);
+    for (const int corner : face) {
+      const int corner_prev = mesh::face_corner_prev(face, corner);
+      const int edge = corner_edges[corner];
+      const int edge_prev = corner_edges[corner_prev];
+      mixer.mix_in(corner, old_values[edge]);
+      mixer.mix_in(corner, old_values[edge_prev]);
     }
   }
 
@@ -470,12 +454,12 @@ void adapt_mesh_domain_edge_to_corner_impl(const Mesh &mesh,
   threading::parallel_for(faces.index_range(), 2048, [&](const IndexRange range) {
     for (const int face_index : range) {
       const IndexRange face = faces[face_index];
-      for (const int loop_index : face) {
-        const int loop_index_prev = mesh::face_corner_prev(face, loop_index);
-        const int edge = corner_edges[loop_index];
-        const int edge_prev = corner_edges[loop_index_prev];
+      for (const int corner : face) {
+        const int corner_prev = mesh::face_corner_prev(face, corner);
+        const int edge = corner_edges[corner];
+        const int edge_prev = corner_edges[corner_prev];
         if (old_values[edge] && old_values[edge_prev]) {
-          r_values[loop_index] = true;
+          r_values[corner] = true;
         }
       }
     }
@@ -492,7 +476,7 @@ static GVArray adapt_mesh_domain_edge_to_corner(const Mesh &mesh, const GVArray 
           mesh, varray.typed<T>(), values.as_mutable_span().typed<T>());
     }
   });
-  return GVArray::ForGArray(std::move(values));
+  return GVArray::from_garray(std::move(values));
 }
 
 template<typename T>
@@ -548,7 +532,7 @@ static GVArray adapt_mesh_domain_edge_to_point(const Mesh &mesh, const GVArray &
           mesh, varray.typed<T>(), values.as_mutable_span().typed<T>());
     }
   });
-  return GVArray::ForGArray(std::move(values));
+  return GVArray::from_garray(std::move(values));
 }
 
 static GVArray adapt_mesh_domain_edge_to_face(const Mesh &mesh, const GVArray &varray)
@@ -562,7 +546,7 @@ static GVArray adapt_mesh_domain_edge_to_face(const Mesh &mesh, const GVArray &v
     if constexpr (!std::is_void_v<attribute_math::DefaultMixer<T>>) {
       if constexpr (std::is_same_v<T, bool>) {
         /* A face is selected if all of its edges are selected. */
-        new_varray = VArray<bool>::ForFunc(
+        new_varray = VArray<bool>::from_func(
             faces.size(), [corner_edges, faces, varray = varray.typed<T>()](const int face_index) {
               for (const int edge : corner_edges.slice(faces[face_index])) {
                 if (!varray[edge]) {
@@ -573,7 +557,7 @@ static GVArray adapt_mesh_domain_edge_to_face(const Mesh &mesh, const GVArray &v
             });
       }
       else {
-        new_varray = VArray<T>::ForFunc(
+        new_varray = VArray<T>::from_func(
             faces.size(), [corner_edges, faces, varray = varray.typed<T>()](const int face_index) {
               T return_value;
               attribute_math::DefaultMixer<T> mixer({&return_value, 1});
@@ -645,7 +629,7 @@ static GVArray adapt_mesh_attribute_domain(const Mesh &mesh,
     if (can_simple_adapt_for_single(mesh, from_domain, to_domain)) {
       BUFFER_FOR_CPP_TYPE_VALUE(varray.type(), value);
       varray.get_internal_single(value);
-      return GVArray::ForSingle(varray.type(), mesh.attributes().domain_size(to_domain), value);
+      return GVArray::from_single(varray.type(), mesh.attributes().domain_size(to_domain), value);
     }
   }
 
@@ -757,7 +741,7 @@ class MeshVertexGroupsAttributeProvider final : public DynamicAttributesProvider
   {
     BLI_assert(vertex_group_index >= 0);
     if (dverts.is_empty()) {
-      return {VArray<float>::ForSingle(0.0f, mesh.verts_num), AttrDomain::Point};
+      return {VArray<float>::from_single(0.0f, mesh.verts_num), AttrDomain::Point};
     }
     return {varray_for_deform_verts(dverts, vertex_group_index), AttrDomain::Point};
   }
@@ -808,7 +792,7 @@ class MeshVertexGroupsAttributeProvider final : public DynamicAttributesProvider
     if (mesh == nullptr) {
       return true;
     }
-
+    const AttributeAccessor accessor = mesh->attributes();
     const Span<MDeformVert> dverts = mesh->deform_verts();
 
     int group_index = 0;
@@ -817,7 +801,9 @@ class MeshVertexGroupsAttributeProvider final : public DynamicAttributesProvider
         return this->get_for_vertex_group_index(*mesh, dverts, group_index);
       };
 
-      AttributeIter iter{group->name, AttrDomain::Point, CD_PROP_FLOAT, get_fn};
+      AttributeIter iter{group->name, AttrDomain::Point, bke::AttrType::Float, get_fn};
+      iter.is_builtin = false;
+      iter.accessor = &accessor;
       fn(iter);
       if (iter.is_stopped()) {
         return false;
@@ -892,13 +878,6 @@ static GeometryAttributeProviders create_attribute_providers_for_mesh()
                                                  point_access,
                                                  tag_component_positions_changed);
 
-  static BuiltinCustomDataLayerProvider id("id",
-                                           AttrDomain::Point,
-                                           CD_PROP_INT32,
-                                           BuiltinAttributeProvider::Deletable,
-                                           point_access,
-                                           nullptr);
-
   static const auto material_index_clamp = mf::build::SI1_SO<int, int>(
       "Material Index Validate",
       [](int value) {
@@ -971,7 +950,6 @@ static GeometryAttributeProviders create_attribute_providers_for_mesh()
                                      &edge_verts,
                                      &corner_vert,
                                      &corner_edge,
-                                     &id,
                                      &material_index,
                                      &sharp_face,
                                      &sharp_edge},

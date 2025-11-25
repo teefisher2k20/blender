@@ -17,14 +17,12 @@ import sys
 
 import make_utils
 from make_utils import call
-from pathlib import Path
 
 
 # Parse arguments.
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ctest-command", default="ctest")
-    parser.add_argument("--cmake-command", default="cmake")
     parser.add_argument("--git-command", default="git")
     parser.add_argument("--config", default="")
     parser.add_argument("build_directory")
@@ -35,7 +33,6 @@ def main() -> int:
     args = parse_arguments()
     git_command = args.git_command
     ctest_command = args.ctest_command
-    cmake_command = args.cmake_command
     config = args.config
     build_dir = args.build_directory
 
@@ -46,24 +43,6 @@ def main() -> int:
     if make_utils.command_missing(git_command):
         sys.stderr.write("git not found, can't run tests\n")
         return 1
-
-    # Test if we are building a specific release version.
-    lib_tests_dirpath = Path("tests") / "data"
-
-    if not (lib_tests_dirpath / ".git").exists():
-        print("Tests files not found, downloading...")
-
-        if make_utils.command_missing(cmake_command):
-            sys.stderr.write("cmake not found, can't checkout test files\n")
-            return 1
-
-        # Ensure the test data files sub-module is configured and present.
-        make_utils.git_enable_submodule(git_command, Path("tests") / "data")
-        make_utils.git_update_submodule(args.git_command, lib_tests_dirpath)
-
-        # Run cmake again to detect tests files.
-        os.chdir(build_dir)
-        call([cmake_command, "."])
 
     # Run tests
     tests_dir = os.path.join(build_dir, "tests")

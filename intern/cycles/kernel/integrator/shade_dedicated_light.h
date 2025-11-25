@@ -67,16 +67,8 @@ ccl_device void shadow_linking_setup_ray_from_intersection(
   ray->self.object = INTEGRATOR_STATE(state, shadow_link, last_isect_object);
   ray->self.prim = INTEGRATOR_STATE(state, shadow_link, last_isect_prim);
 
-  if (isect->type == PRIMITIVE_LAMP) {
-    ray->self.light_object = OBJECT_NONE;
-    ray->self.light_prim = PRIM_NONE;
-    ray->self.light = isect->prim;
-  }
-  else {
-    ray->self.light_object = isect->object;
-    ray->self.light_prim = isect->prim;
-    ray->self.light = LAMP_NONE;
-  }
+  ray->self.light_object = isect->object;
+  ray->self.light_prim = isect->prim;
 }
 
 ccl_device bool shadow_linking_shade_light(KernelGlobals kg,
@@ -219,7 +211,7 @@ ccl_device void shadow_linking_shade(KernelGlobals kg,
 
   INTEGRATOR_STATE_WRITE(shadow_state, shadow_path, flag) = shadow_flag;
 
-#  ifdef __PATH_GUIDING__
+#  if defined(__PATH_GUIDING__)
   if (kernel_data.integrator.train_guiding) {
     guiding_record_light_surface_segment(kg, state, &isect);
     INTEGRATOR_STATE(shadow_state, shadow_path, guiding_mis_weight) = mis_weight;
@@ -245,7 +237,7 @@ ccl_device void integrator_shade_dedicated_light(KernelGlobals kg,
   kernel_assert(!"integrator_intersect_dedicated_light is not supposed to be scheduled");
 #endif
 
-  integrator_shade_surface_next_kernel<DEVICE_KERNEL_INTEGRATOR_SHADE_DEDICATED_LIGHT>(kg, state);
+  integrator_shade_surface_next_kernel<DEVICE_KERNEL_INTEGRATOR_SHADE_DEDICATED_LIGHT>(state);
 }
 
 CCL_NAMESPACE_END

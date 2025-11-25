@@ -43,7 +43,7 @@ struct BLaplacianSystem {
   /* Data. */
   float min_area;
 };
-typedef BLaplacianSystem LaplacianSystem;
+using LaplacianSystem = BLaplacianSystem;
 
 static bool vert_is_boundary(BMVert *v);
 static LaplacianSystem *init_laplacian_system(int a_numEdges, int a_numLoops, int a_numVerts);
@@ -93,49 +93,43 @@ static void memset_laplacian_system(LaplacianSystem *sys, int val)
 static LaplacianSystem *init_laplacian_system(int a_numEdges, int a_numLoops, int a_numVerts)
 {
   LaplacianSystem *sys;
-  sys = static_cast<LaplacianSystem *>(
-      MEM_callocN(sizeof(LaplacianSystem), "ModLaplSmoothSystem"));
+  sys = MEM_callocN<LaplacianSystem>("ModLaplSmoothSystem");
   sys->numEdges = a_numEdges;
   sys->numLoops = a_numLoops;
   sys->numVerts = a_numVerts;
 
-  sys->eweights = static_cast<float *>(
-      MEM_callocN(sizeof(float) * sys->numEdges, "ModLaplSmoothEWeight"));
+  sys->eweights = MEM_calloc_arrayN<float>(sys->numEdges, "ModLaplSmoothEWeight");
   if (!sys->eweights) {
     delete_laplacian_system(sys);
     return nullptr;
   }
 
-  sys->fweights = static_cast<float(*)[3]>(
+  sys->fweights = static_cast<float (*)[3]>(
       MEM_callocN(sizeof(float[3]) * sys->numLoops, "ModLaplSmoothFWeight"));
   if (!sys->fweights) {
     delete_laplacian_system(sys);
     return nullptr;
   }
 
-  sys->ring_areas = static_cast<float *>(
-      MEM_callocN(sizeof(float) * sys->numVerts, "ModLaplSmoothRingAreas"));
+  sys->ring_areas = MEM_calloc_arrayN<float>(sys->numVerts, "ModLaplSmoothRingAreas");
   if (!sys->ring_areas) {
     delete_laplacian_system(sys);
     return nullptr;
   }
 
-  sys->vlengths = static_cast<float *>(
-      MEM_callocN(sizeof(float) * sys->numVerts, "ModLaplSmoothVlengths"));
+  sys->vlengths = MEM_calloc_arrayN<float>(sys->numVerts, "ModLaplSmoothVlengths");
   if (!sys->vlengths) {
     delete_laplacian_system(sys);
     return nullptr;
   }
 
-  sys->vweights = static_cast<float *>(
-      MEM_callocN(sizeof(float) * sys->numVerts, "ModLaplSmoothVweights"));
+  sys->vweights = MEM_calloc_arrayN<float>(sys->numVerts, "ModLaplSmoothVweights");
   if (!sys->vweights) {
     delete_laplacian_system(sys);
     return nullptr;
   }
 
-  sys->zerola = static_cast<bool *>(
-      MEM_callocN(sizeof(bool) * sys->numVerts, "ModLaplSmoothZeloa"));
+  sys->zerola = MEM_calloc_arrayN<bool>(sys->numVerts, "ModLaplSmoothZeloa");
   if (!sys->zerola) {
     delete_laplacian_system(sys);
     return nullptr;

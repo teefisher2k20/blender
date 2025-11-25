@@ -25,7 +25,7 @@ namespace blender::gpu {
  * for use in PSO construction and caching.
  */
 struct MTLVertexAttributeDescriptorPSO {
-  MTLVertexFormat format;
+  ::MTLVertexFormat format;
   int offset;
   int buffer_index;
   GPUVertFetchMode format_conversion_mode;
@@ -53,19 +53,21 @@ struct MTLVertexAttributeDescriptorPSO {
 };
 
 struct MTLVertexBufferLayoutDescriptorPSO {
-  MTLVertexStepFunction step_function;
+  ::MTLVertexStepFunction step_function;
   int step_rate;
   int stride;
+  int buffer_slot;
 
   bool operator==(const MTLVertexBufferLayoutDescriptorPSO &other) const
   {
     return (step_function == other.step_function) && (step_rate == other.step_rate) &&
-           (stride == other.stride);
+           (stride == other.stride) && (buffer_slot == other.buffer_slot);
   }
 
   uint64_t hash() const
   {
-    return uint64_t(uint64_t(this->step_function) ^ (this->step_rate << 4) ^ (this->stride << 8));
+    return uint64_t(uint64_t(this->step_function) ^ (this->step_rate << 4) ^ (this->stride << 8) ^
+                    (uint64_t(this->buffer_slot) << 32));
   }
 
   void reset()
@@ -76,57 +78,14 @@ struct MTLVertexBufferLayoutDescriptorPSO {
   }
 };
 
-/* SSBO attribute state caching. */
-struct MTLSSBOAttribute {
-
-  int mtl_attribute_index;
-  int vbo_id;
-  int attribute_offset;
-  int per_vertex_stride;
-  int attribute_format;
-  bool is_instance;
-
-  MTLSSBOAttribute() = default;
-  MTLSSBOAttribute(
-      int attribute_ind, int vertexbuffer_ind, int offset, int stride, int format, bool instanced)
-      : mtl_attribute_index(attribute_ind),
-        vbo_id(vertexbuffer_ind),
-        attribute_offset(offset),
-        per_vertex_stride(stride),
-        attribute_format(format),
-        is_instance(instanced)
-  {
-  }
-
-  bool operator==(const MTLSSBOAttribute &other) const
-  {
-    return (mtl_attribute_index == other.mtl_attribute_index && vbo_id == other.vbo_id &&
-            attribute_offset == other.attribute_offset &&
-            per_vertex_stride == other.per_vertex_stride &&
-            attribute_format == other.attribute_format && is_instance == other.is_instance);
-  }
-
-  void reset()
-  {
-    mtl_attribute_index = 0;
-    vbo_id = 0;
-    attribute_offset = 0;
-    per_vertex_stride = 0;
-    attribute_format = 0;
-    is_instance = false;
-  }
-};
-
 struct MTLVertexDescriptor {
-
   /* Core Vertex Attributes. */
   MTLVertexAttributeDescriptorPSO attributes[GPU_VERT_ATTR_MAX_LEN];
-  MTLVertexBufferLayoutDescriptorPSO
-      buffer_layouts[GPU_BATCH_VBO_MAX_LEN + GPU_BATCH_INST_VBO_MAX_LEN];
+  MTLVertexBufferLayoutDescriptorPSO buffer_layouts[GPU_BATCH_VBO_MAX_LEN];
   int max_attribute_value;
   int total_attributes;
   int num_vert_buffers;
-  MTLPrimitiveTopologyClass prim_topology_class;
+  ::MTLPrimitiveTopologyClass prim_topology_class;
 
   bool operator==(const MTLVertexDescriptor &other) const
   {
@@ -146,7 +105,7 @@ struct MTLVertexDescriptor {
       }
     }
 
-    for (const int b : IndexRange(this->num_vert_buffers)) {
+    for (const int b : IndexRange(ARRAY_SIZE(this->buffer_layouts))) {
       if (!(this->buffer_layouts[b] == other.buffer_layouts[b])) {
         return false;
       }
@@ -173,10 +132,13 @@ struct MTLVertexDescriptor {
 };
 
 struct SpecializationStateDescriptor {
-  Vector<Shader::Constants::Value> values;
+  Vector<shader::SpecializationConstant::Value> values;
 
   SpecializationStateDescriptor() = default;
-  SpecializationStateDescriptor(Vector<Shader::Constants::Value> source) : values(source) {}
+  SpecializationStateDescriptor(Vector<shader::SpecializationConstant::Value> source)
+      : values(source)
+  {
+  }
 
   bool operator==(const SpecializationStateDescriptor &other) const
   {
@@ -187,7 +149,7 @@ struct SpecializationStateDescriptor {
   {
     uint64_t hash = values.size();
     uint seed = 0xFF;
-    for (const Shader::Constants::Value &value : values) {
+    for (const shader::SpecializationConstant::Value &value : values) {
       seed = seed << 1;
       hash ^= seed ^ value.u;
     }
@@ -343,7 +305,7 @@ struct MTLComputePipelineStateDescriptor {
   SpecializationStateDescriptor specialization_state;
 
   MTLComputePipelineStateDescriptor() = default;
-  MTLComputePipelineStateDescriptor(Vector<Shader::Constants::Value> values)
+  MTLComputePipelineStateDescriptor(Vector<shader::SpecializationConstant::Value> values)
   {
     specialization_state.values = values;
   }

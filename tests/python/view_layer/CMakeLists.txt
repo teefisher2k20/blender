@@ -6,7 +6,7 @@
 
 # Use '--write-blend=/tmp/test.blend' to view output
 
-set(TEST_SRC_DIR ${CMAKE_SOURCE_DIR}/tests/data)
+set(TEST_SRC_DIR ${CMAKE_SOURCE_DIR}/tests/files)
 set(TEST_OUT_DIR ${CMAKE_BINARY_DIR}/tests)
 
 # ugh, any better way to do this on testing only?
@@ -16,9 +16,15 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory ${TEST_OUT_DIR})
 #   message(FATAL_ERROR "CMake test directory not found!")
 # endif()
 
-# for testing with valgrind prefix: valgrind --track-origins=yes --error-limit=no
-set(TEST_BLENDER_EXE $<TARGET_FILE:blender> --background --factory-startup --debug-memory --debug-exit-on-error --env-system-scripts ${CMAKE_SOURCE_DIR}/scripts)
-
+# For testing with VALGRIND prefix: `valgrind --track-origins=yes --error-limit=no`
+set(TEST_BLENDER_EXE
+  $<TARGET_FILE:blender>
+  --background
+  --factory-startup
+  --debug-memory
+  --debug-exit-on-error
+  --env-system-scripts ${CMAKE_SOURCE_DIR}/scripts
+)
 
 # ------------------------------------------------------------------------------
 

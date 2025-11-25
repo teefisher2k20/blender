@@ -17,6 +17,8 @@ struct TransInfo;
 struct View3D;
 struct ViewLayer;
 
+namespace blender::ed::transform {
+
 bool gimbal_axis_pose(Object *ob, const bPoseChannel *pchan, float gmat[3][3]);
 bool gimbal_axis_object(Object *ob, float gmat[3][3]);
 
@@ -74,6 +76,8 @@ enum {
 /**
  * Calculate unit length values into `r_normal` & `r_plane`
  * from selected objects in the 3D viewport.
+ *
+ * \param v3d: The 3D viewport or null.
  */
 int getTransformOrientation_ex(const Scene *scene,
                                ViewLayer *view_layer,
@@ -84,3 +88,5 @@ int getTransformOrientation_ex(const Scene *scene,
                                float r_normal[3],
                                float r_plane[3]);
 int getTransformOrientation(const bContext *C, float r_normal[3], float r_plane[3]);
+
+}  // namespace blender::ed::transform

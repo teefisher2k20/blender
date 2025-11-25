@@ -33,8 +33,12 @@ void BKE_materials_exit();
 /** \name Materials
  * \{ */
 
-void BKE_object_materials_test(Main *bmain, Object *ob, ID *id);
-void BKE_objects_materials_test_all(Main *bmain, ID *id);
+/** Make the object's material array the same size as its data ID's material array. */
+void BKE_object_materials_sync_length(Main *bmain, Object *ob, ID *id);
+
+/** Ensure that every object using this data has a material array of the correct size. */
+void BKE_objects_materials_sync_length_all(Main *bmain, ID *id);
+
 void BKE_object_material_resize(Main *bmain, Object *ob, short totcol, bool do_id_user);
 void BKE_object_material_remap(Object *ob, const unsigned int *remap);
 /**
@@ -153,16 +157,26 @@ void BKE_id_material_clear(Main *bmain, ID *id);
  */
 Material *BKE_object_material_get_eval(Object *ob, short act);
 /**
+ * Same as above, but uses the given geometry data instead of `ob.data`. This is useful for
+ * instances. The alternative is to use #BKE_object_replace_data_on_shallow_copy which is more
+ * hacky.
+ */
+const Material *BKE_object_material_get_eval(const Object &ob, const ID &data, short act);
+/**
  * Gets the number of material slots on the evaluated object.
  * This is the maximum of the number of material slots on the object and geometry.
  */
 int BKE_object_material_count_eval(const Object *ob);
+/** Same as above but allows using a custom ID as data instead of Object.data. */
+int BKE_object_material_count_eval(const Object &ob, const ID &data);
 
 /**
  * Returns the maximum material index used by the geometry. This returns zero if the geometry is
  * empty or if all material indices are negative.
  */
 std::optional<int> BKE_id_material_index_max_eval(const ID &id);
+/** Returns how many material slots the geometry may use (based on the maximum material index). */
+int BKE_id_material_used_eval(const ID &id);
 
 /**
  * Gets the number of material slots used by the geometry. The corresponding material for each slot
@@ -195,12 +209,17 @@ void BKE_id_material_eval_ensure_default_slot(ID *id);
  * \param col: new value.
  * \param fac: Zero for is no change.
  */
-void ramp_blend(int type, float r_col[3], float fac, const float col[3]);
+void ramp_blend(int type, float r_col[4], float fac, const float col[4]);
 
 /** \} */
 
 /* -------------------------------------------------------------------- */
 /** \name Default Materials
+ *
+ * TODO: Explain expected usages? Seems to be primarily defined for GPU/viewport code?
+ *
+ *  \warning _NEVER_ use these materials as fallback data for regular ID data. They should only be
+ * used as template/copy source, or in some very specific, local and short-lived contexts.
  * \{ */
 
 Material *BKE_material_default_empty();

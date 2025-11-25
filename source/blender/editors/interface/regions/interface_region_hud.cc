@@ -17,7 +17,7 @@
 
 #include "BLI_listbase.h"
 #include "BLI_rect.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_utildefines.h"
 
 #include "BKE_context.hh"
@@ -26,7 +26,7 @@
 #include "WM_api.hh"
 #include "WM_types.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_view2d.hh"
 
 #include "BLT_translation.hh"
@@ -40,11 +40,70 @@
 /** \name Utilities
  * \{ */
 
+/**
+ * Return the index of `region` of other regions in the area (of the same type).
+ */
+static int area_calc_region_type_index(const ScrArea *area, const ARegion *region)
+{
+  const int region_type = region->regiontype;
+  int index = 0;
+  LISTBASE_FOREACH (const ARegion *, region_iter, &area->regionbase) {
+    if (region_iter->regiontype != region_type) {
+      continue;
+    }
+    if (region_iter == region) {
+      return index;
+    }
+    index += 1;
+  }
+
+  /* Bad input as the `region` was not found in the `area`,
+   * -1 causes the first to be returned. */
+  BLI_assert_unreachable();
+  return -1;
+}
+
+/**
+ * Find the areas region by type and index, or just by type (if the index isn't found).
+ */
+static ARegion *area_find_region_by_type_and_index_hint(const ScrArea *area,
+                                                        const short region_type,
+                                                        int index_hint)
+{
+  ARegion *region_match_type = nullptr;
+  /* Any negative values can return the first match. */
+  index_hint = std::max(0, index_hint);
+  int index = 0;
+  LISTBASE_FOREACH (ARegion *, region, &area->regionbase) {
+    if (region->regiontype != region_type) {
+      continue;
+    }
+    if (index == index_hint) {
+      region_match_type = region;
+      break;
+    }
+    if (region_match_type == nullptr) {
+      region_match_type = region;
+    }
+    index += 1;
+  }
+  return region_match_type;
+}
+
 struct HudRegionData {
   short regionid;
+  /**
+   * The region index of this region type in the `area`.
+   * When this cannot be resolved, use the first region of `regionid`.
+   *
+   * This is needed because it's possible the index is no longer available
+   * if exiting quad-view in the 3D viewport after performing an operation for example.
+   * so in this case use the first region.
+   */
+  int region_index_hint;
 };
 
-static bool last_redo_poll(const bContext *C, short region_type)
+static bool last_redo_poll(const bContext *C, short region_type, int region_index_hint)
 {
   wmOperator *op = WM_operator_last_redo(C);
   if (op == nullptr) {
@@ -58,7 +117,8 @@ static bool last_redo_poll(const bContext *C, short region_type)
      * wrong context.
      */
     ScrArea *area = CTX_wm_area(C);
-    ARegion *region_op = (region_type != -1) ? BKE_area_find_region_type(area, region_type) :
+    ARegion *region_op = (region_type != -1) ? area_find_region_by_type_and_index_hint(
+                                                   area, region_type, region_index_hint) :
                                                nullptr;
     ARegion *region_prev = CTX_wm_region(C);
     CTX_wm_region_set((bContext *)C, region_op);
@@ -92,7 +152,7 @@ static bool hud_panel_operator_redo_poll(const bContext *C, PanelType * /*pt*/)
   if (region != nullptr) {
     HudRegionData *hrd = static_cast<HudRegionData *>(region->regiondata);
     if (hrd != nullptr) {
-      return last_redo_poll(C, hrd->regionid);
+      return last_redo_poll(C, hrd->regionid, hrd->region_index_hint);
     }
   }
   return false;
@@ -112,18 +172,18 @@ static void hud_panel_operator_redo_draw(const bContext *C, Panel *panel)
     return;
   }
   if (!WM_operator_check_ui_enabled(C, op->type->name)) {
-    uiLayoutSetEnabled(panel->layout, false);
+    panel->layout->enabled_set(false);
   }
-  uiLayout *col = uiLayoutColumn(panel->layout, false);
+  uiLayout *col = &panel->layout->column(false);
   uiTemplateOperatorRedoProperties(col, C);
 }
 
 static void hud_panels_register(ARegionType *art, int space_type, int region_type)
 {
-  PanelType *pt = MEM_cnew<PanelType>(__func__);
-  STRNCPY(pt->idname, "OPERATOR_PT_redo");
-  STRNCPY(pt->label, N_("Redo"));
-  STRNCPY(pt->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
+  PanelType *pt = MEM_callocN<PanelType>(__func__);
+  STRNCPY_UTF8(pt->idname, "OPERATOR_PT_redo");
+  STRNCPY_UTF8(pt->label, N_("Redo"));
+  STRNCPY_UTF8(pt->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
   pt->draw_header = hud_panel_operator_redo_draw_header;
   pt->draw = hud_panel_operator_redo_draw;
   pt->poll = hud_panel_operator_redo_poll;
@@ -159,7 +219,7 @@ static void hud_region_free(ARegion *region)
 static void hud_region_layout(const bContext *C, ARegion *region)
 {
   HudRegionData *hrd = static_cast<HudRegionData *>(region->regiondata);
-  if (hrd == nullptr || !last_redo_poll(C, hrd->regionid)) {
+  if (hrd == nullptr || !last_redo_poll(C, hrd->regionid, hrd->region_index_hint)) {
     ED_region_tag_redraw(region);
     hud_region_hide(region);
     return;
@@ -233,7 +293,7 @@ static void hud_region_listener(const wmRegionListenerParams *params)
 
 ARegionType *ED_area_type_hud(int space_type)
 {
-  ARegionType *art = MEM_cnew<ARegionType>(__func__);
+  ARegionType *art = MEM_callocN<ARegionType>(__func__);
   art->regionid = RGN_TYPE_HUD;
   art->keymapflag = ED_KEYMAP_UI | ED_KEYMAP_VIEW2D;
   art->listener = hud_region_listener;
@@ -249,7 +309,7 @@ ARegionType *ED_area_type_hud(int space_type)
 
   hud_panels_register(art, space_type, art->regionid);
 
-  art->lock = 1; /* can become flag, see BKE_spacedata_draw_locks */
+  art->lock = REGION_DRAW_LOCK_ALL;
   return art;
 }
 
@@ -313,7 +373,8 @@ void ED_area_type_hud_ensure(bContext *C, ScrArea *area)
   const bool was_hidden = region == nullptr || region->runtime->visible == false;
   ARegion *region_op = CTX_wm_region(C);
   BLI_assert((region_op == nullptr) || (region_op->regiontype != RGN_TYPE_HUD));
-  if (!last_redo_poll(C, region_op ? region_op->regiontype : -1)) {
+  const int region_index_hint = region_op ? area_calc_region_type_index(area, region_op) : -1;
+  if (!last_redo_poll(C, region_op ? region_op->regiontype : -1, region_index_hint)) {
     if (region) {
       ED_region_tag_redraw(region);
       hud_region_hide(region);
@@ -343,14 +404,16 @@ void ED_area_type_hud_ensure(bContext *C, ScrArea *area)
   {
     HudRegionData *hrd = static_cast<HudRegionData *>(region->regiondata);
     if (hrd == nullptr) {
-      hrd = MEM_cnew<HudRegionData>(__func__);
+      hrd = MEM_callocN<HudRegionData>(__func__);
       region->regiondata = hrd;
     }
     if (region_op) {
       hrd->regionid = region_op->regiontype;
+      hrd->region_index_hint = region_index_hint;
     }
     else {
       hrd->regionid = -1;
+      hrd->region_index_hint = -1;
     }
   }
 
@@ -387,14 +450,14 @@ void ED_area_type_hud_ensure(bContext *C, ScrArea *area)
   /* XXX, this is evil! - it also makes the menu show on first draw. :( */
   if (region->runtime->visible) {
     ARegion *region_prev = CTX_wm_region(C);
-    CTX_wm_region_set((bContext *)C, region);
+    CTX_wm_region_set(C, region);
     hud_region_layout(C, region);
     if (was_hidden) {
       region->winx = region->v2d.winx;
       region->winy = region->v2d.winy;
       region->v2d.cur = region->v2d.tot = reset_rect;
     }
-    CTX_wm_region_set((bContext *)C, region_prev);
+    CTX_wm_region_set(C, region_prev);
   }
 
   region->runtime->visible = !((region->flag & RGN_FLAG_HIDDEN) ||
@@ -410,7 +473,7 @@ ARegion *ED_area_type_hud_redo_region_find(const ScrArea *area, const ARegion *h
     return nullptr;
   }
 
-  return BKE_area_find_region_type(area, hrd->regionid);
+  return area_find_region_by_type_and_index_hint(area, hrd->regionid, hrd->region_index_hint);
 }
 
 /** \} */

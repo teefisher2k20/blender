@@ -6,9 +6,9 @@
  * \ingroup depsgraph
  */
 
-#include "intern/builder/deg_builder_transitive.h"
+#include "DEG_depsgraph_debug.hh"
 
-#include "MEM_guardedalloc.h"
+#include "intern/builder/deg_builder_transitive.h"
 
 #include "intern/node/deg_node.hh"
 #include "intern/node/deg_node_component.hh"
@@ -86,7 +86,6 @@ void deg_graph_transitive_reduction(Depsgraph *graph)
     }
     for (Relation *rel : relations_to_remove) {
       rel->unlink();
-      delete rel;
     }
     num_removed_relations += relations_to_remove.size();
     relations_to_remove.clear();

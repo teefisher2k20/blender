@@ -13,10 +13,6 @@
 #include "../BPy_UnaryPredicate1D.h"
 #include "../Interface1D/BPy_ViewEdge.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -69,8 +65,7 @@ PyDoc_STRVAR(
     "      ViewVertex of begin.\n"
     "   :type orientation: bool\n"
     "   :arg brother: A ChainPredicateIterator object.\n"
-    "   :type brother: :class:`ChainPredicateIterator`");
-
+    "   :type brother: :class:`ChainPredicateIterator`\n");
 static int check_begin(PyObject *obj, void *v)
 {
   if (obj != nullptr && obj != Py_None && !BPy_ViewEdge_Check(obj)) {
@@ -197,7 +192,3 @@ PyTypeObject ChainPredicateIterator_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

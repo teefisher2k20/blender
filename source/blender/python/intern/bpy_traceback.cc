@@ -63,7 +63,6 @@ static int traceback_line_number(PyTracebackObject *tb)
     else {
       /* This should never happen, print the error. */
       PyErr_Print();
-      PyErr_Clear();
     }
   }
   return lineno;
@@ -84,7 +83,7 @@ static int parse_syntax_error(PyObject *err,
   *message = nullptr;
   *filename = nullptr;
 
-  /* new style errors.  `err' is an instance */
+  /* New style errors. `err` is an instance. */
   *message = _PyObject_GetAttrId(err, &PyId_msg);
   if (!*message) {
     goto finally;
@@ -209,7 +208,7 @@ bool python_script_error_jump(
   *r_lineno_end = -1;
   *r_offset_end = 0;
 
-  PyErr_Fetch(&exception, &value, (PyObject **)&tb);
+  PyErr_Fetch(&exception, &value, &tb);
   if (exception == nullptr) { /* Equivalent of `!PyErr_Occurred()`. */
     return false;
   }

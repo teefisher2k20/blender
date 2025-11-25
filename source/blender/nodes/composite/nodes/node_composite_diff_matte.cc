@@ -14,12 +14,11 @@
 
 #include "NOD_multi_function.hh"
 
-#include "UI_interface.hh"
 #include "UI_resources.hh"
 
 #include "GPU_material.hh"
 
-#include "COM_shader_node.hh"
+#include "COM_result.hh"
 
 #include "node_composite_util.hh"
 
@@ -27,108 +26,84 @@
 
 namespace blender::nodes::node_composite_diff_matte_cc {
 
-NODE_STORAGE_FUNCS(NodeChroma)
-
 static void cmp_node_diff_matte_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Color>("Image 1")
-      .default_value({1.0f, 1.0f, 1.0f, 1.0f})
-      .compositor_domain_priority(0);
-  b.add_input<decl::Color>("Image 2")
-      .default_value({1.0f, 1.0f, 1.0f, 1.0f})
-      .compositor_domain_priority(1);
+  b.is_function_node();
+  b.add_input<decl::Color>("Image 1").default_value({1.0f, 1.0f, 1.0f, 1.0f});
+  b.add_input<decl::Color>("Image 2").default_value({1.0f, 1.0f, 1.0f, 1.0f});
+  b.add_input<decl::Float>("Tolerance")
+      .default_value(0.1f)
+      .subtype(PROP_FACTOR)
+      .min(0.0f)
+      .max(1.0f)
+      .description(
+          "If the average color difference between the two images is less than this threshold, "
+          "it is keyed");
+  b.add_input<decl::Float>("Falloff")
+      .default_value(0.1f)
+      .subtype(PROP_FACTOR)
+      .min(0.0f)
+      .max(1.0f)
+      .description(
+          "If the average color difference between the two images is less than this threshold, "
+          "it is partially keyed, otherwise, it is not keyed");
+
   b.add_output<decl::Color>("Image");
   b.add_output<decl::Float>("Matte");
 }
 
-static void node_composit_init_diff_matte(bNodeTree * /*ntree*/, bNode *node)
-{
-  NodeChroma *c = MEM_cnew<NodeChroma>(__func__);
-  node->storage = c;
-  c->t1 = 0.1f;
-  c->t2 = 0.1f;
-}
-
-static void node_composit_buts_diff_matte(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
-{
-  uiLayout *col;
-
-  col = uiLayoutColumn(layout, true);
-  uiItemR(col,
-          ptr,
-          "tolerance",
-          UI_ITEM_R_SPLIT_EMPTY_NAME | UI_ITEM_R_SLIDER,
-          std::nullopt,
-          ICON_NONE);
-  uiItemR(
-      col, ptr, "falloff", UI_ITEM_R_SPLIT_EMPTY_NAME | UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
-}
-
 using namespace blender::compositor;
 
-static float get_tolerance(const bNode &node)
+static int node_gpu_material(GPUMaterial *material,
+                             bNode *node,
+                             bNodeExecData * /*execdata*/,
+                             GPUNodeStack *inputs,
+                             GPUNodeStack *outputs)
 {
-  return node_storage(node).t1;
+  return GPU_stack_link(material, node, "node_composite_difference_matte", inputs, outputs);
 }
 
-static float get_falloff(const bNode &node)
+static void difference_matte(const float4 &color,
+                             const float4 &key,
+                             const float &tolerance,
+                             const float &falloff,
+                             float4 &result,
+                             float &matte)
 {
-  return node_storage(node).t2;
+  float difference = math::dot(math::abs(color - key).xyz(), float3(1.0f)) / 3.0f;
+
+  bool is_opaque = difference > tolerance + falloff;
+  float alpha = is_opaque ? color.w :
+                            math::safe_divide(math::max(0.0f, difference - tolerance), falloff);
+
+  matte = math::min(alpha, color.w);
+  result = color * matte;
 }
 
-class DifferenceMatteShaderNode : public ShaderNode {
- public:
-  using ShaderNode::ShaderNode;
-
-  void compile(GPUMaterial *material) override
-  {
-    GPUNodeStack *inputs = get_inputs_array();
-    GPUNodeStack *outputs = get_outputs_array();
-
-    const float tolerance = get_tolerance(bnode());
-    const float falloff = get_falloff(bnode());
-
-    GPU_stack_link(material,
-                   &bnode(),
-                   "node_composite_difference_matte",
-                   inputs,
-                   outputs,
-                   GPU_uniform(&tolerance),
-                   GPU_uniform(&falloff));
-  }
-};
-
-static ShaderNode *get_compositor_shader_node(DNode node)
-{
-  return new DifferenceMatteShaderNode(node);
-}
+using blender::compositor::Color;
 
 static void node_build_multi_function(blender::nodes::NodeMultiFunctionBuilder &builder)
 {
-  const float tolerance = get_tolerance(builder.node());
-  const float falloff = get_falloff(builder.node());
-
   builder.construct_and_set_matching_fn_cb([=]() {
-    return mf::build::SI2_SO2<float4, float4, float4, float>(
+    return mf::build::SI4_SO2<Color, Color, float, float, Color, float>(
         "Difference Key",
-        [=](const float4 &color, const float4 &key, float4 &result, float &matte) -> void {
-          float difference = math::dot(math::abs(color - key).xyz(), float3(1.0f)) / 3.0f;
-
-          bool is_opaque = difference > tolerance + falloff;
-          float alpha = is_opaque ?
-                            color.w :
-                            math::safe_divide(math::max(0.0f, difference - tolerance), falloff);
-
-          matte = math::min(alpha, color.w);
-          result = color * matte;
+        [=](const Color &color,
+            const Color &key,
+            const float &tolerance,
+            const float &falloff,
+            Color &output_color,
+            float &matte) -> void {
+          float4 out_color;
+          difference_matte(float4(color), float4(key), tolerance, falloff, out_color, matte);
+          output_color = Color(out_color);
         },
-        mf::build::exec_presets::AllSpanOrSingle());
+        mf::build::exec_presets::SomeSpanOrSingle<0, 1>());
   });
 }
 
 }  // namespace blender::nodes::node_composite_diff_matte_cc
 
-void register_node_type_cmp_diff_matte()
+static void register_node_type_cmp_diff_matte()
 {
   namespace file_ns = blender::nodes::node_composite_diff_matte_cc;
 
@@ -142,13 +117,10 @@ void register_node_type_cmp_diff_matte()
   ntype.enum_name_legacy = "DIFF_MATTE";
   ntype.nclass = NODE_CLASS_MATTE;
   ntype.declare = file_ns::cmp_node_diff_matte_declare;
-  ntype.draw_buttons = file_ns::node_composit_buts_diff_matte;
   ntype.flag |= NODE_PREVIEW;
-  ntype.initfunc = file_ns::node_composit_init_diff_matte;
-  blender::bke::node_type_storage(
-      &ntype, "NodeChroma", node_free_standard_storage, node_copy_standard_storage);
-  ntype.get_compositor_shader_node = file_ns::get_compositor_shader_node;
+  ntype.gpu_fn = file_ns::node_gpu_material;
   ntype.build_multi_function = file_ns::node_build_multi_function;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
+NOD_REGISTER_NODE(register_node_type_cmp_diff_matte)

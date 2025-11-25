@@ -8,11 +8,9 @@
 
 #pragma once
 
-#include "intern/depsgraph_type.hh"
+#include <string>
 
-#include "BKE_global.hh"
-
-#include "DEG_depsgraph_debug.hh"
+#include "BKE_global.hh"  // IWYU pragma: keep
 
 namespace blender::deg {
 
@@ -25,21 +23,25 @@ class DepsgraphDebug {
   void begin_graph_evaluation();
   void end_graph_evaluation();
 
+  double total_evaluation_time() const;
+
   /* NOTE: Corresponds to G_DEBUG_DEPSGRAPH_* flags. */
   int flags;
 
   /* Name of this dependency graph (is used for debug prints, helping to distinguish graphs
    * created for different view layer). */
-  string name;
+  std::string name;
 
  protected:
   /* Maximum number of counters used to calculate frame rate of depsgraph update. */
   static const constexpr int MAX_FPS_COUNTERS = 64;
 
   /* Point in time when last graph evaluation began.
-   * Is initialized from begin_graph_evaluation() when time debug is enabled.
+   * Is initialized from begin_graph_evaluation().
    */
   double graph_evaluation_start_time_;
+  /* Total time of the last evaluation. */
+  double graph_evaluation_total_time_;
 };
 
 #define DEG_DEBUG_PRINTF(depsgraph, type, ...) \
@@ -63,8 +65,8 @@ class DepsgraphDebug {
     fflush(stderr); \
   } while (0)
 
-bool terminal_do_color(void);
-string color_for_pointer(const void *pointer);
-string color_end(void);
+bool terminal_do_color();
+std::string color_for_pointer(const void *pointer);
+std::string color_end();
 
 }  // namespace blender::deg

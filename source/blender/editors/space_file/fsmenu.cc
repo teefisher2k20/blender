@@ -7,14 +7,15 @@
  */
 
 #include <algorithm>
-#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
+#include "BLI_fileops.h"
+#include "BLI_path_utils.hh"
+#include "BLI_string.h"
 #include "BLI_string_utils.hh"
 #include "BLI_utildefines.h"
 
@@ -45,7 +46,7 @@ static FSMenu *g_fsmenu = nullptr;
 FSMenu *ED_fsmenu_get()
 {
   if (!g_fsmenu) {
-    g_fsmenu = MEM_cnew<FSMenu>(__func__);
+    g_fsmenu = MEM_callocN<FSMenu>(__func__);
   }
   return g_fsmenu;
 }
@@ -210,31 +211,6 @@ void ED_fsmenu_entry_set_name(FSMenuEntry *fsentry, const char *name)
   }
 }
 
-void fsmenu_entry_refresh_valid(FSMenuEntry *fsentry)
-{
-  if (fsentry->path && fsentry->path[0]) {
-#ifdef WIN32
-    /* XXX Special case, always consider those as valid.
-     * Thanks to Windows, which can spend five seconds to perform a mere stat() call on those paths
-     * See #43684. */
-    const char *exceptions[] = {"A:\\", "B:\\", nullptr};
-    const size_t exceptions_len[] = {strlen(exceptions[0]), strlen(exceptions[1]), 0};
-    int i;
-
-    for (i = 0; exceptions[i]; i++) {
-      if (STRCASEEQLEN(fsentry->path, exceptions[i], exceptions_len[i])) {
-        fsentry->valid = true;
-        return;
-      }
-    }
-#endif
-    fsentry->valid = BLI_is_dir(fsentry->path);
-  }
-  else {
-    fsentry->valid = false;
-  }
-}
-
 short fsmenu_can_save(FSMenu *fsmenu, FSMenuCategory category, int idx)
 {
   FSMenuEntry *fsm_iter;
@@ -255,11 +231,21 @@ void fsmenu_insert_entry(FSMenu *fsmenu,
                          int icon,
                          FSMenuInsert flag)
 {
+  /* NOTE: this function must *not* perform file-system checks on `path`,
+   * although the path may be inspected as a literal string.
+   *
+   * This is important because accessing the file system may reference drives
+   * which are offline, network drives requiring an internet connection,
+   * external drives that aren't plugged in, etc.
+   * Delays in any file-system checks can causes hanging on startup.
+   * See !138218 for details. */
+
   const uint path_len = strlen(path);
   BLI_assert(path_len > 0);
   if (path_len == 0) {
     return;
   }
+  BLI_assert(!BLI_path_is_rel(path));
   const bool has_trailing_slash = (path[path_len - 1] == SEP);
   FSMenuEntry *fsm_prev;
   FSMenuEntry *fsm_iter;
@@ -296,7 +282,7 @@ void fsmenu_insert_entry(FSMenu *fsmenu,
     }
   }
 
-  fsm_iter = static_cast<FSMenuEntry *>(MEM_mallocN(sizeof(*fsm_iter), "fsme"));
+  fsm_iter = MEM_mallocN<FSMenuEntry>("fsme");
   fsm_iter->path = has_trailing_slash ? BLI_strdup(path) : BLI_string_joinN(path, SEP_STR);
   fsm_iter->save = (flag & FS_INSERT_SAVE) != 0;
 
@@ -340,13 +326,6 @@ void fsmenu_insert_entry(FSMenu *fsmenu,
   }
 
   ED_fsmenu_entry_set_icon(fsm_iter, icon);
-
-  if (flag & FS_INSERT_NO_VALIDATE) {
-    fsm_iter->valid = true;
-  }
-  else {
-    fsmenu_entry_refresh_valid(fsm_iter);
-  }
 
   if (fsm_prev) {
     if (flag & FS_INSERT_FIRST) {
@@ -475,15 +454,10 @@ void fsmenu_read_bookmarks(FSMenu *fsmenu, const char *filepath)
         if (line[len - 1] == '\n') {
           line[len - 1] = '\0';
         }
-        /* don't do this because it can be slow on network drives,
-         * having a bookmark from a drive that's ejected or so isn't
-         * all _that_ bad */
-#if 0
-        if (BLI_exists(line))
-#endif
-        {
-          fsmenu_insert_entry(fsmenu, category, line, name, ICON_FILE_FOLDER, FS_INSERT_SAVE);
-        }
+        /* Don't check if the path exists before adding because it can be slow on network drives,
+         * having a bookmark from a drive that's ejected or so isn't all that bad.
+         * See !138218 for details. */
+        fsmenu_insert_entry(fsmenu, category, line, name, ICON_FILE_FOLDER, FS_INSERT_SAVE);
       }
       /* always reset name. */
       name[0] = '\0';
@@ -539,44 +513,6 @@ void fsmenu_free()
   fsmenu_free_ex(&g_fsmenu);
 }
 
-static void fsmenu_copy_category(FSMenu *fsmenu_dst,
-                                 FSMenu *fsmenu_src,
-                                 const FSMenuCategory category)
-{
-  FSMenuEntry *fsm_dst_prev = nullptr, *fsm_dst_head = nullptr;
-  FSMenuEntry *fsm_src_iter = ED_fsmenu_get_category(fsmenu_src, category);
-
-  for (; fsm_src_iter != nullptr; fsm_src_iter = fsm_src_iter->next) {
-    FSMenuEntry *fsm_dst = static_cast<FSMenuEntry *>(MEM_dupallocN(fsm_src_iter));
-    if (fsm_dst->path != nullptr) {
-      fsm_dst->path = static_cast<char *>(MEM_dupallocN(fsm_dst->path));
-    }
-
-    if (fsm_dst_prev != nullptr) {
-      fsm_dst_prev->next = fsm_dst;
-    }
-    else {
-      fsm_dst_head = fsm_dst;
-    }
-    fsm_dst_prev = fsm_dst;
-  }
-
-  ED_fsmenu_set_category(fsmenu_dst, category, fsm_dst_head);
-}
-
-static FSMenu *fsmenu_copy(FSMenu *fsmenu)
-{
-  FSMenu *fsmenu_copy = static_cast<FSMenu *>(MEM_dupallocN(fsmenu));
-
-  fsmenu_copy_category(fsmenu_copy, fsmenu_copy, FS_CATEGORY_SYSTEM);
-  fsmenu_copy_category(fsmenu_copy, fsmenu_copy, FS_CATEGORY_SYSTEM_BOOKMARKS);
-  fsmenu_copy_category(fsmenu_copy, fsmenu_copy, FS_CATEGORY_BOOKMARKS);
-  fsmenu_copy_category(fsmenu_copy, fsmenu_copy, FS_CATEGORY_RECENT);
-  fsmenu_copy_category(fsmenu_copy, fsmenu_copy, FS_CATEGORY_OTHER);
-
-  return fsmenu_copy;
-}
-
 int fsmenu_get_active_indices(FSMenu *fsmenu, enum FSMenuCategory category, const char *dir)
 {
   FSMenuEntry *fsm_iter = ED_fsmenu_get_category(fsmenu, category);
@@ -589,103 +525,4 @@ int fsmenu_get_active_indices(FSMenu *fsmenu, enum FSMenuCategory category, cons
   }
 
   return -1;
-}
-
-/**
- * Thanks to some bookmarks sometimes being network drives that can have tens of seconds of delay
- * before being defined as unreachable by the OS, we need to validate the bookmarks in an
- * asynchronous job.
- */
-static void fsmenu_bookmark_validate_job_startjob(void *fsmenuv, wmJobWorkerStatus *worker_status)
-{
-  FSMenu *fsmenu = static_cast<FSMenu *>(fsmenuv);
-
-  int categories[] = {
-      FS_CATEGORY_SYSTEM, FS_CATEGORY_SYSTEM_BOOKMARKS, FS_CATEGORY_BOOKMARKS, FS_CATEGORY_RECENT};
-
-  for (size_t i = ARRAY_SIZE(categories); i--;) {
-    FSMenuEntry *fsm_iter = ED_fsmenu_get_category(fsmenu, FSMenuCategory(categories[i]));
-    for (; fsm_iter; fsm_iter = fsm_iter->next) {
-      if (worker_status->stop) {
-        return;
-      }
-      /* Note that we do not really need atomics primitives or thread locks here, since this only
-       * sets one short, which is assumed to be 'atomic'-enough for us here. */
-      fsmenu_entry_refresh_valid(fsm_iter);
-      worker_status->do_update = true;
-    }
-  }
-}
-
-static void fsmenu_bookmark_validate_job_update(void *fsmenuv)
-{
-  FSMenu *fsmenu_job = static_cast<FSMenu *>(fsmenuv);
-
-  int categories[] = {
-      FS_CATEGORY_SYSTEM, FS_CATEGORY_SYSTEM_BOOKMARKS, FS_CATEGORY_BOOKMARKS, FS_CATEGORY_RECENT};
-
-  for (size_t i = ARRAY_SIZE(categories); i--;) {
-    FSMenuEntry *fsm_iter_src = ED_fsmenu_get_category(fsmenu_job, FSMenuCategory(categories[i]));
-    FSMenuEntry *fsm_iter_dst = ED_fsmenu_get_category(ED_fsmenu_get(),
-                                                       FSMenuCategory(categories[i]));
-    for (; fsm_iter_dst != nullptr; fsm_iter_dst = fsm_iter_dst->next) {
-      while (fsm_iter_src != nullptr && !STREQ(fsm_iter_dst->path, fsm_iter_src->path)) {
-        fsm_iter_src = fsm_iter_src->next;
-      }
-      if (fsm_iter_src == nullptr) {
-        return;
-      }
-      fsm_iter_dst->valid = fsm_iter_src->valid;
-    }
-  }
-}
-
-static void fsmenu_bookmark_validate_job_end(void *fsmenuv)
-{
-  /* In case there would be some dangling update... */
-  fsmenu_bookmark_validate_job_update(fsmenuv);
-}
-
-static void fsmenu_bookmark_validate_job_free(void *fsmenuv)
-{
-  FSMenu *fsmenu = static_cast<FSMenu *>(fsmenuv);
-  fsmenu_free_ex(&fsmenu);
-}
-
-static void fsmenu_bookmark_validate_job_start(wmWindowManager *wm)
-{
-  wmJob *wm_job;
-  FSMenu *fsmenu_job = fsmenu_copy(g_fsmenu);
-
-  /* setup job */
-  wm_job = WM_jobs_get(wm,
-                       wm->winactive,
-                       wm,
-                       "Validating Bookmarks...",
-                       eWM_JobFlag(0),
-                       WM_JOB_TYPE_FSMENU_BOOKMARK_VALIDATE);
-  WM_jobs_customdata_set(wm_job, fsmenu_job, fsmenu_bookmark_validate_job_free);
-  WM_jobs_timer(wm_job, 0.01, NC_SPACE | ND_SPACE_FILE_LIST, NC_SPACE | ND_SPACE_FILE_LIST);
-  WM_jobs_callbacks(wm_job,
-                    fsmenu_bookmark_validate_job_startjob,
-                    nullptr,
-                    fsmenu_bookmark_validate_job_update,
-                    fsmenu_bookmark_validate_job_end);
-
-  /* start the job */
-  WM_jobs_start(wm, wm_job);
-}
-
-static void fsmenu_bookmark_validate_job_stop(wmWindowManager *wm)
-{
-  WM_jobs_kill_type(wm, wm, WM_JOB_TYPE_FSMENU_BOOKMARK_VALIDATE);
-}
-
-void fsmenu_refresh_bookmarks_status(wmWindowManager *wm, FSMenu *fsmenu)
-{
-  BLI_assert(fsmenu == ED_fsmenu_get());
-  UNUSED_VARS_NDEBUG(fsmenu);
-
-  fsmenu_bookmark_validate_job_stop(wm);
-  fsmenu_bookmark_validate_job_start(wm);
 }

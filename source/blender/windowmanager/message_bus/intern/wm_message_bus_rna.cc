@@ -53,6 +53,12 @@ static bool wm_msg_rna_gset_cmp(const void *key_a_p, const void *key_b_p)
            (params_a->ptr.owner_id == params_b->ptr.owner_id) &&
            (params_a->ptr.data == params_b->ptr.data) && (params_a->prop == params_b->prop));
 }
+
+static void *wm_msg_rna_gset_key_duplicate(const void *key_p)
+{
+  const wmMsgSubscribeKey_RNA *key_src = static_cast<const wmMsgSubscribeKey_RNA *>(key_p);
+  return MEM_new<wmMsgSubscribeKey_RNA>(__func__, *key_src);
+}
 static void wm_msg_rna_gset_key_free(void *key_p)
 {
   wmMsgSubscribeKey_RNA *key = static_cast<wmMsgSubscribeKey_RNA *>(key_p);
@@ -68,7 +74,7 @@ static void wm_msg_rna_gset_key_free(void *key_p)
   if (key->msg.params.data_path != nullptr) {
     MEM_freeN(key->msg.params.data_path);
   }
-  MEM_freeN(key);
+  MEM_delete(key);
 }
 
 static void wm_msg_rna_repr(FILE *stream, const wmMsgSubscribeKey *msg_key)
@@ -207,13 +213,12 @@ void WM_msgtypeinfo_init_rna(wmMsgTypeInfo *msgtype_info)
 {
   msgtype_info->gset.hash_fn = wm_msg_rna_gset_hash;
   msgtype_info->gset.cmp_fn = wm_msg_rna_gset_cmp;
+  msgtype_info->gset.key_duplicate_fn = wm_msg_rna_gset_key_duplicate;
   msgtype_info->gset.key_free_fn = wm_msg_rna_gset_key_free;
 
   msgtype_info->repr = wm_msg_rna_repr;
   msgtype_info->update_by_id = wm_msg_rna_update_by_id;
   msgtype_info->remove_by_id = wm_msg_rna_remove_by_id;
-
-  msgtype_info->msg_key_size = sizeof(wmMsgSubscribeKey_RNA);
 }
 
 /** \} */
@@ -235,13 +240,12 @@ void WM_msg_publish_rna_params(wmMsgBus *mbus, const wmMsgParams_RNA *msg_key_pa
   wmMsgSubscribeKey_RNA *key;
 
   const char *none = "<none>";
-  CLOG_INFO(WM_LOG_MSGBUS_PUB,
-            2,
-            "rna(id='%s', %s.%s)",
-            msg_key_params->ptr.owner_id ? ((ID *)msg_key_params->ptr.owner_id)->name : none,
-            msg_key_params->ptr.type ? RNA_struct_identifier(msg_key_params->ptr.type) : none,
-            msg_key_params->prop ? RNA_property_identifier((PropertyRNA *)msg_key_params->prop) :
-                                   none);
+  CLOG_DEBUG(WM_LOG_MSGBUS_PUB,
+             "rna(id='%s', %s.%s)",
+             msg_key_params->ptr.owner_id ? ((ID *)msg_key_params->ptr.owner_id)->name : none,
+             msg_key_params->ptr.type ? RNA_struct_identifier(msg_key_params->ptr.type) : none,
+             msg_key_params->prop ? RNA_property_identifier((PropertyRNA *)msg_key_params->prop) :
+                                    none);
 
   if ((key = WM_msg_lookup_rna(mbus, msg_key_params))) {
     WM_msg_publish_with_key(mbus, &key->head);
@@ -291,7 +295,7 @@ void WM_msg_subscribe_rna_params(wmMsgBus *mbus,
                                  const wmMsgSubscribeValue *msg_val_params,
                                  const char *id_repr)
 {
-  wmMsgSubscribeKey_RNA msg_key_test = {{nullptr}};
+  wmMsgSubscribeKey_RNA msg_key_test{};
 
   /* Use when added. */
   msg_key_test.msg.head.id = id_repr;
@@ -300,14 +304,13 @@ void WM_msg_subscribe_rna_params(wmMsgBus *mbus,
   msg_key_test.msg.params = *msg_key_params;
 
   const char *none = "<none>";
-  CLOG_INFO(WM_LOG_MSGBUS_SUB,
-            3,
-            "rna(id='%s', %s.%s, info='%s')",
-            msg_key_params->ptr.owner_id ? ((ID *)msg_key_params->ptr.owner_id)->name : none,
-            msg_key_params->ptr.type ? RNA_struct_identifier(msg_key_params->ptr.type) : none,
-            msg_key_params->prop ? RNA_property_identifier((PropertyRNA *)msg_key_params->prop) :
-                                   none,
-            id_repr);
+  CLOG_TRACE(WM_LOG_MSGBUS_SUB,
+             "rna(id='%s', %s.%s, info='%s')",
+             msg_key_params->ptr.owner_id ? ((ID *)msg_key_params->ptr.owner_id)->name : none,
+             msg_key_params->ptr.type ? RNA_struct_identifier(msg_key_params->ptr.type) : none,
+             msg_key_params->prop ? RNA_property_identifier((PropertyRNA *)msg_key_params->prop) :
+                                    none,
+             id_repr);
 
   wmMsgSubscribeKey_RNA *msg_key = (wmMsgSubscribeKey_RNA *)WM_msg_subscribe_with_key(
       mbus, &msg_key_test.head, msg_val_params);

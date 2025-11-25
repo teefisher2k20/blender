@@ -23,6 +23,7 @@
 #include "DNA_modifier_types.h"
 #include "DNA_object_types.h"
 #include "DNA_screen_types.h"
+#include "DNA_texture_types.h"
 
 #include "BKE_colortools.hh" /* CurveMapping. */
 #include "BKE_customdata.hh"
@@ -33,6 +34,7 @@
 #include "BKE_texture.h" /* Texture masking. */
 
 #include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "BLO_read_write.hh"
@@ -184,7 +186,7 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
     return mesh;
   }
 
-  const bool has_mdef = CustomData_has_layer(&mesh->vert_data, CD_MDEFORMVERT);
+  const bool has_mdef = !mesh->deform_verts().is_empty();
   /* If no vertices were ever added to an object's vgroup, dvert might be nullptr. */
   if (!has_mdef) {
     /* If this modifier is not allowed to add vertices, just return. */
@@ -201,10 +203,9 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
   }
 
   /* Get org weights, assuming 0.0 for vertices not in given vgroup. */
-  org_w = static_cast<float *>(MEM_malloc_arrayN(verts_num, sizeof(float), __func__));
-  new_w = static_cast<float *>(MEM_malloc_arrayN(verts_num, sizeof(float), __func__));
-  dw = static_cast<MDeformWeight **>(
-      MEM_malloc_arrayN(verts_num, sizeof(MDeformWeight *), __func__));
+  org_w = MEM_malloc_arrayN<float>(size_t(verts_num), __func__);
+  new_w = MEM_malloc_arrayN<float>(size_t(verts_num), __func__);
+  dw = MEM_malloc_arrayN<MDeformWeight *>(size_t(verts_num), __func__);
   for (i = 0; i < verts_num; i++) {
     dw[i] = BKE_defvert_find_index(&dvert[i], defgrp_index);
     if (dw[i]) {
@@ -291,39 +292,38 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   PointerRNA ob_ptr;
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, &ob_ptr);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  col = uiLayoutColumn(layout, true);
-  uiItemPointerR(
-      col, ptr, "vertex_group", &ob_ptr, "vertex_groups", std::nullopt, ICON_GROUP_VERTEX);
+  col = &layout->column(true);
+  col->prop_search(ptr, "vertex_group", &ob_ptr, "vertex_groups", std::nullopt, ICON_GROUP_VERTEX);
 
-  uiItemR(layout, ptr, "default_weight", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "default_weight", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
 
-  col = uiLayoutColumnWithHeading(layout, false, IFACE_("Group Add"));
-  row = uiLayoutRow(col, true);
-  uiLayoutSetPropDecorate(row, false);
-  sub = uiLayoutRow(row, true);
-  uiItemR(sub, ptr, "use_add", UI_ITEM_NONE, "", ICON_NONE);
-  sub = uiLayoutRow(sub, true);
-  uiLayoutSetActive(sub, RNA_boolean_get(ptr, "use_add"));
-  uiLayoutSetPropSep(sub, false);
-  uiItemR(sub, ptr, "add_threshold", UI_ITEM_R_SLIDER, IFACE_("Threshold"), ICON_NONE);
-  uiItemDecoratorR(row, ptr, "add_threshold", 0);
+  col = &layout->column(false, IFACE_("Group Add"));
+  row = &col->row(true);
+  row->use_property_decorate_set(false);
+  sub = &row->row(true);
+  sub->prop(ptr, "use_add", UI_ITEM_NONE, "", ICON_NONE);
+  sub = &sub->row(true);
+  sub->active_set(RNA_boolean_get(ptr, "use_add"));
+  sub->use_property_split_set(false);
+  sub->prop(ptr, "add_threshold", UI_ITEM_R_SLIDER, IFACE_("Threshold"), ICON_NONE);
+  row->decorator(ptr, "add_threshold", 0);
 
-  col = uiLayoutColumnWithHeading(layout, false, IFACE_("Group Remove"));
-  row = uiLayoutRow(col, true);
-  uiLayoutSetPropDecorate(row, false);
-  sub = uiLayoutRow(row, true);
-  uiItemR(sub, ptr, "use_remove", UI_ITEM_NONE, "", ICON_NONE);
-  sub = uiLayoutRow(sub, true);
-  uiLayoutSetActive(sub, RNA_boolean_get(ptr, "use_remove"));
-  uiLayoutSetPropSep(sub, false);
-  uiItemR(sub, ptr, "remove_threshold", UI_ITEM_R_SLIDER, IFACE_("Threshold"), ICON_NONE);
-  uiItemDecoratorR(row, ptr, "remove_threshold", 0);
+  col = &layout->column(false, IFACE_("Group Remove"));
+  row = &col->row(true);
+  row->use_property_decorate_set(false);
+  sub = &row->row(true);
+  sub->prop(ptr, "use_remove", UI_ITEM_NONE, "", ICON_NONE);
+  sub = &sub->row(true);
+  sub->active_set(RNA_boolean_get(ptr, "use_remove"));
+  sub->use_property_split_set(false);
+  sub->prop(ptr, "remove_threshold", UI_ITEM_R_SLIDER, IFACE_("Threshold"), ICON_NONE);
+  row->decorator(ptr, "remove_threshold", 0);
 
-  uiItemR(layout, ptr, "normalize", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "normalize", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void falloff_panel_draw(const bContext * /*C*/, Panel *panel)
@@ -334,15 +334,15 @@ static void falloff_panel_draw(const bContext * /*C*/, Panel *panel)
   PointerRNA ob_ptr;
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, &ob_ptr);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  row = uiLayoutRow(layout, true);
-  uiItemR(row, ptr, "falloff_type", UI_ITEM_NONE, IFACE_("Type"), ICON_NONE);
-  sub = uiLayoutRow(row, true);
-  uiLayoutSetPropSep(sub, false);
-  uiItemR(row, ptr, "invert_falloff", UI_ITEM_NONE, "", ICON_ARROW_LEFTRIGHT);
+  row = &layout->row(true);
+  row->prop(ptr, "falloff_type", UI_ITEM_NONE, IFACE_("Type"), ICON_NONE);
+  sub = &row->row(true);
+  sub->use_property_split_set(false);
+  row->prop(ptr, "invert_falloff", UI_ITEM_NONE, "", ICON_ARROW_LEFTRIGHT);
   if (RNA_enum_get(ptr, "falloff_type") == MOD_WVG_MAPPING_CURVE) {
-    uiTemplateCurveMapping(layout, ptr, "map_curve", 0, false, false, false, false);
+    uiTemplateCurveMapping(layout, ptr, "map_curve", 0, false, false, false, false, false);
   }
 }
 
@@ -421,4 +421,5 @@ ModifierTypeInfo modifierType_WeightVGEdit = {
     /*blend_write*/ blend_write,
     /*blend_read*/ blend_read,
     /*foreach_cache*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
 };

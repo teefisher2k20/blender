@@ -13,10 +13,14 @@
 #include <optional>
 
 #include "BLI_bounds_types.hh"
+#include "BLI_math_matrix_types.hh"
 #include "BLI_math_vector_types.hh"
 #include "BLI_memory_counter_fwd.hh"
+#include "BLI_string_ref.hh"
 
 #include "BKE_volume_grid_fwd.hh"
+
+#include "DNA_volume_types.h"
 
 struct Depsgraph;
 struct Main;
@@ -80,13 +84,15 @@ const blender::bke::VolumeGridData *BKE_volume_grid_get(const Volume *volume, in
 blender::bke::VolumeGridData *BKE_volume_grid_get_for_write(Volume *volume, int grid_index);
 const blender::bke::VolumeGridData *BKE_volume_grid_active_get_for_read(const Volume *volume);
 /* Tries to find a grid with the given name. Make sure that the volume has been loaded. */
-const blender::bke::VolumeGridData *BKE_volume_grid_find(const Volume *volume, const char *name);
-blender::bke::VolumeGridData *BKE_volume_grid_find_for_write(Volume *volume, const char *name);
+const blender::bke::VolumeGridData *BKE_volume_grid_find(const Volume *volume,
+                                                         blender::StringRef name);
+blender::bke::VolumeGridData *BKE_volume_grid_find_for_write(Volume *volume,
+                                                             blender::StringRef name);
 
 /* Tries to set the name of the velocity field. If no such grid exists with the given base name,
  * this will try common post-fixes in order to detect velocity fields split into multiple grids.
  * Return false if neither finding with the base name nor with the post-fixes succeeded. */
-bool BKE_volume_set_velocity_grid_by_name(Volume *volume, const char *base_name);
+bool BKE_volume_set_velocity_grid_by_name(Volume *volume, blender::StringRef base_name);
 
 /* Volume Editing
  *
@@ -113,6 +119,8 @@ void BKE_volume_grid_add(Volume *volume, const blender::bke::VolumeGridData &gri
  * OpenVDB crashes when the determinant of the transform matrix becomes too small.
  */
 bool BKE_volume_grid_determinant_valid(double determinant);
+bool BKE_volume_voxel_size_valid(const blender::float3 &voxel_size);
+bool BKE_volume_grid_transform_valid(const blender::float4x4 &transform);
 
 /* Simplify */
 int BKE_volume_simplify_level(const Depsgraph *depsgraph);

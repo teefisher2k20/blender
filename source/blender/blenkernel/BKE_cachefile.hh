@@ -16,9 +16,6 @@ struct Main;
 struct Object;
 struct Scene;
 
-void BKE_cachefiles_init();
-void BKE_cachefiles_exit();
-
 void *BKE_cachefile_add(Main *bmain, const char *name);
 
 void BKE_cachefile_reload(Depsgraph *depsgraph, CacheFile *cache_file);
@@ -31,6 +28,7 @@ bool BKE_cachefile_filepath_get(const Main *bmain,
                                 char r_filepath[1024]);
 
 double BKE_cachefile_time_offset(const CacheFile *cache_file, double time, double fps);
+double BKE_cachefile_frame_offset(const CacheFile *cache_file, double time);
 
 /* Modifiers and constraints open and free readers through these. */
 void BKE_cachefile_reader_open(CacheFile *cache_file,
@@ -38,14 +36,6 @@ void BKE_cachefile_reader_open(CacheFile *cache_file,
                                Object *object,
                                const char *object_path);
 void BKE_cachefile_reader_free(CacheFile *cache_file, CacheReader **reader);
-
-/**
- * Determine whether the #CacheFile should use a render engine procedural. If so, data is not read
- * from the file and bounding boxes are used to represent the objects in the Scene.
- * Render engines will receive the bounding box as a placeholder but can instead
- * load the data directly if they support it.
- */
-bool BKE_cache_file_uses_render_procedural(const CacheFile *cache_file, Scene *scene);
 
 /**
  * Add a layer to the cache_file. Return NULL if the `filepath` is already that of an existing

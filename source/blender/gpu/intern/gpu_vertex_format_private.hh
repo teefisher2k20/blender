@@ -15,6 +15,12 @@
 struct GPUVertFormat;
 
 void VertexFormat_pack(GPUVertFormat *format);
-void VertexFormat_texture_buffer_pack(GPUVertFormat *format);
 uint padding(uint offset, uint alignment);
 uint vertex_buffer_size(const GPUVertFormat *format, uint vertex_len);
+
+namespace blender::gpu {
+
+bool is_fetch_normalized(VertAttrType attr_type);
+bool is_fetch_float(VertAttrType attr_type);
+
+}  // namespace blender::gpu

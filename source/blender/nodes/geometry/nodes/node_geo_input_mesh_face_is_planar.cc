@@ -2,6 +2,8 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include <algorithm>
+
 #include "BLI_math_vector.hh"
 
 #include "DNA_mesh_types.h"
@@ -64,18 +66,14 @@ class PlanarFieldInput final : public bke::MeshFieldInput {
 
       for (const int vert : corner_verts.slice(face)) {
         float dot = math::dot(reference_normal, positions[vert]);
-        if (dot > max) {
-          max = dot;
-        }
-        if (dot < min) {
-          min = dot;
-        }
+        max = std::max(dot, max);
+        min = std::min(dot, min);
       }
       return max - min < thresholds[i] / 2.0f;
     };
 
     return mesh.attributes().adapt_domain<bool>(
-        VArray<bool>::ForFunc(faces.size(), planar_fn), AttrDomain::Face, domain);
+        VArray<bool>::from_func(faces.size(), planar_fn), AttrDomain::Face, domain);
   }
 
   void for_each_field_input_recursive(FunctionRef<void(const FieldInput &)> fn) const override
@@ -121,7 +119,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_INPUT;
   ntype.geometry_node_execute = geo_node_exec;
   ntype.declare = node_declare;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

@@ -12,10 +12,6 @@
 #include "../../BPy_Convert.h"
 #include "../../BPy_IntegrationType.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -55,7 +51,6 @@ PyDoc_STRVAR(
     "   :type inter: :class:`freestyle.types.Interface1D`\n"
     "   :return: The density of the ViewMap for a given Interface1D.\n"
     "   :rtype: float\n");
-
 static int GetViewMapGradientNormF1D___init__(BPy_GetViewMapGradientNormF1D *self,
                                               PyObject *args,
                                               PyObject *kwds)
@@ -119,7 +114,3 @@ PyTypeObject GetViewMapGradientNormF1D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

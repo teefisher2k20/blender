@@ -60,6 +60,10 @@ static openvdb::FloatGrid::Ptr points_to_sdf_grid_impl(const Span<float3> positi
                                                        const Span<float> radii,
                                                        const float voxel_size)
 {
+  if (!BKE_volume_voxel_size_valid(float3(voxel_size))) {
+    return nullptr;
+  }
+
   /* Create a new grid that will be filled. #ParticlesToLevelSet requires
    * the background value to be positive */
   openvdb::FloatGrid::Ptr new_grid = openvdb::FloatGrid::create(1.0f);
@@ -101,10 +105,10 @@ bke::VolumeGridData *fog_volume_grid_add_from_points(Volume *volume,
   openvdb::tools::sdfToFogVolume(*new_grid);
 
   /* Take the desired density into account. */
-  openvdb::tools::foreach (new_grid->beginValueOn(),
-                           [&](const openvdb::FloatGrid::ValueOnIter &iter) {
-                             iter.modifyValue([&](float &value) { value *= density; });
-                           });
+  openvdb::tools::foreach(new_grid->beginValueOn(),
+                          [&](const openvdb::FloatGrid::ValueOnIter &iter) {
+                            iter.modifyValue([&](float &value) { value *= density; });
+                          });
 
   return BKE_volume_grid_add_vdb(*volume, name, std::move(new_grid));
 }

@@ -13,17 +13,16 @@
 #include <cstring>
 
 #include "DNA_anim_types.h"
-#include "DNA_node_types.h"
 #include "DNA_screen_types.h"
 #include "DNA_space_types.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_bounds_types.hh"
+#include "BLI_listbase.h"
+#include "BLI_string_utf8.h"
 #include "BLI_utildefines.h"
 
 #include "BLT_translation.hh"
 
-#include "BKE_action.hh"
 #include "BKE_fcurve.hh"
 #include "BKE_nla.hh"
 
@@ -59,7 +58,7 @@ void nla_action_get_color(AnimData *adt, bAction *act, float color[4])
   }
   else {
     if (act) {
-      /* reddish color - same as dopesheet summary */
+      /* reddish color - same as dope-sheet summary */
       UI_GetThemeColor4fv(TH_ANIM_ACTIVE, color);
     }
     else {
@@ -101,7 +100,7 @@ static void nla_action_draw_keyframes(
   color[3] = min_ff(0.7f, color[3] * 2.5f);
 
   GPUVertFormat *format = immVertexFormat();
-  uint pos_id = GPU_vertformat_attr_add(format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+  uint pos_id = GPU_vertformat_attr_add(format, "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
 
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
 
@@ -123,15 +122,16 @@ static void nla_action_draw_keyframes(
   if (key_len > 0) {
     format = immVertexFormat();
     KeyframeShaderBindings sh_bindings;
-    sh_bindings.pos_id = GPU_vertformat_attr_add(format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+    sh_bindings.pos_id = GPU_vertformat_attr_add(
+        format, "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
     sh_bindings.size_id = GPU_vertformat_attr_add(
-        format, "size", GPU_COMP_F32, 1, GPU_FETCH_FLOAT);
+        format, "size", blender::gpu::VertAttrType::SFLOAT_32);
     sh_bindings.color_id = GPU_vertformat_attr_add(
-        format, "color", GPU_COMP_U8, 4, GPU_FETCH_INT_TO_FLOAT_UNIT);
+        format, "color", blender::gpu::VertAttrType::UNORM_8_8_8_8);
     sh_bindings.outline_color_id = GPU_vertformat_attr_add(
-        format, "outlineColor", GPU_COMP_U8, 4, GPU_FETCH_INT_TO_FLOAT_UNIT);
+        format, "outlineColor", blender::gpu::VertAttrType::UNORM_8_8_8_8);
     sh_bindings.flags_id = GPU_vertformat_attr_add(
-        format, "flags", GPU_COMP_U32, 1, GPU_FETCH_INT);
+        format, "flags", blender::gpu::VertAttrType::UINT_32);
 
     GPU_program_point_size(true);
     immBindBuiltinProgram(GPU_SHADER_KEYFRAME_SHAPE);
@@ -177,7 +177,7 @@ static void nla_actionclip_draw_markers(
   }
 
   const uint shdr_pos = GPU_vertformat_attr_add(
-      immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   if (dashed) {
     immBindBuiltinProgram(GPU_SHADER_3D_LINE_DASHED_UNIFORM_COLOR);
 
@@ -367,7 +367,7 @@ static uint nla_draw_use_dashed_outlines(const float color[4], bool muted)
 {
   /* Note that we use dashed shader here, and make it draw solid lines if not muted... */
   uint shdr_pos = GPU_vertformat_attr_add(
-      immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   immBindBuiltinProgram(GPU_SHADER_3D_LINE_DASHED_UNIFORM_COLOR);
 
   float viewport_size[4];
@@ -439,7 +439,8 @@ static void nla_draw_strip(SpaceNla *snla,
   /* get color of strip */
   nla_strip_get_color_inside(adt, strip, color);
 
-  shdr_pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+  shdr_pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
 
   /* draw extrapolation info first (as backdrop)
@@ -497,7 +498,8 @@ static void nla_draw_strip(SpaceNla *snla,
     UI_draw_roundbox_4fv(&rect, true, 0.0f, color);
 
     /* restore current vertex format & program (roundbox trashes it) */
-    shdr_pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+    shdr_pos = GPU_vertformat_attr_add(
+        immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
     immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
   }
   else {
@@ -632,10 +634,10 @@ static void nla_draw_strip_text(AnimData *adt,
 
   /* just print the name and the range */
   if (strip->flag & NLASTRIP_FLAG_TEMP_META) {
-    str_len = STRNCPY_RLEN(str, DATA_("Temp-Meta"));
+    str_len = STRNCPY_UTF8_RLEN(str, DATA_("Temp-Meta"));
   }
   else {
-    str_len = STRNCPY_RLEN(str, strip->name);
+    str_len = STRNCPY_UTF8_RLEN(str, strip->name);
   }
 
   /* set text color - if colors (see above) are light, draw black text, otherwise draw white */
@@ -687,11 +689,11 @@ static void nla_draw_strip_frames_text(
    * while also preserving some accuracy, since we do use floats. */
 
   /* start frame */
-  numstr_len = SNPRINTF_RLEN(numstr, "%.1f", strip->start);
+  numstr_len = SNPRINTF_UTF8_RLEN(numstr, "%.1f", strip->start);
   UI_view2d_text_cache_add(v2d, strip->start - 1.0f, ymaxc + ytol, numstr, numstr_len, col);
 
   /* end frame */
-  numstr_len = SNPRINTF_RLEN(numstr, "%.1f", strip->end);
+  numstr_len = SNPRINTF_UTF8_RLEN(numstr, "%.1f", strip->end);
   UI_view2d_text_cache_add(v2d, strip->end, ymaxc + ytol, numstr, numstr_len, col);
 }
 
@@ -855,7 +857,7 @@ void draw_nla_main_data(bAnimContext *ac, SpaceNla *snla, ARegion *region)
           }
 
           uint pos = GPU_vertformat_attr_add(
-              immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+              immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
           immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
 
           /* just draw a semi-shaded rect spanning the width of the viewable area, based on if
@@ -947,8 +949,8 @@ void draw_nla_main_data(bAnimContext *ac, SpaceNla *snla, ARegion *region)
         case ANIMTYPE_DSHAIR:
         case ANIMTYPE_DSPOINTCLOUD:
         case ANIMTYPE_DSVOLUME:
+        case ANIMTYPE_DSLIGHTPROBE:
         case ANIMTYPE_SHAPEKEY:
-        case ANIMTYPE_GPDATABLOCK:
         case ANIMTYPE_GPLAYER:
         case ANIMTYPE_GREASE_PENCIL_DATABLOCK:
         case ANIMTYPE_GREASE_PENCIL_LAYER_GROUP:
@@ -1002,7 +1004,7 @@ void draw_nla_track_list(const bContext *C,
     }
   }
   { /* second pass: UI widgets */
-    uiBlock *block = UI_block_begin(C, region, __func__, UI_EMBOSS);
+    uiBlock *block = UI_block_begin(C, region, __func__, blender::ui::EmbossType::Emboss);
     size_t track_index = 0;
     float ymax = NLATRACK_FIRST_TOP(ac);
 

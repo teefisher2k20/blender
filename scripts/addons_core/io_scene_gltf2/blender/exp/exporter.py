@@ -3,13 +3,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import bpy
-import re
 import os
 from typing import List
 
 from ... import get_version_string
 from ...io.com import gltf2_io, gltf2_io_extensions
-from ...io.com.path import path_to_uri, uri_to_path
+from ...io.com.path import uri_to_path
 from ...io.com.constants import ComponentType, DataType
 from ...io.exp import binary_data as gltf2_io_binary_data, buffer as gltf2_io_buffer, image_data as gltf2_io_image_data
 from ...io.exp.user_extensions import export_user_extensions
@@ -161,7 +160,7 @@ class GlTF2Exporter:
             os.makedirs(output_path, exist_ok=True)
 
         for name, image in self.__images.items():
-            dst_path = output_path + "/" + name
+            dst_path = os.path.join(self.export_settings['gltf_filedirectory'], uri_to_path(image.uri))
             with open(dst_path, 'wb') as f:
                 f.write(image.data)
 
@@ -340,7 +339,7 @@ class GlTF2Exporter:
 
         The scene should be built up with the generated glTF classes
         :param scene: gltf2_io.Scene type. Root node of the scene graph
-        :param active: If true, sets the glTD.scene index to the added scene
+        :param active: If true, sets the glTF.scene index to the added scene
         :return: nothing
         """
         if self.__finalized:
@@ -420,28 +419,9 @@ class GlTF2Exporter:
             return index
 
     def __add_image(self, image: gltf2_io_image_data.ImageData):
-        name = image.adjusted_name()
-        count = 1
-        regex = re.compile(r"-\d+$")
-        while name + image.file_extension in self.__images.keys():
-            regex_found = re.findall(regex, name)
-            if regex_found:
-                name = re.sub(regex, "-" + str(count), name)
-            else:
-                name += "-" + str(count)
+        self.__images[image.adjusted_name] = image
 
-            count += 1
-        # TODO: allow embedding of images (base64)
-
-        self.__images[name + image.file_extension] = image
-
-        texture_dir = self.export_settings['gltf_texturedirectory']
-        abs_path = os.path.join(texture_dir, name + image.file_extension)
-        rel_path = os.path.relpath(
-            abs_path,
-            start=self.export_settings['gltf_filedirectory'],
-        )
-        return path_to_uri(rel_path)
+        return image.uri
 
     @classmethod
     def __get_key_path(cls, d: dict, keypath: List[str], default):
@@ -472,7 +452,7 @@ class GlTF2Exporter:
             #         self.__append_unique_and_get_index(self.__gltf.extensions_required, extension_name)
 
         if self.export_settings['gltf_trs_w_animation_pointer'] is True:
-            if type(node) == gltf2_io.AnimationChannelTarget:
+            if type(node) is gltf2_io.AnimationChannelTarget:
                 if node.path in ["translation", "rotation", "scale", "weights"]:
                     if node.extensions is None:
                         node.extensions = {}
@@ -481,13 +461,26 @@ class GlTF2Exporter:
                     node.path = "pointer"
                     self.__append_unique_and_get_index(self.__gltf.extensions_used, "KHR_animation_pointer")
 
-        if type(node) == gltf2_io.AnimationChannelTarget:
+        if type(node) is gltf2_io.AnimationChannelTarget:
             if node.path not in ["translation", "rotation", "scale", "weights"] and node.path != "pointer":
                 if node.extensions is None:
                     node.extensions = {}
+                original_node = node.node # Used only for alpha pointer
+                original_path = node.path # Used only for alpha pointer
                 node.extensions["KHR_animation_pointer"] = {"pointer": node.path.replace("XXX", str(node.node))}
                 node.node = None
                 node.path = "pointer"
+
+                # In case the animation is on alpha, we need to change the alpha mode of the material
+                tab = original_path.split("/")
+                if len(tab) == 5 and tab[1] == "materials" and \
+                    tab[3] == "pbrMetallicRoughness" and tab[4] == "baseColorFactor" and \
+                    node.tmp_alpha_cst is False:
+
+                    self.__gltf.materials[original_node].alpha_mode = "BLEND"
+
+                node.tmp_alpha_cst = None
+
                 self.__append_unique_and_get_index(self.__gltf.extensions_used, "KHR_animation_pointer")
 
         return node

@@ -11,10 +11,6 @@
 #include "../BPy_Convert.h"
 #include "../Interface1D/BPy_ViewEdge.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -56,8 +52,7 @@ PyDoc_STRVAR(
     "      ViewVertex of begin.\n"
     "   :type orientation: bool\n"
     "   :arg brother: A ChainSilhouetteIterator object.\n"
-    "   :type brother: :class:`ChainSilhouetteIterator`");
-
+    "   :type brother: :class:`ChainSilhouetteIterator`\n");
 static int check_begin(PyObject *obj, void *v)
 {
   if (obj != nullptr && obj != Py_None && !BPy_ViewEdge_Check(obj)) {
@@ -152,7 +147,3 @@ PyTypeObject ChainSilhouetteIterator_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

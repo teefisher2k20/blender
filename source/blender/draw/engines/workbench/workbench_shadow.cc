@@ -16,6 +16,7 @@
  */
 
 #include "BKE_object.hh"
+#include "DNA_scene_types.h"
 #include "DRW_render.hh"
 #include "GPU_compute.hh"
 
@@ -181,12 +182,11 @@ bool ShadowPass::ShadowView::debug_object_culling(Object *ob)
 {
   printf("Test %s\n", ob->id.name);
   const Bounds<float3> bounds = *BKE_object_boundbox_get(ob);
-  BoundBox bb;
-  BKE_boundbox_init_from_minmax(&bb, bounds.min, bounds.max);
+  const std::array<float3, 8> corners = bounds::corners(bounds);
   for (int p : IndexRange(extruded_frustum_.planes_count)) {
     float4 plane = extruded_frustum_.planes[p];
     bool separating_axis = true;
-    for (float3 corner : bb.vec) {
+    for (float3 corner : corners) {
       corner = math::transform_point(ob->object_to_world(), corner);
       float signed_distance = math::dot(corner, float3(plane)) - plane.w;
       if (signed_distance <= 0) {
@@ -195,7 +195,7 @@ bool ShadowPass::ShadowView::debug_object_culling(Object *ob)
       }
     }
     if (separating_axis) {
-      printf("Sepatating Axis >>> x: %f, y: %f, z: %f, w: %f \n", UNPACK4(plane));
+      printf("Separating Axis >>> x: %f, y: %f, z: %f, w: %f \n", UNPACK4(plane));
       return true;
     }
   }
@@ -205,6 +205,8 @@ bool ShadowPass::ShadowView::debug_object_culling(Object *ob)
 void ShadowPass::ShadowView::set_mode(ShadowPass::PassType type)
 {
   current_pass_type_ = type;
+  /* Ensure compute_visibility runs again after updating the mode. */
+  manager_fingerprint_ = 0;
 }
 
 void ShadowPass::ShadowView::compute_visibility(ObjectBoundsBuf &bounds,
@@ -242,9 +244,9 @@ void ShadowPass::ShadowView::compute_visibility(ObjectBoundsBuf &bounds,
 
   if (do_visibility_) {
     /* TODO(@pragma37): Use regular culling for the caps pass. */
-    GPUShader *shader = current_pass_type_ == ShadowPass::FORCED_FAIL ?
-                            ShaderCache::get().shadow_visibility_static.get() :
-                            ShaderCache::get().shadow_visibility_dynamic.get();
+    gpu::Shader *shader = current_pass_type_ == ShadowPass::FORCED_FAIL ?
+                              ShaderCache::get().shadow_visibility_static.get() :
+                              ShaderCache::get().shadow_visibility_dynamic.get();
     GPU_shader_bind(shader);
     GPU_shader_uniform_1i(shader, "resource_len", resource_len);
     GPU_shader_uniform_1i(shader, "view_len", view_len_);
@@ -377,7 +379,7 @@ void ShadowPass::sync()
 
 void ShadowPass::object_sync(SceneState &scene_state,
                              ObjectRef &ob_ref,
-                             ResourceHandle handle,
+                             ResourceHandleRange handle,
                              const bool has_transp_mat)
 {
   if (!enabled_) {
@@ -426,7 +428,7 @@ void ShadowPass::object_sync(SceneState &scene_state,
 void ShadowPass::draw(Manager &manager,
                       View &view,
                       SceneResources &resources,
-                      GPUTexture &depth_stencil_tx,
+                      gpu::Texture &depth_stencil_tx,
                       bool force_fail_method)
 {
   if (!enabled_) {

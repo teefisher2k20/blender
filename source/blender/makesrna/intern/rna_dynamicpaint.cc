@@ -6,10 +6,8 @@
  * \ingroup RNA
  */
 
-#include <climits>
 #include <cstdlib>
 
-#include "BKE_dynamicpaint.h"
 #include "BKE_modifier.hh"
 
 #include "BLI_string_utf8_symbols.h"
@@ -18,8 +16,6 @@
 
 #include "DNA_dynamicpaint_types.h"
 #include "DNA_modifier_types.h"
-#include "DNA_object_force_types.h"
-#include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 
 #include "RNA_define.hh"
@@ -39,7 +35,10 @@ const EnumPropertyItem rna_enum_prop_dynamicpaint_type_items[] = {
 
 #  include <fmt/format.h>
 
+#  include "BLI_string.h"
+
 #  include "BKE_context.hh"
+#  include "BKE_dynamicpaint.h"
 #  include "BKE_particle.h"
 
 #  include "DEG_depsgraph.hh"
@@ -158,7 +157,7 @@ static PointerRNA rna_PaintSurface_active_get(PointerRNA *ptr)
 
   for (; surface; surface = surface->next) {
     if (id == canvas->active_sur) {
-      return rna_pointer_inherit_refine(ptr, &RNA_DynamicPaintSurface, surface);
+      return RNA_pointer_create_with_parent(*ptr, &RNA_DynamicPaintSurface, surface);
     }
     id++;
   }
@@ -170,9 +169,9 @@ static void rna_DynamicPaint_surfaces_begin(CollectionPropertyIterator *iter, Po
   DynamicPaintCanvasSettings *canvas = (DynamicPaintCanvasSettings *)ptr->data;
 #  if 0
   rna_iterator_array_begin(
-      iter, (void *)canvas->surfaces, sizeof(PaintSurface), canvas->totsur, 0, 0);
+      iter, ptr,(void *)canvas->surfaces, sizeof(PaintSurface), canvas->totsur, 0, 0);
 #  endif
-  rna_iterator_listbase_begin(iter, &canvas->surfaces, nullptr);
+  rna_iterator_listbase_begin(iter, ptr, &canvas->surfaces, nullptr);
 }
 
 static int rna_Surface_active_point_index_get(PointerRNA *ptr)
@@ -185,7 +184,6 @@ static void rna_Surface_active_point_index_set(PointerRNA *ptr, int value)
 {
   DynamicPaintCanvasSettings *canvas = (DynamicPaintCanvasSettings *)ptr->data;
   canvas->active_sur = value;
-  return;
 }
 
 static void rna_Surface_active_point_range(
@@ -219,7 +217,7 @@ static bool rna_DynamicPaint_is_cache_user_get(PointerRNA *ptr)
 {
   DynamicPaintSurface *surface = (DynamicPaintSurface *)ptr->data;
 
-  return (surface->format != MOD_DPAINT_SURFACE_F_IMAGESEQ) ? 1 : 0;
+  return (surface->format != MOD_DPAINT_SURFACE_F_IMAGESEQ) ? true : false;
 }
 
 /* Does output layer exist. */
@@ -314,7 +312,7 @@ static void rna_def_canvas_surface(BlenderRNA *brna)
   PropertyRNA *parm;
   FunctionRNA *func;
 
-  /*  Surface format */
+  /* Surface format */
   static const EnumPropertyItem prop_dynamicpaint_surface_format[] = {
       // {MOD_DPAINT_SURFACE_F_PTEX, "PTEX", ICON_TEXTURE_SHADED, "Ptex", ""},
       {MOD_DPAINT_SURFACE_F_VERTEX, "VERTEX", ICON_OUTLINER_DATA_MESH, "Vertex", ""},
@@ -322,13 +320,13 @@ static void rna_def_canvas_surface(BlenderRNA *brna)
       {0, nullptr, 0, nullptr, nullptr},
   };
 
-  /*  Surface type - generated dynamically based on surface format */
+  /* Surface type - generated dynamically based on surface format */
   static const EnumPropertyItem prop_dynamicpaint_surface_type[] = {
       {MOD_DPAINT_SURFACE_T_PAINT, "PAINT", 0, "Paint", ""},
       {0, nullptr, 0, nullptr, nullptr},
   };
 
-  /*  Initial color setting */
+  /* Initial color setting */
   static const EnumPropertyItem prop_dynamicpaint_init_color_type[] = {
       {MOD_DPAINT_INITIAL_NONE, "NONE", 0, "None", ""},
       {MOD_DPAINT_INITIAL_COLOR, "COLOR", ICON_COLOR, "Color", ""},
@@ -349,7 +347,7 @@ static void rna_def_canvas_surface(BlenderRNA *brna)
   /* Displace-map file format. */
   static const EnumPropertyItem prop_dynamicpaint_image_fileformat[] = {
       {MOD_DPAINT_IMGFORMAT_PNG, "PNG", 0, "PNG", ""},
-#  ifdef WITH_OPENEXR
+#  ifdef WITH_IMAGE_OPENEXR
       {MOD_DPAINT_IMGFORMAT_OPENEXR, "OPENEXR", 0, "OpenEXR", ""},
 #  endif
       {0, nullptr, 0, nullptr, nullptr},
@@ -614,6 +612,7 @@ static void rna_def_canvas_surface(BlenderRNA *brna)
 
   prop = RNA_def_property(srna, "image_output_path", PROP_STRING, PROP_DIRPATH);
   RNA_def_property_string_sdna(prop, nullptr, "image_output_path");
+  RNA_def_property_flag(prop, PROP_PATH_SUPPORTS_BLEND_RELATIVE);
   RNA_def_property_ui_text(prop, "Output Path", "Directory to save the textures");
 
   /* output for primary surface data */

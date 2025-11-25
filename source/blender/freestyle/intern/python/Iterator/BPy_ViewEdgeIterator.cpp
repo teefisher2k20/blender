@@ -11,10 +11,6 @@
 #include "../BPy_Convert.h"
 #include "../Interface1D/BPy_ViewEdge.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -45,8 +41,7 @@ PyDoc_STRVAR(
     "      ViewVertex of begin.\n"
     "   :type orientation: bool\n"
     "   :arg brother: A ViewEdgeIterator object.\n"
-    "   :type brother: :class:`ViewEdgeIterator`");
-
+    "   :type brother: :class:`ViewEdgeIterator`\n");
 static int check_begin(PyObject *obj, void *v)
 {
   if (obj != nullptr && obj != Py_None && !BPy_ViewEdge_Check(obj)) {
@@ -89,13 +84,22 @@ PyDoc_STRVAR(
     ViewEdgeIterator_change_orientation_doc,
     ".. method:: change_orientation()\n"
     "\n"
-    "   Changes the current orientation.");
-
+    "   Changes the current orientation.\n");
 static PyObject *ViewEdgeIterator_change_orientation(BPy_ViewEdgeIterator *self)
 {
   self->ve_it->changeOrientation();
   Py_RETURN_NONE;
 }
+
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
+#endif
 
 static PyMethodDef BPy_ViewEdgeIterator_methods[] = {
     {"change_orientation",
@@ -105,6 +109,14 @@ static PyMethodDef BPy_ViewEdgeIterator_methods[] = {
     {nullptr, nullptr, 0, nullptr},
 };
 
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
+#endif
+
 /*----------------------ViewEdgeIterator get/setters ----------------------------*/
 
 PyDoc_STRVAR(
@@ -112,8 +124,7 @@ PyDoc_STRVAR(
     ViewEdgeIterator_object_doc,
     "The ViewEdge object currently pointed by this iterator.\n"
     "\n"
-    ":type: :class:`ViewEdge`");
-
+    ":type: :class:`ViewEdge`\n");
 static PyObject *ViewEdgeIterator_object_get(BPy_ViewEdgeIterator *self, void * /*closure*/)
 {
   if (!self->ve_it->isEnd()) {
@@ -132,8 +143,7 @@ PyDoc_STRVAR(
     ViewEdgeIterator_current_edge_doc,
     "The ViewEdge object currently pointed by this iterator.\n"
     "\n"
-    ":type: :class:`ViewEdge`");
-
+    ":type: :class:`ViewEdge`\n");
 static PyObject *ViewEdgeIterator_current_edge_get(BPy_ViewEdgeIterator *self, void * /*closure*/)
 {
   ViewEdge *ve = self->ve_it->getCurrentEdge();
@@ -164,8 +174,7 @@ PyDoc_STRVAR(
     "the iterator searches over the ViewEdges surrounding the ending ViewVertex\n"
     "of the \"begin\" ViewEdge.\n"
     "\n"
-    ":type: bool");
-
+    ":type: bool\n");
 static PyObject *ViewEdgeIterator_orientation_get(BPy_ViewEdgeIterator *self, void * /*closure*/)
 {
   return PyBool_from_bool(self->ve_it->getOrientation());
@@ -188,8 +197,7 @@ PyDoc_STRVAR(
     ViewEdgeIterator_begin_doc,
     "The first ViewEdge used for the iteration.\n"
     "\n"
-    ":type: :class:`ViewEdge`");
-
+    ":type: :class:`ViewEdge`\n");
 static PyObject *ViewEdgeIterator_begin_get(BPy_ViewEdgeIterator *self, void * /*closure*/)
 {
   ViewEdge *ve = self->ve_it->getBegin();
@@ -279,7 +287,3 @@ PyTypeObject ViewEdgeIterator_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

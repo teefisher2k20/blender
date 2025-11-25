@@ -94,7 +94,7 @@ static Vector<GVArray> get_field_context_inputs(
     GVArray varray = context.get_varray_for_input(field_input, mask, scope);
     if (!varray) {
       const CPPType &type = field_input.cpp_type();
-      varray = GVArray::ForSingleDefault(type, mask.min_array_size());
+      varray = GVArray::from_single_default(type, mask.min_array_size());
     }
     field_context_inputs.append(varray);
   }
@@ -284,16 +284,16 @@ Vector<GVArray> evaluate_fields(ResourceScope &scope,
                                 const FieldContext &context,
                                 Span<GVMutableArray> dst_varrays)
 {
-  Vector<GVArray> r_varrays(fields_to_evaluate.size());
+  Vector<GVArray> varrays(fields_to_evaluate.size());
   Array<bool> is_output_written_to_dst(fields_to_evaluate.size(), false);
   const int array_size = mask.min_array_size();
 
   if (mask.is_empty()) {
     for (const int i : fields_to_evaluate.index_range()) {
       const CPPType &type = fields_to_evaluate[i].cpp_type();
-      r_varrays[i] = GVArray::ForEmpty(type);
+      varrays[i] = GVArray::from_empty(type);
     }
-    return r_varrays;
+    return varrays;
   }
 
   /* Destination arrays are optional. Create a small utility method to access them. */
@@ -326,12 +326,12 @@ Vector<GVArray> evaluate_fields(ResourceScope &scope,
         const int field_input_index = field_tree_info.deduplicated_field_inputs.index_of(
             field_input);
         const GVArray &varray = field_context_inputs[field_input_index];
-        r_varrays[out_index] = varray;
+        varrays[out_index] = varray;
         break;
       }
       case FieldNodeType::Constant: {
         const FieldConstant &field_constant = static_cast<const FieldConstant &>(field.node());
-        r_varrays[out_index] = GVArray::ForSingleRef(
+        varrays[out_index] = GVArray::from_single_ref(
             field_constant.type(), mask.min_array_size(), field_constant.value().get());
         break;
       }
@@ -350,7 +350,7 @@ Vector<GVArray> evaluate_fields(ResourceScope &scope,
   Vector<GFieldRef> constant_fields_to_evaluate;
   Vector<int> constant_field_indices;
   for (const int i : fields_to_evaluate.index_range()) {
-    if (r_varrays[i]) {
+    if (varrays[i]) {
       /* Already done. */
       continue;
     }
@@ -391,21 +391,21 @@ Vector<GVArray> evaluate_fields(ResourceScope &scope,
       void *buffer;
       if (!dst_varray || !dst_varray.is_span()) {
         /* Allocate a new buffer for the computed result. */
-        buffer = scope.linear_allocator().allocate(type.size() * array_size, type.alignment());
+        buffer = scope.allocator().allocate_array(type, array_size);
 
-        if (!type.is_trivially_destructible()) {
+        if (!type.is_trivially_destructible) {
           /* Destruct values in the end. */
           scope.add_destruct_call(
               [buffer, mask, &type]() { type.destruct_indices(buffer, mask); });
         }
 
-        r_varrays[out_index] = GVArray::ForSpan({type, buffer, array_size});
+        varrays[out_index] = GVArray::from_span({type, buffer, array_size});
       }
       else {
         /* Write the result into the existing span. */
         buffer = dst_varray.get_internal_span().data();
 
-        r_varrays[out_index] = dst_varray;
+        varrays[out_index] = dst_varray;
         is_output_written_to_dst[out_index] = true;
       }
 
@@ -437,19 +437,14 @@ Vector<GVArray> evaluate_fields(ResourceScope &scope,
       const GFieldRef &field = constant_fields_to_evaluate[i];
       const CPPType &type = field.cpp_type();
       /* Allocate memory where the computed value will be stored in. */
-      void *buffer = scope.linear_allocator().allocate(type.size(), type.alignment());
-
-      if (!type.is_trivially_destructible()) {
-        /* Destruct value in the end. */
-        scope.add_destruct_call([buffer, &type]() { type.destruct(buffer); });
-      }
+      void *buffer = scope.allocate_owned(type);
 
       /* Pass output buffer to the procedure executor. */
       mf_params.add_uninitialized_single_output({type, buffer, 1});
 
       /* Create virtual array that can be used after the procedure has been executed below. */
       const int out_index = constant_field_indices[i];
-      r_varrays[out_index] = GVArray::ForSingleRef(type, array_size, buffer);
+      varrays[out_index] = GVArray::from_single_ref(type, array_size, buffer);
     }
 
     procedure_executor.call(mask, mf_params, mf_context);
@@ -464,7 +459,7 @@ Vector<GVArray> evaluate_fields(ResourceScope &scope,
         /* Caller did not provide a destination for this output. */
         continue;
       }
-      const GVArray &computed_varray = r_varrays[out_index];
+      const GVArray &computed_varray = varrays[out_index];
       BLI_assert(computed_varray.type() == dst_varray.type());
       if (is_output_written_to_dst[out_index]) {
         /* The result has been written into the destination provided by the caller already. */
@@ -489,10 +484,10 @@ Vector<GVArray> evaluate_fields(ResourceScope &scope,
           });
         });
       }
-      r_varrays[out_index] = dst_varray;
+      varrays[out_index] = dst_varray;
     }
   }
-  return r_varrays;
+  return varrays;
 }
 
 void evaluate_constant_field(const GField &field, void *r_value)
@@ -526,7 +521,7 @@ Field<bool> invert_boolean_field(const Field<bool> &field)
 {
   static auto not_fn = mf::build::SI1_SO<bool, bool>(
       "Not", [](bool a) { return !a; }, mf::build::exec_presets::AllSpanOrSingle());
-  auto not_op = FieldOperation::Create(not_fn, {field});
+  auto not_op = FieldOperation::from(not_fn, {field});
   return Field<bool>(not_op);
 }
 
@@ -553,7 +548,7 @@ IndexFieldInput::IndexFieldInput() : FieldInput(CPPType::get<int>(), "Index")
 GVArray IndexFieldInput::get_index_varray(const IndexMask &mask)
 {
   auto index_func = [](int i) { return i; };
-  return VArray<int>::ForFunc(mask.min_array_size(), index_func);
+  return VArray<int>::from_func(mask.min_array_size(), index_func);
 }
 
 GVArray IndexFieldInput::get_varray_for_context(const fn::FieldContext & /*context*/,
@@ -700,7 +695,7 @@ FieldInput::~FieldInput() = default;
 FieldConstant::FieldConstant(const CPPType &type, const void *value)
     : FieldNode(FieldNodeType::Constant), type_(type)
 {
-  value_ = MEM_mallocN_aligned(type.size(), type.alignment(), __func__);
+  value_ = MEM_mallocN_aligned(type.size, type.alignment, __func__);
   type.copy_construct(value, value_);
 }
 
@@ -750,7 +745,7 @@ int FieldEvaluator::add_with_destination(GField field, GVMutableArray dst)
 
 int FieldEvaluator::add_with_destination(GField field, GMutableSpan dst)
 {
-  return this->add_with_destination(std::move(field), GVMutableArray::ForSpan(dst));
+  return this->add_with_destination(std::move(field), GVMutableArray::from_span(dst));
 }
 
 int FieldEvaluator::add(GField field, GVArray *varray_ptr)

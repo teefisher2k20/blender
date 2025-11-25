@@ -13,17 +13,24 @@ try:
     from modules import render_report
 
     class WorkbenchReport(render_report.Report):
-        def __init__(self, title, output_dir, oiiotool, device=None, blocklist=[]):
-            super().__init__(title, output_dir, oiiotool, device=device, blocklist=blocklist)
-            self.gpu_backend = device
+        def __init__(self, title, output_dir, oiiotool, variation=None, blocklist=[]):
+            super().__init__(title, output_dir, oiiotool, variation=variation, blocklist=blocklist)
+            self.gpu_backend = variation
 
         def _get_render_arguments(self, arguments_cb, filepath, base_output_filepath):
-            return arguments_cb(filepath, base_output_filepath, gpu_backend=self.device)
+            return arguments_cb(filepath, base_output_filepath, gpu_backend=self.gpu_backend)
 
 except ImportError:
     # render_report can only be loaded when running the render tests. It errors when
     # this script is run during preparation steps.
     pass
+
+BLOCKLIST_VULKAN = [
+    # Blocked due behavior differences. mix(0.05, INF, 0.0) will result a NaN in Vulkan, but INF in OpenGL.
+    # The INF is part of the EXR image.
+    "image_log.blend",
+    "image_log_osl.blend",
+]
 
 
 def setup():
@@ -33,6 +40,9 @@ def setup():
         scene.render.engine = 'BLENDER_WORKBENCH'
         scene.display.shading.light = 'STUDIO'
         scene.display.shading.color_type = 'TEXTURE'
+
+        # Hair
+        scene.render.hair_type = 'STRIP'
 
 
 # When run from inside Blender, render and exit.
@@ -82,7 +92,6 @@ def create_argparse():
     parser.add_argument("--outdir", required=True)
     parser.add_argument("--oiiotool", required=True)
     parser.add_argument('--batch', default=False, action='store_true')
-    parser.add_argument('--fail-silently', default=False, action='store_true')
     parser.add_argument('--gpu-backend')
     return parser
 
@@ -91,19 +100,25 @@ def main():
     parser = create_argparse()
     args = parser.parse_args()
 
-    report = WorkbenchReport("Workbench", args.outdir, args.oiiotool, device=args.gpu_backend)
+    blocklist = []
+    if args.gpu_backend == "vulkan":
+        blocklist += BLOCKLIST_VULKAN
+
+    report = WorkbenchReport("Workbench", args.outdir, args.oiiotool, variation=args.gpu_backend, blocklist=blocklist)
     if args.gpu_backend == "vulkan":
         report.set_compare_engine('workbench', 'opengl')
     else:
-        report.set_compare_engine('eevee_next', 'opengl')
+        report.set_compare_engine('eevee', 'opengl')
     report.set_pixelated(True)
     report.set_reference_dir("workbench_renders")
 
     test_dir_name = Path(args.testdir).name
     if test_dir_name.startswith('hair') and platform.system() == "Darwin":
         report.set_fail_threshold(0.050)
+    if test_dir_name.startswith('openvdb'):
+        report.set_fail_threshold(0.04)
 
-    ok = report.run(args.testdir, args.blender, get_arguments, batch=args.batch, fail_silently=args.fail_silently)
+    ok = report.run(args.testdir, args.blender, get_arguments, batch=args.batch)
 
     sys.exit(not ok)
 

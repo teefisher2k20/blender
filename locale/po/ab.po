@@ -1,9 +1,9 @@
 
 msgid ""
 msgstr ""
-"Project-Id-Version: Blender 4.4.0 Alpha (b'efff379ea583')\n"
+"Project-Id-Version: Blender 5.1.0 Alpha (b'ef4e8fa75057')\n"
 "Report-Msgid-Bugs-To: \n"
-"PO-Revision-Date: 2024-04-29 13:23+0000\n"
+"PO-Revision-Date: 2025-07-23 15:29+0000\n"
 "Last-Translator: Anonymous <noreply@weblate.org>\n"
 "Language-Team: Abkhazian <https://translate.blender.org/projects/blender-ui/ui/ab/>\n"
 "Language: ab\n"
@@ -11,20 +11,12 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
-"X-Generator: Weblate 5.0.1\n"
+"X-Generator: Weblate 5.12.1\n"
 "\"POT-Creation-Date: 2019-02-25 20:41:30"
 
 
 msgid "Select"
 msgstr "Алхра"
-
-
-msgid "Add"
-msgstr "Ацҵара"
-
-
-msgid "Subtract"
-msgstr "Ацхра"
 
 
 msgctxt "ID"
@@ -67,8 +59,20 @@ msgid "Speaker"
 msgstr "Абжьы Ахыҵхырҭа"
 
 
+msgid "Add"
+msgstr "Ацҵара"
+
+
+msgid "Subtract"
+msgstr "Ацхра"
+
+
 msgid "Empty"
 msgstr "Аҭацәы"
+
+
+msgid "Texts"
+msgstr "Аҳәоуқәа"
 
 
 msgid "Edge"
@@ -81,10 +85,6 @@ msgstr "Ахаҿы"
 
 msgid "Object"
 msgstr "Амаҭәар"
-
-
-msgid "Texts"
-msgstr "Аҳәоуқәа"
 
 
 msgid "Main Images"
@@ -119,6 +119,10 @@ msgid "Curve"
 msgstr "Архәара"
 
 
+msgid "View"
+msgstr "Аԥшра"
+
+
 msgid "Difference"
 msgstr "Аиԥшымра"
 
@@ -141,10 +145,6 @@ msgstr "Ахырхага"
 
 msgid "Plane"
 msgstr "Аҟьаҟьа"
-
-
-msgid "View"
-msgstr "Аԥшра"
 
 
 msgid "Render"
@@ -266,6 +266,14 @@ msgid "3D Cursor"
 msgstr "3Д Ахырхага"
 
 
+msgid "Keying"
+msgstr " Аиҭаганҵа"
+
+
+msgid "Text"
+msgstr "Аҳәоу"
+
+
 msgid "Metaball"
 msgstr "Метампыл"
 
@@ -274,16 +282,8 @@ msgid "Light"
 msgstr "Алашара"
 
 
-msgid "Text"
-msgstr "Аҳәоу"
-
-
 msgid "Marker"
 msgstr "Ашьҭа"
-
-
-msgid "Keying"
-msgstr " Аиҭаганҵа"
 
 
 msgid "File"
@@ -292,6 +292,11 @@ msgstr "Ашәҟәы"
 
 msgid "Help"
 msgstr "Аилыркаа"
+
+
+msgctxt "Operator"
+msgid "Lattice"
+msgstr "Аҭыџьеихац"
 
 
 msgid "Intersect"
@@ -501,11 +506,6 @@ msgstr "Абжьы Ахыҵхырҭа"
 msgctxt "Operator"
 msgid "Armature"
 msgstr "Абаҩ"
-
-
-msgctxt "Operator"
-msgid "Lattice"
-msgstr "Аҭыџьеихац"
 
 
 msgctxt "Action"

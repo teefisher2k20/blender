@@ -18,7 +18,7 @@ GHOST_ModifierKeys::GHOST_ModifierKeys()
   clear();
 }
 
-GHOST_ModifierKeys::~GHOST_ModifierKeys() {}
+GHOST_ModifierKeys::~GHOST_ModifierKeys() = default;
 
 GHOST_TKey GHOST_ModifierKeys::getModifierKeyCode(GHOST_TModifierKey mask)
 {
@@ -48,6 +48,12 @@ GHOST_TKey GHOST_ModifierKeys::getModifierKeyCode(GHOST_TModifierKey mask)
     case GHOST_kModifierKeyRightOS:
       key = GHOST_kKeyRightOS;
       break;
+    case GHOST_kModifierKeyLeftHyper:
+      key = GHOST_kKeyLeftHyper;
+      break;
+    case GHOST_kModifierKeyRightHyper:
+      key = GHOST_kKeyRightHyper;
+      break;
     default:
       /* Should not happen. */
       GHOST_ASSERT(0, "Invalid key!");
@@ -61,21 +67,25 @@ bool GHOST_ModifierKeys::get(GHOST_TModifierKey mask) const
 {
   switch (mask) {
     case GHOST_kModifierKeyLeftShift:
-      return m_LeftShift;
+      return left_shift_;
     case GHOST_kModifierKeyRightShift:
-      return m_RightShift;
+      return right_shift_;
     case GHOST_kModifierKeyLeftAlt:
-      return m_LeftAlt;
+      return left_alt_;
     case GHOST_kModifierKeyRightAlt:
-      return m_RightAlt;
+      return right_alt_;
     case GHOST_kModifierKeyLeftControl:
-      return m_LeftControl;
+      return left_control_;
     case GHOST_kModifierKeyRightControl:
-      return m_RightControl;
+      return right_control_;
     case GHOST_kModifierKeyLeftOS:
-      return m_LeftOS;
+      return left_os_;
     case GHOST_kModifierKeyRightOS:
-      return m_RightOS;
+      return right_os_;
+    case GHOST_kModifierKeyLeftHyper:
+      return left_hyper_;
+    case GHOST_kModifierKeyRightHyper:
+      return right_hyper_;
     default:
       GHOST_ASSERT(0, "Invalid key!");
       return false;
@@ -86,28 +96,34 @@ void GHOST_ModifierKeys::set(GHOST_TModifierKey mask, bool down)
 {
   switch (mask) {
     case GHOST_kModifierKeyLeftShift:
-      m_LeftShift = down;
+      left_shift_ = down;
       break;
     case GHOST_kModifierKeyRightShift:
-      m_RightShift = down;
+      right_shift_ = down;
       break;
     case GHOST_kModifierKeyLeftAlt:
-      m_LeftAlt = down;
+      left_alt_ = down;
       break;
     case GHOST_kModifierKeyRightAlt:
-      m_RightAlt = down;
+      right_alt_ = down;
       break;
     case GHOST_kModifierKeyLeftControl:
-      m_LeftControl = down;
+      left_control_ = down;
       break;
     case GHOST_kModifierKeyRightControl:
-      m_RightControl = down;
+      right_control_ = down;
       break;
     case GHOST_kModifierKeyLeftOS:
-      m_LeftOS = down;
+      left_os_ = down;
       break;
     case GHOST_kModifierKeyRightOS:
-      m_RightOS = down;
+      right_os_ = down;
+      break;
+    case GHOST_kModifierKeyLeftHyper:
+      left_hyper_ = down;
+      break;
+    case GHOST_kModifierKeyRightHyper:
+      right_hyper_ = down;
       break;
     default:
       GHOST_ASSERT(0, "Invalid key!");
@@ -117,20 +133,23 @@ void GHOST_ModifierKeys::set(GHOST_TModifierKey mask, bool down)
 
 void GHOST_ModifierKeys::clear()
 {
-  m_LeftShift = false;
-  m_RightShift = false;
-  m_LeftAlt = false;
-  m_RightAlt = false;
-  m_LeftControl = false;
-  m_RightControl = false;
-  m_LeftOS = false;
-  m_RightOS = false;
+  left_shift_ = false;
+  right_shift_ = false;
+  left_alt_ = false;
+  right_alt_ = false;
+  left_control_ = false;
+  right_control_ = false;
+  left_os_ = false;
+  right_os_ = false;
+  left_hyper_ = false;
+  right_hyper_ = false;
 }
 
 bool GHOST_ModifierKeys::equals(const GHOST_ModifierKeys &keys) const
 {
-  return (m_LeftShift == keys.m_LeftShift) && (m_RightShift == keys.m_RightShift) &&
-         (m_LeftAlt == keys.m_LeftAlt) && (m_RightAlt == keys.m_RightAlt) &&
-         (m_LeftControl == keys.m_LeftControl) && (m_RightControl == keys.m_RightControl) &&
-         (m_LeftOS == keys.m_LeftOS) && (m_RightOS == keys.m_RightOS);
+  return (left_shift_ == keys.left_shift_) && (right_shift_ == keys.right_shift_) &&
+         (left_alt_ == keys.left_alt_) && (right_alt_ == keys.right_alt_) &&
+         (left_control_ == keys.left_control_) && (right_control_ == keys.right_control_) &&
+         (left_os_ == keys.left_os_) && (right_os_ == keys.right_os_) &&
+         (left_hyper_ == keys.left_hyper_) && (right_hyper_ == keys.right_hyper_);
 }

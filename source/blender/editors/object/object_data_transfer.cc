@@ -18,6 +18,7 @@
 #include "BKE_customdata.hh"
 #include "BKE_data_transfer.h"
 #include "BKE_deform.hh"
+#include "BKE_library.hh"
 #include "BKE_mesh_remap.hh"
 #include "BKE_object.hh"
 #include "BKE_report.hh"
@@ -51,14 +52,6 @@ static const EnumPropertyItem DT_layer_items[] = {
      0,
      "Vertex Group(s)",
      "Transfer active or all vertex groups"},
-#if 0 /* XXX For now, would like to finish/merge work from 2014 GSOC first. */
-    {DT_TYPE_SHAPEKEY, "SHAPEKEYS", 0, "Shapekey(s)", "Transfer active or all shape keys"},
-#endif
-/* XXX When SkinModifier is enabled,
- * it seems to erase its own CD_MVERT_SKIN layer from final DM :( */
-#if 0
-    {DT_TYPE_SKIN, "SKIN", 0, "Skin Weight", "Transfer skin weights"},
-#endif
     {DT_TYPE_BWEIGHT_VERT, "BEVEL_WEIGHT_VERT", 0, "Bevel Weight", "Transfer bevel weights"},
     {DT_TYPE_MPROPCOL_VERT | DT_TYPE_MLOOPCOL_VERT,
      "COLOR_VERTEX",
@@ -101,7 +94,7 @@ static void dt_add_vcol_layers(const CustomData *cdata,
                                EnumPropertyItem **r_item,
                                int *r_totitem)
 {
-  int types[2] = {CD_PROP_COLOR, CD_PROP_BYTE_COLOR};
+  const int types[2] = {CD_PROP_COLOR, CD_PROP_BYTE_COLOR};
   int idx = 0;
   for (int i = 0; i < 2; i++) {
     eCustomDataType type = eCustomDataType(types[i]);
@@ -175,32 +168,27 @@ static const EnumPropertyItem *dt_layers_select_src_itemf(bContext *C,
       RNA_enum_item_add(&item, &totitem, &tmp_item);
     }
   }
-  else if (data_type == DT_TYPE_SHAPEKEY) {
-    /* TODO */
-  }
   else if (data_type == DT_TYPE_UV) {
     const Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
-    const Object *ob_src_eval = DEG_get_evaluated_object(depsgraph, ob_src);
+    const Object *ob_src_eval = DEG_get_evaluated(depsgraph, ob_src);
     const Mesh *mesh_eval = BKE_object_get_evaluated_mesh_no_subsurf(ob_src_eval);
     if (!mesh_eval) {
       RNA_enum_item_end(&item, &totitem);
       *r_free = true;
       return item;
     }
-    int data_num = CustomData_number_of_layers(&mesh_eval->corner_data, CD_PROP_FLOAT2);
-
+    VectorSet<StringRefNull> uv_map_names = mesh_eval->uv_map_names();
     RNA_enum_item_add_separator(&item, &totitem);
 
-    for (int i = 0; i < data_num; i++) {
+    for (int i = 0; i < uv_map_names.size(); i++) {
       tmp_item.value = i;
-      tmp_item.identifier = tmp_item.name = CustomData_get_layer_name(
-          &mesh_eval->corner_data, CD_PROP_FLOAT2, i);
+      tmp_item.identifier = tmp_item.name = uv_map_names[i].c_str();
       RNA_enum_item_add(&item, &totitem, &tmp_item);
     }
   }
   else if (data_type & DT_TYPE_VCOL_ALL) {
     const Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
-    const Object *ob_src_eval = DEG_get_evaluated_object(depsgraph, ob_src);
+    const Object *ob_src_eval = DEG_get_evaluated(depsgraph, ob_src);
     const Mesh *mesh_eval = BKE_object_get_evaluated_mesh_no_subsurf(ob_src_eval);
     if (!mesh_eval) {
       RNA_enum_item_end(&item, &totitem);
@@ -418,7 +406,7 @@ static bool data_transfer_exec_is_object_valid(wmOperator *op,
   return false;
 }
 
-static int data_transfer_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus data_transfer_exec(bContext *C, wmOperator *op)
 {
   Object *ob_src = context_active_object(C);
   Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
@@ -485,6 +473,8 @@ static int data_transfer_exec(bContext *C, wmOperator *op)
 
   data_transfer_exec_preprocess_objects(C, op, ob_src, &ctx_objects, reverse_transfer);
 
+  int invalid_count = 0;
+
   for (const PointerRNA &ptr : ctx_objects) {
     Object *ob_dst = static_cast<Object *>(ptr.data);
 
@@ -493,10 +483,10 @@ static int data_transfer_exec(bContext *C, wmOperator *op)
     }
 
     if (data_transfer_exec_is_object_valid(op, ob_src, ob_dst, reverse_transfer)) {
-      Object *ob_src_eval = DEG_get_evaluated_object(depsgraph, ob_src);
+      Object *ob_src_eval = DEG_get_evaluated(depsgraph, ob_src);
 
       if (space_transform) {
-        Object *ob_dst_eval = DEG_get_evaluated_object(depsgraph, ob_dst);
+        Object *ob_dst_eval = DEG_get_evaluated(depsgraph, ob_dst);
         BLI_SPACE_TRANSFORM_SETUP(space_transform, ob_dst_eval, ob_src_eval);
       }
 
@@ -526,6 +516,13 @@ static int data_transfer_exec(bContext *C, wmOperator *op)
         changed = true;
       }
     }
+    else {
+      /* Selected objects contains the active object, in this case `ob_src` is the same as
+       * `ob_dst`, so we don't treat this case as invalid. */
+      if (ob_src != ob_dst) {
+        invalid_count++;
+      }
+    }
 
     if (reverse_transfer) {
       std::swap(ob_src, ob_dst);
@@ -537,6 +534,11 @@ static int data_transfer_exec(bContext *C, wmOperator *op)
     WM_event_add_notifier(C, NC_OBJECT | ND_DRAW, nullptr);
   }
 
+  if (invalid_count > 0) {
+    BKE_reportf(
+        op->reports, RPT_WARNING, "Failed to transfer mesh data to %d objects", invalid_count);
+  }
+
 #if 0 /* TODO */
   /* NOTE: issue with that is that if canceled, operator cannot be redone... Nasty in our case. */
   return changed ? OPERATOR_FINISHED : OPERATOR_CANCELLED;
@@ -545,17 +547,18 @@ static int data_transfer_exec(bContext *C, wmOperator *op)
 #endif
 }
 
-/* Used by both OBJECT_OT_data_transfer and OBJECT_OT_datalayout_transfer */
-/* Note this context poll is only really partial,
- * it cannot check for all possible invalid cases. */
+/** Used by both #OBJECT_OT_data_transfer and #OBJECT_OT_datalayout_transfer. */
 static bool data_transfer_poll(bContext *C)
 {
+  /* Note this context poll is only really partial,
+   * it cannot check for all possible invalid cases. */
+
   Object *ob = context_active_object(C);
   ID *data = static_cast<ID *>((ob) ? ob->data : nullptr);
   return (ob != nullptr && ob->type == OB_MESH && data != nullptr);
 }
 
-/* Used by both OBJECT_OT_data_transfer and OBJECT_OT_datalayout_transfer */
+/** Used by both #OBJECT_OT_data_transfer and #OBJECT_OT_datalayout_transfer. */
 static bool data_transfer_poll_property(const bContext * /*C*/,
                                         wmOperator *op,
                                         const PropertyRNA *prop)
@@ -778,7 +781,8 @@ void OBJECT_OT_data_transfer(wmOperatorType *ot)
                       DT_LAYERS_ACTIVE_SRC,
                       "Source Layers Selection",
                       "Which layers to transfer, in case of multi-layers types");
-  RNA_def_property_enum_funcs_runtime(prop, nullptr, nullptr, dt_layers_select_itemf);
+  RNA_def_property_enum_funcs_runtime(
+      prop, nullptr, nullptr, dt_layers_select_itemf, nullptr, nullptr);
 
   prop = RNA_def_enum(ot->srna,
                       "layers_select_dst",
@@ -786,7 +790,8 @@ void OBJECT_OT_data_transfer(wmOperatorType *ot)
                       DT_LAYERS_ACTIVE_DST,
                       "Destination Layers Matching",
                       "How to match source and destination layers");
-  RNA_def_property_enum_funcs_runtime(prop, nullptr, nullptr, dt_layers_select_itemf);
+  RNA_def_property_enum_funcs_runtime(
+      prop, nullptr, nullptr, dt_layers_select_itemf, nullptr, nullptr);
 
   prop = RNA_def_enum(ot->srna,
                       "mix_mode",
@@ -794,7 +799,7 @@ void OBJECT_OT_data_transfer(wmOperatorType *ot)
                       CDT_MIX_TRANSFER,
                       "Mix Mode",
                       "How to affect destination elements with source values");
-  RNA_def_property_enum_funcs_runtime(prop, nullptr, nullptr, dt_mix_mode_itemf);
+  RNA_def_property_enum_funcs_runtime(prop, nullptr, nullptr, dt_mix_mode_itemf, nullptr, nullptr);
   RNA_def_float(
       ot->srna,
       "mix_factor",
@@ -818,7 +823,7 @@ static bool datalayout_transfer_poll(bContext *C)
           data_transfer_poll(C));
 }
 
-static int datalayout_transfer_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus datalayout_transfer_exec(bContext *C, wmOperator *op)
 {
   Object *ob_act = context_active_object(C);
   Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
@@ -839,7 +844,7 @@ static int datalayout_transfer_exec(bContext *C, wmOperator *op)
       return OPERATOR_CANCELLED;
     }
 
-    Object *ob_src_eval = DEG_get_evaluated_object(depsgraph, ob_src);
+    Object *ob_src_eval = DEG_get_evaluated(depsgraph, ob_src);
 
     BKE_object_data_transfer_layout(depsgraph,
                                     ob_src_eval,
@@ -870,7 +875,7 @@ static int datalayout_transfer_exec(bContext *C, wmOperator *op)
       layers_select_dst[fromto_idx] = layers_dst;
     }
 
-    Object *ob_src_eval = DEG_get_evaluated_object(depsgraph, ob_src);
+    Object *ob_src_eval = DEG_get_evaluated(depsgraph, ob_src);
 
     data_transfer_exec_preprocess_objects(C, op, ob_src, &ctx_objects, false);
 
@@ -896,7 +901,9 @@ static int datalayout_transfer_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int datalayout_transfer_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus datalayout_transfer_invoke(bContext *C,
+                                                   wmOperator *op,
+                                                   const wmEvent *event)
 {
   if (edit_modifier_invoke_properties(C, op)) {
     return datalayout_transfer_exec(C, op);
@@ -941,7 +948,8 @@ void OBJECT_OT_datalayout_transfer(wmOperatorType *ot)
                       DT_LAYERS_ACTIVE_SRC,
                       "Source Layers Selection",
                       "Which layers to transfer, in case of multi-layers types");
-  RNA_def_property_enum_funcs_runtime(prop, nullptr, nullptr, dt_layers_select_src_itemf);
+  RNA_def_property_enum_funcs_runtime(
+      prop, nullptr, nullptr, dt_layers_select_src_itemf, nullptr, nullptr);
 
   prop = RNA_def_enum(ot->srna,
                       "layers_select_dst",
@@ -949,7 +957,8 @@ void OBJECT_OT_datalayout_transfer(wmOperatorType *ot)
                       DT_LAYERS_ACTIVE_DST,
                       "Destination Layers Matching",
                       "How to match source and destination layers");
-  RNA_def_property_enum_funcs_runtime(prop, nullptr, nullptr, dt_layers_select_dst_itemf);
+  RNA_def_property_enum_funcs_runtime(
+      prop, nullptr, nullptr, dt_layers_select_dst_itemf, nullptr, nullptr);
 }
 
 }  // namespace blender::ed::object

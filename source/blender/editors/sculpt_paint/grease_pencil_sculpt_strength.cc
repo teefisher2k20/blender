@@ -5,8 +5,6 @@
 #include "BLI_index_mask.hh"
 #include "BLI_task.hh"
 
-#include "DNA_gpencil_legacy_types.h"
-
 #include "BKE_context.hh"
 #include "BKE_grease_pencil.hh"
 #include "BKE_paint.hh"
@@ -39,20 +37,19 @@ void StrengthOperation::on_stroke_begin(const bContext &C, const InputSample &st
 
 void StrengthOperation::on_stroke_extended(const bContext &C, const InputSample &extension_sample)
 {
-  const Scene &scene = *CTX_data_scene(&C);
   Paint &paint = *BKE_paint_get_active_from_context(&C);
   const Brush &brush = *BKE_paint_brush(&paint);
   const bool invert = this->is_inverted(brush);
 
   this->foreach_editable_drawing_with_automask(
       C, [&](const GreasePencilStrokeParams &params, const IndexMask &point_mask) {
-        Array<float2> view_positions = calculate_view_positions(params, point_mask);
+        const Array<float2> view_positions = view_positions_from_point_mask(params, point_mask);
         MutableSpan<float> opacities = params.drawing.opacities_for_write();
 
         point_mask.foreach_index(GrainSize(4096), [&](const int64_t point_i) {
           float &opacity = opacities[point_i];
           const float influence = brush_point_influence(
-              scene, brush, view_positions[point_i], extension_sample, params.multi_frame_falloff);
+              paint, brush, view_positions[point_i], extension_sample, params.multi_frame_falloff);
           /* Brush influence mapped to opacity by a factor of 0.125. */
           const float delta_opacity = (invert ? -influence : influence) * 0.125f;
           opacity = std::clamp(opacity + delta_opacity, 0.0f, 1.0f);

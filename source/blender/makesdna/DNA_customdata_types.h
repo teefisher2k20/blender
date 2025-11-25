@@ -32,8 +32,8 @@ typedef struct CustomDataLayer {
   int active_mask;
   /** Shape key-block unique id reference. */
   int uid;
-  /** Layer name, MAX_CUSTOMDATA_LAYER_NAME. */
-  char name[68];
+  /** Layer name. */
+  char name[/*MAX_CUSTOMDATA_LAYER_NAME*/ 68];
   char _pad1[4];
   /** Layer data. */
   void *data;
@@ -48,8 +48,7 @@ typedef struct CustomDataLayer {
 #define MAX_CUSTOMDATA_LAYER_NAME_NO_PREFIX 64
 
 typedef struct CustomDataExternal {
-  /** FILE_MAX. */
-  char filepath[1024];
+  char filepath[/*FILE_MAX*/ 1024];
 } CustomDataExternal;
 
 /**
@@ -121,6 +120,10 @@ typedef enum eCustomDataType {
   CD_MLOOPUV = 16,
 #endif
   CD_PROP_BYTE_COLOR = 17,
+  /**
+   * Previously used for runtime corner tangent storage in mesh #CustomData. Currently only used
+   * as an identifier to choose tangents in a few places.
+   */
   CD_TANGENT = 18,
   CD_MDISPS = 19,
   CD_PROP_FLOAT4X4 = 20,
@@ -148,8 +151,10 @@ typedef enum eCustomDataType {
 #endif
   CD_GRID_PAINT_MASK = 35,
   CD_MVERT_SKIN = 36,
+#ifdef DNA_DEPRECATED_ALLOW
   CD_FREESTYLE_EDGE = 37,
   CD_FREESTYLE_FACE = 38,
+#endif
   CD_MLOOPTANGENT = 39,
   CD_TESSLOOPNORMAL = 40,
 #ifdef DNA_DEPRECATED_ALLOW
@@ -179,7 +184,8 @@ typedef enum eCustomDataType {
 using eCustomDataMask = uint64_t;
 #endif
 
-/* Bits for eCustomDataMask */
+/* Bits for #eCustomDataMask */
+
 #define CD_MASK_MDEFORMVERT (1 << CD_MDEFORMVERT)
 #define CD_MASK_MFACE (1 << CD_MFACE)
 #define CD_MASK_MTFACE (1 << CD_MTFACE)
@@ -192,7 +198,6 @@ using eCustomDataMask = uint64_t;
 #define CD_MASK_ORIGSPACE (1 << CD_ORIGSPACE)
 #define CD_MASK_ORCO (1 << CD_ORCO)
 #define CD_MASK_PROP_BYTE_COLOR (1 << CD_PROP_BYTE_COLOR)
-#define CD_MASK_TANGENT (1 << CD_TANGENT)
 #define CD_MASK_MDISPS (1 << CD_MDISPS)
 #define CD_MASK_CLOTH_ORCO (1 << CD_CLOTH_ORCO)
 
@@ -203,8 +208,6 @@ using eCustomDataMask = uint64_t;
 
 #define CD_MASK_GRID_PAINT_MASK (1LL << CD_GRID_PAINT_MASK)
 #define CD_MASK_MVERT_SKIN (1LL << CD_MVERT_SKIN)
-#define CD_MASK_FREESTYLE_EDGE (1LL << CD_FREESTYLE_EDGE)
-#define CD_MASK_FREESTYLE_FACE (1LL << CD_FREESTYLE_FACE)
 #define CD_MASK_MLOOPTANGENT (1LL << CD_MLOOPTANGENT)
 #define CD_MASK_TESSLOOPNORMAL (1LL << CD_TESSLOOPNORMAL)
 #define CD_MASK_PROP_COLOR (1ULL << CD_PROP_COLOR)
@@ -220,17 +223,17 @@ using eCustomDataMask = uint64_t;
 /** Multi-resolution loop data. */
 #define CD_MASK_MULTIRES_GRIDS (CD_MASK_MDISPS | CD_GRID_PAINT_MASK)
 
-/* All data layers. */
+/** All data layers. */
 #define CD_MASK_ALL (~0LL)
 
-/* All generic attributes. */
+/** All generic attributes. */
 #define CD_MASK_PROP_ALL \
   (CD_MASK_PROP_FLOAT | CD_MASK_PROP_FLOAT2 | CD_MASK_PROP_FLOAT3 | CD_MASK_PROP_INT32 | \
    CD_MASK_PROP_COLOR | CD_MASK_PROP_STRING | CD_MASK_PROP_BYTE_COLOR | CD_MASK_PROP_BOOL | \
    CD_MASK_PROP_INT8 | CD_MASK_PROP_INT16_2D | CD_MASK_PROP_INT32_2D | CD_MASK_PROP_QUATERNION | \
    CD_MASK_PROP_FLOAT4X4)
 
-/* All color attributes */
+/** All color attributes */
 #define CD_MASK_COLOR_ALL (CD_MASK_PROP_COLOR | CD_MASK_PROP_BYTE_COLOR)
 
 typedef struct CustomData_MeshMasks {
@@ -243,14 +246,16 @@ typedef struct CustomData_MeshMasks {
 
 /** #CustomData.flag */
 enum {
-  /* Indicates layer should not be copied by CustomData_from_template or CustomData_copy_data */
+  /**
+   * Indicates layer should not be copied by #CustomData_from_template or #CustomData_copy_data.
+   */
   CD_FLAG_NOCOPY = (1 << 0),
   CD_FLAG_UNUSED = (1 << 1),
-  /* Indicates the layer is only temporary, also implies no copy */
+  /** Indicates the layer is only temporary, also implies no copy */
   CD_FLAG_TEMPORARY = ((1 << 2) | CD_FLAG_NOCOPY),
-  /* Indicates the layer is stored in an external file */
+  /** Indicates the layer is stored in an external file */
   CD_FLAG_EXTERNAL = (1 << 3),
-  /* Indicates external data is read into memory */
+  /** Indicates external data is read into memory */
   CD_FLAG_IN_MEMORY = (1 << 4),
 #ifdef DNA_DEPRECATED_ALLOW
   CD_FLAG_COLOR_ACTIVE = (1 << 5),
@@ -258,7 +263,5 @@ enum {
 #endif
 };
 
-/* Limits */
+/** Limits. */
 #define MAX_MTFACE 8
-
-#define DYNTOPO_NODE_NONE -1

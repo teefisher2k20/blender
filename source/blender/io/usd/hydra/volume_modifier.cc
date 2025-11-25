@@ -7,10 +7,9 @@
 #include <pxr/usdImaging/usdVolImaging/tokens.h>
 
 #include "DNA_scene_types.h"
-#include "DNA_volume_types.h"
 
 #include "BLI_path_utils.hh"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "BKE_mesh.h"
 #include "BKE_modifier.hh"
@@ -56,7 +55,7 @@ void VolumeModifierData::init()
 
   filepath_ = get_cached_file_path(modifier_->domain->cache_directory,
                                    scene_delegate_->scene->r.cfra);
-  ID_LOG(1, "%s", filepath_.c_str());
+  ID_LOG("%s", filepath_.c_str());
 
   static const pxr::TfToken grid_tokens[] = {pxr::TfToken("density", pxr::TfToken::Immortal),
                                              pxr::TfToken("flame", pxr::TfToken::Immortal),
@@ -98,7 +97,7 @@ void VolumeModifierData::update()
   }
 
   scene_delegate_->GetRenderIndex().GetChangeTracker().MarkRprimDirty(prim_id, bits);
-  ID_LOG(1, "");
+  ID_LOG("");
 }
 
 void VolumeModifierData::write_transform()
@@ -127,7 +126,8 @@ std::string VolumeModifierData::get_cached_file_path(const std::string &director
 {
   char file_path[FILE_MAX];
   char file_name[32];
-  SNPRINTF(file_name, "%s_####%s", FLUID_NAME_DATA, FLUID_DOMAIN_EXTENSION_OPENVDB);
+  /* While a filename need not be UTF8, at this point the constructed name should be UTF8. */
+  SNPRINTF_UTF8(file_name, "%s_####%s", FLUID_NAME_DATA, FLUID_DOMAIN_EXTENSION_OPENVDB);
   BLI_path_frame(file_name, sizeof(file_name), frame, 0);
   BLI_path_join(file_path, sizeof(file_path), directory.c_str(), FLUID_DOMAIN_DIR_DATA, file_name);
 

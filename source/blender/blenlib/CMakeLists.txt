@@ -15,66 +15,68 @@ set(INC_SYS
   ../../../extern/wcwidth
   ../../../extern/json/include
 
-  ${EIGEN3_INCLUDE_DIRS}
   ${ZLIB_INCLUDE_DIRS}
   ${ZSTD_INCLUDE_DIRS}
 )
 
 set(SRC
-  intern/BLI_assert.c
+  intern/BLI_assert.cc
   intern/BLI_color.cc
-  intern/BLI_dial_2d.c
-  intern/BLI_dynstr.c
+  intern/BLI_colorspace.cc
+  intern/BLI_dial_2d.cc
+  intern/BLI_dynstr.cc
   intern/BLI_filelist.cc
-  intern/BLI_ghash.c
+  intern/BLI_ghash.cc
   intern/BLI_ghash_utils.cc
-  intern/BLI_heap.c
-  intern/BLI_heap_simple.c
+  intern/BLI_heap.cc
+  intern/BLI_heap_simple.cc
   intern/BLI_kdopbvh.cc
-  intern/BLI_linklist.c
-  intern/BLI_linklist_lockfree.c
-  intern/BLI_memarena.c
-  intern/BLI_memblock.c
-  intern/BLI_memiter.c
-  intern/BLI_mempool.c
-  intern/BLI_mmap.c
+  intern/BLI_linklist.cc
+  intern/BLI_linklist_lockfree.cc
+  intern/BLI_memarena.cc
+  intern/BLI_memblock.cc
+  intern/BLI_memiter.cc
+  intern/BLI_mempool.cc
+  intern/BLI_mmap.cc
   intern/BLI_subprocess.cc
-  intern/BLI_timer.c
+  intern/BLI_timer.cc
   intern/array_store.cc
+  intern/array_store_rle.cc
   intern/array_store_utils.cc
-  intern/array_utils.c
   intern/array_utils.cc
-  intern/astar.c
+  intern/array_utils_c.cc
+  intern/astar.cc
   intern/atomic_disjoint_set.cc
   intern/bit_bool_conversion.cc
   intern/bit_ref.cc
   intern/bit_span.cc
-  intern/bitmap.c
+  intern/bitmap.cc
   intern/bitmap_draw_2d.cc
-  intern/boxpack_2d.c
-  intern/buffer.c
+  intern/boxpack_2d.cc
   intern/cache_mutex.cc
+  intern/compression.cc
   intern/compute_context.cc
   intern/convexhull_2d.cc
   intern/cpp_type.cc
   intern/cpp_types.cc
+  intern/csv_parse.cc
   intern/delaunay_2d.cc
   intern/dot_export.cc
-  intern/easing.c
-  intern/endian_switch.c
-  intern/expr_pylike_eval.c
+  intern/easing.cc
+  intern/endian_switch.cc
+  intern/expr_pylike_eval.cc
   intern/fftw.cc
   intern/fileops.cc
   intern/fileops_c.cc
-  intern/filereader_file.c
-  intern/filereader_gzip.c
-  intern/filereader_memory.c
-  intern/filereader_zstd.c
-  intern/fnmatch.c
+  intern/filereader_file.cc
+  intern/filereader_gzip.cc
+  intern/filereader_memory.cc
+  intern/filereader_zstd.cc
+  intern/fnmatch.cc
   intern/generic_vector_array.cc
   intern/generic_virtual_array.cc
   intern/generic_virtual_vector_array.cc
-  intern/gsqueue.c
+  intern/gsqueue.cc
   intern/hash_md5.cc
   intern/hash_mm2a.cc
   intern/hash_mm3.cc
@@ -83,26 +85,26 @@ set(SRC
   intern/index_mask.cc
   intern/index_mask_expression.cc
   intern/index_range.cc
-  intern/jitter_2d.c
-  intern/kdtree_1d.c
-  intern/kdtree_2d.c
-  intern/kdtree_3d.c
-  intern/kdtree_4d.c
+  intern/jitter_2d.cc
+  intern/kdtree_1d.cc
+  intern/kdtree_2d.cc
+  intern/kdtree_3d.cc
+  intern/kdtree_4d.cc
   intern/lasso_2d.cc
   intern/lazy_threading.cc
   intern/length_parameterize.cc
   intern/listbase.cc
   intern/math_base.cc
-  intern/math_base_inline.c
-  intern/math_base_safe_inline.c
+  intern/math_base_inline.cc
+  intern/math_base_safe_inline.cc
   intern/math_basis_types.cc
-  intern/math_bits_inline.c
+  intern/math_bits_inline.cc
   intern/math_boolean.cc
   intern/math_color.cc
-  intern/math_color_blend_inline.c
-  intern/math_color_inline.c
+  intern/math_color_blend_inline.cc
+  intern/math_color_inline.cc
   intern/math_geom.cc
-  intern/math_geom_inline.c
+  intern/math_geom_inline.cc
   intern/math_half.cc
   intern/math_interp.cc
   intern/math_matrix.cc
@@ -114,8 +116,9 @@ set(SRC
   intern/math_time.cc
   intern/math_vec.cc
   intern/math_vector.cc
-  intern/math_vector_inline.c
+  intern/math_vector_inline.cc
   intern/memory_cache.cc
+  intern/memory_cache_file_load.cc
   intern/memory_counter.cc
   intern/memory_utils.cc
   intern/mesh_boolean.cc
@@ -128,40 +131,40 @@ set(SRC
   intern/polyfill_2d.cc
   intern/polyfill_2d_beautify.cc
   intern/quadric.cc
+  intern/radial_tiling_shared.cc
   intern/rand.cc
   intern/rct.cc
   intern/resource_scope.cc
-  intern/scanfill.c
-  intern/scanfill_utils.c
+  intern/scanfill.cc
+  intern/scanfill_utils.cc
   intern/serialize.cc
-  intern/session_uid.c
-  intern/smaa_textures.c
-  intern/sort.c
-  intern/sort_utils.c
-  intern/stack.c
+  intern/session_uid.cc
+  intern/smaa_textures.cc
+  intern/sort.cc
+  intern/sort_utils.cc
+  intern/stack.cc
   intern/storage.cc
-  intern/string.c
-  intern/string_cursor_utf8.c
+  intern/string.cc
+  intern/string_cursor_utf8.cc
   intern/string_ref.cc
   intern/string_search.cc
   intern/string_utf8.cc
   intern/string_utils.cc
-  intern/system.c
+  intern/system.cc
   intern/task_graph.cc
-  intern/task_iterator.c
+  intern/task_iterator.cc
   intern/task_pool.cc
   intern/task_range.cc
   intern/task_scheduler.cc
   intern/tempfile.cc
   intern/threads.cc
-  intern/time.c
-  intern/timecode.c
+  intern/time.cc
+  intern/timecode.cc
   intern/timeit.cc
   intern/uuid.cc
-  intern/uvproject.cc
   intern/vector.cc
   intern/virtual_array.cc
-  intern/voxel.c
+  intern/voxel.cc
   intern/winstuff.cc
   intern/winstuff_dir.cc
   intern/winstuff_registration.cc
@@ -169,9 +172,9 @@ set(SRC
   intern/BLI_mempool_private.h
 
   # Header as source (included in C files above).
-  intern/kdtree_impl.h
+  intern/kdtree_impl.hh
   intern/list_sort_impl.h
-
+  intern/radial_tiling_shared.hh
 
   BLI_alloca.h
   BLI_allocator.hh
@@ -196,26 +199,27 @@ set(SRC
   BLI_bit_vector.hh
   BLI_bitmap.h
   BLI_bitmap_draw_2d.h
-  BLI_blenlib.h
   BLI_bounds.hh
   BLI_bounds_types.hh
   BLI_boxpack_2d.h
-  BLI_buffer.h
   BLI_build_config.h
   BLI_cache_mutex.hh
   BLI_color.hh
   BLI_color_mix.hh
+  BLI_colorspace.hh
   BLI_compiler_attrs.h
   BLI_compiler_compat.h
   BLI_compiler_typecheck.h
+  BLI_compression.hh
   BLI_compute_context.hh
   BLI_concurrent_map.hh
   BLI_console.h
-  BLI_convexhull_2d.h
+  BLI_convexhull_2d.hh
   BLI_cpp_type.hh
   BLI_cpp_type_make.hh
   BLI_cpp_types.hh
   BLI_cpp_types_make.hh
+  BLI_csv_parse.hh
   BLI_delaunay_2d.hh
   BLI_devirtualize_parameters.hh
   BLI_dial_2d.h
@@ -227,6 +231,7 @@ set(SRC
   BLI_endian_defines.h
   BLI_endian_switch.h
   BLI_endian_switch_inline.h
+  BLI_enum_flags.hh
   BLI_enumerable_thread_specific.hh
   BLI_expr_pylike_eval.h
   BLI_fftw.hh
@@ -240,6 +245,7 @@ set(SRC
   BLI_function_ref.hh
   BLI_generic_array.hh
   BLI_generic_key.hh
+  BLI_generic_key_string.hh
   BLI_generic_pointer.hh
   BLI_generic_span.hh
   BLI_generic_value_map.hh
@@ -250,6 +256,7 @@ set(SRC
   BLI_gsqueue.h
   BLI_hash.h
   BLI_hash.hh
+  BLI_hash_fwd.hh
   BLI_hash_md5.hh
   BLI_hash_mm2a.hh
   BLI_hash_mm3.hh
@@ -269,8 +276,8 @@ set(SRC
   BLI_iterator.h
   BLI_jitter_2d.h
   BLI_kdopbvh.hh
-  BLI_kdtree.h
-  BLI_kdtree_impl.h
+  BLI_kdtree.hh
+  BLI_kdtree_impl.hh
   BLI_lasso_2d.hh
   BLI_lazy_threading.hh
   BLI_length_parameterize.hh
@@ -326,6 +333,7 @@ set(SRC
   BLI_memblock.h
   BLI_memiter.h
   BLI_memory_cache.hh
+  BLI_memory_cache_file_load.hh
   BLI_memory_counter.hh
   BLI_memory_counter_fwd.hh
   BLI_memory_utils.h
@@ -335,6 +343,7 @@ set(SRC
   BLI_mesh_intersect.hh
   BLI_mmap.h
   BLI_multi_value_map.hh
+  BLI_mutex.hh
   BLI_noise.h
   BLI_noise.hh
   BLI_offset_indices.hh
@@ -347,6 +356,7 @@ set(SRC
   BLI_pool.hh
   BLI_probing_strategies.hh
   BLI_quadric.h
+  BLI_radial_tiling.hh
   BLI_rand.h
   BLI_rand.hh
   BLI_random_access_iterator_mixin.hh
@@ -397,7 +407,6 @@ set(SRC
   BLI_utildefines_variadic.h
   BLI_utility_mixins.hh
   BLI_uuid.h
-  BLI_uvproject.h
   BLI_vector.hh
   BLI_vector_list.hh
   BLI_vector_set.hh
@@ -423,13 +432,14 @@ set(LIB
   PRIVATE bf::intern::atomic
   PRIVATE extern_fmtlib
   PUBLIC bf::dependencies::optional::tbb
+  PRIVATE bf::dependencies::eigen
   ${ZLIB_LIBRARIES}
   ${ZSTD_LIBRARIES}
 )
 
 if(NOT WITH_PYTHON_MODULE)
   list(APPEND SRC
-    intern/BLI_args.c
+    intern/BLI_args.cc
 
     BLI_args.h
   )
@@ -459,9 +469,6 @@ if(WITH_FFTW3)
     ${FFTW3_LIBRARIES}
   )
   add_definitions(-DWITH_FFTW3)
-  if(WITH_FFTW3_THREADS_F_SUPPORT)
-    add_definitions(-DWITH_FFTW3_THREADS_F_SUPPORT)
-  endif()
 endif()
 
 if(WIN32)
@@ -470,9 +477,11 @@ if(WIN32)
     add_definitions(-DWITH_BLENDER_THUMBNAILER)
   endif()
   list(APPEND INC
+    ../../../intern/uriconvert
     ../../../intern/utfconv
   )
   list(APPEND LIB
+    bf_intern_uriconvert
     bf_intern_utfconv
     dxgi
   )
@@ -497,13 +506,13 @@ endif()
 
 # no need to compile object files for inline headers.
 set_source_files_properties(
-  intern/math_base_inline.c
-  intern/math_base_safe_inline.c
-  intern/math_bits_inline.c
-  intern/math_color_blend_inline.c
-  intern/math_color_inline.c
-  intern/math_geom_inline.c
-  intern/math_vector_inline.c
+  intern/math_base_inline.cc
+  intern/math_base_safe_inline.cc
+  intern/math_bits_inline.cc
+  intern/math_color_blend_inline.cc
+  intern/math_color_inline.cc
+  intern/math_geom_inline.cc
+  intern/math_vector_inline.cc
   PROPERTIES HEADER_FILE_ONLY TRUE
 )
 
@@ -526,8 +535,10 @@ if(WITH_GTESTS)
     tests/BLI_bounds_test.cc
     tests/BLI_build_config_test.cc
     tests/BLI_color_test.cc
+    tests/BLI_compression_test.cc
     tests/BLI_convexhull_2d_test.cc
     tests/BLI_cpp_type_test.cc
+    tests/BLI_csv_parse_test.cc
     tests/BLI_delaunay_2d_test.cc
     tests/BLI_disjoint_set_test.cc
     tests/BLI_expr_pylike_eval_test.cc
@@ -600,6 +611,7 @@ if(WITH_GTESTS)
     tests/BLI_unique_sorted_indices_test.cc
     tests/BLI_utildefines_test.cc
     tests/BLI_uuid_test.cc
+    tests/BLI_vector_list_test.cc
     tests/BLI_vector_set_test.cc
     tests/BLI_vector_test.cc
     tests/BLI_virtual_array_test.cc

@@ -24,7 +24,11 @@
 
 #include "BKE_global.hh"
 
+#include "CLG_log.h"
+
 #include <fmt/format.h>
+
+static CLG_LogRef LOG = {"gpu.vulkan"};
 
 using namespace blender::gpu::shader;
 
@@ -51,107 +55,107 @@ static const char *to_string(const Interpolation &interp)
 static const char *to_string(const Type &type)
 {
   switch (type) {
-    case Type::FLOAT:
+    case Type::float_t:
       return "float";
-    case Type::VEC2:
+    case Type::float2_t:
       return "vec2";
-    case Type::VEC3:
+    case Type::float3_t:
       return "vec3";
-    case Type::VEC4:
+    case Type::float4_t:
       return "vec4";
-    case Type::MAT3:
+    case Type::float3x3_t:
       return "mat3";
-    case Type::MAT4:
+    case Type::float4x4_t:
       return "mat4";
-    case Type::UINT:
+    case Type::uint_t:
       return "uint";
-    case Type::UVEC2:
+    case Type::uint2_t:
       return "uvec2";
-    case Type::UVEC3:
+    case Type::uint3_t:
       return "uvec3";
-    case Type::UVEC4:
+    case Type::uint4_t:
       return "uvec4";
-    case Type::INT:
+    case Type::int_t:
       return "int";
-    case Type::IVEC2:
+    case Type::int2_t:
       return "ivec2";
-    case Type::IVEC3:
+    case Type::int3_t:
       return "ivec3";
-    case Type::IVEC4:
+    case Type::int4_t:
       return "ivec4";
-    case Type::BOOL:
+    case Type::bool_t:
       return "bool";
     default:
       return "unknown";
   }
 }
 
-static const char *to_string(const eGPUTextureFormat &type)
+static const char *to_string(const TextureFormat &type)
 {
   switch (type) {
-    case GPU_RGBA8UI:
+    case TextureFormat::UINT_8_8_8_8:
       return "rgba8ui";
-    case GPU_RGBA8I:
+    case TextureFormat::SINT_8_8_8_8:
       return "rgba8i";
-    case GPU_RGBA8:
+    case TextureFormat::UNORM_8_8_8_8:
       return "rgba8";
-    case GPU_RGBA32UI:
+    case TextureFormat::UINT_32_32_32_32:
       return "rgba32ui";
-    case GPU_RGBA32I:
+    case TextureFormat::SINT_32_32_32_32:
       return "rgba32i";
-    case GPU_RGBA32F:
+    case TextureFormat::SFLOAT_32_32_32_32:
       return "rgba32f";
-    case GPU_RGBA16UI:
+    case TextureFormat::UINT_16_16_16_16:
       return "rgba16ui";
-    case GPU_RGBA16I:
+    case TextureFormat::SINT_16_16_16_16:
       return "rgba16i";
-    case GPU_RGBA16F:
+    case TextureFormat::SFLOAT_16_16_16_16:
       return "rgba16f";
-    case GPU_RGBA16:
+    case TextureFormat::UNORM_16_16_16_16:
       return "rgba16";
-    case GPU_RG8UI:
+    case TextureFormat::UINT_8_8:
       return "rg8ui";
-    case GPU_RG8I:
+    case TextureFormat::SINT_8_8:
       return "rg8i";
-    case GPU_RG8:
+    case TextureFormat::UNORM_8_8:
       return "rg8";
-    case GPU_RG32UI:
+    case TextureFormat::UINT_32_32:
       return "rg32ui";
-    case GPU_RG32I:
+    case TextureFormat::SINT_32_32:
       return "rg32i";
-    case GPU_RG32F:
+    case TextureFormat::SFLOAT_32_32:
       return "rg32f";
-    case GPU_RG16UI:
+    case TextureFormat::UINT_16_16:
       return "rg16ui";
-    case GPU_RG16I:
+    case TextureFormat::SINT_16_16:
       return "rg16i";
-    case GPU_RG16F:
+    case TextureFormat::SFLOAT_16_16:
       return "rg16f";
-    case GPU_RG16:
+    case TextureFormat::UNORM_16_16:
       return "rg16";
-    case GPU_R8UI:
+    case TextureFormat::UINT_8:
       return "r8ui";
-    case GPU_R8I:
+    case TextureFormat::SINT_8:
       return "r8i";
-    case GPU_R8:
+    case TextureFormat::UNORM_8:
       return "r8";
-    case GPU_R32UI:
+    case TextureFormat::UINT_32:
       return "r32ui";
-    case GPU_R32I:
+    case TextureFormat::SINT_32:
       return "r32i";
-    case GPU_R32F:
+    case TextureFormat::SFLOAT_32:
       return "r32f";
-    case GPU_R16UI:
+    case TextureFormat::UINT_16:
       return "r16ui";
-    case GPU_R16I:
+    case TextureFormat::SINT_16:
       return "r16i";
-    case GPU_R16F:
+    case TextureFormat::SFLOAT_16:
       return "r16f";
-    case GPU_R16:
+    case TextureFormat::UNORM_16:
       return "r16";
-    case GPU_R11F_G11F_B10F:
+    case TextureFormat::UFLOAT_11_11_10:
       return "r11f_g11f_b10f";
-    case GPU_RGB10_A2:
+    case TextureFormat::UNORM_10_10_10_2:
       return "rgb10_a2";
     default:
       return "unknown";
@@ -209,30 +213,30 @@ static void print_image_type(std::ostream &os,
                              const ShaderCreateInfo::Resource::BindType bind_type)
 {
   switch (type) {
-    case ImageType::INT_BUFFER:
-    case ImageType::INT_1D:
-    case ImageType::INT_1D_ARRAY:
-    case ImageType::INT_2D:
-    case ImageType::INT_2D_ARRAY:
-    case ImageType::INT_3D:
-    case ImageType::INT_CUBE:
-    case ImageType::INT_CUBE_ARRAY:
-    case ImageType::INT_2D_ATOMIC:
-    case ImageType::INT_2D_ARRAY_ATOMIC:
-    case ImageType::INT_3D_ATOMIC:
+    case ImageType::IntBuffer:
+    case ImageType::Int1D:
+    case ImageType::Int1DArray:
+    case ImageType::Int2D:
+    case ImageType::Int2DArray:
+    case ImageType::Int3D:
+    case ImageType::IntCube:
+    case ImageType::IntCubeArray:
+    case ImageType::AtomicInt2D:
+    case ImageType::AtomicInt2DArray:
+    case ImageType::AtomicInt3D:
       os << "i";
       break;
-    case ImageType::UINT_BUFFER:
-    case ImageType::UINT_1D:
-    case ImageType::UINT_1D_ARRAY:
-    case ImageType::UINT_2D:
-    case ImageType::UINT_2D_ARRAY:
-    case ImageType::UINT_3D:
-    case ImageType::UINT_CUBE:
-    case ImageType::UINT_CUBE_ARRAY:
-    case ImageType::UINT_2D_ATOMIC:
-    case ImageType::UINT_2D_ARRAY_ATOMIC:
-    case ImageType::UINT_3D_ATOMIC:
+    case ImageType::UintBuffer:
+    case ImageType::Uint1D:
+    case ImageType::Uint1DArray:
+    case ImageType::Uint2D:
+    case ImageType::Uint2DArray:
+    case ImageType::Uint3D:
+    case ImageType::UintCube:
+    case ImageType::UintCubeArray:
+    case ImageType::AtomicUint2D:
+    case ImageType::AtomicUint2DArray:
+    case ImageType::AtomicUint3D:
       os << "u";
       break;
     default:
@@ -247,52 +251,52 @@ static void print_image_type(std::ostream &os,
   }
 
   switch (type) {
-    case ImageType::FLOAT_BUFFER:
-    case ImageType::INT_BUFFER:
-    case ImageType::UINT_BUFFER:
+    case ImageType::FloatBuffer:
+    case ImageType::IntBuffer:
+    case ImageType::UintBuffer:
       os << "Buffer";
       break;
-    case ImageType::FLOAT_1D:
-    case ImageType::FLOAT_1D_ARRAY:
-    case ImageType::INT_1D:
-    case ImageType::INT_1D_ARRAY:
-    case ImageType::UINT_1D:
-    case ImageType::UINT_1D_ARRAY:
+    case ImageType::Float1D:
+    case ImageType::Float1DArray:
+    case ImageType::Int1D:
+    case ImageType::Int1DArray:
+    case ImageType::Uint1D:
+    case ImageType::Uint1DArray:
       os << "1D";
       break;
-    case ImageType::FLOAT_2D:
-    case ImageType::FLOAT_2D_ARRAY:
-    case ImageType::INT_2D:
-    case ImageType::INT_2D_ARRAY:
-    case ImageType::UINT_2D:
-    case ImageType::UINT_2D_ARRAY:
-    case ImageType::SHADOW_2D:
-    case ImageType::SHADOW_2D_ARRAY:
-    case ImageType::DEPTH_2D:
-    case ImageType::DEPTH_2D_ARRAY:
-    case ImageType::INT_2D_ATOMIC:
-    case ImageType::INT_2D_ARRAY_ATOMIC:
-    case ImageType::UINT_2D_ATOMIC:
-    case ImageType::UINT_2D_ARRAY_ATOMIC:
+    case ImageType::Float2D:
+    case ImageType::Float2DArray:
+    case ImageType::Int2D:
+    case ImageType::Int2DArray:
+    case ImageType::Uint2D:
+    case ImageType::Uint2DArray:
+    case ImageType::Shadow2D:
+    case ImageType::Shadow2DArray:
+    case ImageType::Depth2D:
+    case ImageType::Depth2DArray:
+    case ImageType::AtomicInt2D:
+    case ImageType::AtomicInt2DArray:
+    case ImageType::AtomicUint2D:
+    case ImageType::AtomicUint2DArray:
       os << "2D";
       break;
-    case ImageType::FLOAT_3D:
-    case ImageType::INT_3D:
-    case ImageType::INT_3D_ATOMIC:
-    case ImageType::UINT_3D:
-    case ImageType::UINT_3D_ATOMIC:
+    case ImageType::Float3D:
+    case ImageType::Int3D:
+    case ImageType::AtomicInt3D:
+    case ImageType::Uint3D:
+    case ImageType::AtomicUint3D:
       os << "3D";
       break;
-    case ImageType::FLOAT_CUBE:
-    case ImageType::FLOAT_CUBE_ARRAY:
-    case ImageType::INT_CUBE:
-    case ImageType::INT_CUBE_ARRAY:
-    case ImageType::UINT_CUBE:
-    case ImageType::UINT_CUBE_ARRAY:
-    case ImageType::SHADOW_CUBE:
-    case ImageType::SHADOW_CUBE_ARRAY:
-    case ImageType::DEPTH_CUBE:
-    case ImageType::DEPTH_CUBE_ARRAY:
+    case ImageType::FloatCube:
+    case ImageType::FloatCubeArray:
+    case ImageType::IntCube:
+    case ImageType::IntCubeArray:
+    case ImageType::UintCube:
+    case ImageType::UintCubeArray:
+    case ImageType::ShadowCube:
+    case ImageType::ShadowCubeArray:
+    case ImageType::DepthCube:
+    case ImageType::DepthCubeArray:
       os << "Cube";
       break;
     default:
@@ -300,20 +304,20 @@ static void print_image_type(std::ostream &os,
   }
 
   switch (type) {
-    case ImageType::FLOAT_1D_ARRAY:
-    case ImageType::FLOAT_2D_ARRAY:
-    case ImageType::FLOAT_CUBE_ARRAY:
-    case ImageType::INT_1D_ARRAY:
-    case ImageType::INT_2D_ARRAY:
-    case ImageType::INT_CUBE_ARRAY:
-    case ImageType::UINT_1D_ARRAY:
-    case ImageType::UINT_2D_ARRAY:
-    case ImageType::UINT_CUBE_ARRAY:
-    case ImageType::SHADOW_2D_ARRAY:
-    case ImageType::SHADOW_CUBE_ARRAY:
-    case ImageType::DEPTH_2D_ARRAY:
-    case ImageType::DEPTH_CUBE_ARRAY:
-    case ImageType::UINT_2D_ARRAY_ATOMIC:
+    case ImageType::Float1DArray:
+    case ImageType::Float2DArray:
+    case ImageType::FloatCubeArray:
+    case ImageType::Int1DArray:
+    case ImageType::Int2DArray:
+    case ImageType::IntCubeArray:
+    case ImageType::Uint1DArray:
+    case ImageType::Uint2DArray:
+    case ImageType::UintCubeArray:
+    case ImageType::Shadow2DArray:
+    case ImageType::ShadowCubeArray:
+    case ImageType::Depth2DArray:
+    case ImageType::DepthCubeArray:
+    case ImageType::AtomicUint2DArray:
       os << "Array";
       break;
     default:
@@ -321,10 +325,10 @@ static void print_image_type(std::ostream &os,
   }
 
   switch (type) {
-    case ImageType::SHADOW_2D:
-    case ImageType::SHADOW_2D_ARRAY:
-    case ImageType::SHADOW_CUBE:
-    case ImageType::SHADOW_CUBE_ARRAY:
+    case ImageType::Shadow2D:
+    case ImageType::Shadow2DArray:
+    case ImageType::ShadowCube:
+    case ImageType::ShadowCubeArray:
       os << "Shadow";
       break;
     default:
@@ -335,13 +339,13 @@ static void print_image_type(std::ostream &os,
 
 static std::ostream &print_qualifier(std::ostream &os, const Qualifier &qualifiers)
 {
-  if (bool(qualifiers & Qualifier::NO_RESTRICT) == false) {
+  if (!flag_is_set(qualifiers, Qualifier::no_restrict)) {
     os << "restrict ";
   }
-  if (bool(qualifiers & Qualifier::READ) == false) {
+  if (!flag_is_set(qualifiers, Qualifier::read)) {
     os << "writeonly ";
   }
-  if (bool(qualifiers & Qualifier::WRITE) == false) {
+  if (!flag_is_set(qualifiers, Qualifier::write)) {
     os << "readonly ";
   }
   return os;
@@ -363,36 +367,26 @@ static void print_resource(std::ostream &os,
   }
   os << ") ";
 
-  int64_t array_offset;
-  StringRef name_no_array;
-
   switch (res.bind_type) {
     case ShaderCreateInfo::Resource::BindType::SAMPLER:
       os << "uniform ";
       print_image_type(os, res.sampler.type, res.bind_type);
-      os << res.sampler.name << ";\n";
+      os << res.sampler.name << ";";
       break;
     case ShaderCreateInfo::Resource::BindType::IMAGE:
       os << "uniform ";
       print_qualifier(os, res.image.qualifiers);
       print_image_type(os, res.image.type, res.bind_type);
-      os << res.image.name << ";\n";
+      os << res.image.name << ";";
       break;
     case ShaderCreateInfo::Resource::BindType::UNIFORM_BUFFER:
-      array_offset = res.uniformbuf.name.find_first_of("[");
-      name_no_array = (array_offset == -1) ? res.uniformbuf.name :
-                                             StringRef(res.uniformbuf.name.data(), array_offset);
-      os << "uniform _" << name_no_array << " { " << res.uniformbuf.type_name << " "
-         << res.uniformbuf.name << "; };\n";
+      os << "uniform _" << res.uniformbuf.name.str_no_array() << " { " << res.uniformbuf.type_name
+         << " " << res.uniformbuf.name << "; };";
       break;
     case ShaderCreateInfo::Resource::BindType::STORAGE_BUFFER:
-      array_offset = res.storagebuf.name.find_first_of("[");
-      name_no_array = (array_offset == -1) ? res.storagebuf.name :
-                                             StringRef(res.storagebuf.name.data(), array_offset);
       print_qualifier(os, res.storagebuf.qualifiers);
-      os << "buffer _";
-      os << name_no_array << " { " << res.storagebuf.type_name << " " << res.storagebuf.name
-         << "; };\n";
+      os << "buffer _" << res.storagebuf.name.str_no_array() << " { " << res.storagebuf.type_name
+         << " " << res.storagebuf.name << "; };";
       break;
   }
 }
@@ -405,12 +399,25 @@ static void print_resource(std::ostream &os,
   print_resource(os, location, res);
 }
 
+static void print_resource(std::ostream &os,
+                           const VKShaderInterface &shader_interface,
+                           const ShaderCreateInfo::Resource &res,
+                           StringRefNull res_frequency,
+                           StringRefNull &active_info_name)
+{
+  if (assign_if_different(active_info_name, res.info_name)) {
+    os << "\n#define CREATE_INFO_RES_" << res_frequency << "_" << res.info_name << " \\\n";
+  }
+  print_resource(os, shader_interface, res);
+  os << " \\\n";
+}
+
 inline int get_location_count(const Type &type)
 {
-  if (type == shader::Type::MAT4) {
+  if (type == shader::Type::float4x4_t) {
     return 4;
   }
-  else if (type == shader::Type::MAT3) {
+  if (type == shader::Type::float3x3_t) {
     return 3;
   }
   return 1;
@@ -485,21 +492,7 @@ static std::string main_function_wrapper(std::string &pre_main, std::string &pos
 
 static std::string combine_sources(Span<StringRefNull> sources)
 {
-  std::string result = fmt::to_string(fmt::join(sources, ""));
-  /* Renderdoc step-by-step debugger cannot be used when using the #line directive. The indexed
-   * based is not supported as it doesn't make sense in Vulkan and Blender misuses this to store a
-   * hash. The filename based directive cannot be used as it cannot find the actual file on disk
-   * and state is set incorrectly.
-   *
-   * When running in renderdoc we scramble `#line` into `//ine` to work around these limitation. */
-  if (G.debug & G_DEBUG_GPU_RENDERDOC) {
-    size_t start_pos = 0;
-    while ((start_pos = result.find("#line ", start_pos)) != std::string::npos) {
-      result[start_pos] = '/';
-      result[start_pos + 1] = '/';
-    }
-  }
-  return result;
+  return fmt::to_string(fmt::join(sources, ""));
 }
 
 VKShader::VKShader(const char *name) : Shader(name)
@@ -507,21 +500,22 @@ VKShader::VKShader(const char *name) : Shader(name)
   context_ = VKContext::get();
 }
 
-void VKShader::init(const shader::ShaderCreateInfo &info, bool is_batch_compilation)
+void VKShader::init(const shader::ShaderCreateInfo &info, bool /*is_codegen_only*/)
 {
   VKShaderInterface *vk_interface = new VKShaderInterface();
   vk_interface->init(info);
   interface = vk_interface;
   is_static_shader_ = info.do_static_compilation_;
   is_compute_shader_ = !info.compute_source_.is_empty() || !info.compute_source_generated.empty();
-  use_batch_compilation_ = is_batch_compilation;
 }
 
 VKShader::~VKShader()
 {
+  VKDevice &device = VKBackend::get().device;
   VKDiscardPool &discard_pool = VKDiscardPool::discard_pool_get();
 
   if (vk_pipeline_layout != VK_NULL_HANDLE) {
+    device.pipelines.discard(discard_pool, vk_pipeline_layout);
     discard_pool.discard_pipeline_layout(vk_pipeline_layout);
     vk_pipeline_layout = VK_NULL_HANDLE;
   }
@@ -533,38 +527,54 @@ void VKShader::build_shader_module(MutableSpan<StringRefNull> sources,
                                    shaderc_shader_kind stage,
                                    VKShaderModule &r_shader_module)
 {
-  BLI_assert_msg(ELEM(stage,
-                      shaderc_vertex_shader,
-                      shaderc_geometry_shader,
-                      shaderc_fragment_shader,
-                      shaderc_compute_shader),
-                 "Only forced ShaderC shader kinds are supported.");
   r_shader_module.is_ready = false;
   const VKDevice &device = VKBackend::get().device;
-  sources[SOURCES_INDEX_VERSION] = device.glsl_patch_get();
-  r_shader_module.combined_sources = combine_sources(sources);
-  if (!use_batch_compilation_) {
-    VKShaderCompiler::compile_module(*this, stage, r_shader_module);
-    r_shader_module.is_ready = true;
+  std::string source_patch;
+
+  switch (stage) {
+    case shaderc_vertex_shader:
+      source_patch = device.glsl_vertex_patch_get();
+      break;
+    case shaderc_geometry_shader:
+      source_patch = device.glsl_geometry_patch_get();
+      break;
+    case shaderc_fragment_shader:
+      source_patch = device.glsl_fragment_patch_get();
+      break;
+    case shaderc_compute_shader:
+      source_patch = device.glsl_compute_patch_get();
+      break;
+    default:
+      BLI_assert_msg(0, "Only forced ShaderC shader kinds are supported.");
+      break;
   }
+
+  sources[SOURCES_INDEX_VERSION] = source_patch;
+  r_shader_module.combined_sources = combine_sources(sources);
+  VKShaderCompiler::compile_module(*this, stage, r_shader_module);
+  r_shader_module.is_ready = true;
 }
 
-void VKShader::vertex_shader_from_glsl(MutableSpan<StringRefNull> sources)
+void VKShader::vertex_shader_from_glsl(const shader::ShaderCreateInfo & /*info*/,
+                                       MutableSpan<StringRefNull> sources)
 {
   build_shader_module(sources, shaderc_vertex_shader, vertex_module);
 }
 
-void VKShader::geometry_shader_from_glsl(MutableSpan<StringRefNull> sources)
+void VKShader::geometry_shader_from_glsl(const shader::ShaderCreateInfo & /*info*/,
+                                         MutableSpan<StringRefNull> sources)
 {
   build_shader_module(sources, shaderc_geometry_shader, geometry_module);
 }
 
-void VKShader::fragment_shader_from_glsl(MutableSpan<StringRefNull> sources)
+void VKShader::fragment_shader_from_glsl(const shader::ShaderCreateInfo & /*info*/,
+                                         MutableSpan<StringRefNull> sources)
 {
   build_shader_module(sources, shaderc_fragment_shader, fragment_module);
 }
 
-void VKShader::compute_shader_from_glsl(MutableSpan<StringRefNull> sources)
+void VKShader::compute_shader_from_glsl(const shader::ShaderCreateInfo & /*info*/,
+                                        MutableSpan<StringRefNull> sources)
 {
   build_shader_module(sources, shaderc_compute_shader, compute_module);
 }
@@ -576,12 +586,6 @@ void VKShader::warm_cache(int /*limit*/)
 
 bool VKShader::finalize(const shader::ShaderCreateInfo *info)
 {
-  if (!use_batch_compilation_) {
-    compilation_finished = true;
-  }
-  if (compilation_failed) {
-    return false;
-  }
   /* Add-ons that still use old API will crash as the shader create info isn't available.
    * See #130555 */
   if (info == nullptr) {
@@ -593,7 +597,7 @@ bool VKShader::finalize(const shader::ShaderCreateInfo *info)
     Vector<StringRefNull> sources;
     sources.append("version");
     sources.append(source);
-    geometry_shader_from_glsl(sources);
+    geometry_shader_from_glsl(*info, sources);
   }
 
   const VKShaderInterface &vk_interface = interface_get();
@@ -601,36 +605,35 @@ bool VKShader::finalize(const shader::ShaderCreateInfo *info)
   if (!finalize_descriptor_set_layouts(device, vk_interface)) {
     return false;
   }
-  if (!finalize_pipeline_layout(device.vk_handle(), vk_interface)) {
+  if (!finalize_pipeline_layout(device, vk_interface)) {
     return false;
   }
 
   push_constants = VKPushConstants(&vk_interface.push_constants_layout_get());
-  if (use_batch_compilation_) {
-    return true;
-  }
-  return finalize_post();
+  return finalize_post(info->pipelines_.as_span());
 }
 
-bool VKShader::finalize_post()
+bool VKShader::finalize_post(Span<PipelineState> pipelines)
 {
   bool result = finalize_shader_module(vertex_module, "vertex") &&
                 finalize_shader_module(geometry_module, "geometry") &&
                 finalize_shader_module(fragment_module, "fragment") &&
                 finalize_shader_module(compute_module, "compute");
 
-  /* Ensure that pipeline of compute shaders are already build. This can improve performance as it
-   * can triggers a back-end compilation step. In this step the Shader module SPIR-V is
-   * compiled to a shader program that can be executed by the device. Depending on the driver this
-   * can take some time as well. If this is done inside the main thread it will stall user
-   * interactivity.
-   *
-   * TODO: We should check if VK_EXT_graphics_pipeline_library can improve the pipeline creation
-   * step for graphical shaders.
-   */
-  if (result && is_compute_shader_) {
-    ensure_and_get_compute_pipeline();
+  if (!result) {
+    return result;
   }
+  /* Ensure that pipelines are already built. For compute shaders only the default state is
+   * compiled. For graphics shaders the pipeline state is read from the shader create info. */
+  if (is_compute_shader_) {
+    /* This is only done for the first shader compilation (not specialization).
+     * Give the default constants. */
+    ensure_and_get_compute_pipeline(*constants);
+  }
+  else {
+    result &= ensure_graphics_pipelines(pipelines);
+  }
+
   return result;
 }
 
@@ -659,12 +662,7 @@ bool VKShader::finalize_shader_module(VKShaderModule &shader_module, const char 
   return compilation_succeeded;
 }
 
-bool VKShader::is_ready() const
-{
-  return compilation_finished;
-}
-
-bool VKShader::finalize_pipeline_layout(VkDevice vk_device,
+bool VKShader::finalize_pipeline_layout(VKDevice &device,
                                         const VKShaderInterface &shader_interface)
 {
   const uint32_t layout_count = vk_descriptor_set_layout_ == VK_NULL_HANDLE ? 0 : 1;
@@ -687,11 +685,13 @@ bool VKShader::finalize_pipeline_layout(VkDevice vk_device,
     pipeline_info.pPushConstantRanges = &push_constant_range;
   }
 
-  if (vkCreatePipelineLayout(vk_device, &pipeline_info, nullptr, &vk_pipeline_layout) !=
+  if (vkCreatePipelineLayout(device.vk_handle(), &pipeline_info, nullptr, &vk_pipeline_layout) !=
       VK_SUCCESS)
   {
     return false;
   };
+
+  debug::object_label(vk_pipeline_layout, name_get());
 
   return true;
 }
@@ -714,33 +714,12 @@ bool VKShader::finalize_descriptor_set_layouts(VKDevice &vk_device,
   return vk_descriptor_set_layout_ != VK_NULL_HANDLE;
 }
 
-/* -------------------------------------------------------------------- */
-/** \name Transform feedback
- *
- * Not supported in the vulkan backend.
- *
- * \{ */
-
-void VKShader::transform_feedback_names_set(Span<const char *> /*name_list*/,
-                                            eGPUShaderTFBType /*geom_type*/)
+void VKShader::bind(const shader::SpecializationConstants *constants_state)
 {
-  BLI_assert_unreachable();
-}
+  VKContext *ctx = VKContext::get();
+  /* Copy constants state. */
+  ctx->specialization_constants_set(constants_state);
 
-bool VKShader::transform_feedback_enable(VertBuf *)
-{
-  return false;
-}
-
-void VKShader::transform_feedback_disable()
-{
-  BLI_assert_unreachable();
-}
-
-/** \} */
-
-void VKShader::bind()
-{
   /* Intentionally empty. Binding of the pipeline are done just before drawing/dispatching.
    * See #VKPipeline.update_and_bind */
 }
@@ -762,21 +741,23 @@ std::string VKShader::resources_declare(const shader::ShaderCreateInfo &info) co
   const VKShaderInterface &vk_interface = interface_get();
   std::stringstream ss;
 
+  ss << "\n#line " << __LINE__ << " \"" << __FILE__ << "\"\n";
+
   ss << "\n/* Specialization Constants (pass-through). */\n";
   uint constant_id = 0;
   for (const SpecializationConstant &sc : info.specialization_constants_) {
     ss << "layout (constant_id=" << constant_id++ << ") const ";
     switch (sc.type) {
-      case Type::INT:
+      case Type::int_t:
         ss << "int " << sc.name << "=" << std::to_string(sc.value.i) << ";\n";
         break;
-      case Type::UINT:
+      case Type::uint_t:
         ss << "uint " << sc.name << "=" << std::to_string(sc.value.u) << "u;\n";
         break;
-      case Type::BOOL:
+      case Type::bool_t:
         ss << "bool " << sc.name << "=" << (sc.value.u ? "true" : "false") << ";\n";
         break;
-      case Type::FLOAT:
+      case Type::float_t:
         /* Use uint representation to allow exact same bit pattern even if NaN. uintBitsToFloat
          * isn't supported during global const initialization. */
         ss << "uint " << sc.name << "_uint=" << std::to_string(sc.value.u) << "u;\n";
@@ -788,21 +769,57 @@ std::string VKShader::resources_declare(const shader::ShaderCreateInfo &info) co
     }
   }
 
-  ss << "\n/* Pass Resources. */\n";
-  for (const ShaderCreateInfo::Resource &res : info.pass_resources_) {
-    print_resource(ss, vk_interface, res);
+  ss << "\n/* Compilation Constants (pass-through). */\n";
+  for (const CompilationConstant &sc : info.compilation_constants_) {
+    ss << "const ";
+    switch (sc.type) {
+      case Type::int_t:
+        ss << "int " << sc.name << "=" << std::to_string(sc.value.i) << ";\n";
+        break;
+      case Type::uint_t:
+        ss << "uint " << sc.name << "=" << std::to_string(sc.value.u) << "u;\n";
+        break;
+      case Type::bool_t:
+        ss << "bool " << sc.name << "=" << (sc.value.u ? "true" : "false") << ";\n";
+        break;
+      default:
+        BLI_assert_unreachable();
+        break;
+    }
   }
 
-  ss << "\n/* Batch Resources. */\n";
-  for (const ShaderCreateInfo::Resource &res : info.batch_resources_) {
-    print_resource(ss, vk_interface, res);
+  {
+    StringRefNull active_info = "";
+    for (const ShaderCreateInfo::SharedVariable &sv : info.shared_variables_) {
+      if (assign_if_different(active_info, sv.info_name)) {
+        ss << "\n#define CREATE_INFO_RES_SHARED_VARS_" << sv.info_name << " \\\n";
+      }
+      ss << "shared " << to_string(sv.type) << " " << sv.name << ";";
+      ss << " \\\n";
+    }
+    ss << "\n";
   }
-
-  ss << "\n/* Geometry Resources. */\n";
-  for (const ShaderCreateInfo::Resource &res : info.geometry_resources_) {
-    print_resource(ss, vk_interface, res);
+  {
+    StringRefNull active_info = "";
+    for (const ShaderCreateInfo::Resource &res : info.pass_resources_) {
+      print_resource(ss, vk_interface, res, "PASS", active_info);
+    }
+    ss << "\n";
   }
-
+  {
+    StringRefNull active_info = "";
+    for (const ShaderCreateInfo::Resource &res : info.batch_resources_) {
+      print_resource(ss, vk_interface, res, "BATCH", active_info);
+    }
+    ss << "\n";
+  }
+  {
+    StringRefNull active_info = "";
+    for (const ShaderCreateInfo::Resource &res : info.geometry_resources_) {
+      print_resource(ss, vk_interface, res, "GEOMETRY", active_info);
+    }
+    ss << "\n";
+  }
   /* Push constants. */
   const VKPushConstants::Layout &push_constants_layout = vk_interface.push_constants_layout_get();
   const VKPushConstants::StorageType push_constants_storage =
@@ -818,16 +835,13 @@ std::string VKShader::resources_declare(const shader::ShaderCreateInfo &info) co
     }
     ss << "{\n";
     for (const ShaderCreateInfo::PushConst &uniform : info.push_constants_) {
-      ss << "  " << to_string(uniform.type) << " pc_" << uniform.name;
+      ss << "  " << to_string(uniform.type) << " " << uniform.name;
       if (uniform.array_size > 0) {
         ss << "[" << uniform.array_size << "]";
       }
       ss << ";\n";
     }
-    ss << "} PushConstants;\n";
-    for (const ShaderCreateInfo::PushConst &uniform : info.push_constants_) {
-      ss << "#define " << uniform.name << " (PushConstants.pc_" << uniform.name << ")\n";
-    }
+    ss << "};\n";
   }
 
   ss << "\n";
@@ -852,8 +866,8 @@ std::string VKShader::vertex_interface_declare(const shader::ShaderCreateInfo &i
 
   const bool has_geometry_stage = do_geometry_shader_injection(&info) ||
                                   !info.geometry_source_.is_empty();
-  const bool do_layer_output = bool(info.builtins_ & BuiltinBits::LAYER);
-  const bool do_viewport_output = bool(info.builtins_ & BuiltinBits::VIEWPORT_INDEX);
+  const bool do_layer_output = flag_is_set(info.builtins_, BuiltinBits::LAYER);
+  const bool do_viewport_output = flag_is_set(info.builtins_, BuiltinBits::VIEWPORT_INDEX);
   if (has_geometry_stage) {
     if (do_layer_output) {
       ss << "layout(location=" << (location++) << ") out int gpu_Layer;\n ";
@@ -889,55 +903,55 @@ std::string VKShader::vertex_interface_declare(const shader::ShaderCreateInfo &i
 static Type to_component_type(const Type &type)
 {
   switch (type) {
-    case Type::FLOAT:
-    case Type::VEC2:
-    case Type::VEC3:
-    case Type::VEC4:
-    case Type::MAT3:
-    case Type::MAT4:
-      return Type::FLOAT;
-    case Type::UINT:
-    case Type::UVEC2:
-    case Type::UVEC3:
-    case Type::UVEC4:
-      return Type::UINT;
-    case Type::INT:
-    case Type::IVEC2:
-    case Type::IVEC3:
-    case Type::IVEC4:
-    case Type::BOOL:
-      return Type::INT;
+    case Type::float_t:
+    case Type::float2_t:
+    case Type::float3_t:
+    case Type::float4_t:
+    case Type::float3x3_t:
+    case Type::float4x4_t:
+      return Type::float_t;
+    case Type::uint_t:
+    case Type::uint2_t:
+    case Type::uint3_t:
+    case Type::uint4_t:
+      return Type::uint_t;
+    case Type::int_t:
+    case Type::int2_t:
+    case Type::int3_t:
+    case Type::int4_t:
+    case Type::bool_t:
+      return Type::int_t;
     /* Alias special types. */
-    case Type::UCHAR:
-    case Type::UCHAR2:
-    case Type::UCHAR3:
-    case Type::UCHAR4:
-    case Type::USHORT:
-    case Type::USHORT2:
-    case Type::USHORT3:
-    case Type::USHORT4:
-      return Type::UINT;
-    case Type::CHAR:
-    case Type::CHAR2:
-    case Type::CHAR3:
-    case Type::CHAR4:
-    case Type::SHORT:
-    case Type::SHORT2:
-    case Type::SHORT3:
-    case Type::SHORT4:
-      return Type::INT;
-    case Type::VEC3_101010I2:
-      return Type::FLOAT;
+    case Type::uchar_t:
+    case Type::uchar2_t:
+    case Type::uchar3_t:
+    case Type::uchar4_t:
+    case Type::ushort_t:
+    case Type::ushort2_t:
+    case Type::ushort3_t:
+    case Type::ushort4_t:
+      return Type::uint_t;
+    case Type::char_t:
+    case Type::char2_t:
+    case Type::char3_t:
+    case Type::char4_t:
+    case Type::short_t:
+    case Type::short2_t:
+    case Type::short3_t:
+    case Type::short4_t:
+      return Type::int_t;
+    case Type::float3_10_10_10_2_t:
+      return Type::float_t;
   }
   BLI_assert_unreachable();
-  return Type::FLOAT;
+  return Type::float_t;
 }
 
 std::string VKShader::fragment_interface_declare(const shader::ShaderCreateInfo &info) const
 {
   std::stringstream ss;
   std::string pre_main;
-  const VKWorkarounds &workarounds = VKBackend::get().device.workarounds_get();
+  const VKExtensions &extensions = VKBackend::get().device.extensions_get();
 
   ss << "\n/* Interfaces. */\n";
   const Span<StageInterfaceInfo *> in_interfaces = info.geometry_source_.is_empty() ?
@@ -947,15 +961,15 @@ std::string VKShader::fragment_interface_declare(const shader::ShaderCreateInfo 
   for (const StageInterfaceInfo *iface : in_interfaces) {
     print_interface(ss, "in", *iface, location);
   }
-  if (bool(info.builtins_ & BuiltinBits::LAYER)) {
+  if (flag_is_set(info.builtins_, BuiltinBits::LAYER)) {
     ss << "#define gpu_Layer gl_Layer\n";
   }
-  if (bool(info.builtins_ & BuiltinBits::VIEWPORT_INDEX)) {
+  if (flag_is_set(info.builtins_, BuiltinBits::VIEWPORT_INDEX)) {
     ss << "#define gpu_ViewportIndex gl_ViewportIndex\n";
   }
 
-  if (workarounds.fragment_shader_barycentric &&
-      bool(info.builtins_ & BuiltinBits::BARYCENTRIC_COORD))
+  if (!extensions.fragment_shader_barycentric &&
+      flag_is_set(info.builtins_, BuiltinBits::BARYCENTRIC_COORD))
   {
     ss << "layout(location=" << (location++) << ") smooth in vec3 gpu_BaryCoord;\n";
     ss << "layout(location=" << (location++) << ") noperspective in vec3 gpu_BaryCoordNoPersp;\n";
@@ -972,8 +986,7 @@ std::string VKShader::fragment_interface_declare(const shader::ShaderCreateInfo 
 
   ss << "\n/* Sub-pass Inputs. */\n";
   const VKShaderInterface &interface = interface_get();
-  const bool use_local_read = !workarounds.dynamic_rendering_local_read;
-  const bool use_dynamic_rendering = !workarounds.dynamic_rendering;
+  const bool use_local_read = extensions.dynamic_rendering_local_read;
 
   if (use_local_read) {
     uint32_t subpass_input_binding_index = 0;
@@ -987,10 +1000,10 @@ std::string VKShader::fragment_interface_declare(const shader::ShaderCreateInfo 
       Type component_type = to_component_type(input.type);
       char typePrefix;
       switch (component_type) {
-        case Type::INT:
+        case Type::int_t:
           typePrefix = 'i';
           break;
-        case Type::UINT:
+        case Type::uint_t:
           typePrefix = 'u';
           break;
         default:
@@ -1011,7 +1024,7 @@ std::string VKShader::fragment_interface_declare(const shader::ShaderCreateInfo 
       pre_main += ss_pre.str();
     }
   }
-  else if (use_dynamic_rendering) {
+  else {
     for (const ShaderCreateInfo::SubpassIn &input : info.subpass_inputs_) {
       std::string image_name = "gpu_subpass_img_";
       image_name += std::to_string(input.index);
@@ -1021,29 +1034,15 @@ std::string VKShader::fragment_interface_declare(const shader::ShaderCreateInfo 
 
       /* IMPORTANT: We assume that the frame-buffer will be layered or not based on the layer
        * built-in flag. */
-      bool is_layered_fb = bool(info.builtins_ & BuiltinBits::LAYER);
-
-      /* Start with invalid value to detect failure cases. */
-      ImageType image_type = ImageType::FLOAT_BUFFER;
-      switch (to_component_type(input.type)) {
-        case Type::FLOAT:
-          image_type = is_layered_fb ? ImageType::FLOAT_2D_ARRAY : ImageType::FLOAT_2D;
-          break;
-        case Type::INT:
-          image_type = is_layered_fb ? ImageType::INT_2D_ARRAY : ImageType::INT_2D;
-          break;
-        case Type::UINT:
-          image_type = is_layered_fb ? ImageType::UINT_2D_ARRAY : ImageType::UINT_2D;
-          break;
-        default:
-          break;
-      }
+      bool is_layered_fb = flag_is_set(info.builtins_, BuiltinBits::LAYER);
+      bool is_layered_input = ELEM(
+          input.img_type, ImageType::Uint2DArray, ImageType::Int2DArray, ImageType::Float2DArray);
       /* Declare image. */
       using Resource = ShaderCreateInfo::Resource;
       /* NOTE(fclem): Using the attachment index as resource index might be problematic as it might
        * collide with other resources. */
-      Resource res(Resource::BindType::SAMPLER, input.index);
-      res.sampler.type = image_type;
+      Resource res(info, Resource::BindType::SAMPLER, input.index);
+      res.sampler.type = input.img_type;
       res.sampler.sampler = GPUSamplerState::default_sampler();
       res.sampler.name = image_name;
       print_resource(ss, interface, res);
@@ -1051,8 +1050,13 @@ std::string VKShader::fragment_interface_declare(const shader::ShaderCreateInfo 
       char swizzle[] = "xyzw";
       swizzle[to_component_count(input.type)] = '\0';
 
-      std::string texel_co = (is_layered_fb) ? "ivec3(gl_FragCoord.xy, gpu_Layer)" :
-                                               "ivec2(gl_FragCoord.xy)";
+      std::string texel_co = (is_layered_input) ?
+                                 ((is_layered_fb)  ? "ivec3(gl_FragCoord.xy, gpu_Layer)" :
+                                                     /* This should fetch the attached layer.
+                                                      * But this is not simple to set. For now
+                                                      * assume it is always the first layer. */
+                                                     "ivec3(gl_FragCoord.xy, 0)") :
+                                 "ivec2(gl_FragCoord.xy)";
 
       std::stringstream ss_pre;
       /* Populate the global before main using imageLoad. */
@@ -1062,57 +1066,10 @@ std::string VKShader::fragment_interface_declare(const shader::ShaderCreateInfo 
       pre_main += ss_pre.str();
     }
   }
-  else {
-    /* Use subpass passes input attachments when dynamic rendering isn't available. */
-    for (const ShaderCreateInfo::SubpassIn &input : info.subpass_inputs_) {
-      using Resource = ShaderCreateInfo::Resource;
-      Resource res(Resource::BindType::SAMPLER, input.index);
-      const VKDescriptorSet::Location location = interface.descriptor_set_location(res);
-
-      std::string image_name = "gpu_subpass_img_" + std::to_string(input.index);
-
-      /* Declare global for input. */
-      ss << to_string(input.type) << " " << input.name << ";\n";
-      /* Declare subpass input. */
-      ss << "layout(input_attachment_index=" << input.index << ", set=0, binding=" << location
-         << ") uniform ";
-      switch (to_component_type(input.type)) {
-        case Type::INT:
-          ss << "isubpassInput";
-          break;
-        case Type::UINT:
-          ss << "usubpassInput";
-          break;
-        case Type::FLOAT:
-        default:
-          ss << "subpassInput";
-          break;
-      }
-      ss << " " << image_name << ";";
-
-      /* Read data from subpass input. */
-      char swizzle[] = "xyzw";
-      swizzle[to_component_count(input.type)] = '\0';
-      std::stringstream ss_pre;
-      ss_pre << "  " << input.name << " = subpassLoad(" << image_name << ")." << swizzle << ";\n";
-      pre_main += ss_pre.str();
-    }
-  }
 
   ss << "\n/* Outputs. */\n";
-  int fragment_out_location = 0;
   for (const ShaderCreateInfo::FragOut &output : info.fragment_outputs_) {
-    /* When using dynamic rendering the attachment location doesn't change. When using render
-     * passes and sub-passes the location refers to the color attachment of the sub-pass.
-     *
-     * LIMITATION: dual source blending cannot be used together with sub-passes.
-     */
-    const bool use_dual_blending = output.blend != DualBlend::NONE;
-    BLI_assert_msg(!(use_dual_blending && !info.subpass_inputs_.is_empty()),
-                   "Dual source blending are not supported with subpass inputs when using render "
-                   "passes. It can be supported, but wasn't for code readability.");
-    const int location = (use_dynamic_rendering || use_dual_blending) ? output.index :
-                                                                        fragment_out_location++;
+    const int location = output.index;
     ss << "layout(location = " << location;
     switch (output.blend) {
       case DualBlend::SRC_0:
@@ -1206,13 +1163,10 @@ std::string VKShader::compute_layout_declare(const shader::ShaderCreateInfo &inf
 {
   std::stringstream ss;
   ss << "\n/* Compute Layout. */\n";
-  ss << "layout(local_size_x = " << info.compute_layout_.local_size_x;
-  if (info.compute_layout_.local_size_y != -1) {
-    ss << ", local_size_y = " << info.compute_layout_.local_size_y;
-  }
-  if (info.compute_layout_.local_size_z != -1) {
-    ss << ", local_size_z = " << info.compute_layout_.local_size_z;
-  }
+  ss << "layout(";
+  ss << "  local_size_x = " << info.compute_layout_.local_size_x;
+  ss << ", local_size_y = " << info.compute_layout_.local_size_y;
+  ss << ", local_size_z = " << info.compute_layout_.local_size_z;
   ss << ") in;\n";
   ss << "\n";
   return ss.str();
@@ -1227,12 +1181,13 @@ std::string VKShader::workaround_geometry_shader_source_create(
     const shader::ShaderCreateInfo &info)
 {
   std::stringstream ss;
-  const VKWorkarounds &workarounds = VKBackend::get().device.workarounds_get();
+  const VKExtensions &extensions = VKBackend::get().device.extensions_get();
 
-  const bool do_layer_output = bool(info.builtins_ & BuiltinBits::LAYER);
-  const bool do_viewport_output = bool(info.builtins_ & BuiltinBits::VIEWPORT_INDEX);
-  const bool do_barycentric_workaround = workarounds.fragment_shader_barycentric &&
-                                         bool(info.builtins_ & BuiltinBits::BARYCENTRIC_COORD);
+  const bool do_layer_output = flag_is_set(info.builtins_, BuiltinBits::LAYER);
+  const bool do_viewport_output = flag_is_set(info.builtins_, BuiltinBits::VIEWPORT_INDEX);
+  const bool do_barycentric_workaround = !extensions.fragment_shader_barycentric &&
+                                         flag_is_set(info.builtins_,
+                                                     BuiltinBits::BARYCENTRIC_COORD);
 
   shader::ShaderCreateInfo info_modified = info;
   info_modified.geometry_out_interfaces_ = info_modified.vertex_out_interfaces_;
@@ -1294,15 +1249,19 @@ std::string VKShader::workaround_geometry_shader_source_create(
 
 bool VKShader::do_geometry_shader_injection(const shader::ShaderCreateInfo *info) const
 {
-  const VKWorkarounds &workarounds = VKBackend::get().device.workarounds_get();
+  const VKExtensions &extensions = VKBackend::get().device.extensions_get();
   BuiltinBits builtins = info->builtins_;
-  if (workarounds.fragment_shader_barycentric && bool(builtins & BuiltinBits::BARYCENTRIC_COORD)) {
+  if (!extensions.fragment_shader_barycentric &&
+      flag_is_set(builtins, BuiltinBits::BARYCENTRIC_COORD))
+  {
     return true;
   }
-  if (workarounds.shader_output_layer && bool(builtins & BuiltinBits::LAYER)) {
+  if (!extensions.shader_output_layer && flag_is_set(builtins, BuiltinBits::LAYER)) {
     return true;
   }
-  if (workarounds.shader_output_viewport_index && bool(builtins & BuiltinBits::VIEWPORT_INDEX)) {
+  if (!extensions.shader_output_viewport_index &&
+      flag_is_set(builtins, BuiltinBits::VIEWPORT_INDEX))
+  {
     return true;
   }
   return false;
@@ -1310,7 +1269,8 @@ bool VKShader::do_geometry_shader_injection(const shader::ShaderCreateInfo *info
 
 /** \} */
 
-VkPipeline VKShader::ensure_and_get_compute_pipeline()
+VkPipeline VKShader::ensure_and_get_compute_pipeline(
+    const shader::SpecializationConstants &constants_state)
 {
   BLI_assert(is_compute_shader_);
   BLI_assert(compute_module.vk_shader_module != VK_NULL_HANDLE);
@@ -1318,29 +1278,109 @@ VkPipeline VKShader::ensure_and_get_compute_pipeline()
 
   /* Early exit when no specialization constants are used and the vk_pipeline_base_ is already
    * valid. This would handle most cases. */
-  if (constants.values.is_empty() && vk_pipeline_base_ != VK_NULL_HANDLE) {
+  if (constants_state.values.is_empty() && vk_pipeline_base_ != VK_NULL_HANDLE) {
     return vk_pipeline_base_;
   }
 
   VKComputeInfo compute_info = {};
-  compute_info.specialization_constants.extend(constants.values);
+  compute_info.specialization_constants.extend(constants_state.values);
   compute_info.vk_shader_module = compute_module.vk_shader_module;
   compute_info.vk_pipeline_layout = vk_pipeline_layout;
 
   VKDevice &device = VKBackend::get().device;
   /* Store result in local variable to ensure thread safety. */
   VkPipeline vk_pipeline = device.pipelines.get_or_create_compute_pipeline(
-      compute_info, is_static_shader_, vk_pipeline_base_);
+      compute_info, is_static_shader_, vk_pipeline_base_, name_get());
   if (vk_pipeline_base_ == VK_NULL_HANDLE) {
     vk_pipeline_base_ = vk_pipeline;
   }
   return vk_pipeline;
 }
 
+bool VKShader::ensure_graphics_pipelines(Span<shader::PipelineState> pipeline_states)
+{
+  BLI_assert(!is_compute_shader_);
+  has_precompiled_pipelines_ = !pipeline_states.is_empty();
+  for (const shader::PipelineState &pipeline_state : pipeline_states) {
+    const VkPrimitiveTopology vk_topology = to_vk_primitive_topology(pipeline_state.primitive_);
+
+    VKGraphicsInfo graphics_info = {};
+    graphics_info.vertex_in.vk_topology = vk_topology;
+    graphics_info.vertex_in.attributes.reserve(pipeline_state.vertex_inputs_.size());
+    graphics_info.vertex_in.bindings.reserve(pipeline_state.vertex_inputs_.size());
+    uint32_t binding = 0;
+    for (const shader::PipelineState::AttributeBinding &attribute_binding :
+         pipeline_state.vertex_inputs_)
+    {
+      const GPUVertAttr::Type attribute_type = {attribute_binding.type};
+      int location_len = ceil_division(attribute_type.comp_len(), 4);
+      for (const uint32_t location_offset : IndexRange(location_len)) {
+        graphics_info.vertex_in.attributes.append({
+            attribute_binding.location + location_offset,
+            binding,
+            to_vk_format(
+                attribute_type.comp_type(), attribute_type.size(), attribute_type.fetch_mode()),
+            attribute_binding.offset + location_offset * uint32_t(sizeof(float4)),
+        });
+        graphics_info.vertex_in.bindings.append(
+            {attribute_binding.binding, attribute_binding.stride, VK_VERTEX_INPUT_RATE_VERTEX});
+        binding++;
+      }
+    }
+
+    graphics_info.shaders.vk_vertex_module = vertex_module.vk_shader_module;
+    graphics_info.shaders.vk_geometry_module = geometry_module.vk_shader_module;
+    graphics_info.shaders.vk_fragment_module = fragment_module.vk_shader_module;
+    graphics_info.shaders.vk_pipeline_layout = vk_pipeline_layout;
+    graphics_info.shaders.vk_topology = vk_topology;
+    graphics_info.shaders.state = pipeline_state.state_;
+    graphics_info.shaders.mutable_state.point_size = 1.0f;
+    graphics_info.shaders.mutable_state.line_width = 1.0f;
+    graphics_info.shaders.mutable_state.stencil_write_mask = 0u;
+    graphics_info.shaders.mutable_state.stencil_compare_mask = 0u;
+    graphics_info.shaders.mutable_state.stencil_reference = 0u;
+    graphics_info.shaders.viewport_count = pipeline_state.viewport_count_;
+    graphics_info.shaders.specialization_constants.extend(
+        pipeline_state.specialization_constants_);
+    graphics_info.shaders.has_depth = pipeline_state.depth_format_ != TextureTargetFormat::Invalid;
+    graphics_info.shaders.has_stencil = pipeline_state.stencil_format_ !=
+                                        TextureTargetFormat::Invalid;
+
+    graphics_info.fragment_out.depth_attachment_format = to_vk_format(
+        pipeline_state.depth_format_);
+    graphics_info.fragment_out.stencil_attachment_format = to_vk_format(
+        pipeline_state.stencil_format_);
+    for (const TextureTargetFormat color_format : pipeline_state.color_formats_) {
+      graphics_info.fragment_out.color_attachment_formats.append(to_vk_format(color_format));
+    }
+    graphics_info.fragment_out.state = pipeline_state.state_;
+
+    VKDevice &device = VKBackend::get().device;
+    bool pipeline_created = false;
+    VkPipeline vk_pipeline = device.pipelines.get_or_create_graphics_pipeline(
+        graphics_info, is_static_shader_, vk_pipeline_base_, name_get(), pipeline_created);
+    UNUSED_VARS_NDEBUG(pipeline_created);
+    if (vk_pipeline == VK_NULL_HANDLE) {
+      return false;
+    }
+    BLI_assert_msg(pipeline_created,
+                   "Sanity check: Pipeline state is precompiled during shader creation, but "
+                   "resulting pipeline was "
+                   "already present in VKPipelinePool. This should not happen and might indicate "
+                   "that the same pipeline state is added multiple times.");
+    if (vk_pipeline_base_ == VK_NULL_HANDLE) {
+      vk_pipeline_base_ = vk_pipeline;
+    }
+  }
+
+  return true;
+}
+
 VkPipeline VKShader::ensure_and_get_graphics_pipeline(GPUPrimType primitive,
                                                       VKVertexAttributeObject &vao,
                                                       VKStateManager &state_manager,
-                                                      VKFrameBuffer &framebuffer)
+                                                      VKFrameBuffer &framebuffer,
+                                                      SpecializationConstants &constants_state)
 {
   BLI_assert(!is_compute_shader_);
   BLI_assert_msg(
@@ -1349,47 +1389,70 @@ VkPipeline VKShader::ensure_and_get_graphics_pipeline(GPUPrimType primitive,
       "drawing fragments. Calling code should be adapted to use a shader that sets the "
       "gl_PointSize before entering the fragment stage. For example `GPU_SHADER_3D_POINT_*`.");
 
-  /* TODO: Graphics info should be cached in VKContext and only the changes should be applied. */
-  VKGraphicsInfo graphics_info = {};
-  graphics_info.specialization_constants.extend(constants.values);
-  graphics_info.vk_pipeline_layout = vk_pipeline_layout;
+  const VkPrimitiveTopology vk_topology = to_vk_primitive_topology(primitive);
+  const VkFormat depth_attachment_format = framebuffer.depth_attachment_format_get();
+  const VkFormat stencil_attachment_format = framebuffer.stencil_attachment_format_get();
 
-  graphics_info.vertex_in.vk_topology = to_vk_primitive_topology(primitive);
+  VKGraphicsInfo graphics_info = {};
+  graphics_info.vertex_in.vk_topology = vk_topology;
   graphics_info.vertex_in.attributes = vao.attributes;
   graphics_info.vertex_in.bindings = vao.bindings;
 
-  graphics_info.pre_rasterization.vk_vertex_module = vertex_module.vk_shader_module;
-  graphics_info.pre_rasterization.vk_geometry_module = geometry_module.vk_shader_module;
+  graphics_info.shaders.vk_vertex_module = vertex_module.vk_shader_module;
+  graphics_info.shaders.vk_geometry_module = geometry_module.vk_shader_module;
+  graphics_info.shaders.vk_fragment_module = fragment_module.vk_shader_module;
+  graphics_info.shaders.vk_pipeline_layout = vk_pipeline_layout;
+  graphics_info.shaders.vk_topology = vk_topology;
+  graphics_info.shaders.state = state_manager.state;
+  graphics_info.shaders.mutable_state = state_manager.mutable_state;
+  graphics_info.shaders.viewport_count = framebuffer.viewport_size();
+  graphics_info.shaders.specialization_constants.extend(constants_state.values);
+  graphics_info.shaders.has_depth = depth_attachment_format != VK_FORMAT_UNDEFINED;
+  graphics_info.shaders.has_stencil = stencil_attachment_format != VK_FORMAT_UNDEFINED;
+  /* Cleanup mutable state to increase cache hits. */
+  /* NOTE: Refactor stencils to use dynamic state. #149452 */
+  if (!graphics_info.shaders.has_stencil || state_manager.state.stencil_test == GPU_STENCIL_NONE) {
+    graphics_info.shaders.mutable_state.stencil_write_mask = 0u;
+    graphics_info.shaders.mutable_state.stencil_compare_mask = 0u;
+    graphics_info.shaders.mutable_state.stencil_reference = 0u;
+  }
+  if (primitive != GPU_PRIM_POINTS) {
+    graphics_info.shaders.mutable_state.point_size = 1.0f;
+  }
+  graphics_info.shaders.mutable_state.line_width = 1.0f;
 
-  graphics_info.fragment_shader.vk_fragment_module = fragment_module.vk_shader_module;
-  graphics_info.state = state_manager.state;
-  graphics_info.mutable_state = state_manager.mutable_state;
-  graphics_info.fragment_shader.viewports.clear();
-  framebuffer.vk_viewports_append(graphics_info.fragment_shader.viewports);
-  graphics_info.fragment_shader.scissors.clear();
-  framebuffer.vk_render_areas_append(graphics_info.fragment_shader.scissors);
-
-  graphics_info.fragment_out.vk_render_pass = framebuffer.vk_render_pass;
-  graphics_info.fragment_out.depth_attachment_format = framebuffer.depth_attachment_format_get();
-  graphics_info.fragment_out.stencil_attachment_format =
-      framebuffer.stencil_attachment_format_get();
+  graphics_info.fragment_out.depth_attachment_format = depth_attachment_format;
+  graphics_info.fragment_out.stencil_attachment_format = stencil_attachment_format;
   graphics_info.fragment_out.color_attachment_formats.extend(
       framebuffer.color_attachment_formats_get());
-  graphics_info.fragment_out.color_attachment_size = framebuffer.color_attachment_size;
+  graphics_info.fragment_out.state = state_manager.state;
 
   VKDevice &device = VKBackend::get().device;
-  /* Store result in local variable to ensure thread safety. */
+  bool pipeline_created = false;
   VkPipeline vk_pipeline = device.pipelines.get_or_create_graphics_pipeline(
-      graphics_info, is_static_shader_, vk_pipeline_base_);
+      graphics_info, is_static_shader_, vk_pipeline_base_, name_get(), pipeline_created);
+
+  UNUSED_VARS_NDEBUG(pipeline_created);
+#ifndef NDEBUG
+  if (has_precompiled_pipelines_ && pipeline_created) {
+    /* Sanity check: Used to detect mismatches between shader create info states and actual used
+     * pipeline states.
+     *
+     * NOTE: This could trigger false positives where input attributes are just different between
+     * objects that require a new pipeline state. */
+    CLOG_INFO(&LOG,
+              "Pipeline states were compiled for `%s`, however a pipeline state triggered a new "
+              "pipeline compilation.",
+              name_get().c_str());
+    const VKContext &context = *VKContext::get();
+    BLI_assert(!context.debug_pipeline_creation);
+  }
+#endif
+
   if (vk_pipeline_base_ == VK_NULL_HANDLE) {
     vk_pipeline_base_ = vk_pipeline;
   }
   return vk_pipeline;
-}
-
-int VKShader::program_handle_get() const
-{
-  return -1;
 }
 
 const VKShaderInterface &VKShader::interface_get() const

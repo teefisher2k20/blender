@@ -2,7 +2,8 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include <string>
+#include "BLI_memory_utils.hh"
+#include "BLI_string.h"
 
 #include "DNA_node_types.h"
 
@@ -11,6 +12,7 @@
 #include "COM_compile_state.hh"
 #include "COM_context.hh"
 #include "COM_evaluator.hh"
+#include "COM_implicit_input_operation.hh"
 #include "COM_input_single_value_operation.hh"
 #include "COM_multi_function_procedure_operation.hh"
 #include "COM_node_operation.hh"
@@ -30,30 +32,44 @@ void Evaluator::evaluate()
 {
   context_.reset();
 
-  if (!is_compiled_) {
-    compile_and_evaluate();
+  BLI_SCOPED_DEFER([&]() {
+    if (context_.profiler()) {
+      context_.profiler()->finalize(context_.get_node_tree());
+    }
+  });
+
+  derived_node_tree_ = std::make_unique<DerivedNodeTree>(context_.get_node_tree());
+
+  if (!this->validate_node_tree()) {
+    return;
   }
-  else {
-    for (const std::unique_ptr<Operation> &operation : operations_stream_) {
-      if (context_.is_canceled()) {
-        this->cancel_evaluation();
-        break;
-      }
-      operation->evaluate();
+
+  if (context_.is_canceled()) {
+    this->cancel_evaluation();
+    return;
+  }
+
+  const Schedule schedule = compute_schedule(context_, *derived_node_tree_);
+
+  CompileState compile_state(context_, schedule);
+
+  for (const DNode &node : schedule) {
+    if (context_.is_canceled()) {
+      this->cancel_evaluation();
+      return;
+    }
+
+    if (compile_state.should_compile_pixel_compile_unit(node)) {
+      this->evaluate_pixel_compile_unit(compile_state);
+    }
+
+    if (is_pixel_node(node)) {
+      compile_state.add_node_to_pixel_compile_unit(node);
+    }
+    else {
+      this->evaluate_node(node, compile_state);
     }
   }
-
-  if (context_.profiler()) {
-    context_.profiler()->finalize(context_.get_node_tree());
-  }
-}
-
-void Evaluator::reset()
-{
-  operations_stream_.clear();
-  derived_node_tree_.reset();
-
-  is_compiled_ = false;
 }
 
 bool Evaluator::validate_node_tree()
@@ -68,50 +84,27 @@ bool Evaluator::validate_node_tree()
     return false;
   }
 
+  for (const bNodeTree *node_tree : derived_node_tree_->used_btrees()) {
+    for (const bNode *node : node_tree->all_nodes()) {
+      /* The poll method of those two nodes perform raw pointer comparisons of node trees, so they
+       * can wrongly fail since the compositor localizes the node tree, changing its pointer value
+       * than the one in the main database. So handle those two nodes. */
+      if (STR_ELEM(node->idname, "CompositorNodeRLayers", "CompositorNodeCryptomatteV2")) {
+        continue;
+      }
+
+      const char *disabled_hint = nullptr;
+      if (!node->typeinfo->poll(node->typeinfo, node_tree, &disabled_hint)) {
+        context_.set_info_message("Compositor node tree has unsupported nodes.");
+        return false;
+      }
+    }
+  }
+
   return true;
 }
 
-void Evaluator::compile_and_evaluate()
-{
-  derived_node_tree_ = std::make_unique<DerivedNodeTree>(context_.get_node_tree());
-
-  if (!validate_node_tree()) {
-    return;
-  }
-
-  if (context_.is_canceled()) {
-    this->cancel_evaluation();
-    reset();
-    return;
-  }
-
-  const Schedule schedule = compute_schedule(context_, *derived_node_tree_);
-
-  CompileState compile_state(schedule);
-
-  for (const DNode &node : schedule) {
-    if (context_.is_canceled()) {
-      this->cancel_evaluation();
-      reset();
-      return;
-    }
-
-    if (compile_state.should_compile_pixel_compile_unit(node)) {
-      compile_and_evaluate_pixel_compile_unit(compile_state);
-    }
-
-    if (is_pixel_node(node)) {
-      compile_state.add_node_to_pixel_compile_unit(node);
-    }
-    else {
-      compile_and_evaluate_node(node, compile_state);
-    }
-  }
-
-  is_compiled_ = true;
-}
-
-void Evaluator::compile_and_evaluate_node(DNode node, CompileState &compile_state)
+void Evaluator::evaluate_node(DNode node, CompileState &compile_state)
 {
   NodeOperation *operation = node->typeinfo->get_compositor_operation(context_, node);
 
@@ -135,6 +128,10 @@ void Evaluator::map_node_operation_inputs_to_their_results(DNode node,
 {
   for (const bNodeSocket *input : node->input_sockets()) {
     const DInputSocket dinput{node.context(), input};
+
+    if (!is_socket_available(input)) {
+      continue;
+    }
 
     DSocket dorigin = get_input_origin_socket(dinput);
 
@@ -162,7 +159,7 @@ void Evaluator::map_node_operation_inputs_to_their_results(DNode node,
 
 /* Create one of the concrete subclasses of the PixelOperation based on the context and compile
  * state. Deleting the operation is the caller's responsibility. */
-PixelOperation *create_pixel_operation(Context &context, CompileState &compile_state)
+static PixelOperation *create_pixel_operation(Context &context, CompileState &compile_state)
 {
   const Schedule &schedule = compile_state.get_schedule();
   PixelCompileUnit &compile_unit = compile_state.get_pixel_compile_unit();
@@ -176,7 +173,7 @@ PixelOperation *create_pixel_operation(Context &context, CompileState &compile_s
   return new ShaderOperation(context, compile_unit, schedule);
 }
 
-void Evaluator::compile_and_evaluate_pixel_compile_unit(CompileState &compile_state)
+void Evaluator::evaluate_pixel_compile_unit(CompileState &compile_state)
 {
   PixelCompileUnit &compile_unit = compile_state.get_pixel_compile_unit();
 
@@ -206,10 +203,10 @@ void Evaluator::compile_and_evaluate_pixel_compile_unit(CompileState &compile_st
     const PixelCompileUnit end_compile_unit(compile_unit.as_span().drop_front(split_index));
 
     compile_state.get_pixel_compile_unit() = start_compile_unit;
-    this->compile_and_evaluate_pixel_compile_unit(compile_state);
+    this->evaluate_pixel_compile_unit(compile_state);
 
     compile_state.get_pixel_compile_unit() = end_compile_unit;
-    this->compile_and_evaluate_pixel_compile_unit(compile_state);
+    this->evaluate_pixel_compile_unit(compile_state);
 
     /* No need to continue, the above recursive calls will eventually exist the loop and do the
      * actual compilation. */
@@ -239,6 +236,21 @@ void Evaluator::map_pixel_operation_inputs_to_their_results(PixelOperation *oper
   for (const auto item : operation->get_inputs_to_linked_outputs_map().items()) {
     Result &result = compile_state.get_result_from_output_socket(item.value);
     operation->map_input_to_result(item.key, &result);
+
+    /* Correct the reference count of the result in case multiple of the result's outgoing links
+     * corresponds to a single input in the pixel operation. See the description of the member
+     * inputs_to_reference_counts_map_ variable for more information. */
+    const int internal_reference_count = operation->get_internal_input_reference_count(item.key);
+    result.decrement_reference_count(internal_reference_count - 1);
+  }
+
+  for (const auto item : operation->get_implicit_inputs_to_input_identifiers_map().items()) {
+    ImplicitInputOperation *input_operation = new ImplicitInputOperation(context_, item.key);
+    operation->map_input_to_result(item.value, &input_operation->get_result());
+
+    operations_stream_.append(std::unique_ptr<ImplicitInputOperation>(input_operation));
+
+    input_operation->evaluate();
   }
 }
 

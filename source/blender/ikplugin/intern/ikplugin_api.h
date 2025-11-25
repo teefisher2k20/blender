@@ -8,10 +8,6 @@
 
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 struct Depsgraph;
 struct Object;
 struct Scene;
@@ -34,8 +30,4 @@ struct IKPlugin {
   void (*test_constraint)(struct Object *ob, struct bConstraint *cons);
 };
 
-typedef struct IKPlugin IKPlugin;
-
-#ifdef __cplusplus
-}
-#endif
+using IKPlugin = struct IKPlugin;

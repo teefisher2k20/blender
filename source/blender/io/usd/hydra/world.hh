@@ -4,16 +4,11 @@
 
 #pragma once
 
-#include <map>
-
 #include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/tf/staticTokens.h>
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/sdf/path.h>
-
-#include "DNA_view3d_types.h"
-#include "DNA_world_types.h"
 
 #include "light.hh"
 
@@ -25,9 +20,6 @@ class WorldData : public LightData {
 
   void init() override;
   void update() override;
-
- protected:
-  void write_transform() override;
 };
 
 }  // namespace blender::io::hydra

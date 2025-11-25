@@ -6,24 +6,26 @@
  * \ingroup edtransform
  */
 
+#include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 #include "DNA_scene_types.h"
 #include "DNA_screen_types.h"
 #include "DNA_space_types.h"
+#include "DNA_userdef_types.h"
 #include "DNA_view3d_types.h"
 
 #include "GPU_immediate.hh"
 #include "GPU_matrix.hh"
 #include "GPU_state.hh"
 
+#include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
 #include "BLI_rect.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_utildefines.h"
 
 #include "BLT_translation.hh"
@@ -38,7 +40,7 @@
 /* Own include. */
 #include "transform_constraints.hh"
 
-using namespace blender;
+namespace blender::ed::transform {
 
 static void drawObjectConstraint(TransInfo *t);
 
@@ -65,17 +67,6 @@ static void projection_matrix_calc(const TransInfo *t, float r_pmtx[3][3])
   float mat[3][3];
   mul_m3_m3m3(mat, r_pmtx, t->spacemtx_inv);
   mul_m3_m3m3(r_pmtx, t->spacemtx, mat);
-}
-
-static void view_vector_calc(const TransInfo *t, const float focus[3], float r_vec[3])
-{
-  if (t->persp != RV3D_ORTHO) {
-    sub_v3_v3v3(r_vec, t->viewinv[3], focus);
-  }
-  else {
-    copy_v3_v3(r_vec, t->viewinv[2]);
-  }
-  normalize_v3(r_vec);
 }
 
 /* ************************** CONSTRAINTS ************************* */
@@ -367,13 +358,14 @@ static short transform_orientation_or_default(const TransInfo *t)
 }
 
 static const float (*transform_object_axismtx_get(const TransInfo *t,
-                                                  const TransDataContainer * /*tc*/,
+                                                  const TransDataContainer *tc,
                                                   const TransData *td))[3]
 {
   if (transform_orientation_or_default(t) == V3D_ORIENT_GIMBAL) {
     BLI_assert(t->orient_type_mask & (1 << V3D_ORIENT_GIMBAL));
     if (t->options & (CTX_POSE_BONE | CTX_OBJECT)) {
-      return td->ext->axismtx_gimbal;
+      TransDataExtension *td_ext = &tc->data_ext[td - tc->data];
+      return td_ext->axismtx_gimbal;
     }
   }
   return td->axismtx;
@@ -490,7 +482,7 @@ static void applyObjectConstraintVec(const TransInfo *t,
     copy_v3_v3(out, in);
     if (t->con.mode & CON_APPLY) {
       mul_m3_v3(t->spacemtx_inv, out);
-      const float(*axismtx)[3] = transform_object_axismtx_get(t, tc, td);
+      const float (*axismtx)[3] = transform_object_axismtx_get(t, tc, td);
       mul_m3_v3(axismtx, out);
       if (t->flag & T_EDIT) {
         mul_m3_v3(tc->mat3_unit, out);
@@ -537,7 +529,7 @@ static void applyObjectConstraintSize(const TransInfo *t,
     float tmat[3][3];
     float imat[3][3];
 
-    const float(*axismtx)[3] = transform_object_axismtx_get(t, tc, td);
+    const float (*axismtx)[3] = transform_object_axismtx_get(t, tc, td);
     invert_m3_m3(imat, axismtx);
 
     if (!(t->con.mode & CON_AXIS0)) {
@@ -560,8 +552,7 @@ static void applyObjectConstraintSize(const TransInfo *t,
 
 static void constraints_rotation_impl(const TransInfo *t,
                                       const float axismtx[3][3],
-                                      float r_axis[3],
-                                      float *r_angle)
+                                      float r_axis[3])
 {
   BLI_assert(t->con.mode & CON_APPLY);
   int mode = t->con.mode & (CON_AXIS0 | CON_AXIS1 | CON_AXIS2);
@@ -580,16 +571,6 @@ static void constraints_rotation_impl(const TransInfo *t,
       copy_v3_v3(r_axis, axismtx[2]);
       break;
   }
-  /* Don't flip axis if asked to or if num input. */
-  if (r_angle &&
-      !((mode & CON_NOFLIP) || hasNumInput(&t->num) || (t->flag & T_INPUT_IS_VALUES_FINAL)))
-  {
-    float view_vector[3];
-    view_vector_calc(t, t->center_global, view_vector);
-    if (dot_v3v3(r_axis, view_vector) > 0.0f) {
-      *r_angle = -(*r_angle);
-    }
-  }
 }
 
 /**
@@ -599,20 +580,14 @@ static void constraints_rotation_impl(const TransInfo *t,
  *
  * In the case of single axis constraints, the rotation axis is directly the one constrained to.
  * For planar constraints (2 axis), the rotation axis is the normal of the plane.
- *
- * The following only applies when #CON_NOFLIP is not set.
- * The vector is then modified to always point away from the screen (in global space)
- * This insures that the rotation is always logically following the mouse.
- * (ie: not doing counterclockwise rotations when the mouse moves clockwise).
  */
 static void applyAxisConstraintRot(const TransInfo *t,
                                    const TransDataContainer * /*tc*/,
                                    const TransData *td,
-                                   float r_axis[3],
-                                   float *r_angle)
+                                   float r_axis[3])
 {
   if (!td && t->con.mode & CON_APPLY) {
-    constraints_rotation_impl(t, t->spacemtx, r_axis, r_angle);
+    constraints_rotation_impl(t, t->spacemtx, r_axis);
   }
 }
 
@@ -623,21 +598,15 @@ static void applyAxisConstraintRot(const TransInfo *t,
  *
  * In the case of single axis constraints, the rotation axis is directly the one constrained to.
  * For planar constraints (2 axis), the rotation axis is the normal of the plane.
- *
- * The following only applies when #CON_NOFLIP is not set.
- * The vector is then modified to always point away from the screen (in global space)
- * This insures that the rotation is always logically following the mouse.
- * (ie: not doing counterclockwise rotations when the mouse moves clockwise).
  */
 static void applyObjectConstraintRot(const TransInfo *t,
                                      const TransDataContainer *tc,
                                      const TransData *td,
-                                     float r_axis[3],
-                                     float *r_angle)
+                                     float r_axis[3])
 {
   if (t->con.mode & CON_APPLY) {
     float tmp_axismtx[3][3];
-    const float(*axismtx)[3];
+    const float (*axismtx)[3];
 
     /* On setup call, use first object. */
     if (td == nullptr) {
@@ -654,7 +623,7 @@ static void applyObjectConstraintRot(const TransInfo *t,
       axismtx = transform_object_axismtx_get(t, tc, td);
     }
 
-    constraints_rotation_impl(t, axismtx, r_axis, r_angle);
+    constraints_rotation_impl(t, axismtx, r_axis);
   }
 }
 
@@ -666,7 +635,7 @@ static void applyObjectConstraintRot(const TransInfo *t,
 
 void setConstraint(TransInfo *t, int mode, const char text[])
 {
-  BLI_strncpy(t->con.text + 1, text, sizeof(t->con.text) - 1);
+  BLI_strncpy_utf8(t->con.text + 1, text, sizeof(t->con.text) - 1);
   t->con.mode = eTConstraint(mode);
   projection_matrix_calc(t, t->con.pmtx);
 
@@ -681,7 +650,7 @@ void setConstraint(TransInfo *t, int mode, const char text[])
 
 void setAxisMatrixConstraint(TransInfo *t, int mode, const char text[])
 {
-  BLI_strncpy(t->con.text + 1, text, sizeof(t->con.text) - 1);
+  BLI_strncpy_utf8(t->con.text + 1, text, sizeof(t->con.text) - 1);
   t->con.mode = eTConstraint(mode);
   projection_matrix_calc(t, t->con.pmtx);
 
@@ -711,7 +680,7 @@ void setUserConstraint(TransInfo *t, int mode, const char text_[])
   char text[256];
   const short orientation = transform_orientation_or_default(t);
   const char *spacename = transform_orientations_spacename_get(t, orientation);
-  SNPRINTF(text, text_, spacename);
+  SNPRINTF_UTF8(text, text_, spacename);
 
   switch (orientation) {
     case V3D_ORIENT_LOCAL:
@@ -783,7 +752,8 @@ static void drawLine(
   }
   UI_make_axis_color(col, axis, col2);
 
-  uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
+  uint pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32_32);
 
   float viewport[4];
   GPU_viewport_size_get_f(viewport);
@@ -833,13 +803,13 @@ void drawConstraint(TransInfo *t)
       drawLine(t, t->center_global, t->spacemtx[1], 'Y', 0);
       drawLine(t, t->center_global, t->spacemtx[2], 'Z', 0);
 
-      eGPUDepthTest depth_test_enabled = GPU_depth_test_get();
+      GPUDepthTest depth_test_enabled = GPU_depth_test_get();
       if (depth_test_enabled) {
         GPU_depth_test(GPU_DEPTH_NONE);
       }
 
       const uint shdr_pos = GPU_vertformat_attr_add(
-          immVertexFormat(), "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
+          immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32_32);
 
       immBindBuiltinProgram(GPU_SHADER_3D_LINE_DASHED_UNIFORM_COLOR);
 
@@ -906,12 +876,13 @@ void drawPropCircle(TransInfo *t)
       GPU_matrix_scale_2f(1.0f / t->aspect[0], 1.0f / t->aspect[1]);
     }
 
-    eGPUDepthTest depth_test_enabled = GPU_depth_test_get();
+    GPUDepthTest depth_test_enabled = GPU_depth_test_get();
     if (depth_test_enabled) {
       GPU_depth_test(GPU_DEPTH_NONE);
     }
 
-    uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
+    uint pos = GPU_vertformat_attr_add(
+        immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32_32);
 
     immBindBuiltinProgram(GPU_SHADER_3D_POLYLINE_UNIFORM_COLOR);
 
@@ -945,7 +916,8 @@ void drawPropRange(TransInfo *t)
     return;
   }
 
-  uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
+  uint pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32_32);
 
   immBindBuiltinProgram(GPU_SHADER_3D_POLYLINE_UNIFORM_COLOR);
 
@@ -988,7 +960,7 @@ static void drawObjectConstraint(TransInfo *t)
     TransData *td = tc->data;
     for (int i = 0; i < tc->data_len; i++, td++) {
       float co[3];
-      const float(*axismtx)[3];
+      const float (*axismtx)[3];
 
       if (t->flag & T_PROP_EDIT) {
         /* We're sorted, so skip the rest. */
@@ -1054,7 +1026,13 @@ void startConstraint(TransInfo *t)
 {
   t->con.mode |= CON_APPLY;
   *t->con.text = ' ';
-  t->num.idx_max = min_ii(getConstraintSpaceDimension(t) - 1, t->idx_max);
+
+  /* When `dims` is zero, no constraints are set (or not set *yet*).
+   * In this case `t->num.idx_max` is unlikely to be used.
+   * Set to `t->idx_max` as it's the default when transform starts
+   * to prevent numeric errors, see: #144916. */
+  const short dims = getConstraintSpaceDimension(t);
+  t->num.idx_max = (dims > 0) ? std::min<short>(dims - 1, t->idx_max) : t->idx_max;
 }
 
 void stopConstraint(TransInfo *t)
@@ -1105,14 +1083,14 @@ static void setNearestAxis2d(TransInfo *t)
   t->con.mode &= ~(CON_AXIS0 | CON_AXIS1 | CON_AXIS2);
 
   /* No correction needed... just use whichever one is lower. */
-  blender::float2 dvec = t->mval - t->mouse.imval;
+  float2 dvec = t->mval - t->mouse.imval;
   if (abs(dvec.x) < abs(dvec.y)) {
     t->con.mode |= CON_AXIS1;
-    STRNCPY(t->con.text, IFACE_(" along Y axis"));
+    STRNCPY_UTF8(t->con.text, IFACE_(" along Y axis"));
   }
   else {
     t->con.mode |= CON_AXIS0;
-    STRNCPY(t->con.text, IFACE_(" along X axis"));
+    STRNCPY_UTF8(t->con.text, IFACE_(" along X axis"));
   }
 }
 
@@ -1166,31 +1144,31 @@ static void setNearestAxis3d(TransInfo *t)
   if (len[0] <= len[1] && len[0] <= len[2]) {
     if (t->modifiers & MOD_CONSTRAINT_SELECT_PLANE) {
       t->con.mode |= (CON_AXIS1 | CON_AXIS2);
-      SNPRINTF(t->con.text, IFACE_(" locking %s X axis"), t->spacename);
+      SNPRINTF_UTF8(t->con.text, IFACE_(" locking %s X axis"), t->spacename);
     }
     else {
       t->con.mode |= CON_AXIS0;
-      SNPRINTF(t->con.text, IFACE_(" along %s X axis"), t->spacename);
+      SNPRINTF_UTF8(t->con.text, IFACE_(" along %s X axis"), t->spacename);
     }
   }
   else if (len[1] <= len[0] && len[1] <= len[2]) {
     if (t->modifiers & MOD_CONSTRAINT_SELECT_PLANE) {
       t->con.mode |= (CON_AXIS0 | CON_AXIS2);
-      SNPRINTF(t->con.text, IFACE_(" locking %s Y axis"), t->spacename);
+      SNPRINTF_UTF8(t->con.text, IFACE_(" locking %s Y axis"), t->spacename);
     }
     else {
       t->con.mode |= CON_AXIS1;
-      SNPRINTF(t->con.text, IFACE_(" along %s Y axis"), t->spacename);
+      SNPRINTF_UTF8(t->con.text, IFACE_(" along %s Y axis"), t->spacename);
     }
   }
   else if (len[2] <= len[1] && len[2] <= len[0]) {
     if (t->modifiers & MOD_CONSTRAINT_SELECT_PLANE) {
       t->con.mode |= (CON_AXIS0 | CON_AXIS1);
-      SNPRINTF(t->con.text, IFACE_(" locking %s Z axis"), t->spacename);
+      SNPRINTF_UTF8(t->con.text, IFACE_(" locking %s Z axis"), t->spacename);
     }
     else {
       t->con.mode |= CON_AXIS2;
-      SNPRINTF(t->con.text, IFACE_(" along %s Z axis"), t->spacename);
+      SNPRINTF_UTF8(t->con.text, IFACE_(" along %s Z axis"), t->spacename);
     }
   }
 }
@@ -1286,3 +1264,5 @@ int getConstraintSpaceDimension(const TransInfo *t)
 }
 
 /** \} */
+
+}  // namespace blender::ed::transform

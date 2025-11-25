@@ -9,8 +9,6 @@
  * DNA level diffing for undo.
  */
 
-#include "DNA_userdef_types.h"
-
 #ifndef _WIN32
 #  include <unistd.h> /* for read close */
 #else
@@ -23,7 +21,7 @@
 #include <cstring>
 #include <fcntl.h> /* for open */
 
-#include "MEM_guardedalloc.h"
+#include "DNA_userdef_types.h"
 
 #include "BLI_path_utils.hh"
 #include "BLI_string.h"
@@ -100,7 +98,7 @@ bool BKE_memfile_undo_decode(MemFileUndoData *mfu,
 
 MemFileUndoData *BKE_memfile_undo_encode(Main *bmain, MemFileUndoData *mfu_prev)
 {
-  MemFileUndoData *mfu = MEM_cnew<MemFileUndoData>(__func__);
+  MemFileUndoData *mfu = MEM_callocN<MemFileUndoData>(__func__);
 
   /* This flag used to be set because the undo step was written as #BLENDER_QUIT_FILE. It's not
    * clear whether there are still good reasons to keep it. Undo can also be thought of as a kind

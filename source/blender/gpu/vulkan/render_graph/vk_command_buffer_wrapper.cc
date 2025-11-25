@@ -12,11 +12,10 @@
 
 namespace blender::gpu::render_graph {
 VKCommandBufferWrapper::VKCommandBufferWrapper(VkCommandBuffer vk_command_buffer,
-                                               const VKWorkarounds &workarounds)
+                                               const VKExtensions &extensions)
     : vk_command_buffer_(vk_command_buffer)
 {
-  use_dynamic_rendering = !workarounds.dynamic_rendering;
-  use_dynamic_rendering_local_read = !workarounds.dynamic_rendering_local_read;
+  use_dynamic_rendering_local_read = extensions.dynamic_rendering_local_read;
 }
 
 void VKCommandBufferWrapper::begin_recording()
@@ -256,14 +255,18 @@ void VKCommandBufferWrapper::push_constants(VkPipelineLayout layout,
   vkCmdPushConstants(vk_command_buffer_, layout, stage_flags, offset, size, p_values);
 }
 
-void VKCommandBufferWrapper::begin_render_pass(const VkRenderPassBeginInfo *render_pass_begin_info)
+void VKCommandBufferWrapper::set_viewport(const Vector<VkViewport> viewports)
 {
-  vkCmdBeginRenderPass(vk_command_buffer_, render_pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+  vkCmdSetViewport(vk_command_buffer_, 0, viewports.size(), viewports.data());
 }
 
-void VKCommandBufferWrapper::end_render_pass()
+void VKCommandBufferWrapper::set_scissor(const Vector<VkRect2D> scissors)
 {
-  vkCmdEndRenderPass(vk_command_buffer_);
+  vkCmdSetScissor(vk_command_buffer_, 0, scissors.size(), scissors.data());
+}
+void VKCommandBufferWrapper::set_line_width(const float line_width)
+{
+  vkCmdSetLineWidth(vk_command_buffer_, line_width);
 }
 
 void VKCommandBufferWrapper::begin_rendering(const VkRenderingInfo *p_rendering_info)

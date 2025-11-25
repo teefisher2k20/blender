@@ -7,7 +7,6 @@
 
 #include "BKE_action.hh"
 #include "BKE_anim_data.hh"
-#include "BKE_fcurve.hh"
 #include "BKE_global.hh"
 #include "BKE_idtype.hh"
 #include "BKE_lib_id.hh"
@@ -52,7 +51,7 @@ class ActionFilterTest : public testing::Test {
     bmain = BKE_main_new();
     G_MAIN = bmain; /* For BKE_animdata_free(). */
 
-    action = &static_cast<bAction *>(BKE_id_new(bmain, ID_AC, "ACÄnimåtië"))->wrap();
+    action = &BKE_id_new<bAction>(bmain, "ACÄnimåtië")->wrap();
     cube = BKE_object_add_only_object(bmain, OB_EMPTY, "Küüübus");
     suzanne = BKE_object_add_only_object(bmain, OB_EMPTY, "OBSuzanne");
   }
@@ -101,8 +100,6 @@ TEST_F(ActionFilterTest, slots_expanded_or_not)
 
   /* Mock an bAnimContext for the Animation editor, with the above Animation showing. */
   SpaceAction saction = {nullptr};
-  saction.action = action;
-  saction.action_slot_handle = slot_cube.handle;
   saction.ads.filterflag = eDopeSheet_FilterFlag(0);
 
   bAnimContext ac = {nullptr};
@@ -112,6 +109,8 @@ TEST_F(ActionFilterTest, slots_expanded_or_not)
   ac.spacetype = SPACE_ACTION;
   ac.sl = reinterpret_cast<SpaceLink *>(&saction);
   ac.obact = cube;
+  ac.active_action = action;
+  ac.active_action_user = &cube->id;
   ac.ads = &saction.ads;
 
   { /* Test with collapsed slots. */
@@ -258,8 +257,6 @@ TEST_F(ActionFilterTest, layered_action_active_fcurves)
 
   /* Mock an bAnimContext for the Action editor. */
   SpaceAction saction = {nullptr};
-  saction.action = action;
-  saction.action_slot_handle = slot_cube.handle;
   saction.ads.filterflag = eDopeSheet_FilterFlag(0);
 
   bAnimContext ac = {nullptr};
@@ -269,6 +266,8 @@ TEST_F(ActionFilterTest, layered_action_active_fcurves)
   ac.spacetype = SPACE_ACTION;
   ac.sl = reinterpret_cast<SpaceLink *>(&saction);
   ac.obact = cube;
+  ac.active_action = action;
+  ac.active_action_user = &cube->id;
   ac.ads = &saction.ads;
 
   {

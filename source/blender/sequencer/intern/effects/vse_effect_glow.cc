@@ -19,7 +19,7 @@
 
 #include "effects.hh"
 
-using namespace blender;
+namespace blender::seq {
 
 static void glow_blur_bitmap(
     const float4 *src, float4 *map, int width, int height, float blur, int quality)
@@ -45,7 +45,7 @@ static void glow_blur_bitmap(
   const float k = -1.0f / (2.0f * float(M_PI) * blur * blur);
   float weight = 0;
   for (int ix = 0; ix < halfWidth; ix++) {
-    weight = float(exp(k * (ix * ix)));
+    weight = exp(k * (ix * ix));
     filter[halfWidth - ix] = weight;
     filter[halfWidth + ix] = weight;
   }
@@ -126,34 +126,20 @@ static void blur_isolate_highlights(const float4 *in,
 
 static void init_glow_effect(Strip *strip)
 {
-  if (strip->effectdata) {
-    MEM_freeN(strip->effectdata);
-  }
-
-  strip->effectdata = MEM_callocN(sizeof(GlowVars), "glowvars");
-
-  GlowVars *glow = (GlowVars *)strip->effectdata;
-  glow->fMini = 0.25;
-  glow->fClamp = 1.0;
-  glow->fBoost = 0.5;
-  glow->dDist = 3.0;
-  glow->dQuality = 3;
-  glow->bNoComp = 0;
+  MEM_SAFE_FREE(strip->effectdata);
+  GlowVars *data = MEM_callocN<GlowVars>("glowvars");
+  strip->effectdata = data;
+  data->fMini = 0.25f;
+  data->fClamp = 1.0f;
+  data->fBoost = 0.5f;
+  data->dDist = 3.0f;
+  data->dQuality = 3;
+  data->bNoComp = 0;
 }
 
 static int num_inputs_glow()
 {
   return 1;
-}
-
-static void free_glow_effect(Strip *strip, const bool /*do_id_user*/)
-{
-  MEM_SAFE_FREE(strip->effectdata);
-}
-
-static void copy_glow_effect(Strip *dst, const Strip *src, const int /*flag*/)
-{
-  dst->effectdata = MEM_dupallocN(src->effectdata);
 }
 
 static void do_glow_effect_byte(Strip *strip,
@@ -172,7 +158,7 @@ static void do_glow_effect_byte(Strip *strip,
   Array<float4> outbuf(x * y);
 
   using namespace blender;
-  IMB_colormanagement_transform_from_byte_threaded(*inbuf.data(), rect1, x, y, 4, "sRGB", "sRGB");
+  IMB_colormanagement_transform_byte_to_float(*inbuf.data(), rect1, x, y, 4, "sRGB", "sRGB");
 
   blur_isolate_highlights(
       inbuf.data(), outbuf.data(), x, y, glow->fMini * 3.0f, glow->fBoost * fac, glow->fClamp);
@@ -223,7 +209,8 @@ static void do_glow_effect_float(Strip *strip,
                    glow->dQuality);
 }
 
-static ImBuf *do_glow_effect(const SeqRenderData *context,
+static ImBuf *do_glow_effect(const RenderData *context,
+                             SeqRenderState * /*state*/,
                              Strip *strip,
                              float /*timeline_frame*/,
                              float fac,
@@ -258,11 +245,11 @@ static ImBuf *do_glow_effect(const SeqRenderData *context,
   return out;
 }
 
-void glow_effect_get_handle(SeqEffectHandle &rval)
+void glow_effect_get_handle(EffectHandle &rval)
 {
   rval.init = init_glow_effect;
   rval.num_inputs = num_inputs_glow;
-  rval.free = free_glow_effect;
-  rval.copy = copy_glow_effect;
   rval.execute = do_glow_effect;
 }
+
+}  // namespace blender::seq

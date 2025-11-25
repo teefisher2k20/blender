@@ -18,7 +18,7 @@
 #include "BKE_report.hh"
 
 #include "BLI_path_utils.hh"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "DEG_depsgraph.hh"
 
@@ -43,7 +43,7 @@ static bool multires_poll(bContext *C)
   return edit_modifier_poll_generic(C, &RNA_MultiresModifier, (1 << OB_MESH), true, false);
 }
 
-static int multires_higher_levels_delete_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus multires_higher_levels_delete_exec(bContext *C, wmOperator *op)
 {
   Scene *scene = CTX_data_scene(C);
   Object *ob = context_active_object(C);
@@ -63,9 +63,9 @@ static int multires_higher_levels_delete_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int multires_higher_levels_delete_invoke(bContext *C,
-                                                wmOperator *op,
-                                                const wmEvent * /*event*/)
+static wmOperatorStatus multires_higher_levels_delete_invoke(bContext *C,
+                                                             wmOperator *op,
+                                                             const wmEvent * /*event*/)
 {
   if (edit_modifier_invoke_properties(C, op)) {
     return multires_higher_levels_delete_exec(C, op);
@@ -113,7 +113,7 @@ static EnumPropertyItem prop_multires_subdivide_mode_type[] = {
     {0, nullptr, 0, nullptr, nullptr},
 };
 
-static int multires_subdivide_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus multires_subdivide_exec(bContext *C, wmOperator *op)
 {
   Object *object = context_active_object(C);
   MultiresModifierData *mmd = (MultiresModifierData *)edit_modifier_property_get(
@@ -141,7 +141,9 @@ static int multires_subdivide_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int multires_subdivide_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus multires_subdivide_invoke(bContext *C,
+                                                  wmOperator *op,
+                                                  const wmEvent * /*event*/)
 {
   if (edit_modifier_invoke_properties(C, op)) {
     return multires_subdivide_exec(C, op);
@@ -176,7 +178,7 @@ void OBJECT_OT_multires_subdivide(wmOperatorType *ot)
 /** \name Multires Reshape Operator
  * \{ */
 
-static int multires_reshape_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus multires_reshape_exec(bContext *C, wmOperator *op)
 {
   Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
   Object *ob = context_active_object(C), *secondob = nullptr;
@@ -216,7 +218,9 @@ static int multires_reshape_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int multires_reshape_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus multires_reshape_invoke(bContext *C,
+                                                wmOperator *op,
+                                                const wmEvent * /*event*/)
 {
   if (edit_modifier_invoke_properties(C, op)) {
     return multires_reshape_exec(C, op);
@@ -245,7 +249,7 @@ void OBJECT_OT_multires_reshape(wmOperatorType *ot)
 /** \name Multires Save External Operator
  * \{ */
 
-static int multires_external_save_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus multires_external_save_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
   Object *ob = context_active_object(C);
@@ -274,7 +278,9 @@ static int multires_external_save_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int multires_external_save_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus multires_external_save_invoke(bContext *C,
+                                                      wmOperator *op,
+                                                      const wmEvent * /*event*/)
 {
   Object *ob = context_active_object(C);
   Mesh *mesh = static_cast<Mesh *>(ob->data);
@@ -301,7 +307,8 @@ static int multires_external_save_invoke(bContext *C, wmOperator *op, const wmEv
 
   op->customdata = mesh;
 
-  SNPRINTF(filepath, "//%s.btx", mesh->id.name + 2);
+  /* While a filename need not be UTF8, at this point the constructed name should be UTF8. */
+  SNPRINTF_UTF8(filepath, "//%s.btx", mesh->id.name + 2);
   RNA_string_set(op->ptr, "filepath", filepath);
 
   WM_event_add_fileselect(C, op);
@@ -339,7 +346,7 @@ void OBJECT_OT_multires_external_save(wmOperatorType *ot)
 /** \name Multires Pack Operator
  * \{ */
 
-static int multires_external_pack_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus multires_external_pack_exec(bContext *C, wmOperator * /*op*/)
 {
   Object *ob = context_active_object(C);
   Mesh *mesh = static_cast<Mesh *>(ob->data);
@@ -373,7 +380,7 @@ void OBJECT_OT_multires_external_pack(wmOperatorType *ot)
 /** \name Multires Apply Base
  * \{ */
 
-static int multires_base_apply_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus multires_base_apply_exec(bContext *C, wmOperator *op)
 {
   Depsgraph *depsgraph = CTX_data_depsgraph_pointer(C);
   Object *object = context_active_object(C);
@@ -384,9 +391,13 @@ static int multires_base_apply_exec(bContext *C, wmOperator *op)
     return OPERATOR_CANCELLED;
   }
 
+  const ApplyBaseMode mode = RNA_boolean_get(op->ptr, "apply_heuristic") ?
+                                 ApplyBaseMode::ForSubdivision :
+                                 ApplyBaseMode::Base;
+
   ed::sculpt_paint::undo::push_multires_mesh_begin(C, op->type->name);
 
-  multiresModifier_base_apply(depsgraph, object, mmd);
+  multiresModifier_base_apply(depsgraph, object, mmd, mode);
 
   ed::sculpt_paint::undo::push_multires_mesh_end(C, op->type->name);
 
@@ -396,7 +407,9 @@ static int multires_base_apply_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int multires_base_apply_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus multires_base_apply_invoke(bContext *C,
+                                                   wmOperator *op,
+                                                   const wmEvent * /*event*/)
 {
   if (edit_modifier_invoke_properties(C, op)) {
     return multires_base_apply_exec(C, op);
@@ -417,6 +430,14 @@ void OBJECT_OT_multires_base_apply(wmOperatorType *ot)
   /* flags */
   ot->flag = OPTYPE_REGISTER | OPTYPE_INTERNAL;
   edit_modifier_properties(ot);
+  PropertyRNA *prop = RNA_def_boolean(
+      ot->srna,
+      "apply_heuristic",
+      true,
+      "Apply Subdivision Heuristic",
+      "Whether or not the final base mesh positions will be slightly altered to account for a new "
+      "subdivision modifier being added");
+  RNA_def_property_flag(prop, PROP_SKIP_SAVE | PROP_HIDDEN);
 }
 
 /** \} */
@@ -425,7 +446,7 @@ void OBJECT_OT_multires_base_apply(wmOperatorType *ot)
 /** \name Multires Unsubdivide
  * \{ */
 
-static int multires_unsubdivide_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus multires_unsubdivide_exec(bContext *C, wmOperator *op)
 {
   Depsgraph *depsgraph = CTX_data_depsgraph_pointer(C);
   Object *object = context_active_object(C);
@@ -448,7 +469,9 @@ static int multires_unsubdivide_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int multires_unsubdivide_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus multires_unsubdivide_invoke(bContext *C,
+                                                    wmOperator *op,
+                                                    const wmEvent * /*event*/)
 {
   if (edit_modifier_invoke_properties(C, op)) {
     return multires_unsubdivide_exec(C, op);
@@ -477,7 +500,7 @@ void OBJECT_OT_multires_unsubdivide(wmOperatorType *ot)
 /** \name Multires Rebuild Subdivisions
  * \{ */
 
-static int multires_rebuild_subdiv_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus multires_rebuild_subdiv_exec(bContext *C, wmOperator *op)
 {
   Depsgraph *depsgraph = CTX_data_depsgraph_pointer(C);
   Object *object = context_active_object(C);
@@ -502,7 +525,9 @@ static int multires_rebuild_subdiv_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int multires_rebuild_subdiv_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus multires_rebuild_subdiv_invoke(bContext *C,
+                                                       wmOperator *op,
+                                                       const wmEvent * /*event*/)
 {
   if (edit_modifier_invoke_properties(C, op)) {
     return multires_rebuild_subdiv_exec(C, op);

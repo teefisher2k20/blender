@@ -43,7 +43,7 @@
 
 #include "BKE_global.hh"
 
-#include "BLI_color.hh"
+#include "BLI_color_types.hh"
 #include "BLI_map.hh"
 #include "BLI_utility_mixins.hh"
 #include "BLI_vector.hh"
@@ -57,7 +57,6 @@
 #include "vk_command_builder.hh"
 #include "vk_render_graph_links.hh"
 #include "vk_resource_state_tracker.hh"
-#include "vk_resource_tracker.hh"
 
 namespace blender::gpu::render_graph {
 class VKScheduler;
@@ -69,9 +68,9 @@ class VKRenderGraph : public NonCopyable {
   using DebugGroupID = int64_t;
 
   /** All links inside the graph indexable via NodeHandle. */
-  Vector<VKRenderGraphNodeLinks> links_;
+  Vector<VKRenderGraphNodeLinks, 1024> links_;
   /** All nodes inside the graph indexable via NodeHandle. */
-  Vector<VKRenderGraphNode> nodes_;
+  Vector<VKRenderGraphNode, 1024> nodes_;
   /** Storage for large node datas to improve CPU cache pre-loading. */
   VKRenderGraphStorage storage_;
 
@@ -123,8 +122,6 @@ class VKRenderGraph : public NonCopyable {
   } debug_;
 
  public:
-  VKSubmissionID submission_id;
-
   /**
    * Construct a new render graph instance.
    *
@@ -137,7 +134,7 @@ class VKRenderGraph : public NonCopyable {
   /**
    * Add a node to the render graph.
    */
-  template<typename NodeInfo> void add_node(const typename NodeInfo::CreateInfo &create_info)
+  template<typename NodeInfo> NodeHandle add_node(const typename NodeInfo::CreateInfo &create_info)
   {
     std::scoped_lock lock(resources_.mutex);
     static VKRenderGraphNode node_template = {};
@@ -172,13 +169,14 @@ class VKRenderGraph : public NonCopyable {
       }
       debug_.node_group_map[node_handle] = debug_.used_groups.size() - 1;
     }
+    return node_handle;
   }
 
  public:
 #define ADD_NODE(NODE_CLASS) \
-  void add_node(const NODE_CLASS::CreateInfo &create_info) \
+  NodeHandle add_node(const NODE_CLASS::CreateInfo &create_info) \
   { \
-    add_node<NODE_CLASS>(create_info); \
+    return add_node<NODE_CLASS>(create_info); \
   }
   ADD_NODE(VKBeginQueryNode)
   ADD_NODE(VKBeginRenderingNode)
@@ -204,6 +202,19 @@ class VKRenderGraph : public NonCopyable {
   ADD_NODE(VKUpdateMipmapsNode)
   ADD_NODE(VKSynchronizationNode)
 #undef ADD_NODE
+
+  /**
+   * Get the reference to the node data for a VKCopyBufferNode.
+   *
+   * Allows altering a previous added node. Is useful to reduce barriers when a streaming buffer
+   * requires data that can still fit in the previous copy command.
+   */
+  VKCopyBufferNode::Data &get_node_data(NodeHandle node_handle)
+  {
+    VKRenderGraphNode &node = nodes_[node_handle];
+    BLI_assert(node.type == VKNodeType::COPY_BUFFER);
+    return node.copy_buffer;
+  }
 
   /**
    * Push a new debugging group to the stack with the given name.
@@ -249,6 +260,8 @@ class VKRenderGraph : public NonCopyable {
    * Reset the render graph.
    */
   void reset();
+
+  void memstats() const;
 
  private:
 };

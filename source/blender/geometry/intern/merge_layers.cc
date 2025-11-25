@@ -62,6 +62,7 @@ GreasePencil *merge_layers(const GreasePencil &src_grease_pencil,
     const int first_src_layer_i = src_layer_indices[0];
     const Layer &first_src_layer = src_grease_pencil.layer(first_src_layer_i);
     layer.set_name(first_src_layer.name());
+    layer.opacity = first_src_layer.opacity;
     Drawing *drawing = new_grease_pencil->get_eval_drawing(layer);
     BLI_assert(drawing != nullptr);
     curves_by_new_layer[new_layer_i] = &drawing->strokes_for_write();
@@ -111,7 +112,7 @@ GreasePencil *merge_layers(const GreasePencil &src_grease_pencil,
   const bke::AttributeAccessor src_attributes = src_grease_pencil.attributes();
   bke::MutableAttributeAccessor new_attributes = new_grease_pencil->attributes_for_write();
   src_attributes.foreach_attribute([&](const bke::AttributeIter &iter) {
-    if (iter.data_type == CD_PROP_STRING) {
+    if (iter.data_type == bke::AttrType::String) {
       return;
     }
     if (attribute_filter.allow_skip(iter.name)) {

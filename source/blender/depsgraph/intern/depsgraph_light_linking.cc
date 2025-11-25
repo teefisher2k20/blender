@@ -14,12 +14,8 @@
 #include "BLI_hash.hh"
 #include "BLI_listbase.h"
 #include "BLI_map.hh"
-#include "BLI_utildefines.h"
-
-#include "BKE_collection.hh"
 
 #include "DNA_collection_types.h"
-#include "DNA_layer_types.h"
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 
@@ -52,21 +48,12 @@ void eval_runtime_data(const ::Depsgraph *depsgraph, Object &object_eval)
 
 namespace {
 
-/* TODO(sergey): Move to a public API, solving the const-correctness. */
-template<class T> static inline const T *get_original(const T *id)
-{
-  if (!id) {
-    return nullptr;
-  }
-  return reinterpret_cast<T *>(DEG_get_original_id(const_cast<ID *>(&id->id)));
-}
-
 /* Check whether the ID is suitable to be an input of the dependency graph. */
 /* TODO(sergey): Move the function and check to a more generic place. */
 #ifndef NDEBUG
 bool is_valid_input_id(const ID &id)
 {
-  return (id.tag & ID_TAG_LOCALIZED) || DEG_is_original_id(&id);
+  return (id.tag & ID_TAG_LOCALIZED) || DEG_is_original(&id);
 }
 #endif
 
@@ -211,7 +198,7 @@ const EmitterData *EmitterDataMap::get_data(const Object &emitter) const
     return nullptr;
   }
 
-  const Collection *collection_orig = get_original(collection_eval);
+  const Collection *collection_orig = DEG_get_original(collection_eval);
 
   return emitter_data_map_.lookup_ptr(collection_orig);
 }
@@ -309,7 +296,7 @@ void LinkingData::update_emitters_membership(EmitterDataMap &emitter_data_map,
 
 uint64_t LinkingData::get_light_set_for(const Object &object) const
 {
-  const Object *object_orig = get_original(&object);
+  const Object *object_orig = DEG_get_original(&object);
   return object_light_sets_.lookup_default(object_orig, LightSet::DEFAULT_ID);
 }
 
@@ -323,10 +310,9 @@ namespace {
  * Note that if an object is reachable from multiple children collection the callback is invoked
  * for all of them. */
 template<class Proc>
-static void foreach_light_collection_object_inner(
-    const CollectionLightLinking &collection_light_linking,
-    const Collection &collection,
-    Proc &&callback)
+void foreach_light_collection_object_inner(const CollectionLightLinking &collection_light_linking,
+                                           const Collection &collection,
+                                           Proc &&callback)
 {
   LISTBASE_FOREACH (const CollectionChild *, collection_child, &collection.children) {
     foreach_light_collection_object_inner(
@@ -347,7 +333,7 @@ static void foreach_light_collection_object_inner(
  * Note that if an object is reachable from multiple children collection the callback is invoked
  * for all of them. */
 template<class Proc>
-static void foreach_light_collection_object(const Collection &collection, Proc &&callback)
+void foreach_light_collection_object(const Collection &collection, Proc &&callback)
 {
   LISTBASE_FOREACH (const CollectionChild *, collection_child, &collection.children) {
     foreach_light_collection_object_inner(
@@ -495,7 +481,7 @@ void Cache::eval_runtime_data(Object &object_eval) const
     }
   }
   else if (need_runtime) {
-    object_eval.light_linking = MEM_cnew<LightLinking>(__func__);
+    BKE_light_linking_ensure(&object_eval);
     object_eval.light_linking->runtime = runtime;
   }
 }

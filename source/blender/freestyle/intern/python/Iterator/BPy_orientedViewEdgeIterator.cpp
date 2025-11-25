@@ -10,10 +10,6 @@
 
 #include "../BPy_Convert.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -37,8 +33,7 @@ PyDoc_STRVAR(
     "   default constructor or the copy constructor.\n"
     "\n"
     "   :arg iBrother: An orientedViewEdgeIterator object.\n"
-    "   :type iBrother: :class:`orientedViewEdgeIterator`");
-
+    "   :type iBrother: :class:`orientedViewEdgeIterator`\n");
 static int orientedViewEdgeIterator_init(BPy_orientedViewEdgeIterator *self,
                                          PyObject *args,
                                          PyObject *kwds)
@@ -111,8 +106,7 @@ PyDoc_STRVAR(
     "value) currently pointed to by this iterator. If the boolean value is true,\n"
     "the ViewEdge is incoming.\n"
     "\n"
-    ":type: (:class:`ViewEdge`, bool)");
-
+    ":type: tuple[:class:`ViewEdge`, bool]\n");
 static PyObject *orientedViewEdgeIterator_object_get(BPy_orientedViewEdgeIterator *self,
                                                      void * /*closure*/)
 {
@@ -176,7 +170,3 @@ PyTypeObject orientedViewEdgeIterator_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

@@ -4,7 +4,9 @@
 
 bl_info = {
     "name": "BioVision Motion Capture (BVH) format",
-    "author": "Campbell Barton",
+    # This is now displayed as the maintainer, so show the foundation.
+    # "author": "Campbell Barton", # Original Author
+    "author": "Blender Foundation",
     "version": (1, 0, 1),
     "blender": (2, 81, 6),
     "location": "File > Import-Export",
@@ -277,6 +279,13 @@ class ExportBVH(bpy.types.Operator, ExportHelper):
         return super().invoke(context, event)
 
     def execute(self, context):
+
+        if self.options.is_invoke:
+            # The context may have changed since invoking the file selector.
+            if not self.poll(context):
+                self.report({'ERROR'}, "Invalid context")
+                return {'CANCELLED'}
+
         if self.frame_start == 0 and self.frame_end == 0:
             self.frame_start = context.scene.frame_start
             self.frame_end = context.scene.frame_end

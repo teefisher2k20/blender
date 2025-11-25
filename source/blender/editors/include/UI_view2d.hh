@@ -218,12 +218,18 @@ void UI_view2d_dot_grid_draw(const View2D *v2d,
                              float min_step,
                              int grid_subdivisions);
 
-void UI_view2d_draw_lines_y__values(const View2D *v2d);
-void UI_view2d_draw_lines_x__values(const View2D *v2d);
-void UI_view2d_draw_lines_x__discrete_values(const View2D *v2d, bool display_minor_lines);
-void UI_view2d_draw_lines_x__discrete_time(const View2D *v2d,
-                                           const Scene *scene,
-                                           bool display_minor_lines);
+/**
+ * Draw horizontal lines.
+ *
+ * \param base: Defines in what step the lines are drawn.
+ * Depending on the zoom level of the `v2d` the step is a full fraction of the given base.
+ */
+void UI_view2d_draw_lines_y__values(const View2D *v2d, int base);
+void UI_view2d_draw_lines_x__values(const View2D *v2d, int base);
+void UI_view2d_draw_lines_x__discrete_values(const View2D *v2d,
+                                             int base,
+                                             bool display_minor_lines);
+void UI_view2d_draw_lines_x__discrete_time(const View2D *v2d, int base, bool display_minor_lines);
 void UI_view2d_draw_lines_x__discrete_frames_or_seconds(const View2D *v2d,
                                                         const Scene *scene,
                                                         bool display_seconds,
@@ -232,34 +238,36 @@ void UI_view2d_draw_lines_x__frames_or_seconds(const View2D *v2d,
                                                const Scene *scene,
                                                bool display_seconds);
 
-float UI_view2d_grid_resolution_x__frames_or_seconds(const View2D *v2d,
-                                                     const Scene *scene,
-                                                     bool display_seconds);
-float UI_view2d_grid_resolution_y__values(const View2D *v2d);
+float UI_view2d_grid_resolution_x__frames_or_seconds(const View2D *v2d, const Scene *scene);
+float UI_view2d_grid_resolution_y__values(const View2D *v2d, int base);
 
 /**
  * Scale indicator text drawing.
  */
-void UI_view2d_draw_scale_y__values(const ARegion *region,
-                                    const View2D *v2d,
-                                    const rcti *rect,
-                                    int colorid);
-void UI_view2d_draw_scale_y__block(const ARegion *region,
-                                   const View2D *v2d,
-                                   const rcti *rect,
-                                   int colorid);
+void UI_view2d_draw_scale_y__values(
+    const ARegion *region, const View2D *v2d, const rcti *rect, int colorid, int base);
+/**
+ * Draw a text scale in either frames or seconds. The minimum step distance is 1, meaning no
+ * subframe indicators will be drawn.
+ */
 void UI_view2d_draw_scale_x__discrete_frames_or_seconds(const ARegion *region,
                                                         const View2D *v2d,
                                                         const rcti *rect,
                                                         const Scene *scene,
                                                         bool display_seconds,
-                                                        int colorid);
+                                                        int colorid,
+                                                        int base);
+/**
+ * Draw a text scale in either frames or seconds.
+ * This can draw indicators on subframes, e.g. "1.5".
+ */
 void UI_view2d_draw_scale_x__frames_or_seconds(const ARegion *region,
                                                const View2D *v2d,
                                                const rcti *rect,
                                                const Scene *scene,
                                                bool display_seconds,
-                                               int colorid);
+                                               int colorid,
+                                               int base);
 
 /** \} */
 
@@ -270,7 +278,6 @@ void UI_view2d_draw_scale_x__frames_or_seconds(const ARegion *region,
 /**
  * Draw scroll-bars in the given 2D-region.
  */
-void UI_view2d_scrollers_draw_ex(View2D *v2d, const rcti *mask_custom, bool use_full_hide);
 void UI_view2d_scrollers_draw(View2D *v2d, const rcti *mask_custom);
 
 /** \} */
@@ -471,6 +478,8 @@ void UI_view2d_smooth_view(const bContext *C, ARegion *region, const rctf *cur, 
 #define UI_MARKER_MARGIN_Y (42 * UI_SCALE_FAC)
 #define UI_TIME_SCRUB_MARGIN_Y (23 * UI_SCALE_FAC)
 #define UI_TIME_CACHE_MARGIN_Y (UI_TIME_SCRUB_MARGIN_Y / 6.0f)
+#define UI_ANIM_MINY (HEADERY * UI_SCALE_FAC * 1.1f)
+#define UI_MARKERS_MINY (HEADERY * UI_SCALE_FAC * 2.0f)
 
 /** \} */
 

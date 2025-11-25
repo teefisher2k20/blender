@@ -309,7 +309,7 @@ typedef enum eGPDstroke_Flag {
   GP_STROKE_NEEDS_CURVE_UPDATE = (1 << 9),
   /* Flag to indicate that a stroke is used only for help, and will not affect rendering or fill */
   GP_STROKE_HELP = (1 << 10),
-  /* Flag to indicate that a extend stroke collide (fill tool)  */
+  /* Flag to indicate that a extend stroke collide (fill tool). */
   GP_STROKE_COLLIDE = (1 << 11),
   /* only for use with stroke-buffer (while drawing arrows) */
   GP_STROKE_USE_ARROW_START = (1 << 12),
@@ -455,8 +455,8 @@ typedef struct bGPDlayer {
   struct Object *parent;
   /** Inverse matrix (only used if parented). */
   float inverse[4][4];
-  /** String describing sub-object info, `MAX_ID_NAME - 2`. */
-  char parsubstr[64];
+  /** String describing sub-object info. */
+  char parsubstr[/*MAX_NAME*/ 64];
   short partype;
 
   /** Thickness adjustment. */
@@ -611,7 +611,11 @@ typedef struct bGPgrid {
 
 /** Grease-Pencil Annotations - 'DataBlock'. */
 typedef struct bGPdata {
+#ifdef __cplusplus
   DNA_DEFINE_CXX_METHODS(bGPdata)
+  /** See #ID_Type comment for why this is here. */
+  static constexpr ID_Type id_type = ID_GD_LEGACY;
+#endif
 
   /** Grease Pencil data is a data-block. */
   ID id;
@@ -796,20 +800,3 @@ typedef enum eGP_DrawMode {
   GP_DRAWMODE_2D = 0,
   GP_DRAWMODE_3D = 1,
 } eGP_DrawMode;
-
-/* ***************************************** */
-/* Mode Checking Macros */
-
-#define GPENCIL_CURVE_EDIT_SESSIONS_ON(gpd) \
-  ((gpd) && ((gpd)->flag & (GP_DATA_STROKE_EDITMODE)) && ((gpd)->flag & GP_DATA_CURVE_EDIT_MODE))
-
-/* Macros to check grease pencil modes */
-#define GPENCIL_VERTEX_MODE(gpd) ((gpd) && (gpd->flag & GP_DATA_STROKE_VERTEXMODE))
-
-#define GPENCIL_ANY_SCULPT_MASK(flag) \
-  ((flag & (GP_SCULPT_MASK_SELECTMODE_POINT | GP_SCULPT_MASK_SELECTMODE_STROKE | \
-            GP_SCULPT_MASK_SELECTMODE_SEGMENT)))
-
-#define GPENCIL_ANY_VERTEX_MASK(flag) \
-  ((flag & (GP_VERTEX_MASK_SELECTMODE_POINT | GP_VERTEX_MASK_SELECTMODE_STROKE | \
-            GP_VERTEX_MASK_SELECTMODE_SEGMENT)))

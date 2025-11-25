@@ -9,8 +9,6 @@
  * the topology of existing mesh data. (split, join, flip etc).
  */
 
-#include "MEM_guardedalloc.h"
-
 #include "BLI_math_vector.h"
 #include "BLI_vector.hh"
 
@@ -92,9 +90,16 @@ bool BM_disk_dissolve(BMesh *bm, BMVert *v)
       return false;
     }
 #else
-    if (UNLIKELY(!BM_faces_join_pair(bm, e->l, e->l->radial_next, true))) {
+    BMFace *f_double;
+
+    if (UNLIKELY(!BM_faces_join_pair(bm, e->l, e->l->radial_next, true, &f_double))) {
       return false;
     }
+
+    /* See #BM_faces_join note on callers asserting when `r_double` is non-null. */
+    BLI_assert_msg(f_double == nullptr,
+                   "Doubled face detected at " AT ". Resulting mesh may be corrupt.");
+
     if (UNLIKELY(!BM_vert_collapse_faces(bm, v->e, v, 1.0, true, false, true, true))) {
       return false;
     }
@@ -111,9 +116,15 @@ bool BM_disk_dissolve(BMesh *bm, BMVert *v)
 
     /* handle two-valence */
     if (e->l != e->l->radial_next) {
-      if (!BM_faces_join_pair(bm, e->l, e->l->radial_next, true)) {
+      BMFace *f_double;
+
+      if (!BM_faces_join_pair(bm, e->l, e->l->radial_next, true, &f_double)) {
         return false;
       }
+
+      /* See #BM_faces_join note on callers asserting when `r_double` is non-null. */
+      BLI_assert_msg(f_double == nullptr,
+                     "Doubled face detected at " AT ". Resulting mesh may be corrupt.");
     }
 
     return true;
@@ -128,13 +139,19 @@ bool BM_disk_dissolve(BMesh *bm, BMVert *v)
       do {
         BMFace *f = nullptr;
         if (BM_edge_is_manifold(e) && (e != baseedge) && (e != keepedge)) {
-          f = BM_faces_join_pair(bm, e->l, e->l->radial_next, true);
+          BMFace *f_double;
+
+          f = BM_faces_join_pair(bm, e->l, e->l->radial_next, true, &f_double);
           /* return if couldn't join faces in manifold
            * conditions */
           /* !disabled for testing why bad things happen */
           if (!f) {
             return false;
           }
+
+          /* See #BM_faces_join note on callers asserting when `r_double` is non-null. */
+          BLI_assert_msg(f_double == nullptr,
+                         "Doubled face detected at " AT ". Resulting mesh may be corrupt.");
         }
 
         if (f) {
@@ -156,10 +173,16 @@ bool BM_disk_dissolve(BMesh *bm, BMVert *v)
     if (e->l) {
       /* get remaining two faces */
       if (e->l != e->l->radial_next) {
+        BMFace *f_double;
+
         /* join two remaining faces */
-        if (!BM_faces_join_pair(bm, e->l, e->l->radial_next, true)) {
+        if (!BM_faces_join_pair(bm, e->l, e->l->radial_next, true, &f_double)) {
           return false;
         }
+
+        /* See #BM_faces_join note on callers asserting when `r_double` is non-null. */
+        BLI_assert_msg(f_double == nullptr,
+                       "Doubled face detected at " AT ". Resulting mesh may be corrupt.");
       }
     }
   }
@@ -167,7 +190,8 @@ bool BM_disk_dissolve(BMesh *bm, BMVert *v)
   return true;
 }
 
-BMFace *BM_faces_join_pair(BMesh *bm, BMLoop *l_a, BMLoop *l_b, const bool do_del)
+BMFace *BM_faces_join_pair(
+    BMesh *bm, BMLoop *l_a, BMLoop *l_b, const bool do_del, BMFace **r_double)
 {
   BLI_assert((l_a != l_b) && (l_a->e == l_b->e));
 
@@ -177,7 +201,7 @@ BMFace *BM_faces_join_pair(BMesh *bm, BMLoop *l_a, BMLoop *l_b, const bool do_de
   }
 
   BMFace *faces[2] = {l_a->f, l_b->f};
-  return BM_faces_join(bm, faces, 2, do_del);
+  return BM_faces_join(bm, faces, 2, do_del, r_double);
 }
 
 BMFace *BM_face_split(BMesh *bm,
@@ -350,7 +374,7 @@ BMEdge *BM_vert_collapse_faces(BMesh *bm,
 
         src[0] = kvloop->head.data;
         src[1] = tvloop->head.data;
-        CustomData_bmesh_interp(&bm->ldata, src, w, nullptr, 2, kvloop->head.data);
+        CustomData_bmesh_interp(&bm->ldata, src, w, 2, kvloop->head.data);
       }
     } while ((l_iter = l_iter->radial_next) != e_kill->l);
   }
@@ -371,7 +395,14 @@ BMEdge *BM_vert_collapse_faces(BMesh *bm,
     }
 
     if (faces.size() >= 2) {
-      BMFace *f2 = BM_faces_join(bm, faces.data(), faces.size(), true);
+      BMFace *f_double;
+
+      BMFace *f2 = BM_faces_join(bm, faces.data(), faces.size(), true, &f_double);
+
+      /* See #BM_faces_join note on callers asserting when `r_double` is non-null. */
+      BLI_assert_msg(f_double == nullptr,
+                     "Doubled face detected at " AT ". Resulting mesh may be corrupt.");
+
       if (f2) {
         BMLoop *l_a, *l_b;
 
@@ -790,9 +821,15 @@ BMEdge *BM_edge_rotate(BMesh *bm, BMEdge *e, const bool ccw, const short check_f
 
   const bool is_flipped = !BM_edge_is_contiguous(e);
 
+  BMFace *f_double;
+
   /* don't delete the edge, manually remove the edge after so we can copy its attributes */
   f = BM_faces_join_pair(
-      bm, BM_face_edge_share_loop(l1->f, e), BM_face_edge_share_loop(l2->f, e), true);
+      bm, BM_face_edge_share_loop(l1->f, e), BM_face_edge_share_loop(l2->f, e), true, &f_double);
+
+  /* See #BM_faces_join note on callers asserting when `r_double` is non-null. */
+  BLI_assert_msg(f_double == nullptr,
+                 "Doubled face detected at " AT ". Resulting mesh may be corrupt.");
 
   if (f == nullptr) {
     return nullptr;

@@ -355,9 +355,7 @@ class IndexRangeCyclic {
     if (this->cycles_ > 0) {
       return this->size_before_loop() + this->end_ + (this->cycles_ - 1) * this->range_size_;
     }
-    else {
-      return int(this->end_ - this->start_);
-    }
+    return int(this->end_ - this->start_);
   }
 
   /**
@@ -415,10 +413,7 @@ class IndexRangeCyclic {
       BLI_assert(0 <= index && index <= range_end);
     }
 
-    constexpr CyclicIterator(const CyclicIterator &copy)
-        : index_(copy.index_), range_end_(copy.range_end_), cycles_(copy.cycles_)
-    {
-    }
+    constexpr CyclicIterator(const CyclicIterator &copy) = default;
     ~CyclicIterator() = default;
 
     constexpr CyclicIterator &operator=(const CyclicIterator &copy)
@@ -474,6 +469,10 @@ IndexMask curve_to_point_selection(OffsetIndices<int> points_by_curve,
                                    const IndexMask &curve_selection,
                                    IndexMaskMemory &memory);
 
+IndexMask curve_type_point_selection(const bke::CurvesGeometry &curves,
+                                     CurveType curve_type,
+                                     IndexMaskMemory &memory);
+
 void fill_points(OffsetIndices<int> points_by_curve,
                  const IndexMask &curve_selection,
                  GPointer value,
@@ -512,13 +511,42 @@ void foreach_curve_by_type(const VArray<int8_t> &types,
                            FunctionRef<void(IndexMask)> poly_fn,
                            FunctionRef<void(IndexMask)> bezier_fn,
                            FunctionRef<void(IndexMask)> nurbs_fn);
+
+using SelectedCallback = FunctionRef<void(
+    int curve_i, IndexRange curve_points, Span<IndexRange> selected_point_ranges)>;
+using UnselectedCallback = FunctionRef<void(IndexRange curves, IndexRange unselected_points)>;
+
+/**
+ * Calls callback function for each curve having selected points.
+ *
+ * \param mask: selected points.
+ * \param points_by_curve: The offsets of every curve into arrays on the points domain.
+ * \param selected_fn: callback function called for each curve with at least one point selected.
+ */
+void foreach_selected_point_ranges_per_curve(const IndexMask &mask,
+                                             OffsetIndices<int> points_by_curve,
+                                             SelectedCallback selected_fn);
+
+/**
+ * Calls callback function for each curve having selected points.
+ * Calls second callback for groups of curves with no points selected.
+ *
+ * \param mask: selected points.
+ * \param points_by_curve: The offsets of every curve into arrays on the points domain.
+ * \param selected_fn: callback function called for each curve with at least one point selected.
+ * \param unselected_fn: callback function called for groups of curves with no selected points.
+ */
+void foreach_selected_point_ranges_per_curve(const IndexMask &mask,
+                                             OffsetIndices<int> points_by_curve,
+                                             SelectedCallback selected_fn,
+                                             UnselectedCallback unselected_fn);
+
 namespace bezier {
 
 /**
  * Return a flat array of all the bezier positions including the left and right handles.
  * The layout is
- * `[handle_position_left#0, position#0, handle_position_right#0, handle_position_left#1,
- *   position#1, handle_position_right#1, ...]`
+ * `[handle_left#0, position#0, handle_right#0, handle_left#1, position#1, handle_right#1, ...]`
  */
 Array<float3> retrieve_all_positions(const bke::CurvesGeometry &curves,
                                      const IndexMask &curves_selection);
@@ -535,6 +563,43 @@ void write_all_positions(bke::CurvesGeometry &curves,
                          Span<float3> all_positions);
 
 }  // namespace bezier
+
+namespace nurbs {
+
+/**
+ * Gathers NURBS custom knots of selected curves from one `CurvesGeometry` instance to another.
+ * Should be used to implement operator's custom knot copying logic.
+ * `dst_curve_offset` can be used to append knots to already existing ones in the `CurvesGeometry`.
+ */
+void gather_custom_knots(const bke::CurvesGeometry &src,
+                         const IndexMask &src_curves,
+                         int dst_curve_offset,
+                         bke::CurvesGeometry &dst);
+
+/**
+ * Overwrites `NURBS_KNOT_MODE_CUSTOM` to given ones for regular and cyclic curves.
+ * The purpose is to update knot modes for curves when knot copying or calculation is not
+ * possible or too complex. Curve operators not supporting NURBS custom knots should call this
+ * function with `IndexMask` `CurvesGeometry.curves_range()`, if resulting curves are created by
+ * copying all attributes. This way `NURBS_KNOT_MODE_CUSTOM` values might be copied though custom
+ * knots not.
+ */
+void update_custom_knot_modes(const IndexMask &mask,
+                              const KnotsMode mode_for_regular,
+                              const KnotsMode mode_for_cyclic,
+                              bke::CurvesGeometry &curves);
+
+/**
+ * Copies NURBS custom knots from one `CurvesGeometry` instance to another excluding
+ * `exclude_curves`.
+ * For excluded curves with `NURBS_KNOT_MODE_CUSTOM` knot mode is overwritten to
+ * `NURBS_KNOT_MODE_NORMAL`.
+ */
+void copy_custom_knots(const bke::CurvesGeometry &src_curves,
+                       const IndexMask &exclude_curves,
+                       bke::CurvesGeometry &dst_curves);
+
+}  // namespace nurbs
 
 /** \} */
 
@@ -563,11 +628,9 @@ inline bool CurvePoint::operator<(const CurvePoint &other) const
   if (index == other.index) {
     return parameter < other.parameter;
   }
-  else {
-    /* Use next index for cyclic comparison due to loop segment < first segment. */
-    return next_index < other.next_index &&
-           !(next_index == other.index && parameter == 1.0 && other.parameter == 0.0);
-  }
+  /* Use next index for cyclic comparison due to loop segment < first segment. */
+  return next_index < other.next_index &&
+         !(next_index == other.index && parameter == 1.0 && other.parameter == 0.0);
 }
 
 /** \} */

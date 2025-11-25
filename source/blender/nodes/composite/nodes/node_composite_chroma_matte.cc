@@ -18,12 +18,11 @@
 
 #include "NOD_multi_function.hh"
 
-#include "UI_interface.hh"
 #include "UI_resources.hh"
 
 #include "GPU_material.hh"
 
-#include "COM_shader_node.hh"
+#include "COM_result.hh"
 
 #include "node_composite_util.hh"
 
@@ -31,100 +30,55 @@
 
 namespace blender::nodes::node_composite_chroma_matte_cc {
 
-NODE_STORAGE_FUNCS(NodeChroma)
-
 static void cmp_node_chroma_matte_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Color>("Image")
-      .default_value({1.0f, 1.0f, 1.0f, 1.0f})
-      .compositor_domain_priority(0);
-  b.add_input<decl::Color>("Key Color")
-      .default_value({1.0f, 1.0f, 1.0f, 1.0f})
-      .compositor_domain_priority(1);
-  b.add_output<decl::Color>("Image");
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
+  b.is_function_node();
+  b.add_input<decl::Color>("Image").default_value({1.0f, 1.0f, 1.0f, 1.0f}).hide_value();
+  b.add_output<decl::Color>("Image").align_with_previous();
   b.add_output<decl::Float>("Matte");
-}
 
-static void node_composit_init_chroma_matte(bNodeTree * /*ntree*/, bNode *node)
-{
-  NodeChroma *c = MEM_cnew<NodeChroma>(__func__);
-  node->storage = c;
-  c->t1 = DEG2RADF(30.0f);
-  c->t2 = DEG2RADF(10.0f);
-  c->t3 = 0.0f;
-  c->fsize = 0.0f;
-  c->fstrength = 1.0f;
-}
-
-static void node_composit_buts_chroma_matte(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
-{
-  uiLayout *col;
-
-  col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "tolerance", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "threshold", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
-
-  col = uiLayoutColumn(layout, true);
-  /* Removed for now. */
-  // uiItemR(col, ptr, "lift", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
-  uiItemR(
-      col, ptr, "gain", UI_ITEM_R_SPLIT_EMPTY_NAME | UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
-  /* Removed for now. */
-  // uiItemR(col, ptr, "shadow_adjust", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
+  b.add_input<decl::Color>("Key Color").default_value({1.0f, 1.0f, 1.0f, 1.0f});
+  b.add_input<decl::Float>("Minimum")
+      .default_value(DEG2RADF(10.0f))
+      .subtype(PROP_ANGLE)
+      .description(
+          "If the angle between the color and the key color in CrCb space is less than this "
+          "minimum angle, it is keyed");
+  b.add_input<decl::Float>("Maximum")
+      .default_value(DEG2RADF(30.0f))
+      .subtype(PROP_ANGLE)
+      .description(
+          "If the angle between the color and the key color in CrCb space is larger than this "
+          "maximum angle, it is not keyed");
+  b.add_input<decl::Float>("Falloff")
+      .default_value(1.0f)
+      .min(0.0f)
+      .max(1.0f)
+      .subtype(PROP_FACTOR)
+      .description(
+          "Controls the falloff between keyed and non-keyed values. 0 means completely sharp and "
+          "1 means completely smooth");
 }
 
 using namespace blender::compositor;
 
-static float get_acceptance(const bNode &node)
+static int node_gpu_material(GPUMaterial *material,
+                             bNode *node,
+                             bNodeExecData * /*execdata*/,
+                             GPUNodeStack *inputs,
+                             GPUNodeStack *outputs)
 {
-  return std::tan(node_storage(node).t1 / 2.0f);
-}
-
-static float get_cutoff(const bNode &node)
-{
-  return node_storage(node).t2;
-}
-
-static float get_falloff(const bNode &node)
-{
-  return node_storage(node).fstrength;
-}
-
-class ChromaMatteShaderNode : public ShaderNode {
- public:
-  using ShaderNode::ShaderNode;
-
-  void compile(GPUMaterial *material) override
-  {
-    GPUNodeStack *inputs = get_inputs_array();
-    GPUNodeStack *outputs = get_outputs_array();
-
-    const float acceptance = get_acceptance(bnode());
-    const float cutoff = get_cutoff(bnode());
-    const float falloff = get_falloff(bnode());
-
-    GPU_stack_link(material,
-                   &bnode(),
-                   "node_composite_chroma_matte",
-                   inputs,
-                   outputs,
-                   GPU_uniform(&acceptance),
-                   GPU_uniform(&cutoff),
-                   GPU_uniform(&falloff));
-  }
-};
-
-static ShaderNode *get_compositor_shader_node(DNode node)
-{
-  return new ChromaMatteShaderNode(node);
+  return GPU_stack_link(material, node, "node_composite_chroma_matte", inputs, outputs);
 }
 
 /* Algorithm from the book Video Demystified. Chapter 7. Chroma Keying. */
 static void chroma_matte(const float4 &color,
                          const float4 &key,
-                         const float acceptance,
-                         const float cutoff,
-                         const float falloff,
+                         const float &minimum,
+                         const float &maximum,
+                         const float &falloff,
                          float4 &result,
                          float &matte)
 {
@@ -145,15 +99,15 @@ static void chroma_matte(const float4 &color,
   color_cc = math::from_direction(key_cc * float2(1.0f, -1.0f)) * color_cc;
 
   /* Compute foreground key. If positive, the value is in the [0, 1] range. */
-  float foreground_key = color_cc.x - (math::abs(color_cc.y) / acceptance);
+  float foreground_key = color_cc.x - (math::abs(color_cc.y) / math::tan(maximum / 2.0f));
 
   /* Negative foreground key values retain the original alpha. Positive values are scaled by the
-   * falloff, while colors that make an angle less than the cutoff angle get a zero alpha. */
+   * falloff, while colors that make an angle less than the minimum angle get a zero alpha. */
   float alpha = color.w;
   if (foreground_key > 0.0f) {
     alpha = 1.0f - (foreground_key / falloff);
 
-    if (math::abs(math::atan2(color_cc.y, color_cc.x)) < (cutoff / 2.0f)) {
+    if (math::abs(math::atan2(color_cc.y, color_cc.x)) < (minimum / 2.0f)) {
       alpha = 0.0f;
     }
   }
@@ -163,26 +117,32 @@ static void chroma_matte(const float4 &color,
   result = color * matte;
 }
 
+using blender::compositor::Color;
+
 static void node_build_multi_function(blender::nodes::NodeMultiFunctionBuilder &builder)
 {
-  const float acceptance = get_acceptance(builder.node());
-  const float cutoff = get_cutoff(builder.node());
-  const float falloff = get_falloff(builder.node());
-
   builder.construct_and_set_matching_fn_cb([=]() {
-    return mf::build::SI2_SO2<float4, float4, float4, float>(
+    return mf::build::SI5_SO2<Color, Color, float, float, float, Color, float>(
         "Chroma Key",
-        [=](const float4 &color, const float4 &key_color, float4 &output_color, float &matte)
-            -> void {
-          chroma_matte(color, key_color, acceptance, cutoff, falloff, output_color, matte);
+        [=](const Color &color,
+            const Color &key_color,
+            const float &minimum,
+            const float &maximum,
+            const float &falloff,
+            Color &output_color,
+            float &matte) -> void {
+          float4 out_color;
+          chroma_matte(
+              float4(color), float4(key_color), minimum, maximum, falloff, out_color, matte);
+          output_color = Color(out_color);
         },
-        mf::build::exec_presets::AllSpanOrSingle());
+        mf::build::exec_presets::SomeSpanOrSingle<0, 1>());
   });
 }
 
 }  // namespace blender::nodes::node_composite_chroma_matte_cc
 
-void register_node_type_cmp_chroma_matte()
+static void register_node_type_cmp_chroma_matte()
 {
   namespace file_ns = blender::nodes::node_composite_chroma_matte_cc;
 
@@ -194,13 +154,11 @@ void register_node_type_cmp_chroma_matte()
   ntype.enum_name_legacy = "CHROMA_MATTE";
   ntype.nclass = NODE_CLASS_MATTE;
   ntype.declare = file_ns::cmp_node_chroma_matte_declare;
-  ntype.draw_buttons = file_ns::node_composit_buts_chroma_matte;
   ntype.flag |= NODE_PREVIEW;
-  ntype.initfunc = file_ns::node_composit_init_chroma_matte;
-  blender::bke::node_type_storage(
-      &ntype, "NodeChroma", node_free_standard_storage, node_copy_standard_storage);
-  ntype.get_compositor_shader_node = file_ns::get_compositor_shader_node;
+  ntype.gpu_fn = file_ns::node_gpu_material;
   ntype.build_multi_function = file_ns::node_build_multi_function;
+  blender::bke::node_type_size(ntype, 155, 140, NODE_DEFAULT_MAX_WIDTH);
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
+NOD_REGISTER_NODE(register_node_type_cmp_chroma_matte)

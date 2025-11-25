@@ -42,13 +42,14 @@ void RealizeOnDomainOperation::execute()
 {
   /* Translate the input such that it is centered in the virtual compositing space. Adding any
    * corrective translation if necessary. */
-  const float2 input_center_translation = float2(-float2(this->get_input().domain().size) / 2.0f);
+  const float2 input_center_translation = float2(-float2(this->get_input().domain().data_size) /
+                                                 2.0f);
   const float3x3 input_transformation = math::translate(
       this->get_input().domain().transformation,
       input_center_translation + this->compute_corrective_translation());
 
   /* Translate the output such that it is centered in the virtual compositing space. */
-  const float2 output_center_translation = -float2(this->compute_domain().size) / 2.0f;
+  const float2 output_center_translation = -float2(this->compute_domain().data_size) / 2.0f;
   const float3x3 output_transformation = math::translate(this->compute_domain().transformation,
                                                          output_center_translation);
 
@@ -77,38 +78,36 @@ float2 RealizeOnDomainOperation::compute_corrective_translation()
    * to the centering translation. Which introduce fuzzy result due to interpolation. So if one
    * is odd and the other is even, detected by testing the low bit of the xor of the sizes, shift
    * the input by 1/2 pixel so the pixels align. */
-  const int2 output_size = this->compute_domain().size;
-  const int2 input_size = this->get_input().domain().size;
+  const int2 output_size = this->compute_domain().data_size;
+  const int2 input_size = this->get_input().domain().data_size;
   return float2(((input_size[0] ^ output_size[0]) & 1) ? -0.5f : 0.0f,
                 ((input_size[1] ^ output_size[1]) & 1) ? -0.5f : 0.0f);
 }
 
 void RealizeOnDomainOperation::realize_on_domain_gpu(const float3x3 &inverse_transformation)
 {
-  GPUShader *shader = this->context().get_shader(this->get_realization_shader_name());
+  gpu::Shader *shader = this->context().get_shader(this->get_realization_shader_name());
   GPU_shader_bind(shader);
 
   GPU_shader_uniform_mat3_as_mat4(shader, "inverse_transformation", inverse_transformation.ptr());
 
-  /* The texture sampler should use bilinear interpolation for both the bilinear and bicubic
-   * cases, as the logic used by the bicubic realization shader expects textures to use bilinear
-   * interpolation. */
   Result &input = this->get_input();
   const RealizationOptions realization_options = input.get_realization_options();
-  const bool use_bilinear = ELEM(
-      realization_options.interpolation, Interpolation::Bilinear, Interpolation::Bicubic);
-  GPU_texture_filter_mode(input, use_bilinear);
 
-  /* If the input repeats, set a repeating extend mode for out-of-bound texture access. Otherwise,
-   * make out-of-bound texture access return zero by setting a clamp to border extend mode. */
+  if (!GPU_texture_has_integer_format(input)) {
+    /* The texture sampler should use bilinear interpolation for both the bilinear and bicubic
+     * cases, as the logic used by the bicubic realization shader expects textures to use bilinear
+     * interpolation. */
+    const bool use_bilinear = ELEM(
+        realization_options.interpolation, Interpolation::Bilinear, Interpolation::Bicubic);
+    GPU_texture_filter_mode(input, use_bilinear);
+    GPU_texture_anisotropic_filter(input, false);
+  }
+
   GPU_texture_extend_mode_x(input,
-                            realization_options.repeat_x ?
-                                GPU_SAMPLER_EXTEND_MODE_REPEAT :
-                                GPU_SAMPLER_EXTEND_MODE_CLAMP_TO_BORDER);
+                            map_extension_mode_to_extend_mode(realization_options.extension_x));
   GPU_texture_extend_mode_y(input,
-                            realization_options.repeat_y ?
-                                GPU_SAMPLER_EXTEND_MODE_REPEAT :
-                                GPU_SAMPLER_EXTEND_MODE_CLAMP_TO_BORDER);
+                            map_extension_mode_to_extend_mode(realization_options.extension_y));
 
   input.bind_as_texture(shader, "input_tx");
 
@@ -117,7 +116,7 @@ void RealizeOnDomainOperation::realize_on_domain_gpu(const float3x3 &inverse_tra
   output.allocate_texture(domain);
   output.bind_as_image(shader, "domain_img");
 
-  compute_dispatch_threads_at_least(shader, domain.size);
+  compute_dispatch_threads_at_least(shader, domain.data_size);
 
   input.unbind_as_texture();
   output.unbind_as_image();
@@ -128,39 +127,89 @@ const char *RealizeOnDomainOperation::get_realization_shader_name()
 {
   if (this->get_input().get_realization_options().interpolation == Interpolation::Bicubic) {
     switch (this->get_input().type()) {
-      case ResultType::Color:
-        return "compositor_realize_on_domain_bicubic_color";
-      case ResultType::Vector:
-        return "compositor_realize_on_domain_bicubic_vector";
       case ResultType::Float:
         return "compositor_realize_on_domain_bicubic_float";
-      case ResultType::Int:
-      case ResultType::Int2:
       case ResultType::Float2:
+        return "compositor_realize_on_domain_bicubic_float2";
       case ResultType::Float3:
-        /* Realization does not support internal image types. */
+        /* Float3 is internally stored in a float4 texture. */
+        return "compositor_realize_on_domain_bicubic_float4";
+      case ResultType::Float4:
+        return "compositor_realize_on_domain_bicubic_float4";
+      case ResultType::Color:
+        return "compositor_realize_on_domain_bicubic_float4";
+      case ResultType::Int:
+        return "compositor_realize_on_domain_int";
+      case ResultType::Int2:
+        return "compositor_realize_on_domain_int2";
+      case ResultType::Bool:
+        return "compositor_realize_on_domain_bool";
+      case ResultType::Menu:
+        return "compositor_realize_on_domain_menu";
+      case ResultType::String:
+        /* Single only types do not support GPU code path. */
+        BLI_assert(Result::is_single_value_only_type(this->get_input().type()));
+        BLI_assert_unreachable();
         break;
     }
   }
   else {
     switch (this->get_input().type()) {
-      case ResultType::Color:
-        return "compositor_realize_on_domain_color";
-      case ResultType::Vector:
-        return "compositor_realize_on_domain_vector";
       case ResultType::Float:
         return "compositor_realize_on_domain_float";
-      case ResultType::Int:
-      case ResultType::Int2:
       case ResultType::Float2:
+        return "compositor_realize_on_domain_float2";
       case ResultType::Float3:
-        /* Realization does not support internal image types. */
+        /* Float3 is internally stored in a float4 texture. */
+        return "compositor_realize_on_domain_float4";
+      case ResultType::Float4:
+        return "compositor_realize_on_domain_float4";
+      case ResultType::Color:
+        return "compositor_realize_on_domain_float4";
+      case ResultType::Int:
+        return "compositor_realize_on_domain_int";
+      case ResultType::Int2:
+        return "compositor_realize_on_domain_int2";
+      case ResultType::Bool:
+        return "compositor_realize_on_domain_bool";
+      case ResultType::Menu:
+        return "compositor_realize_on_domain_menu";
+      case ResultType::String:
+        /* Single only types do not support GPU code path. */
+        BLI_assert(Result::is_single_value_only_type(this->get_input().type()));
+        BLI_assert_unreachable();
         break;
     }
   }
 
   BLI_assert_unreachable();
   return nullptr;
+}
+
+template<typename T>
+static void realize_on_domain(const Result &input,
+                              Result &output,
+                              const float3x3 &inverse_transformation)
+{
+  const RealizationOptions realization_options = input.get_realization_options();
+  const int2 input_size = input.domain().data_size;
+  const int2 output_size = output.domain().data_size;
+  parallel_for(output_size, [&](const int2 texel) {
+    const float2 texel_coordinates = float2(texel) + float2(0.5f);
+
+    /* Transform the input image by transforming the domain coordinates with the inverse of input
+     * image's transformation. The inverse transformation is an affine matrix and thus the
+     * coordinates should be in homogeneous coordinates. */
+    const float2 transformed_coordinates =
+        (inverse_transformation * float3(texel_coordinates, 1.0f)).xy();
+
+    const float2 normalized_coordinates = transformed_coordinates / float2(input_size);
+    T sample = input.sample<T>(normalized_coordinates,
+                               realization_options.interpolation,
+                               realization_options.extension_x,
+                               realization_options.extension_y);
+    output.store_pixel(texel, sample);
+  });
 }
 
 void RealizeOnDomainOperation::realize_on_domain_cpu(const float3x3 &inverse_transformation)
@@ -171,38 +220,25 @@ void RealizeOnDomainOperation::realize_on_domain_cpu(const float3x3 &inverse_tra
   const Domain domain = this->compute_domain();
   output.allocate_texture(domain);
 
-  const RealizationOptions realization_options = input.get_realization_options();
-  parallel_for(domain.size, [&](const int2 texel) {
-    /* Add 0.5 to evaluate the input sampler at the center of the pixel. */
-    float2 coordinates = float2(texel) + float2(0.5f);
-
-    /* Transform the input image by transforming the domain coordinates with the inverse of input
-     * image's transformation. The inverse transformation is an affine matrix and thus the
-     * coordinates should be in homogeneous coordinates. */
-    coordinates = (inverse_transformation * float3(coordinates, 1.0f)).xy();
-
-    /* Subtract the offset and divide by the input image size to get the relevant coordinates into
-     * the sampler's expected [0, 1] range. */
-    const int2 input_size = input.domain().size;
-    float2 normalized_coordinates = coordinates / float2(input_size);
-
-    float4 sample;
-    switch (realization_options.interpolation) {
-      case Interpolation::Nearest:
-        sample = input.sample_nearest_wrap(
-            normalized_coordinates, realization_options.repeat_x, realization_options.repeat_y);
-        break;
-      case Interpolation::Bilinear:
-        sample = input.sample_bilinear_wrap(
-            normalized_coordinates, realization_options.repeat_x, realization_options.repeat_y);
-        break;
-      case Interpolation::Bicubic:
-        sample = input.sample_cubic_wrap(
-            normalized_coordinates, realization_options.repeat_x, realization_options.repeat_y);
-        break;
-    }
-    output.store_pixel_generic_type(texel, sample);
-  });
+  input.get_cpp_type()
+      .to_static_type_tag<float,
+                          float2,
+                          float3,
+                          float4,
+                          Color,
+                          int32_t,
+                          int2,
+                          bool,
+                          nodes::MenuValue>([&](auto type_tag) {
+        using T = typename decltype(type_tag)::type;
+        if constexpr (std::is_same_v<T, void>) {
+          /* Unsupported type. */
+          BLI_assert_unreachable();
+        }
+        else {
+          realize_on_domain<T>(input, output, inverse_transformation);
+        }
+      });
 }
 
 Domain RealizeOnDomainOperation::compute_domain()
@@ -214,36 +250,39 @@ Domain RealizeOnDomainOperation::compute_domain()
  * realization shouldn't be needed. */
 static constexpr float transformation_tolerance = 10e-6f;
 
-/* Given a potentially transformed domain, compute a domain such that its rotation and scale become
- * identity and the size of the domain is increased/reduced to adapt to the new transformation. For
- * instance, if the domain is rotated, the returned domain will have zero rotation but expanded
- * size to account for the bounding box of the domain after rotation. The size of the returned
- * domain is bound and clipped by the maximum possible size to avoid allocations that surpass
- * hardware limits. */
-static Domain compute_realized_transformation_domain(Context &context, const Domain &domain)
+Domain RealizeOnDomainOperation::compute_realized_transformation_domain(
+    Context &context, const Domain &domain, const bool realize_translation)
 {
-  const int2 size = domain.size;
-
   /* If the domain is only infinitesimally rotated or scaled, return a domain with just the
-   * translation component. */
+   * translation component if not realizing translation. */
   if (math::is_equal(
           float2x2(domain.transformation), float2x2::identity(), transformation_tolerance))
   {
-    return Domain(size, math::from_location<float3x3>(domain.transformation.location()));
+    if (realize_translation) {
+      Domain realized_domain = domain;
+      realized_domain.transformation = float3x3::identity();
+      return realized_domain;
+    }
+    Domain realized_domain = domain;
+    realized_domain.transformation = math::from_location<float3x3>(
+        domain.transformation.location());
+    return realized_domain;
   }
 
   /* Compute the 4 corners of the domain. */
+  const int2 size = domain.data_size;
   const float2 lower_left_corner = float2(0.0f);
   const float2 lower_right_corner = float2(size.x, 0.0f);
   const float2 upper_left_corner = float2(0.0f, size.y);
   const float2 upper_right_corner = float2(size);
 
-  /* Eliminate the translation component of the transformation and create a centered
-   * transformation with the image center as the origin. Translation is ignored since it has no
-   * effect on the size of the domain and will be restored later. */
-  const float2 center = float2(float2(size) / 2.0f);
+  /* Eliminate the translation component of the transformation. Translation is ignored since it has
+   * no effect on the size of the domain and will be restored later. */
   const float3x3 transformation = float3x3(float2x2(domain.transformation));
-  const float3x3 centered_transformation = math::from_origin_transform(transformation, center);
+
+  /* Translate the input such that it is centered in the virtual compositing space. */
+  const float2 center_translation = -float2(size) / 2.0f;
+  const float3x3 centered_transformation = math::translate(transformation, center_translation);
 
   /* Transform each of the 4 corners of the image by the centered transformation. */
   const float2 transformed_lower_left_corner = math::transform_point(centered_transformation,
@@ -275,7 +314,10 @@ static Domain compute_realized_transformation_domain(Context &context, const Dom
   const int2 safe_size = math::clamp(new_size, int2(1), int2(max_size));
 
   /* Create a domain from the new safe size and just the translation component of the
-   * transformation, */
+   * transformation if not realizing translation. */
+  if (realize_translation) {
+    return Domain(safe_size);
+  }
   return Domain(safe_size, math::from_location<float3x3>(domain.transformation.location()));
 }
 
@@ -286,7 +328,7 @@ SimpleOperation *RealizeOnDomainOperation::construct_if_needed(
     const Domain &operation_domain)
 {
   /* This input doesn't need realization, the operation is not needed. */
-  if (!input_descriptor.realization_options.realize_on_operation_domain) {
+  if (input_descriptor.realization_mode == InputRealizationMode::None) {
     return nullptr;
   }
 
@@ -301,16 +343,26 @@ SimpleOperation *RealizeOnDomainOperation::construct_if_needed(
     return nullptr;
   }
 
-  const Domain target_domain = compute_realized_transformation_domain(context, operation_domain);
+  /* If we are realizing on the operation domain, then our target domain is the operation domain,
+   * otherwise, we are only realizing the transforms, then our target domain is the input's one. */
+  const bool use_operation_domain = input_descriptor.realization_mode ==
+                                    InputRealizationMode::OperationDomain;
+  const Domain target_domain = use_operation_domain ? operation_domain : input_result.domain();
 
-  /* The input have an almost identical domain to the target domain, so no need to realize it and
-   * the operation is not needed. */
-  if (Domain::is_equal(input_result.domain(), target_domain, transformation_tolerance)) {
+  const bool should_realize_translation = input_descriptor.realization_mode ==
+                                          InputRealizationMode::Transforms;
+  const Domain realized_target_domain =
+      RealizeOnDomainOperation::compute_realized_transformation_domain(
+          context, target_domain, should_realize_translation);
+
+  /* The input have an almost identical domain to the realized target domain, so no need to realize
+   * it and the operation is not needed. */
+  if (Domain::is_equal(input_result.domain(), realized_target_domain, transformation_tolerance)) {
     return nullptr;
   }
 
   /* Otherwise, realization is needed. */
-  return new RealizeOnDomainOperation(context, target_domain, input_descriptor.type);
+  return new RealizeOnDomainOperation(context, realized_target_domain, input_descriptor.type);
 }
 
 }  // namespace blender::compositor

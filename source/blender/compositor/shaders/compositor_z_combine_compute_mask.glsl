@@ -2,16 +2,20 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "infos/compositor_z_combine_infos.hh"
+
+COMPUTE_SHADER_CREATE_INFO(compositor_z_combine_compute_mask)
+
 #include "gpu_shader_compositor_texture_utilities.glsl"
 
 void main()
 {
-  ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+  int2 texel = int2(gl_GlobalInvocationID.xy);
 
   float first_z_value = texture_load(first_z_tx, texel).x;
   float second_z_value = texture_load(second_z_tx, texel).x;
 
   float z_combine_factor = float(first_z_value < second_z_value);
 
-  imageStore(mask_img, texel, vec4(z_combine_factor));
+  imageStore(mask_img, texel, float4(z_combine_factor));
 }

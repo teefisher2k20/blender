@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include "BLI_utildefines.h"
 #include "BLI_vector.hh"
 
 struct ID;
@@ -25,7 +24,7 @@ namespace blender::deg {
  *
  *   void DepsgraphRelationBuilder::my_id_builder(ID *id)
  *   {
- *     if (built_map_.checkIsBuiltAndTag(id)) {
+ *     if (built_map_.check_is_built_and_tag(id)) {
  *       return;
  *     }
  *

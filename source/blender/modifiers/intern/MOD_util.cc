@@ -8,27 +8,24 @@
 
 #include <cstring>
 
-#include "BLI_utildefines.h"
-
 #include "BLI_bitmap.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
 
-#include "DNA_image_types.h"
 #include "DNA_mesh_types.h"
 #include "DNA_modifier_types.h"
 #include "DNA_object_types.h"
+#include "DNA_texture_types.h"
 
 #include "BKE_action.hh" /* BKE_pose_channel_find_name */
 #include "BKE_attribute.hh"
+#include "BKE_customdata.hh"
 #include "BKE_deform.hh"
-#include "BKE_editmesh.hh"
 #include "BKE_image.hh"
 #include "BKE_lattice.hh"
 
 #include "BKE_modifier.hh"
 
-#include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_query.hh"
 
 #include "MOD_modifiertypes.hh"
@@ -89,13 +86,14 @@ void MOD_get_texture_coords(MappingInfoModifierData *dmd,
 
   /* UVs need special handling, since they come from faces */
   if (texmapping == MOD_DISP_MAP_UV) {
-    if (CustomData_has_layer(&mesh->corner_data, CD_PROP_FLOAT2)) {
+    const VectorSet<StringRefNull> uv_map_names = mesh->uv_map_names();
+    if (!uv_map_names.is_empty()) {
       const OffsetIndices faces = mesh->faces();
       const Span<int> corner_verts = mesh->corner_verts();
       BLI_bitmap *done = BLI_BITMAP_NEW(verts_num, __func__);
-      char uvname[MAX_CUSTOMDATA_LAYER_NAME];
-      CustomData_validate_layer_name(
-          &mesh->corner_data, CD_PROP_FLOAT2, dmd->uvlayer_name, uvname);
+      const StringRef uvname = uv_map_names.contains(dmd->uvlayer_name) ?
+                                   dmd->uvlayer_name :
+                                   mesh->active_uv_map_name();
       const bke::AttributeAccessor attributes = mesh->attributes();
       const VArraySpan uv_map = *attributes.lookup_or_default<float2>(
           uvname, bke::AttrDomain::Corner, float2(0));
@@ -147,7 +145,7 @@ void MOD_previous_vcos_store(ModifierData *md, const float (*vert_coords)[3])
   while ((md = md->next) && md->type == eModifierType_Armature) {
     ArmatureModifierData *amd = (ArmatureModifierData *)md;
     if (amd->multi && amd->vert_coords_prev == nullptr) {
-      amd->vert_coords_prev = static_cast<float(*)[3]>(MEM_dupallocN(vert_coords));
+      amd->vert_coords_prev = static_cast<float (*)[3]>(MEM_dupallocN(vert_coords));
     }
     else {
       break;

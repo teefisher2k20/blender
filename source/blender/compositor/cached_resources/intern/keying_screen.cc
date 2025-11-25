@@ -22,7 +22,6 @@
 
 #include "GPU_shader.hh"
 #include "GPU_storage_buffer.hh"
-#include "GPU_texture.hh"
 
 #include "BKE_movieclip.h"
 #include "BKE_tracking.h"
@@ -144,7 +143,7 @@ KeyingScreen::KeyingScreen(Context &context,
     return;
   }
 
-  this->result.allocate_texture(Domain(size));
+  this->result.allocate_texture(Domain(size), false);
   if (context.use_gpu()) {
     this->compute_gpu(context, smoothness, marker_positions, marker_colors);
   }
@@ -158,7 +157,7 @@ void KeyingScreen::compute_gpu(Context &context,
                                Vector<float2> &marker_positions,
                                const Vector<float4> &marker_colors)
 {
-  GPUShader *shader = context.get_shader("compositor_keying_screen");
+  gpu::Shader *shader = context.get_shader("compositor_keying_screen");
   GPU_shader_bind(shader);
 
   GPU_shader_uniform_1f(shader, "smoothness", smoothness);
@@ -173,24 +172,24 @@ void KeyingScreen::compute_gpu(Context &context,
     marker_positions.append(float2(0.0f));
   }
 
-  GPUStorageBuf *positions_ssbo = GPU_storagebuf_create_ex(marker_positions.size() *
-                                                               sizeof(float2),
-                                                           marker_positions.data(),
-                                                           GPU_USAGE_STATIC,
-                                                           "Marker Positions");
+  gpu::StorageBuf *positions_ssbo = GPU_storagebuf_create_ex(marker_positions.size() *
+                                                                 sizeof(float2),
+                                                             marker_positions.data(),
+                                                             GPU_USAGE_STATIC,
+                                                             "Marker Positions");
   const int positions_ssbo_location = GPU_shader_get_ssbo_binding(shader, "marker_positions");
   GPU_storagebuf_bind(positions_ssbo, positions_ssbo_location);
 
-  GPUStorageBuf *colors_ssbo = GPU_storagebuf_create_ex(marker_colors.size() * sizeof(float4),
-                                                        marker_colors.data(),
-                                                        GPU_USAGE_STATIC,
-                                                        "Marker Colors");
+  gpu::StorageBuf *colors_ssbo = GPU_storagebuf_create_ex(marker_colors.size() * sizeof(float4),
+                                                          marker_colors.data(),
+                                                          GPU_USAGE_STATIC,
+                                                          "Marker Colors");
   const int colors_ssbo_location = GPU_shader_get_ssbo_binding(shader, "marker_colors");
   GPU_storagebuf_bind(colors_ssbo, colors_ssbo_location);
 
   this->result.bind_as_image(shader, "output_img");
 
-  compute_dispatch_threads_at_least(shader, this->result.domain().size);
+  compute_dispatch_threads_at_least(shader, this->result.domain().data_size);
 
   this->result.unbind_as_image();
   GPU_storagebuf_unbind(positions_ssbo);
@@ -206,7 +205,7 @@ void KeyingScreen::compute_cpu(const float smoothness,
                                const Vector<float4> &marker_colors)
 {
   float squared_shape_parameter = math::square(1.0f / smoothness);
-  const int2 size = this->result.domain().size;
+  const int2 size = this->result.domain().data_size;
   parallel_for(size, [&](const int2 texel) {
     float2 normalized_pixel_location = (float2(texel) + float2(0.5f)) / float2(size);
 
@@ -227,7 +226,7 @@ void KeyingScreen::compute_cpu(const float smoothness,
     }
     weighted_sum /= sum_of_weights;
 
-    this->result.store_pixel(texel, weighted_sum);
+    this->result.store_pixel(texel, Color(weighted_sum));
   });
 }
 
@@ -271,15 +270,19 @@ Result &KeyingScreenContainer::get(Context &context,
   const std::string object_key = id_key + movie_tracking_object->name;
   auto &cached_keying_screens_for_id = map_.lookup_or_add_default(object_key);
 
-  /* Invalidate the keying screen cache for that MovieClip ID if it was changed and reset the
-   * recalculate flag. */
-  if (context.query_id_recalc_flag(reinterpret_cast<ID *>(movie_clip)) & ID_RECALC_ALL) {
+  /* Invalidate the cache for that movie clip if it was changed since it was cached. */
+  if (!cached_keying_screens_for_id.is_empty() &&
+      movie_clip->runtime.last_update != update_counts_.lookup(id_key))
+  {
     cached_keying_screens_for_id.clear();
   }
 
   auto &keying_screen = *cached_keying_screens_for_id.lookup_or_add_cb(key, [&]() {
     return std::make_unique<KeyingScreen>(context, movie_clip, movie_tracking_object, smoothness);
   });
+
+  /* Store the current update count to later compare to and check if the movie clip changed. */
+  update_counts_.add_overwrite(id_key, movie_clip->runtime.last_update);
 
   keying_screen.needed = true;
   return keying_screen.result;

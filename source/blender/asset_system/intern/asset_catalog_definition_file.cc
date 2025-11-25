@@ -15,7 +15,7 @@
 
 #include "asset_catalog_definition_file.hh"
 
-static CLG_LogRef LOG = {"asset_system.asset_catalog_definition_file"};
+static CLG_LogRef LOG = {"asset.catalog"};
 
 namespace blender::asset_system {
 
@@ -183,6 +183,11 @@ bool AssetCatalogDefinitionFile::write_to_disk(const CatalogFilePath &dest_file_
   }
 
   return true;
+}
+
+bool AssetCatalogDefinitionFile::exists_on_disk() const
+{
+  return BLI_exists(this->file_path.c_str());
 }
 
 bool AssetCatalogDefinitionFile::write_to_disk_unsafe(const CatalogFilePath &dest_file_path) const

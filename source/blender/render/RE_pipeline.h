@@ -12,7 +12,10 @@
 #include "DNA_listBase.h"
 #include "DNA_vec_types.h"
 
-struct GPUTexture;
+namespace blender::gpu {
+class Texture;
+}
+struct ExrHandle;
 struct ImBuf;
 struct Image;
 struct ImageFormatData;
@@ -26,10 +29,6 @@ struct Scene;
 struct StampData;
 struct ViewLayer;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 /* this include is what is exposed of render to outside world */
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
@@ -38,41 +37,44 @@ extern "C" {
 #define RE_MAXNAME ((MAX_ID_NAME - 2) + 10)
 
 /* only used as handle */
-typedef struct Render Render;
-
-typedef struct RenderView {
+struct RenderView {
   struct RenderView *next, *prev;
-  char name[64]; /* EXR_VIEW_MAXNAME */
+  char name[/*EXR_VIEW_MAXNAME*/ 64];
 
-  /* Image buffer of a composited layer or a sequencer output.
-   * The ibuf is only allocated if it has an actual data in one of its buffers (float, byte, or
-   * GPU). */
+  /**
+   * Image buffer of a composited layer or a sequencer output.
+   * The `ibuf` is only allocated if it has an actual data in one of its buffers
+   * (float, byte, or GPU).
+   */
   struct ImBuf *ibuf;
-} RenderView;
+};
 
-typedef struct RenderPass {
+struct RenderPass {
   struct RenderPass *next, *prev;
   int channels;
-  char name[64];   /* amount defined in IMB_openexr.hh */
-  char chan_id[8]; /* amount defined in IMB_openexr.hh */
+  char name[/*EXR_PASS_MAXNAME*/ 64];
+  char chan_id[/*EXR_PASS_MAXCHAN*/ 24];
 
-  /* Image buffer which contains data of this pass.
+  /**
+   * Image buffer which contains data of this pass.
    *
    * The data can be either CPU side stored in ibuf->float_buffer, or a GPU-side stored in
    * ibuf->gpu (during rendering, i.e.).
    *
-   * The pass data storage is lazily allocated, and until data is actually provided (via either CPU
-   * buffer of GPU texture) the ibuf is not allocated. */
+   * The pass data storage is lazily allocated, and until data is actually provided
+   * (via either CPU buffer of GPU texture) the ibuf is not allocated.
+   */
   struct ImBuf *ibuf;
 
   int rectx, recty;
 
-  char fullname[64]; /* EXR_PASS_MAXNAME */
-  char view[64];     /* EXR_VIEW_MAXNAME */
-  int view_id;       /* quick lookup */
+  char fullname[/*EXR_PASS_MAXNAME*/ 64];
+  char view[/*EXR_VIEW_MAXNAME*/ 64];
+  /** Quick lookup. */
+  int view_id;
 
   char _pad0[4];
-} RenderPass;
+};
 
 /**
  * - A render-layer is a full image, but with all passes and samples.
@@ -80,7 +82,7 @@ typedef struct RenderPass {
  * - After render, the Combined pass is in combined,
  *   for render-layers read from files it is a real pass.
  */
-typedef struct RenderLayer {
+struct RenderLayer {
   struct RenderLayer *next, *prev;
 
   /** copy of RenderData */
@@ -89,14 +91,10 @@ typedef struct RenderLayer {
 
   int rectx, recty;
 
-  /** Optional saved end-result on disk. */
-  void *exrhandle;
-
   ListBase passes;
+};
 
-} RenderLayer;
-
-typedef struct RenderResult {
+struct RenderResult {
   struct RenderResult *next, *prev;
 
   /* The number of users of this render result. Default value is 0. The result is freed when
@@ -120,8 +118,6 @@ typedef struct RenderResult {
 
   /* coordinates within final image (after cropping) */
   rcti tilerect;
-  /* offset to apply to get a border render in full image */
-  int xof, yof;
 
   /* the main buffers */
   ListBase layers;
@@ -135,6 +131,14 @@ typedef struct RenderResult {
   /* for render results in Image, verify validity for sequences */
   int framenr;
 
+  /**
+   * Pixels per meter (for image output).
+   * - Typically initialized via #BKE_scene_ppm_get.
+   * - May be zero which indicates the PPM being "unset".
+   *   Although in most cases a scene is available.
+   */
+  double ppm[2];
+
   /* for acquire image, to indicate if it there is a combined layer */
   bool have_combined;
 
@@ -145,25 +149,25 @@ typedef struct RenderResult {
   struct StampData *stamp_data;
 
   bool passes_allocated;
-} RenderResult;
+};
 
-typedef struct RenderStats {
+struct RenderStats {
   int cfra;
   bool localview;
   double starttime, lastframetime;
   const char *infostr, *statstr;
   char scene_name[MAX_ID_NAME - 2];
-  float mem_used, mem_peak;
-} RenderStats;
+  int mem_used, mem_peak;
+};
 
 /* *********************** API ******************** */
 
 /**
- * The name is used as identifier, so elsewhere in blender the result can retrieved.
- * Calling a new render with same name, frees automatic existing render.
- */
-struct Render *RE_NewRender(const char *name);
-struct Render *RE_GetRender(const char *name);
+ * The owner is a unique identifier for the render, either an original scene
+ * datablock for regular renders, or an area for preview renders.
+ * Calling a new render with an existing owner frees the existing render. */
+struct Render *RE_NewRender(const void *owner);
+struct Render *RE_GetRender(const void *owner);
 
 struct Scene;
 struct Render *RE_NewSceneRender(const struct Scene *scene);
@@ -180,12 +184,6 @@ struct Render *RE_NewInteractiveCompositorRender(const struct Scene *scene);
 /* Assign default dummy callbacks. */
 
 /**
- * Called for new renders and when finishing rendering
- * so we always have valid callbacks on a render.
- */
-void RE_InitRenderCB(struct Render *re);
-
-/**
  * Use free render as signal to do everything over (previews).
  *
  * Only call this while you know it will remove the link too.
@@ -196,6 +194,11 @@ void RE_FreeViewRender(struct ViewRender *view_render);
  * Only called on exit.
  */
 void RE_FreeAllRender(void);
+
+/**
+ * On file load, free all interactive compositor renders.
+ */
+void RE_FreeInteractiveCompositorRenders(void);
 
 /**
  * On file load, free render results.
@@ -261,6 +264,8 @@ struct RenderStats *RE_GetStats(struct Render *re);
  */
 void RE_ResultGet32(struct Render *re, unsigned int *rect);
 void RE_ResultGetFloat(struct Render *re, float *rect);
+
+bool RE_ResultIsMultiView(struct RenderResult *rr);
 
 void RE_render_result_full_channel_name(char *fullname,
                                         const char *layname,
@@ -352,7 +357,7 @@ bool RE_WriteRenderViewsMovie(struct ReportList *reports,
  * \note Only #RE_NewRender() needed, main Blender render calls.
  *
  * \param write_still: Saves frames to disk (typically disabled). Useful for batch-operations
- * (rendering from Python for e.g.) when an additional save action for is inconvenient.
+ * (e.g. rendering from Python) when an additional save action for is inconvenient.
  * This is the default behavior for #RE_RenderAnim.
  */
 void RE_RenderFrame(struct Render *re,
@@ -401,19 +406,17 @@ void RE_PreviewRender(struct Render *re, struct Main *bmain, struct Scene *scene
 bool RE_ReadRenderResult(struct Scene *scene, struct Scene *scenode);
 
 struct RenderResult *RE_MultilayerConvert(
-    void *exrhandle, const char *colorspace, bool predivide, int rectx, int recty);
-
-/* Display and event callbacks. */
+    ExrHandle *exrhandle, const char *colorspace, bool predivide, int rectx, int recty);
 
 /**
- * Image and movie output has to move to either #ImBuf or kernel.
- */
-void RE_display_init_cb(struct Render *re,
-                        void *handle,
-                        void (*f)(void *handle, RenderResult *rr));
-void RE_display_clear_cb(struct Render *re,
-                         void *handle,
-                         void (*f)(void *handle, RenderResult *rr));
+ * Display, event callbacks and GPU contexts
+ * */
+
+void RE_display_init(Render *re);
+void RE_display_ensure_gpu_context(Render *re);
+void RE_display_share(Render *re, const Render *parent_re);
+void RE_display_free(Render *re);
+
 void RE_display_update_cb(struct Render *re,
                           void *handle,
                           void (*f)(void *handle, RenderResult *rr, struct rcti *rect));
@@ -428,12 +431,8 @@ void RE_current_scene_update_cb(struct Render *re,
                                 void *handle,
                                 void (*f)(void *handle, struct Scene *scene));
 
-void RE_system_gpu_context_ensure(Render *re);
-void RE_system_gpu_context_free(Render *re);
 void *RE_system_gpu_context_get(Render *re);
-
 void *RE_blender_gpu_context_ensure(Render *re);
-void RE_blender_gpu_context_free(Render *re);
 
 /**
  * \param x: ranges from -1 to 1.
@@ -453,12 +452,6 @@ bool RE_passes_have_name(struct RenderLayer *rl);
 struct RenderPass *RE_pass_find_by_name(struct RenderLayer *rl,
                                         const char *name,
                                         const char *viewname);
-/**
- * Only provided for API compatibility, don't use this in new code!
- */
-struct RenderPass *RE_pass_find_by_type(struct RenderLayer *rl,
-                                        int passtype,
-                                        const char *viewname);
 
 /**
  * Set the buffer data of the render pass.
@@ -470,12 +463,8 @@ void RE_pass_set_buffer_data(struct RenderPass *pass, float *data);
 /**
  * Ensure a GPU texture corresponding to the render buffer data exists.
  */
-struct GPUTexture *RE_pass_ensure_gpu_texture_cache(struct Render *re, struct RenderPass *rpass);
-
-/* shaded view or baking options */
-#define RE_BAKE_NORMALS 0
-#define RE_BAKE_DISPLACEMENT 1
-#define RE_BAKE_AO 2
+blender::gpu::Texture *RE_pass_ensure_gpu_texture_cache(struct Render *re,
+                                                        struct RenderPass *rpass);
 
 void RE_GetCameraWindow(struct Render *re, const struct Object *camera, float r_winmat[4][4]);
 /**
@@ -518,7 +507,3 @@ struct ImBuf *RE_RenderViewEnsureImBuf(const RenderResult *render_result, Render
 
 /* Returns true if the pass is a color (as opposite of data) and needs to be color managed. */
 bool RE_RenderPassIsColor(const RenderPass *render_pass);
-
-#ifdef __cplusplus
-}
-#endif

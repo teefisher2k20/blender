@@ -9,7 +9,6 @@
 #include "DNA_gpencil_legacy_types.h"
 #include "DNA_scene_types.h"
 
-#include "RNA_access.hh"
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
 
@@ -23,11 +22,15 @@
 
 #  include "BLT_translation.hh"
 
+#  include "BLI_math_base.h"
+#  include "BLI_string.h"
+#  include "BLI_string_utf8.h"
 #  include "BLI_string_utils.hh"
 
 #  include "BKE_animsys.h"
 #  include "BKE_gpencil_legacy.h"
-#  include "BKE_icons.h"
+#  include "BKE_icons.hh"
+#  include "BKE_report.hh"
 
 #  include "DEG_depsgraph.hh"
 
@@ -83,7 +86,7 @@ static void rna_annotation_frame_remove(bGPDlayer *layer,
   }
 
   BKE_gpencil_layer_frame_delete(layer, frame);
-  RNA_POINTER_INVALIDATE(frame_ptr);
+  frame_ptr->invalidate();
 
   WM_main_add_notifier(NC_GPENCIL | NA_EDITED, nullptr);
 }
@@ -121,7 +124,7 @@ static void rna_annotation_layer_remove(bGPdata *gpd, ReportList *reports, Point
   }
 
   BKE_gpencil_layer_delete(gpd, layer);
-  RNA_POINTER_INVALIDATE(layer_ptr);
+  layer_ptr->invalidate();
 
   WM_main_add_notifier(NC_GPENCIL | ND_DATA | NA_EDITED, nullptr);
 }
@@ -145,9 +148,7 @@ static int rna_annotation_layer_active_frame_editable(const PointerRNA *ptr,
   if (gpl->flag & GP_LAYER_LOCKED) {
     return 0;
   }
-  else {
-    return PROP_EDITABLE;
-  }
+  return PROP_EDITABLE;
 }
 
 static void rna_annotation_layer_info_set(PointerRNA *ptr, const char *value)
@@ -155,8 +156,8 @@ static void rna_annotation_layer_info_set(PointerRNA *ptr, const char *value)
   bGPdata *gpd = rna_annotations(ptr);
   bGPDlayer *gpl = static_cast<bGPDlayer *>(ptr->data);
 
-  char oldname[128] = "";
-  STRNCPY(oldname, gpl->info);
+  char oldname[sizeof(gpl->info)] = "";
+  STRNCPY_UTF8(oldname, gpl->info);
 
   /* copy the new name into the name slot */
   STRNCPY_UTF8(gpl->info, value);
@@ -249,7 +250,7 @@ static void rna_def_annotation_stroke_point(BlenderRNA *brna)
   StructRNA *srna;
   PropertyRNA *prop;
 
-  srna = RNA_def_struct(brna, "GPencilStrokePoint", nullptr);
+  srna = RNA_def_struct(brna, "AnnotationStrokePoint", nullptr);
   RNA_def_struct_sdna(srna, "bGPDspoint");
   RNA_def_struct_ui_text(srna, "Annotation Stroke Point", "Data point for freehand stroke curve");
 
@@ -265,14 +266,14 @@ static void rna_def_annotation_stroke(BlenderRNA *brna)
   StructRNA *srna;
   PropertyRNA *prop;
 
-  srna = RNA_def_struct(brna, "GPencilStroke", nullptr);
+  srna = RNA_def_struct(brna, "AnnotationStroke", nullptr);
   RNA_def_struct_sdna(srna, "bGPDstroke");
   RNA_def_struct_ui_text(srna, "Annotation Stroke", "Freehand curve defining part of a sketch");
 
   /* Points */
   prop = RNA_def_property(srna, "points", PROP_COLLECTION, PROP_NONE);
   RNA_def_property_collection_sdna(prop, nullptr, "points", "totpoints");
-  RNA_def_property_struct_type(prop, "GPencilStrokePoint");
+  RNA_def_property_struct_type(prop, "AnnotationStrokePoint");
   RNA_def_property_ui_text(prop, "Stroke Points", "Stroke data points");
 }
 
@@ -281,7 +282,7 @@ static void rna_def_annotation_frame(BlenderRNA *brna)
   StructRNA *srna;
   PropertyRNA *prop;
 
-  srna = RNA_def_struct(brna, "GPencilFrame", nullptr);
+  srna = RNA_def_struct(brna, "AnnotationFrame", nullptr);
   RNA_def_struct_sdna(srna, "bGPDframe");
   RNA_def_struct_ui_text(
       srna, "Annotation Frame", "Collection of related sketches on a particular frame");
@@ -289,7 +290,7 @@ static void rna_def_annotation_frame(BlenderRNA *brna)
   /* Strokes */
   prop = RNA_def_property(srna, "strokes", PROP_COLLECTION, PROP_NONE);
   RNA_def_property_collection_sdna(prop, nullptr, "strokes", nullptr);
-  RNA_def_property_struct_type(prop, "GPencilStroke");
+  RNA_def_property_struct_type(prop, "AnnotationStroke");
   RNA_def_property_ui_text(prop, "Strokes", "Freehand curves defining the sketch on this frame");
 
   /* Frame Number */
@@ -313,8 +314,8 @@ static void rna_def_annotation_frames_api(BlenderRNA *brna, PropertyRNA *cprop)
   FunctionRNA *func;
   PropertyRNA *parm;
 
-  RNA_def_property_srna(cprop, "GPencilFrames");
-  srna = RNA_def_struct(brna, "GPencilFrames", nullptr);
+  RNA_def_property_srna(cprop, "AnnotationFrames");
+  srna = RNA_def_struct(brna, "AnnotationFrames", nullptr);
   RNA_def_struct_sdna(srna, "bGPDlayer");
   RNA_def_struct_ui_text(srna, "Annotation Frames", "Collection of annotation frames");
 
@@ -332,21 +333,21 @@ static void rna_def_annotation_frames_api(BlenderRNA *brna, PropertyRNA *cprop)
                      MAXFRAME);
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
   RNA_def_boolean(func, "active", false, "Active", "");
-  parm = RNA_def_pointer(func, "frame", "GPencilFrame", "", "The newly created frame");
+  parm = RNA_def_pointer(func, "frame", "AnnotationFrame", "", "The newly created frame");
   RNA_def_function_return(func, parm);
 
   func = RNA_def_function(srna, "remove", "rna_annotation_frame_remove");
   RNA_def_function_ui_description(func, "Remove an annotation frame");
   RNA_def_function_flag(func, FUNC_USE_REPORTS);
-  parm = RNA_def_pointer(func, "frame", "GPencilFrame", "Frame", "The frame to remove");
+  parm = RNA_def_pointer(func, "frame", "AnnotationFrame", "Frame", "The frame to remove");
   RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED | PARM_RNAPTR);
   RNA_def_parameter_clear_flags(parm, PROP_THICK_WRAP, ParameterFlag(0));
 
   func = RNA_def_function(srna, "copy", "rna_annotation_frame_copy");
   RNA_def_function_ui_description(func, "Copy an annotation frame");
-  parm = RNA_def_pointer(func, "source", "GPencilFrame", "Source", "The source frame");
+  parm = RNA_def_pointer(func, "source", "AnnotationFrame", "Source", "The source frame");
   RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
-  parm = RNA_def_pointer(func, "copy", "GPencilFrame", "", "The newly copied frame");
+  parm = RNA_def_pointer(func, "copy", "AnnotationFrame", "", "The newly copied frame");
   RNA_def_function_return(func, parm);
 }
 
@@ -358,7 +359,7 @@ static void rna_def_annotation_layer(BlenderRNA *brna)
   static const float default_onion_color_b[] = {0.302f, 0.851f, 0.302f};
   static const float default_onion_color_a[] = {0.250f, 0.1f, 1.0f};
 
-  srna = RNA_def_struct(brna, "GPencilLayer", nullptr);
+  srna = RNA_def_struct(brna, "AnnotationLayer", nullptr);
   RNA_def_struct_sdna(srna, "bGPDlayer");
   RNA_def_struct_ui_text(srna, "Annotation Layer", "Collection of related sketches");
   RNA_def_struct_path_func(srna, "rna_annotation_layer_path");
@@ -373,7 +374,7 @@ static void rna_def_annotation_layer(BlenderRNA *brna)
   /* Frames */
   prop = RNA_def_property(srna, "frames", PROP_COLLECTION, PROP_NONE);
   RNA_def_property_collection_sdna(prop, nullptr, "frames", nullptr);
-  RNA_def_property_struct_type(prop, "GPencilFrame");
+  RNA_def_property_struct_type(prop, "AnnotationFrame");
   RNA_def_property_ui_text(prop, "Frames", "Sketches for this layer on different frames");
   rna_def_annotation_frames_api(brna, prop);
 
@@ -503,8 +504,8 @@ static void rna_def_annotation_layers_api(BlenderRNA *brna, PropertyRNA *cprop)
   FunctionRNA *func;
   PropertyRNA *parm;
 
-  RNA_def_property_srna(cprop, "GreasePencilLayers");
-  srna = RNA_def_struct(brna, "GreasePencilLayers", nullptr);
+  RNA_def_property_srna(cprop, "AnnotationLayers");
+  srna = RNA_def_struct(brna, "AnnotationLayers", nullptr);
   RNA_def_struct_sdna(srna, "bGPdata");
   RNA_def_struct_ui_text(srna, "Annotation Layers", "Collection of annotation layers");
 
@@ -514,13 +515,13 @@ static void rna_def_annotation_layers_api(BlenderRNA *brna, PropertyRNA *cprop)
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
   RNA_def_boolean(
       func, "set_active", true, "Set Active", "Set the newly created layer to the active layer");
-  parm = RNA_def_pointer(func, "layer", "GPencilLayer", "", "The newly created layer");
+  parm = RNA_def_pointer(func, "layer", "AnnotationLayer", "", "The newly created layer");
   RNA_def_function_return(func, parm);
 
   func = RNA_def_function(srna, "remove", "rna_annotation_layer_remove");
   RNA_def_function_ui_description(func, "Remove a annotation layer");
   RNA_def_function_flag(func, FUNC_USE_REPORTS);
-  parm = RNA_def_pointer(func, "layer", "GPencilLayer", "", "The layer to remove");
+  parm = RNA_def_pointer(func, "layer", "AnnotationLayer", "", "The layer to remove");
   RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED | PARM_RNAPTR);
   RNA_def_parameter_clear_flags(parm, PROP_THICK_WRAP, ParameterFlag(0));
 
@@ -549,8 +550,8 @@ static void rna_def_annotation_data(BlenderRNA *brna)
   StructRNA *srna;
   PropertyRNA *prop;
 
-  /* NOTE: This used to be the legacy Grease Pencil ID type, hence the name. */
-  srna = RNA_def_struct(brna, "GreasePencil", "ID");
+  /* NOTE: This used to be the legacy Grease Pencil ID type. */
+  srna = RNA_def_struct(brna, "Annotation", "ID");
   RNA_def_struct_sdna(srna, "bGPdata");
   RNA_def_struct_ui_text(srna, "Annotation", "Freehand annotation sketchbook");
   RNA_def_struct_ui_icon(srna, ICON_OUTLINER_DATA_GREASEPENCIL);
@@ -558,7 +559,7 @@ static void rna_def_annotation_data(BlenderRNA *brna)
   /* Layers */
   prop = RNA_def_property(srna, "layers", PROP_COLLECTION, PROP_NONE);
   RNA_def_property_collection_sdna(prop, nullptr, "layers", nullptr);
-  RNA_def_property_struct_type(prop, "GPencilLayer");
+  RNA_def_property_struct_type(prop, "AnnotationLayer");
   RNA_def_property_ui_text(prop, "Layers", "");
 
   rna_def_annotation_layers_api(brna, prop);

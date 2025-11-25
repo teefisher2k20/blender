@@ -131,7 +131,7 @@ def _test_import(module_name, loaded_modules):
     if module_name in loaded_modules:
         return None
     if "." in module_name:
-        print("Ignoring '{:s}', can't import files containing multiple periods".format(module_name))
+        print("Ignoring '{:s}', cannot import files containing multiple periods".format(module_name))
         return None
 
     if use_time:
@@ -200,7 +200,7 @@ def modules_from_path(path, loaded_modules):
 # Currently used for "startup" modules.
 _registered_module_names = []
 # Keep for comparisons, never ever reload this.
-import bpy_types as _bpy_types
+import _bpy_types
 
 
 def _register_module_call(mod):
@@ -321,7 +321,7 @@ def load_scripts(*, reload_scripts=False, refresh_scripts=False, extensions=True
         # Without this, add-on register functions accessing key-map properties can crash, see: #111702.
         _bpy.context.window_manager.keyconfigs.update(keep_properties=True)
 
-    from bpy_restrict_state import RestrictBlend
+    from _bpy_restrict_state import RestrictBlend
 
     with RestrictBlend():
         for base_path in script_paths(use_user=use_user):
@@ -367,7 +367,7 @@ def _on_exit():
 
     # Call `unregister` function on internal startup module.
     # Must only be used as part of Blender 'exit' process.
-    from bpy_restrict_state import RestrictBlend
+    from _bpy_restrict_state import RestrictBlend
     with RestrictBlend():
         for mod_name in reversed(_registered_module_names):
             if (mod := _sys.modules.get(mod_name)) is None:
@@ -914,7 +914,7 @@ def extension_path_user(package, *, path="", create=False):
 
     .. note::
 
-       This allows each extension to have it's own user directory to store files.
+       This allows each extension to have its own user directory to store files.
 
        The location of the extension it self is not a suitable place to store files
        because it is cleared each upgrade and the users may not have write permissions
@@ -1022,9 +1022,9 @@ def register_tool(tool_cls, *, after=None, separator=False, group=False):
     Register a tool in the toolbar.
 
     :arg tool_cls: A tool subclass.
-    :type tool_cls: :class:`bpy.types.WorkSpaceTool`
+    :type tool_cls: type[:class:`bpy.types.WorkSpaceTool`]
     :arg after: Optional identifiers this tool will be added after.
-    :type after: Sequence[str] | None
+    :type after: Sequence[str] | set[str] | None
     :arg separator: When true, add a separator before this tool.
     :type separator: bool
     :arg group: When true, add a new nested group of tools.
@@ -1231,7 +1231,7 @@ def _blender_default_map():
     # NOTE(@ideasman42): Avoid importing this as there is no need to keep the lookup table in memory.
     # As this runs when the user accesses the "Online Manual", the overhead loading the file is acceptable.
     # In my tests it's under 1/100th of a second loading from a `pyc`.
-    ref_mod = execfile(_os.path.join(_script_base_dir, "modules", "rna_manual_reference.py"))
+    ref_mod = execfile(_os.path.join(_script_base_dir, "modules", "_rna_manual_reference.py"))
     return (ref_mod.url_manual_prefix, ref_mod.url_manual_mapping)
 
 

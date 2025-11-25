@@ -2,8 +2,6 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "DNA_gpencil_legacy_types.h"
-
 #include "BKE_context.hh"
 #include "BKE_grease_pencil.hh"
 #include "BKE_paint.hh"
@@ -71,9 +69,9 @@ void VertexSmearOperation::init_color_grid(const bContext &C, const float2 start
   const Scene &scene = *CTX_data_scene(&C);
   Paint &paint = *BKE_paint_get_active_from_context(&C);
   const Brush &brush = *BKE_paint_brush(&paint);
-  const bool use_selection_masking = GPENCIL_ANY_VERTEX_MASK(
-      eGP_vertex_SelectMaskFlag(scene.toolsettings->gpencil_selectmode_vertex));
-  const float radius = brush_radius(scene, brush, 1.0f);
+  const bool use_selection_masking = ED_grease_pencil_any_vertex_mask_selection(
+      scene.toolsettings);
+  const float radius = brush_radius(paint, brush, 1.0f);
 
   /* Setup grid values. */
   /* TODO: Make this a setting. */
@@ -94,8 +92,8 @@ void VertexSmearOperation::init_color_grid(const bContext &C, const float2 start
     if (point_selection.is_empty()) {
       return false;
     }
-    const Array<float2> view_positions = calculate_view_positions(params, point_selection);
-    const Array<float> radii = calculate_view_radii(params, point_selection);
+    const Array<float2> view_positions = view_positions_from_point_mask(params, point_selection);
+    const Array<float> radii = view_radii_from_point_selection(params, point_selection);
     const VArray<ColorGeometry4f> vertex_colors = params.drawing.vertex_colors();
     /* Compute the colors in the grid by averaging the vertex colors of the points that
      * intersect each cell. */
@@ -153,10 +151,10 @@ void VertexSmearOperation::on_stroke_extended(const bContext &C,
   const Scene &scene = *CTX_data_scene(&C);
   Paint &paint = *BKE_paint_get_active_from_context(&C);
   const Brush &brush = *BKE_paint_brush(&paint);
-  const float radius = brush_radius(scene, brush, extension_sample.pressure);
+  const float radius = brush_radius(paint, brush, extension_sample.pressure);
 
-  const bool use_selection_masking = GPENCIL_ANY_VERTEX_MASK(
-      eGP_vertex_SelectMaskFlag(scene.toolsettings->gpencil_selectmode_vertex));
+  const bool use_selection_masking = ED_grease_pencil_any_vertex_mask_selection(
+      scene.toolsettings);
 
   this->foreach_editable_drawing(C, GrainSize(1), [&](const GreasePencilStrokeParams &params) {
     IndexMaskMemory memory;
@@ -165,7 +163,7 @@ void VertexSmearOperation::on_stroke_extended(const bContext &C,
     if (point_selection.is_empty()) {
       return false;
     }
-    const Array<float2> view_positions = calculate_view_positions(params, point_selection);
+    const Array<float2> view_positions = view_positions_from_point_mask(params, point_selection);
     MutableSpan<ColorGeometry4f> vertex_colors = params.drawing.vertex_colors_for_write();
     point_selection.foreach_index(GrainSize(1024), [&](const int64_t point_i) {
       const float2 view_pos = view_positions[point_i];
@@ -178,7 +176,7 @@ void VertexSmearOperation::on_stroke_extended(const bContext &C,
 
       const float distance_falloff = math::clamp(
           1.0f - (math::distance(color_grid_.center, view_pos) / radius * 2), 0.0f, 1.0f);
-      const float influence = brush_point_influence(scene,
+      const float influence = brush_point_influence(paint,
                                                     brush,
                                                     view_pos,
                                                     extension_sample,

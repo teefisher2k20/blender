@@ -87,19 +87,12 @@ if(DEFINED LIBDIR)
   # not need to be ever discovered for the Blender linking.
   list(REMOVE_ITEM LIB_SUBDIRS ${LIBDIR}/dpcpp)
 
-  # NOTE: Make sure "proper" compiled zlib comes first before the one
-  # which is a part of OpenCollada. They have different ABI, and we
-  # do need to use the official one.
+  # NOTE: Make sure "proper" compiled zlib comes first
   set(CMAKE_PREFIX_PATH ${LIBDIR}/zlib ${LIB_SUBDIRS})
 
   include(platform_old_libs_update)
 
   set(WITH_STATIC_LIBS ON)
-  # OpenMP usually can't be statically linked into shared libraries,
-  # due to not being compiled with position independent code.
-  if(NOT WITH_PYTHON_MODULE)
-    set(WITH_OPENMP_STATIC ON)
-  endif()
   set(Boost_NO_BOOST_CMAKE ON)
   set(Boost_ROOT ${LIBDIR}/boost)
   set(BOOST_LIBRARYDIR ${LIBDIR}/boost/lib)
@@ -305,7 +298,7 @@ if(WITH_CODEC_FFMPEG)
     # Override FFMPEG components to also include static library dependencies
     # included with precompiled libraries, and to ensure correct link order.
     set(FFMPEG_FIND_COMPONENTS
-      avformat avcodec avdevice avutil swresample swscale
+      avformat avdevice avfilter avcodec avutil swresample swscale
       sndfile
       FLAC
       mp3lame
@@ -336,28 +329,6 @@ endif()
 if(WITH_FFTW3)
   find_package_wrapper(Fftw3)
   set_and_warn_library_found("fftw3" FFTW3_FOUND WITH_FFTW3)
-endif()
-
-if(WITH_OPENCOLLADA)
-  find_package_wrapper(OpenCOLLADA)
-  if(OPENCOLLADA_FOUND)
-    if(WITH_STATIC_LIBS)
-      # PCRE is bundled with OpenCollada without headers, so can't use
-      # find_package reliably to detect it.
-      # NOTE: newer fork no longer depends on PCRE: see !122270.
-      if(EXISTS ${LIBDIR}/opencollada/lib/libpcre.a)
-        set(PCRE_LIBRARIES ${LIBDIR}/opencollada/lib/libpcre.a)
-      else()
-        # Quiet warnings.
-        set(PCRE_LIBRARIES "")
-      endif()
-    else()
-      find_package_wrapper(PCRE)
-    endif()
-    find_package_wrapper(XML2)
-  else()
-    set_and_warn_library_found("OpenCollada" OPENCOLLADA_FOUND WITH_OPENCOLLADA)
-  endif()
 endif()
 
 if(WITH_MEM_JEMALLOC)
@@ -424,9 +395,9 @@ if(DEFINED LIBDIR)
     ${SYCL_ROOT_DIR}/lib/libsycl.so.*
     ${SYCL_ROOT_DIR}/lib/libpi_*.so
     ${SYCL_ROOT_DIR}/lib/libur_*.so
+    ${SYCL_ROOT_DIR}/lib/libur_*.so.*
   )
-  list(FILTER _sycl_runtime_libraries EXCLUDE REGEX ".*\.py")
-  list(REMOVE_ITEM _sycl_runtime_libraries "${SYCL_ROOT_DIR}/lib/libpi_opencl.so")
+  list(FILTER _sycl_runtime_libraries EXCLUDE REGEX "\\.py$")
   list(APPEND PLATFORM_BUNDLED_LIBRARIES ${_sycl_runtime_libraries})
   unset(_sycl_runtime_libraries)
 endif()
@@ -463,6 +434,18 @@ if(WITH_MATERIALX)
   set_and_warn_library_found("MaterialX" MaterialX_FOUND WITH_MATERIALX)
 endif()
 add_bundled_libraries(materialx/lib)
+
+# With Blender 4.4 libraries there is no more Boost. But Linux distros may have
+# older versions of libs like USD with a header dependency on Boost, so can't
+# remove this entirely yet.
+if(WITH_BOOST)
+  if(DEFINED LIBDIR AND NOT EXISTS "${LIBDIR}/boost")
+    set(WITH_BOOST OFF)
+    set(BOOST_LIBRARIES)
+    set(BOOST_PYTHON_LIBRARIES)
+    set(BOOST_INCLUDE_DIR)
+  endif()
+endif()
 
 if(WITH_BOOST)
   # uses in build instructions to override include and library variables
@@ -524,7 +507,7 @@ endif()
 add_bundled_libraries(opencolorio/lib)
 
 if(WITH_CYCLES AND WITH_CYCLES_EMBREE)
-  find_package(Embree 3.8.0 REQUIRED)
+  find_package(Embree 4.0.0 REQUIRED)
 endif()
 add_bundled_libraries(embree/lib)
 
@@ -547,13 +530,6 @@ if(WITH_LLVM)
       find_package_wrapper(Clang)
       set_and_warn_library_found("Clang" CLANG_FOUND WITH_CLANG)
     endif()
-
-    # Symbol conflicts with same UTF library used by OpenCollada
-    if(DEFINED LIBDIR)
-      if(WITH_OPENCOLLADA AND (${LLVM_VERSION} VERSION_LESS "4.0.0"))
-        list(REMOVE_ITEM OPENCOLLADA_LIBRARIES ${OPENCOLLADA_UTF_LIBRARY})
-      endif()
-    endif()
   endif()
 endif()
 
@@ -568,8 +544,13 @@ endif()
 add_bundled_libraries(opensubdiv/lib)
 
 if(WITH_TBB)
-  find_package_wrapper(TBB)
+  find_package_wrapper(TBB 2021.13.0)
+  if(TBB_FOUND)
+    get_target_property(TBB_LIBRARIES TBB::tbb LOCATION)
+    get_target_property(TBB_INCLUDE_DIRS TBB::tbb INTERFACE_INCLUDE_DIRECTORIES)
+  endif()
   set_and_warn_library_found("TBB" TBB_FOUND WITH_TBB)
+  mark_as_advanced(TBB_DIR)
 endif()
 add_bundled_libraries(tbb/lib)
 
@@ -591,6 +572,31 @@ endif()
 if(WITH_HARU)
   find_package_wrapper(Haru)
   set_and_warn_library_found("Haru" HARU_FOUND WITH_HARU)
+endif()
+
+if(WITH_MANIFOLD)
+  if(WITH_LIBS_PRECOMPILED OR WITH_STRICT_BUILD_OPTIONS)
+    find_package(manifold REQUIRED)
+  else()
+    # This isn't a common system library, so disable if it's not found.
+    find_package(manifold)
+    if(TARGET manifold::manifold)
+      set(MANIFOLD_FOUND TRUE)
+    endif()
+    set_and_warn_library_found("MANIFOLD" MANIFOLD_FOUND WITH_MANIFOLD)
+  endif()
+  mark_as_advanced(manifold_DIR)
+endif()
+
+if(WITH_RUBBERBAND)
+  if(DEFINED LIBDIR)
+    find_package_wrapper(Rubberband)
+  else()
+    # Use system libs
+    find_package(PkgConfig)
+    pkg_check_modules(RUBBERBAND rubberband)
+  endif()
+  set_and_warn_library_found("Rubberband" RUBBERBAND_FOUND WITH_RUBBERBAND)
 endif()
 
 if(WITH_CYCLES AND WITH_CYCLES_PATH_GUIDING)
@@ -670,13 +676,6 @@ if(WITH_SYSTEM_FREETYPE)
   check_freetype_for_brotli()
   # Quiet warning as this variable will be used after `FREETYPE_LIBRARIES`.
   set(BROTLI_LIBRARIES "")
-endif()
-
-if(WITH_LZO AND WITH_SYSTEM_LZO)
-  find_package_wrapper(LZO)
-  if(NOT LZO_FOUND)
-    message(FATAL_ERROR "Failed finding system LZO version!")
-  endif()
 endif()
 
 if(WITH_SYSTEM_EIGEN3)
@@ -857,19 +856,6 @@ if(WITH_GHOST_X11)
         FATAL_ERROR
         "LibXi not found. "
         "Disable WITH_X11_XINPUT if you want to build without tablet support"
-      )
-    endif()
-  endif()
-
-  if(WITH_X11_XF86VMODE)
-    # XXX, why doesn't cmake make this available?
-    find_library(X11_Xxf86vmode_LIB Xxf86vm   ${X11_LIB_SEARCH_PATH})
-    mark_as_advanced(X11_Xxf86vmode_LIB)
-    if(NOT X11_Xxf86vmode_LIB)
-      message(
-        FATAL_ERROR
-        "libXxf86vm not found. "
-        "Disable WITH_X11_XF86VMODE if you want to build without"
       )
     endif()
   endif()

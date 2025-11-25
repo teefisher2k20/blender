@@ -180,9 +180,6 @@ def SVGGetMaterial(color, context):
     materials = context['materials']
     rgb_re = re.compile(r'^\s*rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,(\d+)\s*\)\s*$')
 
-    if color in materials:
-        return materials[color]
-
     diff = None
     if color.startswith('#'):
         color = color[1:]
@@ -206,7 +203,17 @@ def SVGGetMaterial(color, context):
         diffuse_color[1] = srgb_to_linearrgb(diffuse_color[1])
         diffuse_color[2] = srgb_to_linearrgb(diffuse_color[2])
 
+    if color in materials:
+        return materials[color]
+
     mat = bpy.data.materials.new(name='SVGMat')
+    mat.node_tree.nodes.clear()
+    node_tree = mat.node_tree
+    bsdf = node_tree.nodes.new("ShaderNodeBsdfDiffuse")
+    output = node_tree.nodes.new("ShaderNodeOutputMaterial")
+    output.location[0] += bsdf.width + 20.0
+    node_tree.links.new(bsdf.outputs["BSDF"], output.inputs["Surface"])
+    bsdf.inputs["Color"].default_value = (*diffuse_color, 0.0)
     mat.diffuse_color = (*diffuse_color, 1.0)
 
     materials[color] = mat

@@ -9,7 +9,6 @@
 #pragma once
 
 #include "gpu_backend.hh"
-#include "gpu_capabilities_private.hh"
 #include "gpu_platform_private.hh"
 
 #include "dummy_batch.hh"
@@ -33,6 +32,7 @@ class DummyBackend : public GPUBackend {
              "",
              GPU_ARCHITECTURE_IMR);
   }
+  void init_resources() override {}
   void delete_resources() override {}
   void samplers_update() override {}
   void compute_dispatch(int /*groups_x_len*/, int /*groups_y_len*/, int /*groups_z_len*/) override

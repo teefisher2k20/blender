@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 add_subdirectory(movie)
+add_subdirectory(opencolorio)
 
 set(INC
   PUBLIC .
@@ -21,12 +22,14 @@ set(SRC
   intern/allocimbuf.cc
   intern/colormanagement.cc
   intern/colormanagement_inline.h
-  intern/divers.cc
+  intern/conversion.cc
   intern/filetype.cc
   intern/filter.cc
   intern/format_bmp.cc
   intern/format_dds.cc
   intern/format_hdr.cc
+  intern/format_iris.cc
+  intern/format_jpeg.cc
   intern/format_png.cc
   intern/format_psd.cc
   intern/format_svg.cc
@@ -34,8 +37,6 @@ set(SRC
   intern/format_tiff.cc
   intern/imageprocess.cc
   intern/interp.cc
-  intern/iris.cc
-  intern/jpeg.cc
   intern/metadata.cc
   intern/module.cc
   intern/moviecache.cc
@@ -72,12 +73,15 @@ set(LIB
   PRIVATE bf::blenkernel
   PRIVATE bf::blenlib
   PRIVATE bf::blenloader
+  PRIVATE bf::depsgraph
   PRIVATE bf::dna
   PRIVATE bf::gpu
   bf_imbuf_openimageio
+  PRIVATE bf::intern::atomic
+  PRIVATE bf::intern::clog
   PRIVATE bf::intern::guardedalloc
   bf_intern_memutil
-  bf_intern_opencolorio
+  PRIVATE bf::imbuf::opencolorio
   PRIVATE bf::extern::nanosvg
 
   ${JPEG_LIBRARIES}
@@ -88,7 +92,7 @@ if(WITH_IMAGE_OPENEXR)
   list(APPEND LIB
     bf_imbuf_openexr
   )
-  add_definitions(-DWITH_OPENEXR)
+  add_definitions(-DWITH_IMAGE_OPENEXR)
 else()
   list(APPEND SRC
     intern/openexr/openexr_stub.cpp
@@ -109,13 +113,13 @@ if(WITH_IMAGE_OPENJPEG)
     ${OPENJPEG_INCLUDE_DIRS}
   )
   list(APPEND SRC
-    intern/jp2.cc
+    intern/format_jp2.cc
   )
   list(APPEND LIB
     ${OPENJPEG_LIBRARIES}
   )
 
-  add_definitions(-DWITH_OPENJPEG ${OPENJPEG_DEFINES})
+  add_definitions(-DWITH_IMAGE_OPENJPEG ${OPENJPEG_DEFINES})
 endif()
 
 if(WITH_IMAGE_CINEON)
@@ -125,12 +129,12 @@ if(WITH_IMAGE_CINEON)
   list(APPEND LIB
     bf_imbuf_cineon
   )
-  add_definitions(-DWITH_CINEON)
+  add_definitions(-DWITH_IMAGE_CINEON)
 endif()
 
 if(WITH_IMAGE_WEBP)
   list(APPEND SRC
-    intern/webp.cc
+    intern/format_webp.cc
   )
   list(APPEND INC_SYS
     ${WEBP_INCLUDE_DIRS}
@@ -138,12 +142,8 @@ if(WITH_IMAGE_WEBP)
   list(APPEND LIB
     ${WEBP_LIBRARIES}
   )
-  add_definitions(-DWITH_WEBP)
+  add_definitions(-DWITH_IMAGE_WEBP)
 endif()
-
-list(APPEND INC
-  ../../../intern/opencolorio
-)
 
 if(WIN32)
   list(APPEND INC
@@ -170,5 +170,4 @@ if(WITH_GTESTS)
     tests/IMB_transform_test.cc
   )
   blender_add_test_suite_lib(imbuf "${TEST_SRC}" "${INC}" "${INC_SYS}" "${LIB}")
-  add_subdirectory(tests/performance)
 endif()

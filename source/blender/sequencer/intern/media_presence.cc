@@ -6,28 +6,27 @@
  * \ingroup sequencer
  */
 
-#include "BKE_main.hh"
 #include "BLI_fileops.h"
+#include "BLI_listbase.h"
 #include "BLI_map.hh"
+#include "BLI_mutex.hh"
 #include "BLI_path_utils.hh"
 #include "BLI_string.h"
-#include "BLI_threads.h"
+
 #include "DNA_scene_types.h"
 #include "DNA_sequence_types.h"
 #include "DNA_sound_types.h"
+
+#include "BKE_library.hh"
+#include "BKE_main.hh"
+
 #include "SEQ_utils.hh"
 
 namespace blender::seq {
 
-static ThreadMutex presence_lock = BLI_MUTEX_INITIALIZER;
+static Mutex presence_lock;
 
-static const char *get_seq_base_path(const Strip *strip)
-{
-  return strip->scene ? ID_BLEND_PATH_FROM_GLOBAL(&strip->scene->id) :
-                        BKE_main_blendfile_path_from_global();
-}
-
-static bool check_sound_media_missing(const bSound *sound, const Strip *strip)
+static bool check_sound_media_missing(const bSound *sound)
 {
   if (sound == nullptr) {
     return false;
@@ -35,12 +34,11 @@ static bool check_sound_media_missing(const bSound *sound, const Strip *strip)
 
   char filepath[FILE_MAX];
   STRNCPY(filepath, sound->filepath);
-  const char *basepath = get_seq_base_path(strip);
-  BLI_path_abs(filepath, basepath);
+  BLI_path_abs(filepath, ID_BLEND_PATH_FROM_GLOBAL(&sound->id));
   return !BLI_exists(filepath);
 }
 
-static bool check_media_missing(const Strip *strip)
+static bool check_media_missing(const Scene *scene, const Strip *strip)
 {
   if (strip == nullptr || strip->data == nullptr) {
     return false;
@@ -56,7 +54,7 @@ static bool check_media_missing(const Strip *strip)
         paths_count = int(MEM_allocN_len(elem) / sizeof(*elem));
       }
       char filepath[FILE_MAX];
-      const char *basepath = get_seq_base_path(strip);
+      const char *basepath = ID_BLEND_PATH_FROM_GLOBAL(&scene->id);
       for (int i = 0; i < paths_count; i++, elem++) {
         BLI_path_join(filepath, sizeof(filepath), strip->data->dirpath, elem->filename);
         BLI_path_abs(filepath, basepath);
@@ -69,8 +67,8 @@ static bool check_media_missing(const Strip *strip)
 
   /* Recurse into meta strips. */
   if (strip->type == STRIP_TYPE_META) {
-    LISTBASE_FOREACH (Strip *, seqn, &strip->seqbase) {
-      if (check_media_missing(seqn)) {
+    LISTBASE_FOREACH (Strip *, strip_n, &strip->seqbase) {
+      if (check_media_missing(scene, strip_n)) {
         return true;
       }
     }
@@ -100,7 +98,7 @@ bool media_presence_is_missing(Scene *scene, const Strip *strip)
     return false;
   }
 
-  BLI_mutex_lock(&presence_lock);
+  std::scoped_lock lock(presence_lock);
 
   MediaPresence *presence = get_media_presence_cache(scene);
 
@@ -116,7 +114,7 @@ bool media_presence_is_missing(Scene *scene, const Strip *strip)
       missing = *val;
     }
     else {
-      missing = check_sound_media_missing(sound, strip);
+      missing = check_sound_media_missing(sound);
       presence->map_sound.add_new(sound, missing);
     }
   }
@@ -127,12 +125,11 @@ bool media_presence_is_missing(Scene *scene, const Strip *strip)
       missing = *val;
     }
     else {
-      missing = check_media_missing(strip);
+      missing = check_media_missing(scene, strip);
       presence->map_seq.add_new(strip, missing);
     }
   }
 
-  BLI_mutex_unlock(&presence_lock);
   return missing;
 }
 
@@ -142,7 +139,7 @@ void media_presence_set_missing(Scene *scene, const Strip *strip, bool missing)
     return;
   }
 
-  BLI_mutex_lock(&presence_lock);
+  std::scoped_lock lock(presence_lock);
 
   MediaPresence *presence = get_media_presence_cache(scene);
 
@@ -153,36 +150,31 @@ void media_presence_set_missing(Scene *scene, const Strip *strip, bool missing)
   else {
     presence->map_seq.add_overwrite(strip, missing);
   }
-
-  BLI_mutex_unlock(&presence_lock);
 }
 
 void media_presence_invalidate_strip(Scene *scene, const Strip *strip)
 {
-  BLI_mutex_lock(&presence_lock);
+  std::scoped_lock lock(presence_lock);
   if (scene != nullptr && scene->ed != nullptr && scene->ed->runtime.media_presence != nullptr) {
     scene->ed->runtime.media_presence->map_seq.remove(strip);
   }
-  BLI_mutex_unlock(&presence_lock);
 }
 
 void media_presence_invalidate_sound(Scene *scene, const bSound *sound)
 {
-  BLI_mutex_lock(&presence_lock);
+  std::scoped_lock lock(presence_lock);
   if (scene != nullptr && scene->ed != nullptr && scene->ed->runtime.media_presence != nullptr) {
     scene->ed->runtime.media_presence->map_sound.remove(sound);
   }
-  BLI_mutex_unlock(&presence_lock);
 }
 
 void media_presence_free(Scene *scene)
 {
-  BLI_mutex_lock(&presence_lock);
+  std::scoped_lock lock(presence_lock);
   if (scene != nullptr && scene->ed != nullptr && scene->ed->runtime.media_presence != nullptr) {
     MEM_delete(scene->ed->runtime.media_presence);
     scene->ed->runtime.media_presence = nullptr;
   }
-  BLI_mutex_unlock(&presence_lock);
 }
 
 }  // namespace blender::seq

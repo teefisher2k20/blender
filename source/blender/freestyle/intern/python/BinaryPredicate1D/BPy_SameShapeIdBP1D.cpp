@@ -8,10 +8,6 @@
 
 #include "BPy_SameShapeIdBP1D.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -33,7 +29,6 @@ PyDoc_STRVAR(
     "   :type inter2: :class:`freestyle.types.Interface1D`\n"
     "   :return: True or false.\n"
     "   :rtype: bool\n");
-
 static int SameShapeIdBP1D___init__(BPy_SameShapeIdBP1D *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {nullptr};
@@ -89,7 +84,3 @@ PyTypeObject SameShapeIdBP1D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

@@ -7,12 +7,12 @@
  */
 
 #include <atomic>
-#include <mutex>
+#include <optional>
 
 #include "BLI_concurrent_map.hh"
 #include "BLI_memory_cache.hh"
 #include "BLI_memory_counter.hh"
-#include "BLI_task.hh"
+#include "BLI_mutex.hh"
 
 namespace blender::memory_cache {
 
@@ -43,7 +43,7 @@ struct Cache {
    */
   std::atomic<int64_t> size_in_bytes = 0;
 
-  std::mutex global_mutex;
+  Mutex global_mutex;
   /** Amount of memory currently used in the cache. */
   MemoryCount memory;
   /**
@@ -175,7 +175,7 @@ void remove_if(const FunctionRef<bool(const GenericKey &)> predicate)
   }
   /* Remove all removed keys from the vector too. */
   cache.keys.remove_if([&](const GenericKey *&key) {
-    const int64_t index = &key - &cache.keys[0];
+    const int64_t index = &key - cache.keys.data();
     return predicate_results[index];
   });
   cache.size_in_bytes = cache.memory.total_bytes;

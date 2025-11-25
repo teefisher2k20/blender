@@ -40,11 +40,16 @@ typedef struct VolumeRender {
 } VolumeRender;
 
 typedef struct Volume {
+#ifdef __cplusplus
+  /** See #ID_Type comment for why this is here. */
+  static constexpr ID_Type id_type = ID_VO;
+#endif
+
   ID id;
   struct AnimData *adt; /* animation data (must be immediately after id) */
 
   /* File */
-  char filepath[1024]; /* FILE_MAX */
+  char filepath[/*FILE_MAX*/ 1024];
   struct PackedFile *packedfile;
 
   /* Sequence */

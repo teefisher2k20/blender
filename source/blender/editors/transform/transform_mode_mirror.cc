@@ -11,18 +11,20 @@
 #include "BLI_math_bits.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "ED_screen.hh"
 
-#include "UI_interface.hh"
-
 #include "BLT_translation.hh"
+
+#include "UI_interface_types.hh"
 
 #include "transform.hh"
 #include "transform_convert.hh"
 
 #include "transform_mode.hh"
+
+namespace blender::ed::transform {
 
 /* -------------------------------------------------------------------- */
 /** \name Transform (Mirror)
@@ -37,25 +39,29 @@
  * \param flip: If true, a mirror on all axis will be performed additionally (point
  * reflection).
  */
-static void ElementMirror(TransInfo *t, TransDataContainer *tc, TransData *td, int axis, bool flip)
+static void ElementMirror(TransInfo *t, TransDataContainer *tc, int td_index, int axis, bool flip)
 {
-  if ((t->flag & T_V3D_ALIGN) == 0 && td->ext) {
+  TransData *td = &tc->data[td_index];
+
+  if ((t->flag & T_V3D_ALIGN) == 0 && tc->data_ext) {
+    TransDataExtension *td_ext = &tc->data_ext[td_index];
+
     /* Size checked needed since the 3D cursor only uses rotation fields. */
-    if (td->ext->size) {
-      float fsize[] = {1.0, 1.0, 1.0};
+    if (td_ext->scale) {
+      float fscale[] = {1.0, 1.0, 1.0};
 
       if (axis >= 0) {
-        fsize[axis] = -fsize[axis];
+        fscale[axis] = -fscale[axis];
       }
       if (flip) {
-        negate_v3(fsize);
+        negate_v3(fscale);
       }
 
-      protectedSizeBits(td->protectflag, fsize);
+      protectedScaleBits(td->protectflag, fscale);
 
-      mul_v3_v3v3(td->ext->size, td->ext->isize, fsize);
+      mul_v3_v3v3(td_ext->scale, td_ext->iscale, fscale);
 
-      constraintSizeLim(t, tc, td);
+      constraintScaleLim(t, tc, td_index);
     }
 
     float rmat[3][3];
@@ -72,18 +78,18 @@ static void ElementMirror(TransInfo *t, TransDataContainer *tc, TransData *td, i
       mul_m3_m3m3(rmat, rmat, imat);
       mul_m3_m3m3(rmat, t->spacemtx, rmat);
 
-      ElementRotation_ex(t, tc, td, rmat, td->center);
+      ElementRotation_ex(t, tc, td, td_ext, rmat, td->center);
 
-      if (td->ext->rotAngle) {
-        *td->ext->rotAngle = -td->ext->irotAngle;
+      if (td_ext->rotAngle) {
+        *td_ext->rotAngle = -td_ext->irotAngle;
       }
     }
     else {
       unit_m3(rmat);
-      ElementRotation_ex(t, tc, td, rmat, td->center);
+      ElementRotation_ex(t, tc, td, td_ext, rmat, td->center);
 
-      if (td->ext->rotAngle) {
-        *td->ext->rotAngle = td->ext->irotAngle;
+      if (td_ext->rotAngle) {
+        *td_ext->rotAngle = td_ext->irotAngle;
       }
     }
   }
@@ -174,7 +180,18 @@ static void applyMirror(TransInfo *t)
       special_axis = bitscan_forward_i(special_axis_bitmap);
     }
 
-    SNPRINTF(str, IFACE_("Mirror%s"), t->con.text);
+    SNPRINTF_UTF8(str, IFACE_("Mirror%s"), t->con.text);
+
+    if (t->options & CTX_SEQUENCER_IMAGE) {
+      if (axis_bitmap == 1) {
+        t->values_final[0] = -1;
+        t->values_final[1] = 1;
+      }
+      if (axis_bitmap == 2) {
+        t->values_final[0] = 1;
+        t->values_final[1] = -1;
+      }
+    }
 
     FOREACH_TRANS_DATA_CONTAINER (t, tc) {
       TransData *td = tc->data;
@@ -183,7 +200,7 @@ static void applyMirror(TransInfo *t)
           continue;
         }
 
-        ElementMirror(t, tc, td, special_axis, bitmap_len >= 2);
+        ElementMirror(t, tc, i, special_axis, bitmap_len >= 2);
       }
     }
 
@@ -192,6 +209,10 @@ static void applyMirror(TransInfo *t)
     ED_area_status_text(t->area, str);
   }
   else {
+    if (t->options & CTX_SEQUENCER_IMAGE) {
+      t->values_final[0] = 1.0f;
+      t->values_final[1] = 1.0f;
+    }
     FOREACH_TRANS_DATA_CONTAINER (t, tc) {
       TransData *td = tc->data;
       for (i = 0; i < tc->data_len; i++, td++) {
@@ -199,7 +220,7 @@ static void applyMirror(TransInfo *t)
           continue;
         }
 
-        ElementMirror(t, tc, td, -1, false);
+        ElementMirror(t, tc, i, -1, false);
       }
     }
 
@@ -231,3 +252,5 @@ TransModeInfo TransMode_mirror = {
     /*snap_apply_fn*/ nullptr,
     /*draw_fn*/ nullptr,
 };
+
+}  // namespace blender::ed::transform

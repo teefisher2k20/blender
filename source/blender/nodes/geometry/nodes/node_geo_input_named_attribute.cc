@@ -2,9 +2,11 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "BKE_attribute_legacy_convert.hh"
+
 #include "NOD_rna_define.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "NOD_socket_search_link.hh"
@@ -21,7 +23,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 {
   const bNode *node = b.node_or_null();
 
-  b.add_input<decl::String>("Name").is_attribute_name().hide_label();
+  b.add_input<decl::String>("Name").is_attribute_name().optional_label();
 
   if (node != nullptr) {
     const NodeGeometryInputNamedAttribute &storage = node_storage(*node);
@@ -33,12 +35,12 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "data_type", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "data_type", UI_ITEM_NONE, "", ICON_NONE);
 }
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
 {
-  NodeGeometryInputNamedAttribute *data = MEM_cnew<NodeGeometryInputNamedAttribute>(__func__);
+  NodeGeometryInputNamedAttribute *data = MEM_callocN<NodeGeometryInputNamedAttribute>(__func__);
   data->data_type = CD_PROP_FLOAT;
   node->storage = data;
 }
@@ -79,7 +81,7 @@ static void node_geo_exec(GeoNodeExecParams params)
   const NodeGeometryInputNamedAttribute &storage = node_storage(params.node());
   const eCustomDataType data_type = eCustomDataType(storage.data_type);
 
-  const std::string name = params.extract_input<std::string>("Name");
+  std::string name = params.extract_input<std::string>("Name");
 
   if (name.empty()) {
     params.set_default_remaining_outputs();
@@ -92,7 +94,7 @@ static void node_geo_exec(GeoNodeExecParams params)
   }
   if (bke::attribute_name_is_anonymous(name)) {
     params.error_message_add(NodeWarningType::Info,
-                             TIP_("Anonymous attributes can't be accessed by name"));
+                             TIP_("Anonymous attributes cannot be accessed by name"));
     params.set_default_remaining_outputs();
     return;
   }
@@ -101,8 +103,8 @@ static void node_geo_exec(GeoNodeExecParams params)
 
   const CPPType &type = *bke::custom_data_type_to_cpp_type(data_type);
 
-  params.set_output<GField>("Attribute", AttributeFieldInput::Create(name, type));
-  params.set_output("Exists", bke::AttributeExistsFieldInput::Create(std::move(name)));
+  params.set_output<GField>("Attribute", AttributeFieldInput::from(name, type));
+  params.set_output("Exists", bke::AttributeExistsFieldInput::from(std::move(name)));
 }
 
 static void node_rna(StructRNA *srna)
@@ -131,11 +133,11 @@ static void node_register()
   ntype.gather_link_search_ops = node_gather_link_searches;
   ntype.declare = node_declare;
   ntype.initfunc = node_init;
-  blender::bke::node_type_storage(&ntype,
+  blender::bke::node_type_storage(ntype,
                                   "NodeGeometryInputNamedAttribute",
                                   node_free_standard_storage,
                                   node_copy_standard_storage);
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

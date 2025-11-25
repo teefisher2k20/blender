@@ -6,19 +6,10 @@
  * \ingroup RNA
  */
 
-#include <cstdio>
 #include <cstdlib>
-
-#include "BLI_utildefines.h"
-
-#include "BLT_translation.hh"
-
-#include "BKE_report.hh"
 
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
-
-#include "DNA_windowmanager_types.h"
 
 #include "WM_api.hh"
 
@@ -26,14 +17,19 @@
 
 #ifdef RNA_RUNTIME
 
+#  include "BLT_translation.hh"
+
 #  include "BKE_context.hh"
+#  include "BKE_idprop.hh"
+#  include "BKE_report.hh"
+
 #  include "UI_interface.hh"
 
 #  include "ED_gizmo_library.hh"
 
 static void rna_gizmo_draw_preset_box(wmGizmo *gz, const float matrix[16], int select_id)
 {
-  ED_gizmo_draw_preset_box(gz, (const float(*)[4])matrix, select_id);
+  ED_gizmo_draw_preset_box(gz, (const float (*)[4])matrix, select_id);
 }
 
 static void rna_gizmo_draw_preset_arrow(wmGizmo *gz,
@@ -41,7 +37,7 @@ static void rna_gizmo_draw_preset_arrow(wmGizmo *gz,
                                         int axis,
                                         int select_id)
 {
-  ED_gizmo_draw_preset_arrow(gz, (const float(*)[4])matrix, axis, select_id);
+  ED_gizmo_draw_preset_arrow(gz, (const float (*)[4])matrix, axis, select_id);
 }
 
 static void rna_gizmo_draw_preset_circle(wmGizmo *gz,
@@ -49,7 +45,7 @@ static void rna_gizmo_draw_preset_circle(wmGizmo *gz,
                                          int axis,
                                          int select_id)
 {
-  ED_gizmo_draw_preset_circle(gz, (const float(*)[4])matrix, axis, select_id);
+  ED_gizmo_draw_preset_circle(gz, (const float (*)[4])matrix, axis, select_id);
 }
 
 /* -------------------------------------------------------------------- */

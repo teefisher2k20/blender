@@ -10,6 +10,7 @@
 #include "BKE_material.hh"
 #include "BKE_mesh.hh"
 
+#include "GEO_foreach_geometry.hh"
 #include "GEO_randomize.hh"
 
 #include "node_geometry_util.hh"
@@ -22,15 +23,15 @@ namespace blender::nodes::node_geo_convex_hull_cc {
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Geometry>("Geometry");
-  b.add_output<decl::Geometry>("Convex Hull");
+  b.add_input<decl::Geometry>("Geometry").description("Points to compute the convex hull of");
+  b.add_output<decl::Geometry>("Convex Hull").propagate_all_instance_attributes();
 }
 
 #ifdef WITH_BULLET
 
 static Mesh *hull_from_bullet(const Mesh *mesh, Span<float3> coords)
 {
-  plConvexHull hull = plConvexHullCompute((float(*)[3])coords.data(), coords.size());
+  plConvexHull hull = plConvexHullCompute((float (*)[3])coords.data(), coords.size());
 
   const int verts_num = plConvexHullNumVertices(hull);
   const int faces_num = verts_num <= 2 ? 0 : plConvexHullNumFaces(hull);
@@ -52,20 +53,15 @@ static Mesh *hull_from_bullet(const Mesh *mesh, Span<float3> coords)
   /* Copy vertices. */
   MutableSpan<float3> dst_positions = result->vert_positions_for_write();
   for (const int i : IndexRange(verts_num)) {
+    float3 dummy_co;
     int original_index;
-    plConvexHullGetVertex(hull, i, dst_positions[i], &original_index);
-
-    if (original_index >= 0 && original_index < coords.size()) {
-#  if 0 /* Disabled because it only works for meshes, not predictable enough. */
-      /* Copy custom data on vertices, like vertex groups etc. */
-      if (mesh && original_index < mesh->verts_num) {
-        CustomData_copy_data(&mesh->vert_data, &result->vert_data, int(original_index), int(i), 1);
-      }
-#  endif
+    plConvexHullGetVertex(hull, i, dummy_co, &original_index);
+    if (UNLIKELY(!coords.index_range().contains(original_index))) {
+      BLI_assert_unreachable();
+      dst_positions[i] = float3(0);
+      continue;
     }
-    else {
-      BLI_assert_msg(0, "Unexpected new vertex in hull output");
-    }
+    dst_positions[i] = coords[original_index];
   }
 
   /* Copy edges and loops. */
@@ -262,7 +258,7 @@ static void node_geo_exec(GeoNodeExecParams params)
 
 #ifdef WITH_BULLET
 
-  geometry_set.modify_geometry_sets([&](GeometrySet &geometry_set) {
+  geometry::foreach_real_geometry(geometry_set, [&](GeometrySet &geometry_set) {
     Mesh *mesh = compute_hull(geometry_set);
     if (mesh) {
       geometry::debug_randomize_mesh_order(mesh);
@@ -271,7 +267,9 @@ static void node_geo_exec(GeoNodeExecParams params)
     if (geometry_set.has_grease_pencil()) {
       convex_hull_grease_pencil(geometry_set);
     }
-    geometry_set.keep_only_during_modify({GeometryComponent::Type::Mesh});
+    geometry_set.keep_only({GeometryComponent::Type::Mesh,
+                            GeometryComponent::Type::Instance,
+                            GeometryComponent::Type::Edit});
   });
 
   params.set_output("Convex Hull", std::move(geometry_set));
@@ -294,7 +292,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

@@ -6,7 +6,8 @@
  * \ingroup bli
  */
 
-#include <math.h>
+#include <algorithm>
+#include <cmath>
 
 #include "BLI_compiler_compat.h"
 #include "BLI_sys_types.h"
@@ -116,7 +117,7 @@ static const float hashpntf[768] = {
     0.713870, 0.555261, 0.951333,
 };
 
-extern "C" const uchar BLI_noise_hash_uchar_512[512] = {
+const uchar BLI_noise_hash_uchar_512[512] = {
     0xA2, 0xA0, 0x19, 0x3B, 0xF8, 0xEB, 0xAA, 0xEE, 0xF3, 0x1C, 0x67, 0x28, 0x1D, 0xED, 0x0,  0xDE,
     0x95, 0x2E, 0xDC, 0x3F, 0x3A, 0x82, 0x35, 0x4D, 0x6C, 0xBA, 0x36, 0xD0, 0xF6, 0xC,  0x79, 0x32,
     0xD1, 0x59, 0xF4, 0x8,  0x8B, 0x63, 0x89, 0x2F, 0xB8, 0xB4, 0x97, 0x83, 0xF2, 0x8F, 0x18, 0xC7,
@@ -761,7 +762,7 @@ static const float g_perlin_data_v3[512 + 2][3] = {
 static float noise3_perlin(const float vec[3])
 {
   const char *p = g_perlin_data_ub;
-  const float(*g)[3] = g_perlin_data_v3;
+  const float (*g)[3] = g_perlin_data_v3;
   int bx0, bx1, by0, by1, bz0, bz1, b00, b10, b01, b11;
   float rx0, rx1, ry0, ry1, rz0, rz1, sx, sy, sz, a, b, c, d, t, u, v;
   const float *q;
@@ -1512,9 +1513,7 @@ float BLI_noise_mg_hybrid_multi_fractal(float x,
   float pwHL = powf(lacunarity, -H);
   float pwr = pwHL; /* starts with i=1 instead of 0 */
   for (int i = 1; (weight > 0.001f) && (i < int(octaves)); i++) {
-    if (weight > 1.0f) {
-      weight = 1.0f;
-    }
+    weight = std::min(weight, 1.0f);
     float signal = (noisefunc(x, y, z) + offset) * pwr;
     pwr *= pwHL;
     result += weight * signal;

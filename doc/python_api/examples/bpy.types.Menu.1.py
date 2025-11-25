@@ -18,21 +18,21 @@ class SubMenu(bpy.types.Menu):
         layout.operator("object.select_all", text="Inverse").action = 'INVERT'
         layout.operator("object.select_random", text="Random")
 
-        # access this operator as a submenu
+        # Access this operator as a sub-menu.
         layout.operator_menu_enum("object.select_by_type", "type", text="Select All by Type...")
 
         layout.separator()
 
-        # expand each operator option into this menu
+        # Expand each operator option into this menu.
         layout.operator_enum("object.light_add", "type")
 
         layout.separator()
 
-        # use existing memu
+        # Use existing menu.
         layout.menu("VIEW3D_MT_transform")
 
 
 bpy.utils.register_class(SubMenu)
 
-# test call to display immediately.
+# Test call to display immediately.
 bpy.ops.wm.call_menu(name="OBJECT_MT_select_submenu")

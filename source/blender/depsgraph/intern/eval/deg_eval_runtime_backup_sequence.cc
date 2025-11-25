@@ -10,38 +10,99 @@
 
 #include "DNA_sequence_types.h"
 
+#include "SEQ_sequencer.hh"
+
+#include "BLI_listbase.h"
+
 namespace blender::deg {
 
-SequenceBackup::SequenceBackup(const Depsgraph * /*depsgraph*/)
+StripModifierDataBackup::StripModifierDataBackup()
 {
   reset();
 }
 
-void SequenceBackup::reset()
+void StripModifierDataBackup::reset()
+{
+  sound_in = nullptr;
+  sound_out = nullptr;
+  last_buf = nullptr;
+}
+
+void StripModifierDataBackup::init_from_modifier(StripModifierData *smd)
+{
+  if (smd->type == eSeqModifierType_SoundEqualizer) {
+    sound_in = smd->runtime.last_sound_in;
+    sound_out = smd->runtime.last_sound_out;
+    last_buf = smd->runtime.last_buf;
+
+    smd->runtime.last_sound_in = nullptr;
+    smd->runtime.last_sound_out = nullptr;
+    smd->runtime.last_buf = nullptr;
+  }
+}
+
+void StripModifierDataBackup::restore_to_modifier(StripModifierData *smd)
+{
+  if (smd->type == eSeqModifierType_SoundEqualizer) {
+    smd->runtime.last_sound_in = sound_in;
+    smd->runtime.last_sound_out = sound_out;
+    smd->runtime.last_buf = last_buf;
+  }
+  reset();
+}
+
+bool StripModifierDataBackup::isEmpty() const
+{
+  return sound_in == nullptr && sound_out == nullptr && last_buf == nullptr;
+}
+
+StripBackup::StripBackup(const Depsgraph * /*depsgraph*/)
+{
+  reset();
+}
+
+void StripBackup::reset()
 {
   scene_sound = nullptr;
-  BLI_listbase_clear(&anims);
+  movie_readers.clear();
+  modifiers.clear();
 }
 
-void SequenceBackup::init_from_sequence(Strip *sequence)
+void StripBackup::init_from_strip(Strip *strip)
 {
-  scene_sound = sequence->scene_sound;
-  anims = sequence->anims;
+  scene_sound = strip->runtime->scene_sound;
+  movie_readers = std::move(strip->runtime->movie_readers);
 
-  sequence->scene_sound = nullptr;
-  BLI_listbase_clear(&sequence->anims);
+  LISTBASE_FOREACH (StripModifierData *, smd, &strip->modifiers) {
+    StripModifierDataBackup mod_backup;
+    mod_backup.init_from_modifier(smd);
+    if (!mod_backup.isEmpty()) {
+      modifiers.add(smd->persistent_uid, mod_backup);
+    }
+  }
+
+  strip->runtime->scene_sound = nullptr;
+  strip->runtime->movie_readers.clear();
 }
 
-void SequenceBackup::restore_to_sequence(Strip *sequence)
+void StripBackup::restore_to_strip(Strip *strip)
 {
-  sequence->scene_sound = scene_sound;
-  sequence->anims = anims;
+  strip->runtime->scene_sound = scene_sound;
+  strip->runtime->movie_readers = std::move(movie_readers);
+
+  LISTBASE_FOREACH (StripModifierData *, smd, &strip->modifiers) {
+    std::optional<StripModifierDataBackup> backup = modifiers.pop_try(smd->persistent_uid);
+    if (backup.has_value()) {
+      backup->restore_to_modifier(smd);
+    }
+  }
+
   reset();
 }
 
-bool SequenceBackup::isEmpty() const
+bool StripBackup::isEmpty() const
 {
-  return (scene_sound == nullptr) && BLI_listbase_is_empty(&anims);
+  return (scene_sound == nullptr) && movie_readers.is_empty() && modifiers.is_empty();
 }
 
 }  // namespace blender::deg

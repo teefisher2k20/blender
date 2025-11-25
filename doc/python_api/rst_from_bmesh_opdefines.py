@@ -2,20 +2,21 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-# This is a quite stupid script which extracts bmesh api docs from
-# 'bmesh_opdefines.cc' in order to avoid having to add a lot of introspection
-# data access into the api.
+# This is a quite stupid script which extracts BMesh API docs from
+# `bmesh_opdefines.cc` in order to avoid having to add a lot of introspection
+# data access into the API.
 #
 # The script is stupid because it makes assumptions about formatting...
-# that each arg has its own line, that comments above or directly after will be __doc__ etc...
+# that each argument has its own line, that comments above or directly after will be __doc__ etc...
 #
 # We may want to replace this script with something else one day but for now its good enough.
 # if it needs large updates it may be better to rewrite using a real parser or
-# add introspection into bmesh.ops.
+# add introspection into `bmesh.ops`.
 # - campbell
 
 import os
 import re
+import textwrap
 
 CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 SOURCE_DIR = os.path.normpath(os.path.abspath(os.path.normpath(os.path.join(CURRENT_DIR, "..", ".."))))
@@ -149,7 +150,7 @@ def main():
 
     blocks_py = []
     for comment, b in blocks:
-        # magic, translate into python
+        # Magic, translate into Python.
         b[0] = b[0].replace("static BMOpDefine ", "")
         is_enum = False
 
@@ -163,19 +164,25 @@ def main():
             l = l.replace("{", "(")
             l = l.replace("}", ")")
 
-            if l.startswith("/*"):
-                l = l.replace("/*", "'''own <")
-            else:
-                l = l.replace("/*", "'''inline <")
-            l = l.replace("*/", ">''',")
+            # Skip `exec` & `init` functions. eg: `/*exec*/ bmo_rotate_edges_exec`,
+            if l.startswith("/*opname*/"):
+                l = l.removeprefix("/*opname*/")
 
-            # exec func. eg: bmo_rotate_edges_exec,
-            if l.startswith("bmo_") and l.endswith("_exec,"):
+            elif l.startswith("/*exec*/"):
                 l = "None,"
+            elif l.startswith("/*init*/"):
+                l = "None,"
+            else:
+                if l.startswith("/*"):
+                    l = l.replace("/*", "'''own <")
+                else:
+                    # NOTE: `inline <...>` aren't used anymore, all doc-string comments require their own line.
+                    l = l.replace("/*", "'''inline <")
+                l = l.replace("*/", ">''',")
 
-            # enums
-            if l.startswith("static BMO_FlagSet "):
-                is_enum = True
+                # enums
+                if l.startswith("static BMO_FlagSet "):
+                    is_enum = True
 
             b[i] = l
 
@@ -256,27 +263,23 @@ def main():
 
                 tp_str = ""
 
-                comment_prev = ""
-                comment_next = ""
-                if i != 0:
-                    comment_prev = args[i + 1]
-                    if type(comment_prev) == str and comment_prev.startswith("our <"):
-                        comment_prev = comment_next[5:-1]  # strip inline <...>
-                    else:
-                        comment_prev = ""
-
-                if i + 1 < len(args):
-                    comment_next = args[i + 1]
-                    if type(comment_next) == str and comment_next.startswith("inline <"):
-                        comment_next = comment_next[8:-1]  # strip inline <...>
-                    else:
-                        comment_next = ""
-
                 comment = ""
-                if comment_prev:
-                    comment += comment_prev.strip()
-                if comment_next:
-                    comment += ("\n" if comment_prev else "") + comment_next.strip()
+                if i != 0:
+                    comment = args[i - 1]
+                    if type(args[i - 1]) == str:
+                        if args[i - 1].startswith("own <"):
+                            comment = args[i - 1][5:-1].strip()  # strip `our <...>`
+                            if "\n" in comment:
+                                # Remove leading "*" of comment blocks.
+                                comment = "\n".join([
+                                    "" if l.strip() == "*" else l.lstrip().removeprefix("* ")
+                                    for l in comment.split("\n")
+                                ])
+                    else:
+                        comment = ""
+
+                if comment.startswith("NOTE"):
+                    comment = ""
 
                 default_value = None
                 if tp == BMO_OP_SLOT_FLT:
@@ -318,7 +321,7 @@ def main():
                         tp_str = ":class:`bpy.types.Mesh`"
                     elif tp_sub == BMO_OP_SLOT_SUBTYPE_PTR_STRUCT:
                         # XXX Used for CurveProfile only currently I think (bevel code),
-                        #     but think the idea is that that pointer is for any type?
+                        #     but think the idea is that pointer is for any type?
                         tp_str = ":class:`bpy.types.bpy_struct`"
                     else:
                         assert False, "unreachable, unknown type {!r}".format(vars_dict_reverse[tp_sub])
@@ -358,7 +361,7 @@ def main():
                         elif tp_sub == BMO_OP_SLOT_SUBTYPE_MAP_ELEM:
                             tp_str += ":class:`bmesh.types.BMVert`/:class:`bmesh.types.BMEdge`/:class:`bmesh.types.BMFace`"
                         elif tp_sub == BMO_OP_SLOT_SUBTYPE_MAP_INTERNAL:
-                            tp_str += "unknown internal data, not compatible with python"
+                            tp_str += "unknown internal data, not compatible with Python"
                         else:
                             assert False, "unreachable, unknown type {!r}".format(vars_dict_reverse[tp_sub])
                 else:
@@ -387,6 +390,9 @@ def main():
                 continue
             if l.strip():
                 l = "   " + l
+
+            # Use double back-ticks for literals (C++ comments only use a single, RST expected two).
+            l = l.replace("`", "``")
             comment_washed.append(l)
 
         fw("\n".join(comment_washed))
@@ -403,7 +409,8 @@ def main():
             if comment == "":
                 comment = "Undocumented."
 
-            fw("   :arg {:s}: {:s}\n".format(name, comment))
+            # Indent a block to support multiple lines.
+            fw("   :arg {:s}:\n{:s}\n".format(name, textwrap.indent(comment, "      ")))
             fw("   :type {:s}: {:s}\n".format(name, tp))
 
         if args_out_wash:
@@ -412,7 +419,7 @@ def main():
             for (name, _, tp, comment) in args_out_wash:
                 assert name.endswith(".out")
                 name = name[:-4]
-                fw("      - ``{:s}``: {:s}\n\n".format(name, comment))
+                fw("      - ``{:s}``:\n{:s}\n\n".format(name, textwrap.indent(comment, "        ")))
                 fw("        **type** {:s}\n".format(tp))
 
             fw("\n")
@@ -425,7 +432,6 @@ def main():
 
     fout.close()
     del fout
-    print(OUT_RST)
 
 
 def arg_name_with_default(arg):

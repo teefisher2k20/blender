@@ -8,14 +8,18 @@
 
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "DRW_render.hh"
 
 struct RenderEngineType;
 
 extern RenderEngineType DRW_engine_viewport_workbench_type;
 
-#ifdef __cplusplus
+namespace blender::workbench {
+
+struct Engine : public DrawEngine::Pointer {
+  DrawEngine *create_instance() final;
+
+  static void free_static();
 };
-#endif
+
+}  // namespace blender::workbench

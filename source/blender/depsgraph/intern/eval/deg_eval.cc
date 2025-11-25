@@ -8,18 +8,18 @@
  * Evaluation engine entry-points for Depsgraph Engine.
  */
 
+#include <atomic>
+#include <cstdint>
+
 #include "intern/eval/deg_eval.h"
 
-#include "BLI_compiler_attrs.h"
 #include "BLI_function_ref.hh"
 #include "BLI_gsqueue.h"
 #include "BLI_task.h"
 #include "BLI_time.h"
-#include "BLI_utildefines.h"
 
 #include "BKE_global.hh"
 
-#include "DNA_node_types.h"
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 
@@ -43,7 +43,6 @@
 #include "intern/node/deg_node_component.hh"
 #include "intern/node/deg_node_id.hh"
 #include "intern/node/deg_node_operation.hh"
-#include "intern/node/deg_node_time.hh"
 
 namespace blender::deg {
 
@@ -59,7 +58,7 @@ void schedule_children(DepsgraphEvalState *state,
 
 /* Denotes which part of dependency graph is being evaluated. */
 enum class EvaluationStage {
-  /* Stage 1: Only  Copy-on-Write operations are to be evaluated, prior to anything else.
+  /* Stage 1: Only Copy-on-Write operations are to be evaluated, prior to anything else.
    * This allows other operations to access its dependencies when there is a dependency cycle
    * involved. */
   COPY_ON_EVAL,
@@ -386,7 +385,16 @@ void deg_evaluate_on_refresh(Depsgraph *graph)
     return;
   }
 
-  graph->update_count++;
+  /* The update counts can be used to check if the Depsgraph was changed since the last time it was
+   * cached by comparing its current update count with the one stored at the moment the Depsgraph
+   * data were cached.
+   *
+   * A global atomic is used as opposed to incrementing the update count per Depsgraph to protect
+   * against the case where the Depsgraph is being recreated for each update and used to feed the
+   * same running engine instances. This can happen when using a brute force update pattern (see
+   * #135635). */
+  static std::atomic<uint64_t> global_update_count = 0;
+  graph->update_count = global_update_count.fetch_add(1) + 1;
 
   graph->debug.begin_graph_evaluation();
 

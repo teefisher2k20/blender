@@ -16,7 +16,7 @@
 #include "BLI_math_vector_types.hh"
 #include "BLI_simd.hh"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 namespace blender::math {
 
@@ -160,6 +160,12 @@ BLI_INLINE void bicubic_interpolation(const T *src_buffer,
                                       InterpWrapMode wrap_v)
 {
   BLI_assert(src_buffer && output);
+  BLI_assert(components > 0 && components <= 4);
+
+  /* GCC 15.x can't reliably detect that `components` is never over 4. */
+#if (defined(__GNUC__) && (__GNUC__ >= 15) && !defined(__clang__))
+  [[assume(components <= 4)]];
+#endif
 
 #if BLI_HAVE_SSE4
   if constexpr (std::is_same_v<T, uchar>) {
@@ -213,6 +219,10 @@ BLI_INLINE void bicubic_interpolation(const T *src_buffer,
       if (components == 1) {
         out[0] += data[0] * w;
       }
+      else if (components == 2) {
+        out[0] += data[0] * w;
+        out[1] += data[1] * w;
+      }
       else if (components == 3) {
         out[0] += data[0] * w;
         out[1] += data[1] * w;
@@ -242,6 +252,9 @@ BLI_INLINE void bicubic_interpolation(const T *src_buffer,
     if (components == 1) {
       output[0] = out[0];
     }
+    else if (components == 2) {
+      copy_v2_v2(output, out);
+    }
     else if (components == 3) {
       copy_v3_v3(output, out);
     }
@@ -252,6 +265,10 @@ BLI_INLINE void bicubic_interpolation(const T *src_buffer,
   else {
     if (components == 1) {
       output[0] = uchar(out[0] + 0.5f);
+    }
+    else if (components == 2) {
+      output[0] = uchar(out[0] + 0.5f);
+      output[1] = uchar(out[1] + 0.5f);
     }
     else if (components == 3) {
       output[0] = uchar(out[0] + 0.5f);
@@ -278,6 +295,8 @@ BLI_INLINE void bilinear_fl_impl(const float *buffer,
                                  InterpWrapMode wrap_y)
 {
   BLI_assert(buffer && output);
+  BLI_assert(components > 0 && components <= 4);
+
   float a, b;
   float a_b, ma_b, a_mb, ma_mb;
   int y1, y2, x1, x2;
@@ -362,6 +381,10 @@ BLI_INLINE void bilinear_fl_impl(const float *buffer,
 
   if (components == 1) {
     output[0] = ma_mb * row1[0] + a_mb * row3[0] + ma_b * row2[0] + a_b * row4[0];
+  }
+  else if (components == 2) {
+    output[0] = ma_mb * row1[0] + a_mb * row3[0] + ma_b * row2[0] + a_b * row4[0];
+    output[1] = ma_mb * row1[1] + a_mb * row3[1] + ma_b * row2[1] + a_b * row4[1];
   }
   else if (components == 3) {
     output[0] = ma_mb * row1[0] + a_mb * row3[0] + ma_b * row2[0] + a_b * row4[0];

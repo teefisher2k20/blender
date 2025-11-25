@@ -18,23 +18,23 @@
 
 #pragma once
 
+#include "BLI_enum_flags.hh"
 #include "BLI_index_range.hh"
-#include "BLI_utildefines.h"
 
 #include "GPU_index_buffer.hh"
 #include "GPU_shader.hh"
 #include "GPU_storage_buffer.hh"
-#include "GPU_uniform_buffer.hh"
 #include "GPU_vertex_buffer.hh"
 
-struct GPUShader;
+namespace blender::gpu {
+class Shader;
+}  // namespace blender::gpu
 
 constexpr static int GPU_BATCH_VBO_MAX_LEN = 16;
-constexpr static int GPU_BATCH_INST_VBO_MAX_LEN = 2;
 constexpr static int GPU_BATCH_VAO_STATIC_LEN = 3;
 constexpr static int GPU_BATCH_VAO_DYN_ALLOC_COUNT = 16;
 
-enum eGPUBatchFlag {
+enum GPUBatchFlag {
   /** Invalid default state. */
   GPU_BATCH_INVALID = 0,
 
@@ -42,13 +42,8 @@ enum eGPUBatchFlag {
   GPU_BATCH_OWNS_VBO = (1 << 0),
   GPU_BATCH_OWNS_VBO_MAX = (GPU_BATCH_OWNS_VBO << (GPU_BATCH_VBO_MAX_LEN - 1)),
   GPU_BATCH_OWNS_VBO_ANY = ((GPU_BATCH_OWNS_VBO << GPU_BATCH_VBO_MAX_LEN) - 1),
-  /** Instance blender::gpu::VertBuf ownership. (One bit per vbo) */
-  GPU_BATCH_OWNS_INST_VBO = (GPU_BATCH_OWNS_VBO_MAX << 1),
-  GPU_BATCH_OWNS_INST_VBO_MAX = (GPU_BATCH_OWNS_INST_VBO << (GPU_BATCH_INST_VBO_MAX_LEN - 1)),
-  GPU_BATCH_OWNS_INST_VBO_ANY = ((GPU_BATCH_OWNS_INST_VBO << GPU_BATCH_INST_VBO_MAX_LEN) - 1) &
-                                ~GPU_BATCH_OWNS_VBO_ANY,
   /** blender::gpu::IndexBuf ownership. */
-  GPU_BATCH_OWNS_INDEX = (GPU_BATCH_OWNS_INST_VBO_MAX << 1),
+  GPU_BATCH_OWNS_INDEX = (GPU_BATCH_OWNS_VBO_MAX << 1),
 
   /** Has been initialized. At least one VBO is set. */
   GPU_BATCH_INIT = (1 << 26),
@@ -61,9 +56,9 @@ enum eGPUBatchFlag {
 #define GPU_BATCH_OWNS_NONE GPU_BATCH_INVALID
 
 BLI_STATIC_ASSERT(GPU_BATCH_OWNS_INDEX < GPU_BATCH_INIT,
-                  "eGPUBatchFlag: Error: status flags are shadowed by the ownership bits!")
+                  "GPUBatchFlag: Error: status flags are shadowed by the ownership bits!")
 
-ENUM_OPERATORS(eGPUBatchFlag, GPU_BATCH_DIRTY)
+ENUM_OPERATORS(GPUBatchFlag)
 
 namespace blender::gpu {
 
@@ -79,24 +74,22 @@ class Batch {
  public:
   /** verts[0] is required, others can be nullptr */
   blender::gpu::VertBuf *verts[GPU_BATCH_VBO_MAX_LEN];
-  /** Instance attributes. */
-  blender::gpu::VertBuf *inst[GPU_BATCH_INST_VBO_MAX_LEN];
   /** nullptr if element list not needed */
   blender::gpu::IndexBuf *elem;
-  /** Resource ID attribute workaround. */
-  GPUStorageBuf *resource_id_buf;
+  /** Number of vertices to draw for procedural drawcalls. -1 otherwise. */
+  int32_t procedural_vertices;
   /** Bookkeeping. */
-  eGPUBatchFlag flag;
+  GPUBatchFlag flag;
   /** Type of geometry to draw. */
   GPUPrimType prim_type;
   /** Current assigned shader. DEPRECATED. Here only for uniform binding. */
-  GPUShader *shader;
+  gpu::Shader *shader;
 
   virtual ~Batch() = default;
 
   virtual void draw(int v_first, int v_count, int i_first, int i_count) = 0;
-  virtual void draw_indirect(GPUStorageBuf *indirect_buf, intptr_t offset) = 0;
-  virtual void multi_draw_indirect(GPUStorageBuf *indirect_buf,
+  virtual void draw_indirect(blender::gpu::StorageBuf *indirect_buf, intptr_t offset) = 0;
+  virtual void multi_draw_indirect(blender::gpu::StorageBuf *indirect_buf,
                                    int count,
                                    intptr_t offset,
                                    intptr_t stride) = 0;
@@ -118,10 +111,6 @@ class Batch {
   {
     return verts[index];
   }
-  VertBuf *inst_(const int index) const
-  {
-    return inst[index];
-  }
 };
 
 }  // namespace blender::gpu
@@ -142,12 +131,15 @@ blender::gpu::Batch *GPU_batch_calloc();
 blender::gpu::Batch *GPU_batch_create_ex(GPUPrimType primitive_type,
                                          blender::gpu::VertBuf *vertex_buf,
                                          blender::gpu::IndexBuf *index_buf,
-                                         eGPUBatchFlag owns_flag);
+                                         GPUBatchFlag owns_flag);
+
+blender::gpu::Batch *GPU_batch_create_procedural(GPUPrimType primitive_type, int32_t vertex_count);
+
 /**
  * Creates a #blender::gpu::Batch without buffer ownership.
  */
 #define GPU_batch_create(primitive_type, vertex_buf, index_buf) \
-  GPU_batch_create_ex(primitive_type, vertex_buf, index_buf, (eGPUBatchFlag)0)
+  GPU_batch_create_ex(primitive_type, vertex_buf, index_buf, (GPUBatchFlag)0)
 
 /**
  * Initialize a cleared #blender::gpu::Batch with explicit buffer ownership.
@@ -158,14 +150,14 @@ void GPU_batch_init_ex(blender::gpu::Batch *batch,
                        GPUPrimType primitive_type,
                        blender::gpu::VertBuf *vertex_buf,
                        blender::gpu::IndexBuf *index_buf,
-                       eGPUBatchFlag owns_flag);
+                       GPUBatchFlag owns_flag);
 /**
  * Initialize a cleared #blender::gpu::Batch without buffer ownership.
  * A #blender::gpu::Batch is in cleared state if it was just allocated using `GPU_batch_calloc()`
  * or cleared using `GPU_batch_clear()`.
  */
 #define GPU_batch_init(batch, primitive_type, vertex_buf, index_buf) \
-  GPU_batch_init_ex(batch, primitive_type, vertex_buf, index_buf, (eGPUBatchFlag)0)
+  GPU_batch_init_ex(batch, primitive_type, vertex_buf, index_buf, (GPUBatchFlag)0)
 
 /**
  * DEPRECATED: It is easy to loose ownership with this. To be removed.
@@ -225,22 +217,6 @@ int GPU_batch_vertbuf_add(blender::gpu::Batch *batch,
                           bool own_vbo);
 
 /**
- * Add the given \a vertex_buf as instanced vertex buffer to a #blender::gpu::Batch.
- * \return the index of verts in the batch.
- */
-int GPU_batch_instbuf_add(blender::gpu::Batch *batch,
-                          blender::gpu::VertBuf *vertex_buf,
-                          bool own_vbo);
-
-/**
- * Set the first instanced vertex buffer of a #blender::gpu::Batch.
- * \note Override ONLY the first instance VBO (and free them if owned).
- */
-void GPU_batch_instbuf_set(blender::gpu::Batch *batch,
-                           blender::gpu::VertBuf *vertex_buf,
-                           bool own_vbo);
-
-/**
  * Set the index buffer of a #blender::gpu::Batch.
  * \note Override any previously assigned index buffer (and free it if owned).
  */
@@ -255,13 +231,6 @@ void GPU_batch_elembuf_set(blender::gpu::Batch *batch,
 bool GPU_batch_vertbuf_has(const blender::gpu::Batch *batch,
                            const blender::gpu::VertBuf *vertex_buf);
 
-/**
- * Set resource id buffer to bind as instance attribute to workaround the lack of gl_BaseInstance
- * on some hardware / platform.
- * \note Only to be used by draw manager.
- */
-void GPU_batch_resource_id_buf_set(blender::gpu::Batch *batch, GPUStorageBuf *resource_id_buf);
-
 /** \} */
 
 /* -------------------------------------------------------------------- */
@@ -269,7 +238,7 @@ void GPU_batch_resource_id_buf_set(blender::gpu::Batch *batch, GPUStorageBuf *re
  *
  * TODO(fclem): This whole section should be removed. See the other `TODO`s in this section.
  * This is because we want to remove #blender::gpu::Batch.shader to avoid usage mistakes.
- * Interacting directly with the #GPUShader provide a clearer interface and less error-prone.
+ * Interacting directly with the #gpu::Shader provide a clearer interface and less error-prone.
  * \{ */
 
 /**
@@ -277,11 +246,14 @@ void GPU_batch_resource_id_buf_set(blender::gpu::Batch *batch, GPUStorageBuf *re
  * \note This need to be called first for the `GPU_batch_uniform_*` functions to work.
  */
 /* TODO(fclem): These should be removed and replaced by `GPU_shader_bind()`. */
-void GPU_batch_set_shader(blender::gpu::Batch *batch, GPUShader *shader);
-void GPU_batch_program_set_builtin(blender::gpu::Batch *batch, eGPUBuiltinShader shader_id);
+void GPU_batch_set_shader(
+    blender::gpu::Batch *batch,
+    blender::gpu::Shader *shader,
+    const blender::gpu::shader::SpecializationConstants *constants_state = nullptr);
+void GPU_batch_program_set_builtin(blender::gpu::Batch *batch, GPUBuiltinShader shader_id);
 void GPU_batch_program_set_builtin_with_config(blender::gpu::Batch *batch,
-                                               eGPUBuiltinShader shader_id,
-                                               eGPUShaderConfig sh_cfg);
+                                               GPUBuiltinShader shader_id,
+                                               GPUShaderConfig sh_cfg);
 /**
  * Bind program bound to IMM (immediate mode) to the #blender::gpu::Batch.
  *
@@ -319,7 +291,10 @@ void GPU_batch_program_set_imm_shader(blender::gpu::Batch *batch);
 /**
  * Bind vertex and index buffers to SSBOs using `Frequency::GEOMETRY`.
  */
-void GPU_batch_bind_as_resources(blender::gpu::Batch *batch, GPUShader *shader);
+void GPU_batch_bind_as_resources(
+    blender::gpu::Batch *batch,
+    blender::gpu::Shader *shader,
+    const blender::gpu::shader::SpecializationConstants *constants = nullptr);
 
 /** \} */
 
@@ -380,7 +355,7 @@ void GPU_batch_draw_advanced(blender::gpu::Batch *batch,
                              int instance_count);
 
 /**
- * Issue a single draw call using arguments sourced from a #GPUStorageBuf.
+ * Issue a single draw call using arguments sourced from a #blender::gpu::StorageBuf.
  * The argument are expected to be valid for the type of geometry contained by this
  * #blender::gpu::Batch (index or non-indexed).
  *
@@ -391,11 +366,11 @@ void GPU_batch_draw_advanced(blender::gpu::Batch *batch,
  * https://registry.khronos.org/OpenGL-Refpages/gl4/html/glDrawArraysIndirect.xhtml
  */
 void GPU_batch_draw_indirect(blender::gpu::Batch *batch,
-                             GPUStorageBuf *indirect_buf,
+                             blender::gpu::StorageBuf *indirect_buf,
                              intptr_t offset);
 
 /**
- * Issue \a count draw calls using arguments sourced from a #GPUStorageBuf.
+ * Issue \a count draw calls using arguments sourced from a #blender::gpu::StorageBuf.
  * The \a stride (in bytes) control the spacing between each command description.
  * The argument are expected to be valid for the type of geometry contained by this
  * #blender::gpu::Batch (index or non-indexed).
@@ -407,7 +382,7 @@ void GPU_batch_draw_indirect(blender::gpu::Batch *batch,
  * https://registry.khronos.org/OpenGL-Refpages/gl4/html/glMultiDrawArraysIndirect.xhtml
  */
 void GPU_batch_multi_draw_indirect(blender::gpu::Batch *batch,
-                                   GPUStorageBuf *indirect_buf,
+                                   blender::gpu::StorageBuf *indirect_buf,
                                    int count,
                                    intptr_t offset,
                                    intptr_t stride);
@@ -430,6 +405,40 @@ blender::IndexRange GPU_batch_draw_expanded_parameter_get(GPUPrimType input_prim
                                                           int vertex_count,
                                                           int vertex_first,
                                                           int output_primitive_cout);
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Procedural drawing
+ *
+ * A draw-call always need a batch to be issued.
+ * These are dummy batches that contains no vertex data and can be used to render geometry
+ * without per vertex inputs.
+ * \{ */
+
+/**
+ * Batch with no attributes, suited for rendering procedural geometry.
+ * IMPORTANT: The returned batch is only valid for the current context.
+ */
+blender::gpu::Batch *GPU_batch_procedural_points_get();
+
+/**
+ * Batch with no attributes, suited for rendering procedural geometry.
+ * IMPORTANT: The returned batch is only valid for the current context.
+ */
+blender::gpu::Batch *GPU_batch_procedural_lines_get();
+
+/**
+ * Batch with no attributes, suited for rendering procedural geometry.
+ * IMPORTANT: The returned batch is only valid for the current context.
+ */
+blender::gpu::Batch *GPU_batch_procedural_triangles_get();
+
+/**
+ * Batch with no attributes, suited for rendering procedural geometry.
+ * IMPORTANT: The returned batch is only valid for the current context.
+ */
+blender::gpu::Batch *GPU_batch_procedural_triangle_strips_get();
 
 /** \} */
 

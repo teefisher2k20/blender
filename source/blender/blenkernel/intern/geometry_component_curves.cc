@@ -4,16 +4,12 @@
 
 #include "BLI_task.hh"
 
-#include "DNA_ID_enums.h"
 #include "DNA_curve_types.h"
 
-#include "BKE_attribute_math.hh"
 #include "BKE_curves.hh"
 #include "BKE_geometry_fields.hh"
 #include "BKE_geometry_set.hh"
 #include "BKE_lib_id.hh"
-
-#include "attribute_access_intern.hh"
 
 namespace blender::bke {
 
@@ -138,7 +134,7 @@ const Curve *CurveComponent::get_curve_for_render() const
     return curve_for_render_;
   }
 
-  curve_for_render_ = (Curve *)BKE_id_new_nomain(ID_CU_LEGACY, nullptr);
+  curve_for_render_ = BKE_id_new_nomain<Curve>(nullptr);
   curve_for_render_->curve_eval = curves_;
 
   return curve_for_render_;
@@ -230,18 +226,18 @@ VArray<float3> curve_normals_varray(const CurvesGeometry &curves, const AttrDoma
   const VArray<int8_t> types = curves.curve_types();
   if (curves.is_single_type(CURVE_TYPE_POLY)) {
     return curves.adapt_domain<float3>(
-        VArray<float3>::ForSpan(curves.evaluated_normals()), AttrDomain::Point, domain);
+        VArray<float3>::from_span(curves.evaluated_normals()), AttrDomain::Point, domain);
   }
 
   Array<float3> normals = curve_normal_point_domain(curves);
 
   if (domain == AttrDomain::Point) {
-    return VArray<float3>::ForContainer(std::move(normals));
+    return VArray<float3>::from_container(std::move(normals));
   }
 
   if (domain == AttrDomain::Curve) {
     return curves.adapt_domain<float3>(
-        VArray<float3>::ForContainer(std::move(normals)), AttrDomain::Point, AttrDomain::Curve);
+        VArray<float3>::from_container(std::move(normals)), AttrDomain::Point, AttrDomain::Curve);
   }
 
   return nullptr;
@@ -259,7 +255,7 @@ static VArray<float> construct_curve_length_gvarray(const CurvesGeometry &curves
   curves.ensure_evaluated_lengths();
 
   VArray<bool> cyclic = curves.cyclic();
-  VArray<float> lengths = VArray<float>::ForFunc(
+  VArray<float> lengths = VArray<float>::from_func(
       curves.curves_num(), [&curves, cyclic = std::move(cyclic)](int64_t index) {
         return curves.evaluated_length_total_for_curve(index, cyclic[index]);
       });

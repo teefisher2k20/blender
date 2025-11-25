@@ -30,6 +30,7 @@
 #include "BKE_object_types.hh"
 
 #include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "BLO_read_write.hh"
@@ -454,31 +455,30 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
 
   PointerRNA hook_object_ptr = RNA_pointer_get(ptr, "object");
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "object", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col = &layout->column(false);
+  col->prop(ptr, "object", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   if (!RNA_pointer_is_null(&hook_object_ptr) &&
       RNA_enum_get(&hook_object_ptr, "type") == OB_ARMATURE)
   {
     PointerRNA hook_object_data_ptr = RNA_pointer_get(&hook_object_ptr, "data");
-    uiItemPointerR(
-        col, ptr, "subtarget", &hook_object_data_ptr, "bones", IFACE_("Bone"), ICON_NONE);
+    col->prop_search(ptr, "subtarget", &hook_object_data_ptr, "bones", IFACE_("Bone"), ICON_NONE);
   }
   modifier_vgroup_ui(layout, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", std::nullopt);
 
-  uiItemR(layout, ptr, "strength", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "strength", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
 
   if (RNA_enum_get(&ob_ptr, "mode") == OB_MODE_EDIT) {
-    row = uiLayoutRow(layout, true);
-    uiItemO(row, IFACE_("Reset"), ICON_NONE, "OBJECT_OT_hook_reset");
-    uiItemO(row, IFACE_("Recenter"), ICON_NONE, "OBJECT_OT_hook_recenter");
-    row = uiLayoutRow(layout, true);
-    uiItemO(row, IFACE_("Select"), ICON_NONE, "OBJECT_OT_hook_select");
-    uiItemO(row, IFACE_("Assign"), ICON_NONE, "OBJECT_OT_hook_assign");
+    row = &layout->row(true);
+    row->op("OBJECT_OT_hook_reset", IFACE_("Reset"), ICON_NONE);
+    row->op("OBJECT_OT_hook_recenter", IFACE_("Recenter"), ICON_NONE);
+    row = &layout->row(true);
+    row->op("OBJECT_OT_hook_select", IFACE_("Select"), ICON_NONE);
+    row->op("OBJECT_OT_hook_assign", IFACE_("Assign"), ICON_NONE);
   }
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void falloff_panel_draw(const bContext * /*C*/, Panel *panel)
@@ -490,18 +490,18 @@ static void falloff_panel_draw(const bContext * /*C*/, Panel *panel)
 
   bool use_falloff = RNA_enum_get(ptr, "falloff_type") != eWarp_Falloff_None;
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiItemR(layout, ptr, "falloff_type", UI_ITEM_NONE, IFACE_("Type"), ICON_NONE);
+  layout->prop(ptr, "falloff_type", UI_ITEM_NONE, IFACE_("Type"), ICON_NONE);
 
-  row = uiLayoutRow(layout, false);
-  uiLayoutSetActive(row, use_falloff);
-  uiItemR(row, ptr, "falloff_radius", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  row = &layout->row(false);
+  row->active_set(use_falloff);
+  row->prop(ptr, "falloff_radius", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  uiItemR(layout, ptr, "use_falloff_uniform", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "use_falloff_uniform", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   if (RNA_enum_get(ptr, "falloff_type") == eWarp_Falloff_Curve) {
-    uiTemplateCurveMapping(layout, ptr, "falloff_curve", 0, false, false, false, false);
+    uiTemplateCurveMapping(layout, ptr, "falloff_curve", 0, false, false, false, false, false);
   }
 }
 
@@ -570,4 +570,5 @@ ModifierTypeInfo modifierType_Hook = {
     /*blend_write*/ blend_write,
     /*blend_read*/ blend_read,
     /*foreach_cache*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
 };

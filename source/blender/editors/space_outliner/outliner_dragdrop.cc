@@ -16,7 +16,6 @@
 #include "DNA_space_types.h"
 
 #include "BLI_listbase.h"
-#include "BLI_string.h"
 
 #include "BLT_translation.hh"
 
@@ -24,6 +23,7 @@
 #include "BKE_context.hh"
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
+#include "BKE_library.hh"
 #include "BKE_main.hh"
 #include "BKE_material.hh"
 #include "BKE_object.hh"
@@ -395,7 +395,7 @@ static void parent_drop_set_parents(bContext *C,
   }
 
   if (linked_objects) {
-    BKE_report(reports, RPT_INFO, "Can't edit library linked or non-editable override object(s)");
+    BKE_report(reports, RPT_INFO, "Cannot edit library linked or non-editable override object(s)");
   }
 
   if (parent_set) {
@@ -405,7 +405,7 @@ static void parent_drop_set_parents(bContext *C,
   }
 }
 
-static int parent_drop_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus parent_drop_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
   TreeElement *te = outliner_drop_find(C, event);
   TreeStoreElem *tselem = te ? TREESTORE(te) : nullptr;
@@ -436,7 +436,7 @@ static int parent_drop_invoke(bContext *C, wmOperator *op, const wmEvent *event)
                           static_cast<wmDragID *>(drag->ids.first),
                           par,
                           object::PAR_OBJECT,
-                          event->modifier & KM_ALT);
+                          !(event->modifier & KM_ALT));
 
   return OPERATOR_FINISHED;
 }
@@ -444,11 +444,11 @@ static int parent_drop_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 void OUTLINER_OT_parent_drop(wmOperatorType *ot)
 {
   /* identifiers */
-  ot->name = "Drop to Set Parent (hold Alt to keep transforms)";
+  ot->name = "Drop to Set Parent (hold Alt to not keep transforms)";
   ot->description = "Drag to parent in Outliner";
   ot->idname = "OUTLINER_OT_parent_drop";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = parent_drop_invoke;
 
   ot->poll = ED_operator_region_outliner_active;
@@ -503,7 +503,7 @@ static bool parent_clear_poll(bContext *C, wmDrag *drag, const wmEvent *event)
   }
 }
 
-static int parent_clear_invoke(bContext *C, wmOperator * /*op*/, const wmEvent *event)
+static wmOperatorStatus parent_clear_invoke(bContext *C, wmOperator * /*op*/, const wmEvent *event)
 {
   Main *bmain = CTX_data_main(C);
 
@@ -519,8 +519,8 @@ static int parent_clear_invoke(bContext *C, wmOperator * /*op*/, const wmEvent *
       Object *object = (Object *)drag_id->id;
 
       object::parent_clear(object,
-                           (event->modifier & KM_ALT) ? object::CLEAR_PARENT_KEEP_TRANSFORM :
-                                                        object::CLEAR_PARENT_ALL);
+                           (event->modifier & KM_ALT) ? object::CLEAR_PARENT_ALL :
+                                                        object::CLEAR_PARENT_KEEP_TRANSFORM);
     }
   }
 
@@ -533,11 +533,11 @@ static int parent_clear_invoke(bContext *C, wmOperator * /*op*/, const wmEvent *
 void OUTLINER_OT_parent_clear(wmOperatorType *ot)
 {
   /* identifiers */
-  ot->name = "Drop to Clear Parent (hold Alt to keep transforms)";
+  ot->name = "Drop to Clear Parent (hold Alt to not keep transforms)";
   ot->description = "Drag to clear parent in Outliner";
   ot->idname = "OUTLINER_OT_parent_clear";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = parent_clear_invoke;
 
   ot->poll = ED_operator_outliner_active;
@@ -559,7 +559,7 @@ static bool scene_drop_poll(bContext *C, wmDrag *drag, const wmEvent *event)
   return (ob && (outliner_ID_drop_find(C, event, ID_SCE) != nullptr));
 }
 
-static int scene_drop_invoke(bContext *C, wmOperator * /*op*/, const wmEvent *event)
+static wmOperatorStatus scene_drop_invoke(bContext *C, wmOperator * /*op*/, const wmEvent *event)
 {
   Main *bmain = CTX_data_main(C);
   Scene *scene = (Scene *)outliner_ID_drop_find(C, event, ID_SCE);
@@ -608,7 +608,7 @@ void OUTLINER_OT_scene_drop(wmOperatorType *ot)
   ot->description = "Drag object to scene in Outliner";
   ot->idname = "OUTLINER_OT_scene_drop";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = scene_drop_invoke;
 
   ot->poll = ED_operator_region_outliner_active;
@@ -632,7 +632,9 @@ static bool material_drop_poll(bContext *C, wmDrag *drag, const wmEvent *event)
   return (!ELEM(nullptr, ob, ma) && ID_IS_EDITABLE(&ob->id) && !ID_IS_OVERRIDE_LIBRARY(&ob->id));
 }
 
-static int material_drop_invoke(bContext *C, wmOperator * /*op*/, const wmEvent *event)
+static wmOperatorStatus material_drop_invoke(bContext *C,
+                                             wmOperator * /*op*/,
+                                             const wmEvent *event)
 {
   Main *bmain = CTX_data_main(C);
   Object *ob = (Object *)outliner_ID_drop_find(C, event, ID_OB);
@@ -643,7 +645,7 @@ static int material_drop_invoke(bContext *C, wmOperator * /*op*/, const wmEvent 
   }
 
   /* only drop grease pencil material on grease pencil objects */
-  if ((ma->gp_style != nullptr) && (ob->type != OB_GPENCIL_LEGACY)) {
+  if ((ma->gp_style != nullptr) && (ob->type != OB_GREASE_PENCIL)) {
     return OPERATOR_CANCELLED;
   }
 
@@ -663,7 +665,7 @@ void OUTLINER_OT_material_drop(wmOperatorType *ot)
   ot->description = "Drag material to object in Outliner";
   ot->idname = "OUTLINER_OT_material_drop";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = material_drop_invoke;
 
   ot->poll = ED_operator_region_outliner_active;
@@ -711,7 +713,7 @@ static void datastack_drop_data_init(wmDrag *drag,
                                      TreeStoreElem *tselem,
                                      void *directdata)
 {
-  StackDropData *drop_data = MEM_cnew<StackDropData>("datastack drop data");
+  StackDropData *drop_data = MEM_callocN<StackDropData>("datastack drop data");
 
   drop_data->ob_parent = ob;
   drop_data->pchan_parent = pchan;
@@ -838,7 +840,7 @@ static bool datastack_drop_are_types_valid(StackDropData *drop_data)
   switch (drop_data->drag_tselem->type) {
     case TSE_MODIFIER_BASE:
     case TSE_MODIFIER:
-      return (ob_parent->type == OB_GPENCIL_LEGACY) == (ob_dst->type == OB_GPENCIL_LEGACY);
+      return (ob_parent->type == OB_GREASE_PENCIL) == (ob_dst->type == OB_GREASE_PENCIL);
       break;
     case TSE_CONSTRAINT_BASE:
     case TSE_CONSTRAINT:
@@ -846,7 +848,7 @@ static bool datastack_drop_are_types_valid(StackDropData *drop_data)
       break;
     case TSE_GPENCIL_EFFECT_BASE:
     case TSE_GPENCIL_EFFECT:
-      return ob_parent->type == OB_GPENCIL_LEGACY && ob_dst->type == OB_GPENCIL_LEGACY;
+      return ob_parent->type == OB_GREASE_PENCIL && ob_dst->type == OB_GREASE_PENCIL;
       break;
   }
 
@@ -953,7 +955,7 @@ static void datastack_drop_link(bContext *C, StackDropData *drop_data)
       break;
     }
     case TSE_GPENCIL_EFFECT_BASE:
-      if (ob_dst->type != OB_GPENCIL_LEGACY) {
+      if (ob_dst->type != OB_GREASE_PENCIL) {
         return;
       }
 
@@ -993,7 +995,7 @@ static void datastack_drop_copy(bContext *C, StackDropData *drop_data)
       }
       break;
     case TSE_GPENCIL_EFFECT: {
-      if (ob_dst->type != OB_GPENCIL_LEGACY) {
+      if (ob_dst->type != OB_GREASE_PENCIL) {
         return;
       }
 
@@ -1047,7 +1049,7 @@ static void datastack_drop_reorder(bContext *C, ReportList *reports, StackDropDa
   }
 }
 
-static int datastack_drop_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus datastack_drop_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
   if (event->custom != EVT_DATA_DRAGDROP) {
     return OPERATOR_CANCELLED;
@@ -1079,7 +1081,7 @@ void OUTLINER_OT_datastack_drop(wmOperatorType *ot)
   ot->description = "Copy or reorder modifiers, constraints, and effects";
   ot->idname = "OUTLINER_OT_datastack_drop";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = datastack_drop_invoke;
 
   ot->poll = ED_operator_outliner_active;
@@ -1131,7 +1133,9 @@ static bool collection_drop_init(bContext *C, wmDrag *drag, const int xy[2], Col
 
   Collection *to_collection = outliner_collection_from_tree_element(te);
   if (!ID_IS_EDITABLE(to_collection) || ID_IS_OVERRIDE_LIBRARY(to_collection)) {
-    return false;
+    if (insert_type == TE_INSERT_INTO) {
+      return false;
+    }
   }
 
   /* Get drag datablocks. */
@@ -1233,7 +1237,7 @@ static std::string collection_drop_tooltip(bContext *C,
 
     /* Test if we are moving within same parent collection. */
     bool same_level = false;
-    LISTBASE_FOREACH (CollectionParent *, parent, &data.to->runtime.parents) {
+    LISTBASE_FOREACH (CollectionParent *, parent, &data.to->runtime->parents) {
       if (data.from == parent->collection) {
         same_level = true;
       }
@@ -1281,7 +1285,9 @@ static std::string collection_drop_tooltip(bContext *C,
   return {};
 }
 
-static int collection_drop_invoke(bContext *C, wmOperator * /*op*/, const wmEvent *event)
+static wmOperatorStatus collection_drop_invoke(bContext *C,
+                                               wmOperator * /*op*/,
+                                               const wmEvent *event)
 {
   Main *bmain = CTX_data_main(C);
   Scene *scene = CTX_data_scene(C);
@@ -1367,7 +1373,7 @@ void OUTLINER_OT_collection_drop(wmOperatorType *ot)
   ot->description = "Drag to move to collection in Outliner";
   ot->idname = "OUTLINER_OT_collection_drop";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = collection_drop_invoke;
   ot->poll = ED_operator_outliner_active;
 
@@ -1396,7 +1402,9 @@ static TreeElement *outliner_item_drag_element_find(SpaceOutliner *space_outline
   return outliner_find_item_at_y(space_outliner, &space_outliner->tree, my);
 }
 
-static int outliner_item_drag_drop_invoke(bContext *C, wmOperator * /*op*/, const wmEvent *event)
+static wmOperatorStatus outliner_item_drag_drop_invoke(bContext *C,
+                                                       wmOperator * /*op*/,
+                                                       const wmEvent *event)
 {
   ARegion *region = CTX_wm_region(C);
   SpaceOutliner *space_outliner = CTX_wm_space_outliner(C);
@@ -1431,7 +1439,7 @@ static int outliner_item_drag_drop_invoke(bContext *C, wmOperator * /*op*/, cons
     PointerRNA op_ptr;
     WM_operator_properties_create_ptr(&op_ptr, ot);
     RNA_float_set(&op_ptr, "outside_padding", OUTLINER_DRAG_SCOLL_OUTSIDE_PAD);
-    WM_operator_name_call_ptr(C, ot, WM_OP_INVOKE_DEFAULT, &op_ptr, event);
+    WM_operator_name_call_ptr(C, ot, wm::OpCallContext::InvokeDefault, &op_ptr, event);
     WM_operator_properties_free(&op_ptr);
   }
 

@@ -8,10 +8,13 @@
  * GPU immediate mode drawing utilities
  */
 
-#include <cstdio>
 #include <cstring>
 
+#include "DNA_userdef_types.h"
+
 #include "BLI_math_rotation.h"
+#include "BLI_math_vector.h"
+#include "BLI_rect.h"
 #include "BLI_utildefines.h"
 
 #include "GPU_immediate.hh"
@@ -118,14 +121,31 @@ void immRecti_fast_with_color(
   immVertex2i(pos, x1, y2);
 }
 
+void immRectf_with_texco(const uint pos, const uint tex_coord, const rctf &p, const rctf &uv)
+{
+  immBegin(GPU_PRIM_TRI_FAN, 4);
+  immAttr2f(tex_coord, uv.xmin, uv.ymin);
+  immVertex2f(pos, p.xmin, p.ymin);
+
+  immAttr2f(tex_coord, uv.xmin, uv.ymax);
+  immVertex2f(pos, p.xmin, p.ymax);
+
+  immAttr2f(tex_coord, uv.xmax, uv.ymax);
+  immVertex2f(pos, p.xmax, p.ymax);
+
+  immAttr2f(tex_coord, uv.xmax, uv.ymin);
+  immVertex2f(pos, p.xmax, p.ymin);
+  immEnd();
+}
+
 #if 0 /* more complete version in case we want that */
 void immRecti_complete(int x1, int y1, int x2, int y2, const float color[4])
 {
   GPUVertFormat *format = immVertexFormat();
-  uint pos = add_attr(format, "pos", GPU_COMP_I32, 2, GPU_FETCH_INT_TO_FLOAT);
+  uint pos = add_attr(format, "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
   immUniformColor4fv(color);
-  immRecti(pos, x1, y1, x2, y2);
+  immRectf(pos, x1, y1, x2, y2);
   immUnbindProgram();
 }
 #endif
@@ -451,7 +471,8 @@ void imm_draw_box_checker_2d_ex(float x1,
                                 const float color_secondary[4],
                                 int checker_size)
 {
-  uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+  uint pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
 
   immBindBuiltinProgram(GPU_SHADER_2D_CHECKER);
 
@@ -463,13 +484,15 @@ void imm_draw_box_checker_2d_ex(float x1,
 
   immUnbindProgram();
 }
-void imm_draw_box_checker_2d(float x1, float y1, float x2, float y2)
+void imm_draw_box_checker_2d(float x1, float y1, float x2, float y2, bool clear_alpha)
 {
   float checker_primary[4];
   float checker_secondary[4];
   UI_GetThemeColor4fv(TH_TRANSPARENT_CHECKER_PRIMARY, checker_primary);
   UI_GetThemeColor4fv(TH_TRANSPARENT_CHECKER_SECONDARY, checker_secondary);
-  int checker_size = UI_GetThemeValue(TH_TRANSPARENT_CHECKER_SIZE);
+  checker_primary[3] = clear_alpha ? 0.0 : checker_primary[3];
+  checker_secondary[3] = clear_alpha ? 0.0 : checker_secondary[3];
+  int checker_size = UI_GetThemeValue(TH_TRANSPARENT_CHECKER_SIZE) * U.pixelsize;
   imm_draw_box_checker_2d_ex(x1, y1, x2, y2, checker_primary, checker_secondary, checker_size);
 }
 

@@ -2,16 +2,14 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include <algorithm>
+
 #include "BLI_map.hh"
 #include "BLI_set.hh"
 #include "BLI_stack.hh"
 #include "BLI_vector.hh"
-#include "BLI_vector_set.hh"
 
 #include "NOD_derived_node_tree.hh"
-
-#include "BKE_node_legacy_types.hh"
-#include "BKE_node_runtime.hh"
 
 #include "COM_context.hh"
 #include "COM_scheduler.hh"
@@ -21,33 +19,39 @@ namespace blender::compositor {
 
 using namespace nodes::derived_node_tree_types;
 
-/* Add the viewer node which is marked as NODE_DO_OUTPUT in the given context to the given stack.
- * If no viewer nodes were found, composite nodes can be added as a fallback
- * viewer node. */
-static bool add_viewer_nodes_in_context(const DTreeContext *context, Stack<DNode> &node_stack)
+/* Returns true if any of the node group nodes that make up this tree context are muted. */
+static bool is_tree_context_muted(const DTreeContext &tree_context)
 {
-  for (const bNode *node : context->btree().nodes_by_type("CompositorNodeViewer")) {
-    if (node->flag & NODE_DO_OUTPUT && !node->is_muted()) {
-      node_stack.push(DNode(context, node));
-      return true;
-    }
-  }
-
-  /* The active Composite node was already added, no need to add it again, see the next block. */
-  if (!node_stack.is_empty() && node_stack.peek()->type_legacy == CMP_NODE_COMPOSITE) {
+  /* Root contexts are never muted. */
+  if (tree_context.is_root()) {
     return false;
   }
 
-  /* No active viewers exist in this context, try to add the Composite node as a fallback viewer if
-   * it was not already added. */
-  for (const bNode *node : context->btree().nodes_by_type("CompositorNodeComposite")) {
+  /* The node group that represents this context is muted. */
+  if (tree_context.parent_node()->is_muted()) {
+    return true;
+  }
+
+  /* Recursively check parent contexts up until the root context. */
+  return is_tree_context_muted(*tree_context.parent_context());
+}
+
+/* Find the active viewer node in the given tree context. Returns a null node if no active node was
+ * found. */
+static DNode find_viewer_node_in_context(const DTreeContext &tree_context)
+{
+  /* Do not return viewer nodes that are inside muted contexts. */
+  if (is_tree_context_muted(tree_context)) {
+    return DNode();
+  }
+
+  for (const bNode *node : tree_context.btree().nodes_by_type("CompositorNodeViewer")) {
     if (node->flag & NODE_DO_OUTPUT && !node->is_muted()) {
-      node_stack.push(DNode(context, node));
-      return true;
+      return DNode(&tree_context, node);
     }
   }
 
-  return false;
+  return DNode();
 }
 
 /* Add all File Output nodes inside the given tree_context recursively to the node stack. */
@@ -76,26 +80,19 @@ static void add_file_output_nodes(const DTreeContext &tree_context, Stack<DNode>
 }
 
 /* Add the output nodes whose result should be computed to the given stack. This includes File
- * Output, Composite, and Viewer nodes. Viewer nodes are a special case, as only the nodes that
- * satisfies the requirements in the add_viewer_nodes_in_context function are added. First, the
- * active context is searched for viewer nodes, if non were found, the root context is searched.
- * For more information on what contexts mean here, see the DerivedNodeTree::active_context()
- * function. */
+ * Output, Group Output, and Viewer nodes. */
 static void add_output_nodes(const Context &context,
                              const DerivedNodeTree &tree,
                              Stack<DNode> &node_stack)
 {
   const DTreeContext &root_context = tree.root_context();
 
-  /* Only add File Output nodes if the context supports them. */
-  if (context.use_file_output()) {
+  if (flag_is_set(context.needed_outputs(), OutputTypes::FileOutput)) {
     add_file_output_nodes(root_context, node_stack);
   }
 
-  /* Only add the Composite output node if the context supports composite outputs. The active
-   * Composite node may still be added as a fallback viewer output below. */
-  if (context.use_composite_output()) {
-    for (const bNode *node : root_context.btree().nodes_by_type("CompositorNodeComposite")) {
+  if (flag_is_set(context.needed_outputs(), OutputTypes::Composite)) {
+    for (const bNode *node : root_context.btree().nodes_by_type("NodeGroupOutput")) {
       if (node->flag & NODE_DO_OUTPUT && !node->is_muted()) {
         node_stack.push(DNode(&root_context, node));
         break;
@@ -103,22 +100,28 @@ static void add_output_nodes(const Context &context,
     }
   }
 
-  const DTreeContext &active_context = tree.active_context();
-  const bool viewer_was_added = add_viewer_nodes_in_context(&active_context, node_stack);
+  if (flag_is_set(context.needed_outputs(), OutputTypes::Viewer)) {
+    /* Check if the active context has a viewer node, if not, check the root context. */
+    DNode viewer_node = find_viewer_node_in_context(tree.active_context());
+    if (!viewer_node) {
+      viewer_node = find_viewer_node_in_context(tree.root_context());
+    }
 
-  /* An active viewer was added, no need to search further. */
-  if (viewer_was_added) {
-    return;
+    /* No viewer node in either contexts. */
+    if (!viewer_node) {
+      return;
+    }
+
+    /* If the viewer is treated as a compositor output and takes precedence over it, we need to
+     * remove it since the viewer will act in its place. */
+    if (context.treat_viewer_as_compositor_output() && !node_stack.is_empty() &&
+        node_stack.peek()->is_type("NodeGroupOutput"))
+    {
+      node_stack.pop();
+    }
+
+    node_stack.push(viewer_node);
   }
-
-  /* If the active context is the root one and no viewer nodes were found, we consider this node
-   * tree to have no viewer nodes, even if one of the non-active descendants have viewer nodes. */
-  if (active_context.is_root()) {
-    return;
-  }
-
-  /* The active context doesn't have a viewer node, search in the root context as a fallback. */
-  add_viewer_nodes_in_context(&tree.root_context(), node_stack);
 }
 
 /* A type representing a mapping that associates each node with a heuristic estimation of the
@@ -199,6 +202,10 @@ static NeededBuffers compute_number_of_needed_buffers(Stack<DNode> &output_nodes
     for (const bNodeSocket *input : node->input_sockets()) {
       const DInputSocket dinput{node.context(), input};
 
+      if (!is_socket_available(input)) {
+        continue;
+      }
+
       /* Get the output linked to the input. If it is null, that means the input is unlinked and
        * has no dependency node. */
       const DOutputSocket doutput = get_output_linked_to_input(dinput);
@@ -233,6 +240,10 @@ static NeededBuffers compute_number_of_needed_buffers(Stack<DNode> &output_nodes
     for (const bNodeSocket *input : node->input_sockets()) {
       const DInputSocket dinput{node.context(), input};
 
+      if (!is_socket_available(input)) {
+        continue;
+      }
+
       /* Get the output linked to the input. If it is null, that means the input is unlinked.
        * Unlinked inputs do not take a buffer, so skip those inputs. */
       const DOutputSocket doutput = get_output_linked_to_input(dinput);
@@ -250,15 +261,18 @@ static NeededBuffers compute_number_of_needed_buffers(Stack<DNode> &output_nodes
        * buffers needed by the dependencies, then update the latter to be the former. This is
        * computing the "d" in the aforementioned equation "max(n + m, d)". */
       const int buffers_needed_by_dependency = needed_buffers.lookup(doutput.node());
-      if (buffers_needed_by_dependency > buffers_needed_by_dependencies) {
-        buffers_needed_by_dependencies = buffers_needed_by_dependency;
-      }
+      buffers_needed_by_dependencies = std::max(buffers_needed_by_dependency,
+                                                buffers_needed_by_dependencies);
     }
 
     /* Compute the number of buffers that will be computed/output by this node. */
     int number_of_output_buffers = 0;
     for (const bNodeSocket *output : node->output_sockets()) {
       const DOutputSocket doutput{node.context(), output};
+
+      if (!is_socket_available(output)) {
+        continue;
+      }
 
       /* The output is not linked, it outputs no buffer. */
       if (!output->is_logically_linked()) {
@@ -333,6 +347,10 @@ Schedule compute_schedule(const Context &context, const DerivedNodeTree &tree)
     Vector<DNode> sorted_dependency_nodes;
     for (const bNodeSocket *input : node->input_sockets()) {
       const DInputSocket dinput{node.context(), input};
+
+      if (!is_socket_available(input)) {
+        continue;
+      }
 
       /* Get the output linked to the input. If it is null, that means the input is unlinked and
        * has no dependency node, so skip it. */

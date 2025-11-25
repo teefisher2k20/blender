@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bke
+ */
+
 #pragma once
 
 #include <optional>
@@ -51,9 +55,6 @@ struct ObjectRuntime {
    * somebody else.
    */
   char is_data_eval_owned = false;
-
-  /** Start time of the mode transfer overlay animation. */
-  double overlay_mode_transfer_start_time = 0.0f;
 
   /**
    * The bounding box of the object's evaluated geometry in the active dependency graph. The bounds

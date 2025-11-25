@@ -20,6 +20,7 @@
 #include "BLI_ghash.h"
 #include "BLI_listbase.h"
 #include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_string_utils.hh"
 #include "BLI_utildefines.h"
 
@@ -37,7 +38,7 @@
 #include "BKE_lib_query.hh"
 #include "BKE_main.hh"
 #include "BKE_nla.hh"
-#include "BKE_sound.h"
+#include "BKE_sound.hh"
 
 #include "BLO_read_write.hh"
 
@@ -48,7 +49,7 @@
 
 #include "nla_private.h"
 
-static CLG_LogRef LOG = {"bke.nla"};
+static CLG_LogRef LOG = {"anim.nla"};
 
 using namespace blender;
 
@@ -344,7 +345,7 @@ void BKE_nla_tracks_copy_from_adt(Main *bmain,
 NlaTrack *BKE_nlatrack_new()
 {
   /* allocate new track */
-  NlaTrack *nlt = static_cast<NlaTrack *>(MEM_callocN(sizeof(NlaTrack), "NlaTrack"));
+  NlaTrack *nlt = MEM_callocN<NlaTrack>("NlaTrack");
 
   /* set settings requiring the track to not be part of the stack yet */
   nlt->flag = NLATRACK_SELECTED | NLATRACK_OVERRIDELIBRARY_LOCAL;
@@ -371,7 +372,7 @@ void BKE_nlatrack_insert_before(ListBase *nla_tracks,
   new_track->index = BLI_findindex(nla_tracks, new_track);
 
   /* Must have unique name, but we need to seed this. */
-  STRNCPY(new_track->name, "NlaTrack");
+  STRNCPY_UTF8(new_track->name, "NlaTrack");
 
   BLI_uniquename(nla_tracks,
                  new_track,
@@ -389,7 +390,7 @@ void BKE_nlatrack_insert_after(ListBase *nla_tracks,
   BLI_assert(nla_tracks);
   BLI_assert(new_track);
 
-  /** If nullptr, then caller intends to insert a new head. But, tracks are not allowed to be
+  /* If nullptr, then caller intends to insert a new head. But, tracks are not allowed to be
    * placed before library overrides. So it must inserted after the last override. */
   if (prev == nullptr) {
     NlaTrack *first_track = (NlaTrack *)nla_tracks->first;
@@ -483,7 +484,7 @@ static NlaStrip *nlastrip_new(bAction *act, ID &animated_id)
   }
 
   /* allocate new strip */
-  strip = static_cast<NlaStrip *>(MEM_callocN(sizeof(NlaStrip), "NlaStrip"));
+  strip = MEM_callocN<NlaStrip>("NlaStrip");
 
   /* generic settings
    * - selected flag to highlight this to the user
@@ -594,7 +595,7 @@ NlaStrip *BKE_nlastack_add_strip(const OwnedAnimData owned_adt, const bool is_li
     nlt = BKE_nlatrack_new_tail(&adt->nla_tracks, is_liboverride);
     BKE_nlatrack_set_active(&adt->nla_tracks, nlt);
     BKE_nlatrack_add_strip(nlt, strip, is_liboverride);
-    STRNCPY(nlt->name, adt->action->id.name + 2);
+    STRNCPY_UTF8(nlt->name, adt->action->id.name + 2);
   }
 
   /* automatically name it too */
@@ -606,7 +607,7 @@ NlaStrip *BKE_nlastack_add_strip(const OwnedAnimData owned_adt, const bool is_li
 
 NlaStrip *BKE_nla_add_soundstrip(Main *bmain, Scene *scene, Speaker *speaker)
 {
-  NlaStrip *strip = static_cast<NlaStrip *>(MEM_callocN(sizeof(NlaStrip), "NlaSoundStrip"));
+  NlaStrip *strip = MEM_callocN<NlaStrip>("NlaSoundStrip");
 
 /* if speaker has a sound, set the strip length to the length of the sound,
  * otherwise default to length of 10 frames
@@ -615,7 +616,7 @@ NlaStrip *BKE_nla_add_soundstrip(Main *bmain, Scene *scene, Speaker *speaker)
   if (speaker->sound) {
     SoundInfo info;
     if (BKE_sound_info_get(bmain, speaker->sound, &info)) {
-      strip->end = float(ceil(double(info.length) * FPS));
+      strip->end = float(ceil(double(info.length) * scene->frames_per_second()));
     }
   }
   else
@@ -667,6 +668,15 @@ void BKE_nlatrack_remove_and_free(ListBase *tracks, NlaTrack *nlt, bool do_id_us
   BKE_nlatrack_free(nlt, do_id_user);
 }
 
+bool BKE_nlatrack_is_enabled(const AnimData &adt, const NlaTrack &nlt)
+{
+  if (adt.flag & ADT_NLA_SOLO_TRACK) {
+    return (nlt.flag & NLATRACK_SOLO);
+  }
+
+  return !(nlt.flag & NLATRACK_MUTED);
+}
+
 /* *************************************************** */
 /* NLA Evaluation <-> Editing Stuff */
 
@@ -714,8 +724,8 @@ static float nlastrip_get_frame_actionclip(NlaStrip *strip, float cframe, short 
       return strip->actstart;
     }
 
-    /* - the 'fmod(..., actlength * scale)' is needed to get the repeats working
-     * - the '/ scale' is needed to ensure that scaling influences the timing within the repeat
+    /* - The `fmod(..., actlength * scale)` is needed to get the repeats working.
+     * - The `/ scale` is needed to ensure that scaling influences the timing within the repeat.
      */
     return strip->actend - fmodf(cframe - strip->start, actlength * scale) / scale;
   }
@@ -734,8 +744,8 @@ static float nlastrip_get_frame_actionclip(NlaStrip *strip, float cframe, short 
     return strip->actend;
   }
 
-  /* - the 'fmod(..., actlength * scale)' is needed to get the repeats working
-   * - the '/ scale' is needed to ensure that scaling influences the timing within the repeat
+  /* - The `fmod(..., actlength * scale)` is needed to get the repeats working.
+   * - The `/ scale` is needed to ensure that scaling influences the timing within the repeat.
    */
   return strip->actstart + fmodf(cframe - strip->start, actlength * scale) / scale;
 }
@@ -959,7 +969,7 @@ void BKE_nlastrips_make_metas(ListBase *strips, bool is_temp)
       /* if there is an existing meta-strip, add this strip to it, otherwise, create a new one */
       if (mstrip == nullptr) {
         /* add a new meta-strip, and add it before the current strip that it will replace... */
-        mstrip = static_cast<NlaStrip *>(MEM_callocN(sizeof(NlaStrip), "Meta-NlaStrip"));
+        mstrip = MEM_callocN<NlaStrip>("Meta-NlaStrip");
         mstrip->type = NLASTRIP_TYPE_META;
         BLI_insertlinkbefore(strips, strip, mstrip);
 
@@ -1817,8 +1827,7 @@ void BKE_nlastrip_validate_fcurves(NlaStrip *strip)
       fcu->rna_path = BLI_strdupn("influence", 9);
 
       /* insert keyframe to ensure current value stays on first refresh */
-      fcu->bezt = static_cast<BezTriple *>(
-          MEM_callocN(sizeof(BezTriple), "nlastrip influence bezt"));
+      fcu->bezt = MEM_callocN<BezTriple>("nlastrip influence bezt");
       fcu->totvert = 1;
 
       fcu->bezt->vec[1][0] = strip->start;
@@ -1851,6 +1860,23 @@ void BKE_nlastrip_validate_fcurves(NlaStrip *strip)
       /* TODO: insert a few keyframes to ensure default behavior? */
     }
   }
+}
+
+bool BKE_nlastrip_controlcurve_remove(NlaStrip *strip, FCurve *fcurve)
+{
+  if (STREQ(fcurve->rna_path, "strip_time")) {
+    strip->flag &= ~NLASTRIP_FLAG_USR_TIME;
+  }
+  else if (STREQ(fcurve->rna_path, "influence")) {
+    strip->flag &= ~NLASTRIP_FLAG_USR_INFLUENCE;
+  }
+  else {
+    return false;
+  }
+
+  BLI_remlink(&strip->fcurves, fcurve);
+  BKE_fcurve_free(fcurve);
+  return true;
 }
 
 bool BKE_nlastrip_has_curves_for_property(const PointerRNA *ptr, const PropertyRNA *prop)
@@ -1887,11 +1913,6 @@ bool BKE_nlastrip_has_curves_for_property(const PointerRNA *ptr, const PropertyR
 
 /* Sanity Validation ------------------------------------ */
 
-static bool nla_editbone_name_check(void *arg, const char *name)
-{
-  return BLI_ghash_haskey((GHash *)arg, (const void *)name);
-}
-
 void BKE_nlastrip_validate_name(AnimData *adt, NlaStrip *strip)
 {
   GHash *gh;
@@ -1905,16 +1926,16 @@ void BKE_nlastrip_validate_name(AnimData *adt, NlaStrip *strip)
   if (strip->name[0] == 0) {
     switch (strip->type) {
       case NLASTRIP_TYPE_CLIP: /* act-clip */
-        STRNCPY(strip->name, (strip->act) ? (strip->act->id.name + 2) : DATA_("<No Action>"));
+        STRNCPY_UTF8(strip->name, (strip->act) ? (strip->act->id.name + 2) : DATA_("<No Action>"));
         break;
       case NLASTRIP_TYPE_TRANSITION: /* transition */
-        STRNCPY(strip->name, DATA_("Transition"));
+        STRNCPY_UTF8(strip->name, DATA_("Transition"));
         break;
       case NLASTRIP_TYPE_META: /* meta */
-        STRNCPY(strip->name, DATA_("Meta"));
+        STRNCPY_UTF8(strip->name, CTX_DATA_(BLT_I18NCONTEXT_ID_ACTION, "Meta"));
         break;
       default:
-        STRNCPY(strip->name, DATA_("NLA Strip"));
+        STRNCPY_UTF8(strip->name, DATA_("NLA Strip"));
         break;
     }
   }
@@ -1942,12 +1963,14 @@ void BKE_nlastrip_validate_name(AnimData *adt, NlaStrip *strip)
    * - In an extreme case, it might not be able to find a name,
    *   but then everything else in Blender would fail too :).
    */
-  BLI_uniquename_cb(nla_editbone_name_check,
-                    (void *)gh,
-                    DATA_("NlaStrip"),
-                    '.',
-                    strip->name,
-                    sizeof(strip->name));
+  BLI_uniquename_cb(
+      [&](const blender::StringRefNull check_name) {
+        return BLI_ghash_haskey(gh, check_name.c_str());
+      },
+      DATA_("NlaStrip"),
+      '.',
+      strip->name,
+      sizeof(strip->name));
 
   /* free the hash... */
   BLI_ghash_free(gh, nullptr, nullptr);
@@ -2169,7 +2192,7 @@ bool BKE_nla_action_stash(const OwnedAnimData owned_adt, const bool is_liboverri
     BLI_addhead(&adt->nla_tracks, nlt);
   }
 
-  STRNCPY(nlt->name, STASH_TRACK_NAME);
+  STRNCPY_UTF8(nlt->name, STASH_TRACK_NAME);
   BLI_uniquename(
       &adt->nla_tracks, nlt, STASH_TRACK_NAME, '.', offsetof(NlaTrack, name), sizeof(nlt->name));
 
@@ -2211,16 +2234,6 @@ void BKE_nla_action_pushdown(const OwnedAnimData owned_adt, const bool is_libove
   /* sanity checks */
   /* TODO: need to report the error for this */
   if (ELEM(nullptr, adt, adt->action)) {
-    return;
-  }
-
-  /* if the action is empty, we also shouldn't try to add to stack,
-   * as that will cause us grief down the track
-   */
-  /* TODO: what about modifiers? */
-  animrig::Action &action = adt->action->wrap();
-  if (!action.has_keyframes(adt->slot_handle)) {
-    CLOG_ERROR(&LOG, "action has no data");
     return;
   }
 
@@ -2404,7 +2417,7 @@ bool BKE_nla_tweakmode_enter(const OwnedAnimData owned_adt)
     }
   }
   else {
-    /* This is a strange situation to be in, as every 'tweakable' NLA strip should have an Action.
+    /* This is a strange situation to be in, as every *tweak-able* NLA strip should have an Action.
      */
     BLI_assert_unreachable();
     const bool unassign_ok = animrig::unassign_action(owned_adt);
@@ -2470,7 +2483,7 @@ static void nla_tweakmode_exit_nofollowptr(AnimData *adt)
 
   adt->tmpact = nullptr;
   adt->tmp_slot_handle = animrig::Slot::unassigned;
-  STRNCPY(adt->last_slot_identifier, adt->tmp_last_slot_identifier);
+  STRNCPY_UTF8(adt->last_slot_identifier, adt->tmp_last_slot_identifier);
 
   adt->act_track = nullptr;
   adt->actstrip = nullptr;
@@ -2492,6 +2505,18 @@ void BKE_nla_tweakmode_exit(const OwnedAnimData owned_adt)
   }
 
   if (owned_adt.adt.action) {
+    /* When a strip has no slot assigned, it can still enter tweak mode. Inserting a key will then
+     * create a slot. When exiting tweak mode, this slot has to be assigned to the strip.
+     * At this moment in time, the adt->action is still the one being tweaked. */
+    NlaStrip *active_strip = owned_adt.adt.actstrip;
+    if (active_strip && active_strip->action_slot_handle != owned_adt.adt.slot_handle) {
+      const animrig::ActionSlotAssignmentResult result = animrig::nla::assign_action_slot_handle(
+          *active_strip, owned_adt.adt.slot_handle, owned_adt.owner_id);
+      BLI_assert_msg(result == animrig::ActionSlotAssignmentResult::OK,
+                     "When exiting tweak mode, syncing the tweaked Action slot should work");
+      UNUSED_VARS_NDEBUG(result);
+    }
+
     /* The Action will be replaced with adt->tmpact, and thus needs to be unassigned first. */
 
     /* The high-level function animrig::unassign_action() will check whether NLA tweak mode is
@@ -2555,21 +2580,29 @@ void BKE_nla_debug_print_flags(AnimData *adt, ID *owner_id)
   }
 
   printf("  - ADT flags:");
-  if (adt->flag & ADT_NLA_SOLO_TRACK)
+  if (adt->flag & ADT_NLA_SOLO_TRACK) {
     printf(" SOLO_TRACK");
-  if (adt->flag & ADT_NLA_EVAL_OFF)
+  }
+  if (adt->flag & ADT_NLA_EVAL_OFF) {
     printf(" EVAL_OFF");
-  if (adt->flag & ADT_NLA_EDIT_ON)
+  }
+  if (adt->flag & ADT_NLA_EDIT_ON) {
     printf(" EDIT_ON");
-  if (adt->flag & ADT_NLA_EDIT_NOMAP)
+  }
+  if (adt->flag & ADT_NLA_EDIT_NOMAP) {
     printf(" EDIT_NOMAP");
-  if (adt->flag & ADT_NLA_SKEYS_COLLAPSED)
+  }
+  if (adt->flag & ADT_NLA_SKEYS_COLLAPSED) {
     printf(" SKEYS_COLLAPSED");
-  if (adt->flag & ADT_NLA_EVAL_UPPER_TRACKS)
+  }
+  if (adt->flag & ADT_NLA_EVAL_UPPER_TRACKS) {
     printf(" EVAL_UPPER_TRACKS");
+  }
   if ((adt->flag & (ADT_NLA_SOLO_TRACK | ADT_NLA_EVAL_OFF | ADT_NLA_EDIT_ON | ADT_NLA_EDIT_NOMAP |
                     ADT_NLA_SKEYS_COLLAPSED | ADT_NLA_EVAL_UPPER_TRACKS)) == 0)
+  {
     printf(" -");
+  }
   printf("\n");
 
   if (BLI_listbase_is_empty(&adt->nla_tracks)) {
@@ -2583,54 +2616,76 @@ void BKE_nla_debug_print_flags(AnimData *adt, ID *owner_id)
 
   LISTBASE_FOREACH (NlaTrack *, nlt, &adt->nla_tracks) {
     printf("  - Track #%d %s: ", nlt->index, nlt->name);
-    if (nlt->flag & NLATRACK_ACTIVE)
+    if (nlt->flag & NLATRACK_ACTIVE) {
       printf("ACTIVE ");
-    if (nlt->flag & NLATRACK_SELECTED)
+    }
+    if (nlt->flag & NLATRACK_SELECTED) {
       printf("SELECTED ");
-    if (nlt->flag & NLATRACK_MUTED)
+    }
+    if (nlt->flag & NLATRACK_MUTED) {
       printf("MUTED ");
-    if (nlt->flag & NLATRACK_SOLO)
+    }
+    if (nlt->flag & NLATRACK_SOLO) {
       printf("SOLO ");
-    if (nlt->flag & NLATRACK_PROTECTED)
+    }
+    if (nlt->flag & NLATRACK_PROTECTED) {
       printf("PROTECTED ");
-    if (nlt->flag & NLATRACK_DISABLED)
+    }
+    if (nlt->flag & NLATRACK_DISABLED) {
       printf("DISABLED ");
-    if (nlt->flag & NLATRACK_TEMPORARILY_ADDED)
+    }
+    if (nlt->flag & NLATRACK_TEMPORARILY_ADDED) {
       printf("TEMPORARILY_ADDED ");
-    if (nlt->flag & NLATRACK_OVERRIDELIBRARY_LOCAL)
+    }
+    if (nlt->flag & NLATRACK_OVERRIDELIBRARY_LOCAL) {
       printf("OVERRIDELIBRARY_LOCAL ");
+    }
     printf("\n");
 
     LISTBASE_FOREACH (NlaStrip *, strip, &nlt->strips) {
       printf("    - Strip %s: ", strip->name);
-      if (strip->flag & NLASTRIP_FLAG_ACTIVE)
+      if (strip->flag & NLASTRIP_FLAG_ACTIVE) {
         printf("ACTIVE ");
-      if (strip->flag & NLASTRIP_FLAG_SELECT)
+      }
+      if (strip->flag & NLASTRIP_FLAG_SELECT) {
         printf("SELECT ");
-      if (strip->flag & NLASTRIP_FLAG_TWEAKUSER)
+      }
+      if (strip->flag & NLASTRIP_FLAG_TWEAKUSER) {
         printf("TWEAKUSER ");
-      if (strip->flag & NLASTRIP_FLAG_USR_INFLUENCE)
+      }
+      if (strip->flag & NLASTRIP_FLAG_USR_INFLUENCE) {
         printf("USR_INFLUENCE ");
-      if (strip->flag & NLASTRIP_FLAG_USR_TIME)
+      }
+      if (strip->flag & NLASTRIP_FLAG_USR_TIME) {
         printf("USR_TIME ");
-      if (strip->flag & NLASTRIP_FLAG_USR_TIME_CYCLIC)
+      }
+      if (strip->flag & NLASTRIP_FLAG_USR_TIME_CYCLIC) {
         printf("USR_TIME_CYCLIC ");
-      if (strip->flag & NLASTRIP_FLAG_SYNC_LENGTH)
+      }
+      if (strip->flag & NLASTRIP_FLAG_SYNC_LENGTH) {
         printf("SYNC_LENGTH ");
-      if (strip->flag & NLASTRIP_FLAG_AUTO_BLENDS)
+      }
+      if (strip->flag & NLASTRIP_FLAG_AUTO_BLENDS) {
         printf("AUTO_BLENDS ");
-      if (strip->flag & NLASTRIP_FLAG_REVERSE)
+      }
+      if (strip->flag & NLASTRIP_FLAG_REVERSE) {
         printf("REVERSE ");
-      if (strip->flag & NLASTRIP_FLAG_MUTED)
+      }
+      if (strip->flag & NLASTRIP_FLAG_MUTED) {
         printf("MUTED ");
-      if (strip->flag & NLASTRIP_FLAG_INVALID_LOCATION)
+      }
+      if (strip->flag & NLASTRIP_FLAG_INVALID_LOCATION) {
         printf("INVALID_LOCATION ");
-      if (strip->flag & NLASTRIP_FLAG_NO_TIME_MAP)
+      }
+      if (strip->flag & NLASTRIP_FLAG_NO_TIME_MAP) {
         printf("NO_TIME_MAP ");
-      if (strip->flag & NLASTRIP_FLAG_TEMP_META)
+      }
+      if (strip->flag & NLASTRIP_FLAG_TEMP_META) {
         printf("TEMP_META ");
-      if (strip->flag & NLASTRIP_FLAG_EDIT_TOUCHED)
+      }
+      if (strip->flag & NLASTRIP_FLAG_EDIT_TOUCHED) {
         printf("EDIT_TOUCHED ");
+      }
       printf("\n");
     }
   }
@@ -2724,7 +2779,7 @@ void BKE_nla_liboverride_post_process(ID *id, AnimData *adt)
 
   /* In tweak mode, with tracks, so ensure that the active track/strip pointers are correct. Since
    * these pointers may come from a library, but the override may have added other tracks and
-   * strips (one of which is in tweak mode), always look up the current pointer values.  */
+   * strips (one of which is in tweak mode), always look up the current pointer values. */
   nla_tweakmode_find_active(&adt->nla_tracks, &adt->act_track, &adt->actstrip);
   if (!adt->act_track || !adt->actstrip) {
     /* Could not find the active track/strip, so better to exit tweak mode. */

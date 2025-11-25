@@ -46,13 +46,13 @@ void viewmove_modal_keymap(wmKeyConfig *keyconf)
   WM_modalkeymap_assign(keymap, "VIEW3D_OT_move");
 }
 
-static int viewmove_modal_impl(bContext *C,
-                               ViewOpsData *vod,
-                               const eV3D_OpEvent event_code,
-                               const int xy[2])
+static wmOperatorStatus viewmove_modal_impl(bContext *C,
+                                            ViewOpsData *vod,
+                                            const eV3D_OpEvent event_code,
+                                            const int xy[2])
 {
   bool use_autokey = false;
-  int ret = OPERATOR_RUNNING_MODAL;
+  wmOperatorStatus ret = OPERATOR_RUNNING_MODAL;
 
   switch (event_code) {
     case VIEW_APPLY: {
@@ -83,10 +83,10 @@ static int viewmove_modal_impl(bContext *C,
   return ret;
 }
 
-static int viewmove_invoke_impl(bContext * /*C*/,
-                                ViewOpsData *vod,
-                                const wmEvent *event,
-                                PointerRNA * /*ptr*/)
+static wmOperatorStatus viewmove_invoke_impl(bContext *C,
+                                             ViewOpsData *vod,
+                                             const wmEvent *event,
+                                             PointerRNA * /*ptr*/)
 {
   eV3D_OpEvent event_code = event->type == MOUSEPAN ? VIEW_CONFIRM : VIEW_PASS;
 
@@ -95,13 +95,15 @@ static int viewmove_invoke_impl(bContext * /*C*/,
     int mx = 2 * event->xy[0] - event->prev_xy[0];
     int my = 2 * event->xy[1] - event->prev_xy[1];
     viewmove_apply(vod, mx, my);
+
+    ED_view3d_camera_lock_autokey(vod->v3d, vod->rv3d, C, false, true);
     return OPERATOR_FINISHED;
   }
 
   return OPERATOR_RUNNING_MODAL;
 }
 
-static int viewmove_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus viewmove_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
   return view3d_navigate_invoke_impl(C, op, event, &ViewOpsType_move);
 }
@@ -113,7 +115,7 @@ void VIEW3D_OT_move(wmOperatorType *ot)
   ot->description = "Move the view";
   ot->idname = ViewOpsType_move.idname;
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = viewmove_invoke;
   ot->modal = view3d_navigate_modal_fn;
   ot->poll = view3d_location_poll;

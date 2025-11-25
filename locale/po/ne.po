@@ -1,16 +1,18 @@
 
 msgid ""
 msgstr ""
-"Project-Id-Version: Blender 4.4.0 Alpha (b'efff379ea583')\n"
+"Project-Id-Version: Blender 5.1.0 Alpha (b'ef4e8fa75057')\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2025-01-27 10:58+0000\n"
-"PO-Revision-Date: \n"
-"Last-Translator: Yudhir Khanal <yudhir.khanal@gmail.com>\n"
-"Language-Team: Yudhir\n"
+"POT-Creation-Date: 2025-11-24 08:35+0000\n"
+"PO-Revision-Date: 2025-07-23 15:06+0000\n"
+"Last-Translator: Anonymous <noreply@weblate.org>\n"
+"Language-Team: Nepali <https://translate.blender.org/projects/blender-ui/ui/ne/>\n"
 "Language: ne\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=n != 1;\n"
+"X-Generator: Weblate 5.12.1\n"
 "X-Poedit-Bookmarks: 167,6662,21,-1,-1,3821,-1,-1,1898,-1\n"
 "X-Poedit-Country: NEPAL\n"
 "X-Poedit-Language: Nepali\n"
@@ -41,6 +43,10 @@ msgid "Motion Paths"
 msgstr "चालको बाटो/तरिकाहरु "
 
 
+msgid "Hide"
+msgstr "लुकाउ"
+
+
 msgid "Quaternion"
 msgstr "Quaternion"
 
@@ -51,10 +57,6 @@ msgstr "fileको ठेगाना "
 
 msgid "Extend"
 msgstr "फैल्याउ"
-
-
-msgid "Hide"
-msgstr "लुकाउ"
 
 
 msgid "Weight"
@@ -113,6 +115,10 @@ msgid "Scale"
 msgstr "डाल "
 
 
+msgid "Display"
+msgstr "देखाउन"
+
+
 msgid "Inverse Kinematics"
 msgstr "बिपरित 'गति-बिज्ञान'"
 
@@ -157,10 +163,6 @@ msgid "Reverse"
 msgstr "उल्टो"
 
 
-msgid "Direction"
-msgstr "दिशा "
-
-
 msgid "Path"
 msgstr "ठेगाना (पथ)"
 
@@ -189,12 +191,12 @@ msgid "Damp"
 msgstr "असर कम "
 
 
-msgid "Display"
-msgstr "देखाउन"
-
-
 msgid "Stiffness"
 msgstr "कडापन"
+
+
+msgid "Direction"
+msgstr "दिशा "
 
 
 msgid "Names"
@@ -363,11 +365,6 @@ msgid "Extend the existing selection"
 msgstr "अहिलेको फैल्याउ"
 
 
-msgctxt "Operator"
-msgid "Hide"
-msgstr "लुकाउ"
-
-
 msgid "Align to axis"
 msgstr "अक्ष संग पंक्तिबद्ध "
 
@@ -454,6 +451,11 @@ msgstr "तुलनात्मक पाटो "
 
 msgid "Relative Edge"
 msgstr "तुनालात्मक धार"
+
+
+msgctxt "Operator"
+msgid "Hide"
+msgstr "लुकाउ"
 
 
 msgid "Property Name"

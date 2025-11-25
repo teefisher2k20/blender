@@ -10,6 +10,8 @@
 #include "DNA_screen_types.h"
 #include "DNA_space_types.h"
 
+#include "BLI_listbase.h"
+
 #include "BKE_context.hh"
 #include "BKE_movieclip.h"
 #include "BKE_report.hh"
@@ -45,7 +47,7 @@ static bGPDlayer *detect_get_layer(MovieClip *clip)
   return nullptr;
 }
 
-static int detect_features_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus detect_features_exec(bContext *C, wmOperator *op)
 {
   SpaceClip *sc = CTX_wm_space_clip(C);
   MovieClip *clip = ED_space_clip_get_clip(sc);
@@ -115,7 +117,7 @@ void CLIP_OT_detect_features(wmOperatorType *ot)
   ot->description = "Automatically detect features and place markers to track";
   ot->idname = "CLIP_OT_detect_features";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = detect_features_exec;
   ot->poll = ED_space_clip_tracking_poll;
 

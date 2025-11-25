@@ -10,7 +10,6 @@
 #pragma once
 
 #include "../GHOST_Types.h"
-#include "GHOST_DisplayManagerNULL.hh"
 #include "GHOST_System.hh"
 #include "GHOST_WindowNULL.hh"
 
@@ -37,7 +36,7 @@ class GHOST_SystemHeadless : public GHOST_System {
   }
   bool setConsoleWindowState(GHOST_TConsoleWindowState /*action*/) override
   {
-    return 0;
+    return false;
   }
   GHOST_TSuccess getModifierKeys(GHOST_ModifierKeys & /*keys*/) const override
   {
@@ -49,12 +48,41 @@ class GHOST_SystemHeadless : public GHOST_System {
   }
   GHOST_TCapabilityFlag getCapabilities() const override
   {
-    return GHOST_TCapabilityFlag(GHOST_CAPABILITY_FLAG_ALL &
-                                 /* No windowing functionality supported. */
-                                 ~(GHOST_kCapabilityWindowPosition | GHOST_kCapabilityCursorWarp |
-                                   GHOST_kCapabilityPrimaryClipboard |
-                                   GHOST_kCapabilityDesktopSample |
-                                   GHOST_kCapabilityClipboardImages | GHOST_kCapabilityInputIME));
+    return GHOST_TCapabilityFlag(
+        GHOST_CAPABILITY_FLAG_ALL &
+        /* No windowing functionality supported.
+         * In most cases this value doesn't matter for the headless backend.
+         *
+         * Nevertheless, don't advertise support.
+         *
+         * NOTE: order the following flags as they they're declared in the source. */
+        ~(
+            /* Wrap. */
+            GHOST_kCapabilityWindowPosition |
+            /* Wrap. */
+            GHOST_kCapabilityCursorWarp |
+            /* Wrap. */
+            GHOST_kCapabilityClipboardPrimary |
+            /* Wrap. */
+            GHOST_kCapabilityClipboardImage |
+            /* Wrap. */
+            GHOST_kCapabilityDesktopSample |
+            /* Wrap. */
+            GHOST_kCapabilityInputIME |
+            /* Wrap. */
+            GHOST_kCapabilityWindowDecorationStyles |
+            /* Wrap. */
+            GHOST_kCapabilityKeyboardHyperKey |
+            /* Wrap. */
+            GHOST_kCapabilityCursorRGBA |
+            /* Wrap. */
+            GHOST_kCapabilityCursorGenerator |
+            /* Wrap. */
+            GHOST_kCapabilityMultiMonitorPlacement |
+            /* Wrap. */
+            GHOST_kCapabilityWindowPath)
+
+    );
   }
   char *getClipboard(bool /*selection*/) const override
   {
@@ -85,20 +113,24 @@ class GHOST_SystemHeadless : public GHOST_System {
   void getAllDisplayDimensions(uint32_t & /*width*/, uint32_t & /*height*/) const override
   { /* nop */
   }
-  GHOST_IContext *createOffscreenContext(GHOST_GPUSettings gpuSettings) override
+  GHOST_IContext *createOffscreenContext(GHOST_GPUSettings gpu_settings) override
   {
-    switch (gpuSettings.context_type) {
+    const GHOST_ContextParams context_params_offscreen =
+        GHOST_CONTEXT_PARAMS_FROM_GPU_SETTINGS_OFFSCREEN(gpu_settings);
+    /* This may not be used depending on the build configuration. */
+    (void)context_params_offscreen;
+
+    switch (gpu_settings.context_type) {
 #ifdef WITH_VULKAN_BACKEND
       case GHOST_kDrawingContextTypeVulkan: {
-        const bool debug_context = (gpuSettings.flags & GHOST_gpuDebugContext) != 0;
 #  ifdef _WIN32
         GHOST_Context *context = new GHOST_ContextVK(
-            false, (HWND)0, 1, 2, debug_context, gpuSettings.preferred_device);
+            context_params_offscreen, (HWND)0, 1, 2, gpu_settings.preferred_device);
 #  elif defined(__APPLE__)
         GHOST_Context *context = new GHOST_ContextVK(
-            false, nullptr, 1, 2, debug_context, gpuSettings.preferred_device);
+            context_params_offscreen, nullptr, 1, 2, gpu_settings.preferred_device);
 #  else
-        GHOST_Context *context = new GHOST_ContextVK(false,
+        GHOST_Context *context = new GHOST_ContextVK(context_params_offscreen,
                                                      GHOST_kVulkanPlatformHeadless,
                                                      0,
                                                      0,
@@ -107,8 +139,7 @@ class GHOST_SystemHeadless : public GHOST_System {
                                                      nullptr,
                                                      1,
                                                      2,
-                                                     debug_context,
-                                                     gpuSettings.preferred_device);
+                                                     gpu_settings.preferred_device);
 #  endif
         if (context->initializeDrawingContext()) {
           return context;
@@ -124,7 +155,7 @@ class GHOST_SystemHeadless : public GHOST_System {
         GHOST_Context *context;
         for (int minor = 6; minor >= 3; --minor) {
           context = new GHOST_ContextEGL((GHOST_System *)this,
-                                         false,
+                                         context_params_offscreen,
                                          EGLNativeWindowType(0),
                                          EGLNativeDisplayType(EGL_DEFAULT_DISPLAY),
                                          EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
@@ -164,11 +195,7 @@ class GHOST_SystemHeadless : public GHOST_System {
     GHOST_TSuccess success = GHOST_System::init();
 
     if (success) {
-      m_displayManager = new GHOST_DisplayManagerNULL();
-
-      if (m_displayManager) {
-        return GHOST_kSuccess;
-      }
+      return GHOST_kSuccess;
     }
 
     return GHOST_kFailure;
@@ -180,20 +207,22 @@ class GHOST_SystemHeadless : public GHOST_System {
                               uint32_t width,
                               uint32_t height,
                               GHOST_TWindowState state,
-                              GHOST_GPUSettings gpuSettings,
+                              GHOST_GPUSettings gpu_settings,
                               const bool /*exclusive*/,
                               const bool /*is_dialog*/,
-                              const GHOST_IWindow *parentWindow) override
+                              const GHOST_IWindow *parent_window) override
   {
+    const GHOST_ContextParams context_params = GHOST_CONTEXT_PARAMS_FROM_GPU_SETTINGS(
+        gpu_settings);
     return new GHOST_WindowNULL(title,
                                 left,
                                 top,
                                 width,
                                 height,
                                 state,
-                                parentWindow,
-                                gpuSettings.context_type,
-                                ((gpuSettings.flags & GHOST_gpuStereoVisual) != 0));
+                                parent_window,
+                                gpu_settings.context_type,
+                                context_params);
   }
 
   GHOST_IWindow *getWindowUnderCursor(int32_t /*x*/, int32_t /*y*/) override

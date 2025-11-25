@@ -35,7 +35,7 @@
 
 namespace blender::locale {
 
-static CLG_LogRef LOG = {"translation.messages"};
+static CLG_LogRef LOG = {"translation"};
 
 /* Upper/lower case, intentionally restricted to ASCII. */
 
@@ -111,8 +111,20 @@ class Info {
       if (GetLocaleInfoA(LOCALE_USER_DEFAULT, LOCALE_SISO639LANGNAME, buf, sizeof(buf)) != 0) {
         locale_name = buf;
         if (GetLocaleInfoA(LOCALE_USER_DEFAULT, LOCALE_SISO3166CTRYNAME, buf, sizeof(buf)) != 0) {
-          locale_name += "_";
-          locale_name += buf;
+          std::string region = buf;
+          if (locale_name == "zh") {
+            if (region == "TW" || region == "HK" || region == "MO") {
+              /* Traditional for Taiwan, Hong Kong, Macau. */
+              locale_name += "_HANT";
+            }
+            else {
+              /* Simplified for all other areas. */
+              locale_name += "_HANS";
+            }
+          }
+          else {
+            locale_name += "_" + region;
+          }
         }
       }
     }
@@ -229,7 +241,7 @@ class Info {
     if (end >= input.size()) {
       return true;
     }
-    if (input[end] == '-' || input[end] == '_') {
+    if (ELEM(input[end], '-', '_')) {
       return parse_from_country(input.substr(end + 1));
     }
     if (input[end] == '.') {
@@ -251,14 +263,14 @@ class Info {
         return false;
       }
     }
-    if (tmp != "c" && tmp != "posix") { /* Keep default if C or POSIX. */
+    if (!ELEM(tmp, "c", "posix")) { /* Keep default if C or POSIX. */
       language = tmp;
     }
 
     if (end >= input.size()) {
       return true;
     }
-    if (input[end] == '-' || input[end] == '_') {
+    if (ELEM(input[end], '-', '_')) {
       return parse_from_script(input.substr(end + 1));
     }
     if (input[end] == '.') {
@@ -389,34 +401,34 @@ class MOFile {
 /* Message lookup key. */
 
 struct MessageKeyRef {
-  StringRef context_;
-  StringRef str_;
+  StringRef context;
+  StringRef str;
 
   uint64_t hash() const
   {
-    return get_default_hash(context_, str_);
+    return get_default_hash(this->context, this->str);
   }
 };
 
 struct MessageKey {
-  std::string context_;
-  std::string str_;
+  std::string context;
+  std::string str;
 
   MessageKey(const StringRef c)
   {
     const size_t pos = c.find(char(4));
     if (pos == StringRef::not_found) {
-      str_ = c;
+      this->str = c;
     }
     else {
-      context_ = c.substr(0, pos);
-      str_ = c.substr(pos + 1);
+      this->context = c.substr(0, pos);
+      this->str = c.substr(pos + 1);
     }
   }
 
   uint64_t hash() const
   {
-    return get_default_hash(context_, str_);
+    return get_default_hash(this->context, this->str);
   }
 
   static uint64_t hash_as(const MessageKeyRef &key)
@@ -427,12 +439,12 @@ struct MessageKey {
 
 inline bool operator==(const MessageKey &a, const MessageKey &b)
 {
-  return a.context_ == b.context_ && a.str_ == b.str_;
+  return a.context == b.context && a.str == b.str;
 }
 
 inline bool operator==(const MessageKeyRef &a, const MessageKey &b)
 {
-  return a.context_ == b.context_ && a.str_ == b.str_;
+  return a.context == b.context && a.str == b.str;
 }
 
 /* Messages translation based on .mo files. */
@@ -461,14 +473,19 @@ class MOMessages {
     }
   }
 
-  const char *translate(const int domain, const StringRef context, const StringRef str) const
+  std::optional<StringRefNull> translate(const int domain,
+                                         const StringRef context,
+                                         const StringRef str) const
   {
     if (domain < 0 || domain >= catalogs_.size()) {
-      return nullptr;
+      return std::nullopt;
     }
     const MessageKeyRef key{context, str};
     const std::string *result = catalogs_[domain].lookup_ptr_as(key);
-    return (result) ? result->c_str() : nullptr;
+    if (!result) {
+      return std::nullopt;
+    }
+    return *result;
   }
 
   const std::string &error()
@@ -534,7 +551,7 @@ class MOMessages {
       return false;
     }
 
-    /* Only support UTF-8 encoded files, as created by our msgfmt tool. */
+    /* Only support UTF8 encoded files, as created by our msgfmt tool. */
     const std::string mo_encoding = extract(mo.value(0), "charset=", " \r\n;");
     if (mo_encoding.empty()) {
       error_ = "Invalid mo-format, encoding is not specified";
@@ -544,6 +561,8 @@ class MOMessages {
       error_ = "supported mo-format, encoding must be UTF-8";
       return false;
     }
+
+    CLOG_INFO(&LOG, "Load messages from \"%s\"", filepath.c_str());
 
     /* Create context + key to translated string mapping. */
     for (size_t i = 0; i < mo.size(); i++) {
@@ -584,7 +603,7 @@ void init(const StringRef locale_full_name,
   global_full_name = info.to_full_name();
 
   if (global_messages->error().empty()) {
-    CLOG_INFO(&LOG, 2, "Locale %s used for translation", global_full_name.c_str());
+    CLOG_INFO(&LOG, "Locale %s used for translation", global_full_name.c_str());
   }
   else {
     CLOG_ERROR(&LOG, "Locale %s: %s", global_full_name.c_str(), global_messages->error().c_str());
@@ -598,10 +617,12 @@ void free()
   global_full_name = "";
 }
 
-const char *translate(const int domain, const StringRef context, const StringRef key)
+std::optional<StringRefNull> translate(const int domain,
+                                       const StringRef context,
+                                       const StringRef key)
 {
   if (!global_messages) {
-    return nullptr;
+    return std::nullopt;
   }
 
   return global_messages->translate(domain, context, key);

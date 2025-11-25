@@ -22,7 +22,7 @@ struct Object;
 struct Scene;
 struct bContext;
 
-int ABC_get_version(void);
+int ABC_get_version();
 
 struct AlembicExportParams {
   double frame_start;
@@ -42,7 +42,6 @@ struct AlembicExportParams {
   bool apply_subdiv;
   bool curves_as_mesh;
   bool flatten_hierarchy;
-  bool visible_objects_only;
   bool face_sets;
   bool use_subdiv_schema;
   bool packuv;
@@ -60,7 +59,7 @@ struct AlembicExportParams {
 
   float global_scale;
 
-  char collection[MAX_IDPROP_NAME] = "";
+  char collection[MAX_ID_NAME - 2] = "";
 };
 
 struct AlembicImportParams {
@@ -120,12 +119,12 @@ void ABC_get_transform(struct CacheReader *reader,
                        double time,
                        float scale);
 
-typedef struct ABCReadParams {
+struct ABCReadParams {
   double time;
   int read_flags;
   const char *velocity_name;
   float velocity_scale;
-} ABCReadParams;
+};
 
 #ifdef __cplusplus
 namespace blender::bke {

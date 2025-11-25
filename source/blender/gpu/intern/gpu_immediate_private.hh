@@ -35,7 +35,7 @@ class Immediate {
   /** Current draw call specification. */
   GPUPrimType prim_type = GPU_PRIM_NONE;
   GPUVertFormat vertex_format = {};
-  GPUShader *shader = nullptr;
+  gpu::Shader *shader = nullptr;
   /** Enforce strict vertex count (disabled when using #immBeginAtMost). */
   bool strict_vertex_len = true;
 
@@ -45,9 +45,9 @@ class Immediate {
   /** Wide Line workaround. */
 
   /** Previously bound shader to restore after drawing. */
-  std::optional<eGPUBuiltinShader> prev_builtin_shader;
+  std::optional<GPUBuiltinShader> prev_builtin_shader;
   /** Builtin shader index. Used to test if the line width workaround can be done. */
-  std::optional<eGPUBuiltinShader> builtin_shader_bound;
+  std::optional<GPUBuiltinShader> builtin_shader_bound;
   /** Uniform color: Kept here to update the wide-line shader just before #immBegin. */
   float uniform_color[4];
 

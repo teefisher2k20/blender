@@ -4,13 +4,14 @@
 
 #include "node_geometry_util.hh"
 
+#include "GEO_foreach_geometry.hh"
 #include "GEO_merge_layers.hh"
 
 #include "BKE_grease_pencil.hh"
 
 #include "NOD_rna_define.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 namespace blender::nodes::node_geo_merge_layers_cc {
@@ -24,11 +25,20 @@ enum class MergeLayerMode {
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
+  b.add_default_layout();
   b.add_input<decl::Geometry>("Grease Pencil")
-      .supported_type(GeometryComponent::Type::GreasePencil);
+      .supported_type(GeometryComponent::Type::GreasePencil)
+      .description("Grease Pencil data to merge layers of");
+  b.add_output<decl::Geometry>("Grease Pencil").propagate_all().align_with_previous();
   b.add_input<decl::Bool>("Selection").default_value(true).hide_value().field_on_all();
-  auto &group_id = b.add_input<decl::Int>("Group ID").hide_value().field_on_all();
-  b.add_output<decl::Geometry>("Grease Pencil").propagate_all();
+  auto &group_id = b.add_input<decl::Int>("Group ID")
+                       .hide_value()
+                       .field_on_all()
+                       .make_available([](bNode &node) {
+                         node_storage(node).mode = int8_t(MergeLayerMode::ByID);
+                       });
 
   const bNode *node = b.node_or_null();
   if (node) {
@@ -40,14 +50,14 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
 {
-  auto *data = MEM_cnew<NodeGeometryMergeLayers>(__func__);
+  auto *data = MEM_callocN<NodeGeometryMergeLayers>(__func__);
   data->mode = int8_t(MergeLayerMode::ByName);
   node->storage = data;
 }
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "mode", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "mode", UI_ITEM_NONE, "", ICON_NONE);
 }
 
 static Vector<Vector<int>> get_layers_map_by_name(const GreasePencil &src_grease_pencil,
@@ -161,8 +171,9 @@ static void node_geo_exec(GeoNodeExecParams params)
 
   const NodeAttributeFilter attribute_filter = params.get_attribute_filter("Grease Pencil");
 
-  main_geometry.modify_geometry_sets(
-      [&](GeometrySet &geometry) { merge_layers(geometry, storage, params, attribute_filter); });
+  geometry::foreach_real_geometry(main_geometry, [&](GeometrySet &geometry) {
+    merge_layers(geometry, storage, params, attribute_filter);
+  });
 
   params.set_output("Grease Pencil", std::move(main_geometry));
 }
@@ -208,8 +219,8 @@ static void node_register()
   ntype.draw_buttons = node_layout;
   ntype.geometry_node_execute = node_geo_exec;
   blender::bke::node_type_storage(
-      &ntype, "NodeGeometryMergeLayers", node_free_standard_storage, node_copy_standard_storage);
-  blender::bke::node_register_type(&ntype);
+      ntype, "NodeGeometryMergeLayers", node_free_standard_storage, node_copy_standard_storage);
+  blender::bke::node_register_type(ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

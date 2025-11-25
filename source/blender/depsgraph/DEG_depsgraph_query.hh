@@ -10,10 +10,10 @@
 
 #pragma once
 
+#include "BLI_enum_flags.hh"
 #include "BLI_function_ref.hh"
 #include "BLI_iterator.h"
 #include "BLI_set.hh"
-#include "BLI_utildefines.h"
 
 #include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_build.hh"
@@ -21,6 +21,7 @@
 /* Needed for the instance iterator. */
 #include "DNA_object_types.h"
 
+#include "BKE_duplilist.hh"
 #include "BKE_object_types.hh"
 
 struct BLI_Iterator;
@@ -89,22 +90,43 @@ Scene *DEG_get_evaluated_scene(const Depsgraph *graph);
  */
 ViewLayer *DEG_get_evaluated_view_layer(const Depsgraph *graph);
 
-/** Get evaluated version of object for given original one. */
-Object *DEG_get_evaluated_object(const Depsgraph *depsgraph, Object *object);
-
 /** Get evaluated version of given ID data-block. */
 ID *DEG_get_evaluated_id(const Depsgraph *depsgraph, ID *id);
+const ID *DEG_get_evaluated_id(const Depsgraph *depsgraph, const ID *id);
+
+template<typename T> T *DEG_get_evaluated(const Depsgraph *depsgraph, T *id)
+{
+  static_assert(blender::dna::is_ID_v<T>);
+  return reinterpret_cast<T *>(DEG_get_evaluated_id(depsgraph, reinterpret_cast<ID *>(id)));
+}
+
+template<typename T> const T *DEG_get_evaluated(const Depsgraph *depsgraph, const T *id)
+{
+  static_assert(blender::dna::is_ID_v<T>);
+  return reinterpret_cast<const T *>(
+      DEG_get_evaluated_id(depsgraph, reinterpret_cast<const ID *>(id)));
+}
 
 /** Get evaluated version of data pointed to by RNA pointer */
 void DEG_get_evaluated_rna_pointer(const Depsgraph *depsgraph,
                                    PointerRNA *ptr,
                                    PointerRNA *r_ptr_eval);
 
-/** Get original version of object for given evaluated one. */
-Object *DEG_get_original_object(Object *object);
-
 /** Get original version of given evaluated ID data-block. */
 ID *DEG_get_original_id(ID *id);
+const ID *DEG_get_original_id(const ID *id);
+
+template<typename T> T *DEG_get_original(T *id)
+{
+  static_assert(blender::dna::is_ID_v<T>);
+  return reinterpret_cast<T *>(DEG_get_original_id(reinterpret_cast<ID *>(id)));
+}
+
+template<typename T> const T *DEG_get_original(const T *id)
+{
+  static_assert(blender::dna::is_ID_v<T>);
+  return reinterpret_cast<const T *>(DEG_get_original_id(reinterpret_cast<const ID *>(id)));
+}
 
 /**
  * Get the depsgraph that owns the given ID. This is efficient because the depsgraph is cached on
@@ -123,14 +145,24 @@ Depsgraph *DEG_get_depsgraph_by_id(const ID &id);
  * are not out-of-main localized data-blocks.
  */
 bool DEG_is_original_id(const ID *id);
-bool DEG_is_original_object(const Object *object);
+
+template<typename T> bool DEG_is_original(const T *id)
+{
+  static_assert(blender::dna::is_ID_v<T>);
+  return DEG_is_original_id(reinterpret_cast<const ID *>(id));
+}
 
 /* Opposite of the above (`DEG_is_original_*`).
  *
  * If the data-block is not original it must be evaluated, and vice versa. */
 
 bool DEG_is_evaluated_id(const ID *id);
-bool DEG_is_evaluated_object(const Object *object);
+
+template<typename T> bool DEG_is_evaluated(const T *id)
+{
+  static_assert(blender::dna::is_ID_v<T>);
+  return DEG_is_evaluated_id(reinterpret_cast<const ID *>(id));
+}
 
 /**
  * Check whether depsgraph is fully evaluated. This includes the following checks:
@@ -182,7 +214,7 @@ enum DegIterFlag {
   DEG_ITER_OBJECT_FLAG_VISIBLE = (1 << 3),
   DEG_ITER_OBJECT_FLAG_DUPLI = (1 << 4),
 };
-ENUM_OPERATORS(DegIterFlag, DEG_ITER_OBJECT_FLAG_DUPLI)
+ENUM_OPERATORS(DegIterFlag)
 
 struct DEGObjectIterSettings {
   Depsgraph *depsgraph;
@@ -234,9 +266,11 @@ struct DEGObjectIterData {
   /* Object which created the dupli-list. */
   Object *dupli_parent;
   /* List of duplicated objects. */
-  ListBase *dupli_list;
+  DupliList dupli_list;
   /* Next duplicated object to step into. */
   DupliObject *dupli_object_next;
+  /* The dupli_list index of dupli_object_next. */
+  int dupli_object_next_index;
   /* Corresponds to current object: current iterator object is evaluated from
    * this duplicated object. */
   DupliObject *dupli_object_current;
@@ -248,7 +282,9 @@ struct DEGObjectIterData {
   /* **** Iteration over ID nodes **** */
   size_t id_node_index;
   size_t num_id_nodes;
-  DEGObjectIterData &operator=(const DEGObjectIterData &other);
+
+  /* Copy the current/next data and move the DupliList. */
+  void transfer_from(DEGObjectIterData &other);
 };
 
 void DEG_iterator_objects_begin(BLI_Iterator *iter, DEGObjectIterData *data);
@@ -274,6 +310,59 @@ void DEG_iterator_objects_end(BLI_Iterator *iter);
   ITER_END; \
   } \
   ((void)0)
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name DEG object iterators - Manual dupli iteration
+ * Helper functions for handling dupli instances iteration manually (ie. without passing
+ * DEG_ITER_OBJECT_FLAG_DUPLI to DEGObjectIterSettings::flags)
+ * \{ */
+
+/**
+ * Returns true if the object should be visible on the given context.
+ */
+bool DEG_iterator_object_is_visible(eEvaluationMode eval_mode, const Object *ob);
+
+/**
+ * Returns true if the dupli instance should be visible on the given context.
+ */
+bool DEG_iterator_dupli_is_visible(const DupliObject *dupli, eEvaluationMode eval_mode);
+
+namespace evil {
+/**
+ * WARNING: DON'T USE!!!
+ *
+ * These functions are exposed publicly as a temporary measure while we figure out how to fully get
+ * rid of temporary objects in the Draw module (See #144811).
+ *
+ * DON'T ADD NEW USE CASES FOR THESE FUNCTIONS.
+ */
+
+/**
+ * WARNING: DON'T USE!!!
+ * Generates a temporary object for a given dupli instance.
+ *
+ * Returns true if the resulting object should be visible, otherwise the temp object should be
+ * considered invalid.
+ * NOTE: DEG_iterator_temp_object_free_properties should be called regardless.
+ *
+ * \param do_matrix_setup: If false, the temp_object won't have valid
+ * object_to_world/world_to_object matrices, and the OB_NEG_SCALE flag will never be set.
+ */
+[[nodiscard]] bool DEG_iterator_temp_object_from_dupli(const Object *dupli_parent,
+                                                       const DupliObject *dupli,
+                                                       eEvaluationMode eval_mode,
+                                                       bool do_matrix_setup,
+                                                       Object *r_temp_object,
+                                                       ObjectRuntimeHandle *r_temp_runtime);
+
+/**
+ * WARNING: DON'T USE!!!
+ * Frees any property allocated when calling DEG_iterator_temp_object_from_dupli.
+ */
+void DEG_iterator_temp_object_free_properties(const DupliObject *dupli, Object *temp_object);
+}  // namespace evil
 
 /** \} */
 
@@ -316,7 +405,7 @@ void DEG_foreach_dependent_ID(const Depsgraph *depsgraph,
 
 /**
  * Starts traversal from given component of the given ID, invokes callback for every other
- * component  which is directly on indirectly dependent on the source one.
+ * component which is directly on indirectly dependent on the source one.
  */
 enum {
   /* Ignore transform solvers which depends on multiple inputs and affects final transform.
@@ -336,5 +425,17 @@ void DEG_foreach_dependent_ID_component(const Depsgraph *depsgraph,
                                         DEGForeachIDComponentCallback callback);
 
 void DEG_foreach_ID(const Depsgraph *depsgraph, DEGForeachIDCallback callback);
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name DEG query evaluation timings
+ * \{ */
+
+/**
+ * Return the last evaluation time of \a depsgraph in seconds or std::nullopt if \a depsgraph
+ * hasn't been (fully) evaluated.
+ */
+std::optional<double> DEG_get_last_evaluation_time(const Depsgraph *depsgraph);
 
 /** \} */

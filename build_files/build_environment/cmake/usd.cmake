@@ -17,7 +17,6 @@ if(WIN32)
   set(USD_PLATFORM_FLAGS
     ${USD_OIIO_CMAKE_DEFINES}
     -DCMAKE_CXX_FLAGS=${USD_CXX_FLAGS}
-    -D_PXR_CXX_DEFINITIONS=/DBOOST_ALL_NO_LIB
     -DCMAKE_SHARED_LINKER_FLAGS_INIT=/LIBPATH:${LIBDIR}/tbb/lib
     -DPython_FIND_REGISTRY=NEVER
     -DPython3_EXECUTABLE=${PYTHON_BINARY}
@@ -25,12 +24,13 @@ if(WIN32)
   if(BUILD_MODE STREQUAL Debug)
     list(APPEND USD_PLATFORM_FLAGS -DPXR_USE_DEBUG_PYTHON=ON)
     list(APPEND USD_PLATFORM_FLAGS -DOPENVDB_LIBRARY=${LIBDIR}/openvdb/lib/openvdb_d.lib)
+    list(APPEND USD_PLATFORM_FLAGS -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT='')
   endif()
 elseif(UNIX)
-  # Workaround USD not linking correctly with static Python library, where it would embed
-  # part of the interpret in the USD library. Allow undefined Python symbols and replace
-  # Python library with TBB so it doesn't complain about missing library.
   set(USD_PLATFORM_FLAGS
+    # Workaround USD not linking correctly with static Python library, where it would embed
+    # part of the interpret in the USD library. Allow undefined Python symbols and replace
+    # Python library with TBB so it doesn't complain about missing library.
     # NOTE(@ideasman42): Setting the root is needed, without this an older version of Python
     # is detected from the system. Referencing the root-directory may remove the need
     # to explicitly set the `PYTHON_INCLUDE_DIR` & `PYTHON_LIBRARY`.
@@ -49,16 +49,24 @@ elseif(UNIX)
   endif()
 endif()
 
+if(NOT APPLE)
+  list(APPEND USD_PLATFORM_FLAGS -DPXR_ENABLE_VULKAN_SUPPORT=ON)
+endif()
+
+# Custom namespace to prevent conflicts when importing both bpy module
+# and usd-core pip packages with the same version but different libs.
+string(REPLACE "." "_" USD_NAMESPACE "pxrBlender_v${USD_VERSION}")
+
 set(USD_EXTRA_ARGS
-  ${DEFAULT_BOOST_FLAGS}
   ${USD_PLATFORM_FLAGS}
   -DOPENSUBDIV_ROOT_DIR=${LIBDIR}/opensubdiv
   -DOpenImageIO_ROOT=${LIBDIR}/openimageio
   -DMaterialX_ROOT=${LIBDIR}/materialx
   -DOPENEXR_LIBRARIES=${LIBDIR}/imath/lib/${LIBPREFIX}Imath${OPENEXR_VERSION_POSTFIX}${SHAREDLIBEXT}
   -DOPENEXR_INCLUDE_DIR=${LIBDIR}/imath/include
-  -DImath_DIR=${LIBDIR}/imath
+  -DImath_DIR=${LIBDIR}/imath/lib/cmake/Imath
   -DOPENVDB_LOCATION=${LIBDIR}/openvdb
+  -DPXR_SET_INTERNAL_NAMESPACE=${USD_NAMESPACE}
   -DPXR_ENABLE_PYTHON_SUPPORT=ON
   -DPXR_USE_PYTHON_3=ON
   -DPXR_BUILD_IMAGING=ON
@@ -91,10 +99,17 @@ set(USD_EXTRA_ARGS
   -DPXR_BUILD_USD_TOOLS=OFF
   -DCMAKE_DEBUG_POSTFIX=_d
   -DBUILD_SHARED_LIBS=ON
+  -DTBB_DIR=${LIBDIR}/tbb/lib/cmake/TBB
   -DTBB_INCLUDE_DIRS=${LIBDIR}/tbb/include
   -DTBB_LIBRARIES=${LIBDIR}/tbb/lib/${LIBPREFIX}${TBB_LIBRARY}${SHAREDLIBEXT}
-  -DTbb_TBB_LIBRARY=${LIBDIR}/tbb/lib/${LIBPREFIX}${TBB_LIBRARY}${SHAREDLIBEXT}
-  -DTBB_tbb_LIBRARY_RELEASE=${LIBDIR}/tbb/lib/${LIBPREFIX}${TBB_LIBRARY}${SHAREDLIBEXT}
+  -DTBB_LIBRARIES_DEBUG=${LIBDIR}/tbb/lib/${LIBPREFIX}${TBB_LIBRARY}${SHAREDLIBEXT}
+  -DTBB_LIBRARIES_RELEASE=${LIBDIR}/tbb/lib/${LIBPREFIX}${TBB_LIBRARY}${SHAREDLIBEXT}
+  -DVulkanHeaders_ROOT=${LIBDIR}/vulkan_headers
+  -DVulkanLoader_ROOT=${LIBDIR}/vulkan_loader
+  -DVulkanUtilityLibraries_ROOT=${LIBDIR}/vulkan_headers
+  -DVulkanMemoryAllocator_ROOT=${LIBDIR}/vulkan_memory_allocator
+  -DShaderC_ROOT=${LIBDIR}/shaderc
+  -DSpirvReflect_ROOT=${LIBDIR}/spirv_reflect
 )
 
 # Ray: I'm not sure if the other platforms relied on this or not but this is no longer
@@ -124,8 +139,19 @@ ExternalProject_Add(external_usd
       ${PATCH_DIR}/usd_core_profile.diff &&
     ${PATCH_CMD} -p 1 -d
       ${BUILD_DIR}/usd/src/external_usd <
-      ${PATCH_DIR}/usd_metal_edf.diff
-
+      ${PATCH_DIR}/usd_ctor.diff &&
+    ${PATCH_CMD} -p 1 -d
+      ${BUILD_DIR}/usd/src/external_usd <
+      ${PATCH_DIR}/usd_noboost.diff &&
+    ${PATCH_CMD} -p 1 -d
+      ${BUILD_DIR}/usd/src/external_usd <
+      ${PATCH_DIR}/usd_no_vulkan_sdk.diff &&
+    # The patch just makes empty, but we need it to be removed to avoid
+    # including an empty file instead of the actual vma header.
+    ${CMAKE_COMMAND} -E remove ${BUILD_DIR}/usd/src/external_usd/pxr/imaging/hgiVulkan/vk_mem_alloc.h &&
+    ${PATCH_CMD} -p 1 -d
+      ${BUILD_DIR}/usd/src/external_usd <
+      ${PATCH_DIR}/usd_storm_vulkan.diff
   CMAKE_ARGS
     -DCMAKE_INSTALL_PREFIX=${LIBDIR}/usd
     -Wno-dev
@@ -138,11 +164,16 @@ ExternalProject_Add(external_usd
 add_dependencies(
   external_usd
   external_tbb
-  external_boost
   external_opensubdiv
   external_python
   external_openimageio
   external_materialx
+  external_vulkan_loader
+  external_vulkan_headers
+  external_vulkan_memory_allocator
+  external_vulkan_utility_libraries
+  external_shaderc
+  external_spirv_reflect
   openvdb
 )
 

@@ -10,10 +10,6 @@
 
 #include "../../../view_map/Functions0D.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -39,7 +35,6 @@ PyDoc_STRVAR(
     "   :type it: :class:`freestyle.types.Interface0DIterator`\n"
     "   :return: The ViewShape occluded by the pointed Interface0D.\n"
     "   :rtype: :class:`freestyle.types.ViewShape`\n");
-
 static int GetOccludeeF0D___init__(BPy_GetOccludeeF0D *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {nullptr};
@@ -96,7 +91,3 @@ PyTypeObject GetOccludeeF0D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

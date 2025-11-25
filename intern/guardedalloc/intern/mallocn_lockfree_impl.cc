@@ -31,6 +31,8 @@
 
 using namespace mem_guarded::internal;
 
+namespace {
+
 typedef struct MemHead {
   /* Length of allocated memory block. */
   size_t len;
@@ -44,6 +46,8 @@ typedef struct MemHeadAligned {
 } MemHeadAligned;
 static_assert(MEM_MIN_CPP_ALIGNMENT <= alignof(MemHeadAligned), "Bad alignment of MemHeadAligned");
 static_assert(MEM_MIN_CPP_ALIGNMENT <= sizeof(MemHeadAligned), "Bad size of MemHeadAligned");
+
+}  // namespace
 
 static bool malloc_debug_memset = false;
 
@@ -456,13 +460,13 @@ void *MEM_lockfree_mallocN_aligned(size_t len,
   return nullptr;
 }
 
-void *MEM_lockfree_calloc_arrayN_aligned(const size_t len,
-                                         const size_t size,
-                                         const size_t alignment,
-                                         const char *str)
+static void *mem_lockfree_malloc_arrayN_aligned(const size_t len,
+                                                const size_t size,
+                                                const size_t alignment,
+                                                const char *str,
+                                                size_t &r_bytes_num)
 {
-  size_t bytes_num;
-  if (UNLIKELY(!MEM_size_safe_multiply(len, size, &bytes_num))) {
+  if (UNLIKELY(!MEM_size_safe_multiply(len, size, &r_bytes_num))) {
     print_error(
         "Calloc array aborted due to integer overflow: "
         "len=" SIZET_FORMAT "x" SIZET_FORMAT " in %s, total " SIZET_FORMAT "\n",
@@ -474,11 +478,34 @@ void *MEM_lockfree_calloc_arrayN_aligned(const size_t len,
     return nullptr;
   }
   if (alignment <= MEM_MIN_CPP_ALIGNMENT) {
-    return MEM_callocN(bytes_num, str);
+    return mem_mallocN(r_bytes_num, str);
   }
-  /* There is no lower level #calloc with an alignment parameter, so we have to fallback to using
-   * #memset unfortunately. */
-  void *ptr = MEM_mallocN_aligned(bytes_num, alignment, str);
+  void *ptr = MEM_mallocN_aligned(r_bytes_num, alignment, str);
+  return ptr;
+}
+
+void *MEM_lockfree_malloc_arrayN_aligned(const size_t len,
+                                         const size_t size,
+                                         const size_t alignment,
+                                         const char *str)
+{
+  size_t bytes_num;
+  return mem_lockfree_malloc_arrayN_aligned(len, size, alignment, str, bytes_num);
+}
+
+void *MEM_lockfree_calloc_arrayN_aligned(const size_t len,
+                                         const size_t size,
+                                         const size_t alignment,
+                                         const char *str)
+{
+  /* There is no lower level #calloc with an alignment parameter, so unless the alignment is less
+   * than or equal to what we'd get by default, we have to fall back to #memset unfortunately. */
+  if (alignment <= MEM_MIN_CPP_ALIGNMENT) {
+    return MEM_lockfree_calloc_arrayN(len, size, str);
+  }
+
+  size_t bytes_num;
+  void *ptr = mem_lockfree_malloc_arrayN_aligned(len, size, alignment, str, bytes_num);
   if (!ptr) {
     return nullptr;
   }
@@ -492,7 +519,8 @@ void MEM_lockfree_printmemlist() {}
 
 void mem_lockfree_clearmemlist() {}
 
-/* unused */
+/* Unused. */
+
 void MEM_lockfree_callbackmemlist(void (*func)(void *))
 {
   (void)func; /* Ignored. */
@@ -537,7 +565,8 @@ uint MEM_lockfree_get_memory_blocks_in_use()
   return uint(memory_usage_block_num());
 }
 
-/* dummy */
+/* Dummy. */
+
 void MEM_lockfree_reset_peak_memory()
 {
   memory_usage_peak_reset();
@@ -558,5 +587,5 @@ const char *MEM_lockfree_name_ptr(void *vmemh)
   return "MEM_lockfree_name_ptr(nullptr)";
 }
 
-void MEM_lockfree_name_ptr_set(void *UNUSED(vmemh), const char *UNUSED(str)) {}
+void MEM_lockfree_name_ptr_set(void * /*vmemh*/, const char * /*str*/) {}
 #endif /* !NDEBUG */

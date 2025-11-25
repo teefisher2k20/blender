@@ -114,10 +114,10 @@ class Value {
   eValueType type_;
 
  protected:
-  Value() = delete;
   explicit Value(eValueType type) : type_(type) {}
 
  public:
+  Value() = delete;
   virtual ~Value() = default;
   eValueType type() const
   {
@@ -171,7 +171,7 @@ class Value {
  * For generating value types that represent types that are typically known processor data types.
  */
 template<
-    /** Wrapped c/cpp data type that is used to store the value. */
+    /** Wrapped C/C++ data type that is used to store the value. */
     typename T,
     /** Value type of the class. */
     eValueType V>
@@ -182,7 +182,7 @@ class PrimitiveValue : public Value {
  public:
   explicit PrimitiveValue(const T value) : Value(V), inner_value_(value) {}
 
-  const T value() const
+  T value() const
   {
     return inner_value_;
   }
@@ -253,12 +253,12 @@ class DictionaryValue : public Value {
    */
   Lookup create_lookup() const;
 
-  const std::shared_ptr<Value> *lookup(const StringRef key) const;
-  std::optional<StringRefNull> lookup_str(const StringRef key) const;
-  std::optional<int64_t> lookup_int(const StringRef key) const;
-  std::optional<double> lookup_double(const StringRef key) const;
-  const DictionaryValue *lookup_dict(const StringRef key) const;
-  const ArrayValue *lookup_array(const StringRef key) const;
+  const std::shared_ptr<Value> *lookup(StringRef key) const;
+  std::optional<StringRefNull> lookup_str(StringRef key) const;
+  std::optional<int64_t> lookup_int(StringRef key) const;
+  std::optional<double> lookup_double(StringRef key) const;
+  const DictionaryValue *lookup_dict(StringRef key) const;
+  const ArrayValue *lookup_array(StringRef key) const;
   Span<Item> elements() const
   {
     return values_;
@@ -297,7 +297,6 @@ class JsonFormatter : public Formatter {
    */
   int8_t indentation_len = 0;
 
- public:
   void serialize(std::ostream &os, const Value &value) override;
   /**
    * \return The de-serialized value or null on failure to parse the JSON contents. Typically this

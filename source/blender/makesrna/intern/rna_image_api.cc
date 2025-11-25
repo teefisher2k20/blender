@@ -6,16 +6,12 @@
  * \ingroup RNA
  */
 
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <fcntl.h>
 
-#include "DNA_packedFile_types.h"
-
 #include "BLI_path_utils.hh"
-#include "BLI_utildefines.h"
 
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
@@ -26,12 +22,17 @@
 
 #ifdef RNA_RUNTIME
 
+#  include "BLI_math_base.h"
+#  include "BLI_string.h"
+
+#  include "BKE_context.hh"
 #  include "BKE_image.hh"
 #  include "BKE_image_format.hh"
 #  include "BKE_image_save.hh"
+#  include "BKE_library.hh"
 #  include "BKE_main.hh"
+#  include "BKE_report.hh"
 #  include "BKE_scene.hh"
-#  include <errno.h>
 
 #  include "IMB_imbuf.hh"
 
@@ -39,6 +40,8 @@
 #  include "DNA_scene_types.h"
 
 #  include "MEM_guardedalloc.h"
+
+#  include "WM_api.hh"
 
 static void rna_ImagePackedFile_save(ImagePackedFile *imapf, Main *bmain, ReportList *reports)
 {
@@ -90,7 +93,8 @@ static void rna_Image_save(Image *image,
                            bContext *C,
                            ReportList *reports,
                            const char *path,
-                           const int quality)
+                           const int quality,
+                           const bool save_copy)
 {
   Scene *scene = CTX_data_scene(C);
   ImageSaveOptions opts;
@@ -102,6 +106,7 @@ static void rna_Image_save(Image *image,
     if (quality != 0) {
       opts.im_format.quality = clamp_i(quality, 0, 100);
     }
+    opts.save_copy = save_copy;
     if (!BKE_image_save(reports, bmain, image, nullptr, &opts)) {
       BKE_reportf(reports,
                   RPT_ERROR,
@@ -125,8 +130,7 @@ static void rna_Image_pack(
   BKE_image_free_packedfiles(image);
 
   if (data) {
-    char *data_dup = static_cast<char *>(
-        MEM_mallocN(sizeof(*data_dup) * (size_t)data_len, __func__));
+    char *data_dup = MEM_malloc_arrayN<char>(size_t(data_len), __func__);
     memcpy(data_dup, data, size_t(data_len));
     BKE_image_packfiles_from_mem(reports, image, data_dup, size_t(data_len));
   }
@@ -177,7 +181,7 @@ static void rna_Image_update(Image *image, ReportList *reports)
   }
 
   if (ibuf->byte_buffer.data) {
-    IMB_rect_from_float(ibuf);
+    IMB_byte_from_float(ibuf);
   }
 
   ibuf->userflags |= IB_DISPLAY_BUFFER_INVALID;
@@ -219,7 +223,7 @@ static int rna_Image_gl_load(
     BKE_image_multilayer_index(image->rr, &iuser);
   }
 
-  GPUTexture *tex = BKE_image_get_gpu_texture(image, &iuser);
+  blender::gpu::Texture *tex = BKE_image_get_gpu_texture(image, &iuser);
 
   if (tex == nullptr) {
     BKE_reportf(reports, RPT_ERROR, "Failed to load image texture '%s'", image->id.name + 2);
@@ -237,7 +241,7 @@ static int rna_Image_gl_touch(
 
   BKE_image_tag_time(image);
 
-  if (image->gputexture[TEXTARGET_2D][0] == nullptr) {
+  if (image->runtime->gputexture[TEXTARGET_2D][0] == nullptr) {
     error = rna_Image_gl_load(image, reports, frame, layer_index, pass_index);
   }
 
@@ -315,6 +319,11 @@ void RNA_api_image(StructRNA *srna)
               "not specified",
               0,
               100);
+  RNA_def_boolean(func,
+                  "save_copy",
+                  false,
+                  "Save Copy",
+                  "Save the image as a copy, without updating current image's filepath");
 
   func = RNA_def_function(srna, "pack", "rna_Image_pack");
   RNA_def_function_ui_description(func, "Pack an image as embedded data into the .blend file");

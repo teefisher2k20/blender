@@ -16,10 +16,6 @@
 
 #include "BLI_sys_types.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -51,8 +47,7 @@ PyDoc_STRVAR(
     "      value type is float if func is of the :class:`UnaryFunction0DDouble`\n"
     "      or :class:`UnaryFunction0DFloat` type, and int if func is of the\n"
     "      :class:`UnaryFunction0DUnsigned` type.\n"
-    "   :rtype: int | float");
-
+    "   :rtype: int | float\n");
 static PyObject *Integrator_integrate(PyObject * /*self*/, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"func", "it", "it_end", "integration_type", nullptr};
@@ -109,6 +104,16 @@ PyDoc_STRVAR(
 
 /*-----------------------Integrator module functions definitions---------------------------*/
 
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
+#endif
+
 static PyMethodDef module_functions[] = {
     {"integrate",
      (PyCFunction)Integrator_integrate,
@@ -116,6 +121,14 @@ static PyMethodDef module_functions[] = {
      Integrator_integrate_doc},
     {nullptr, nullptr, 0, nullptr},
 };
+
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
+#endif
 
 /*-----------------------Integrator module definition--------------------------------------*/
 
@@ -151,8 +164,7 @@ PyDoc_STRVAR(
     "* IntegrationType.FIRST: The value computed for the 1D element is the\n"
     "  first of the values obtained for the 0D elements.\n"
     "* IntegrationType.LAST: The value computed for the 1D element is the\n"
-    "  last of the values obtained for the 0D elements.");
-
+    "  last of the values obtained for the 0D elements.\n");
 PyTypeObject IntegrationType_Type = {
     /*ob_base*/ PyVarObject_HEAD_INIT(nullptr, 0)
     /*tp_name*/ "IntegrationType",
@@ -239,7 +251,3 @@ int IntegrationType_Init(PyObject *module)
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

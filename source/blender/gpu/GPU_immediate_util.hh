@@ -12,10 +12,13 @@
 
 #include "BLI_sys_types.h"
 
+struct rctf;
+
 /* Draw 2D rectangles (replaces glRect functions) */
 /* caller is responsible for vertex format & shader */
 void immRectf(uint pos, float x1, float y1, float x2, float y2);
 void immRecti(uint pos, int x1, int y1, int x2, int y2);
+void immRectf_with_texco(uint pos, uint tex_coord, const rctf &p, const rctf &uv);
 
 /**
  * Same as #immRectf / #immRecti but does not call #immBegin / #immEnd.
@@ -142,7 +145,7 @@ void imm_draw_box_checker_2d_ex(float x1,
                                 const float color_primary[4],
                                 const float color_secondary[4],
                                 int checker_size);
-void imm_draw_box_checker_2d(float x1, float y1, float x2, float y2);
+void imm_draw_box_checker_2d(float x1, float y1, float x2, float y2, bool clear_alpha = false);
 
 void imm_draw_cube_fill_3d(uint pos, const float center[3], const float aspect[3]);
 void imm_draw_cube_wire_3d(uint pos, const float center[3], const float aspect[3]);

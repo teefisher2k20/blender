@@ -8,7 +8,7 @@
 
 #include "BLI_listbase.h"
 #include "BLI_math_vector.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "BKE_context.hh"
 #include "BKE_mask.h"
@@ -27,7 +27,7 @@
 
 #include "mask_intern.hh" /* own include */
 
-static int mask_parent_clear_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus mask_parent_clear_exec(bContext *C, wmOperator * /*op*/)
 {
   Mask *mask = CTX_data_edit_mask(C);
 
@@ -60,7 +60,7 @@ void MASK_OT_parent_clear(wmOperatorType *ot)
   ot->description = "Clear the mask's parenting";
   ot->idname = "MASK_OT_parent_clear";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = mask_parent_clear_exec;
 
   ot->poll = ED_maskedit_mask_visible_splines_poll;
@@ -69,7 +69,7 @@ void MASK_OT_parent_clear(wmOperatorType *ot)
   ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
 }
 
-static int mask_parent_set_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus mask_parent_set_exec(bContext *C, wmOperator * /*op*/)
 {
   Mask *mask = CTX_data_edit_mask(C);
 
@@ -134,8 +134,8 @@ static int mask_parent_set_exec(bContext *C, wmOperator * /*op*/)
           point->parent.id_type = ID_MC;
           point->parent.id = &clip->id;
           point->parent.type = parent_type;
-          STRNCPY(point->parent.parent, tracking_object->name);
-          STRNCPY(point->parent.sub_parent, sub_parent_name);
+          STRNCPY_UTF8(point->parent.parent, tracking_object->name);
+          STRNCPY_UTF8(point->parent.sub_parent, sub_parent_name);
 
           copy_v2_v2(point->parent.parent_orig, parmask_pos);
           memcpy(point->parent.parent_corners_orig,
@@ -159,7 +159,7 @@ void MASK_OT_parent_set(wmOperatorType *ot)
   ot->description = "Set the mask's parenting";
   ot->idname = "MASK_OT_parent_set";
 
-  /* api callbacks */
+  /* API callbacks. */
   // ot->invoke = mask_parent_set_invoke;
   ot->exec = mask_parent_set_exec;
 

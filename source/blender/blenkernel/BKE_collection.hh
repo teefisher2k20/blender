@@ -10,9 +10,13 @@
 
 #include "BLI_ghash.h"
 #include "BLI_iterator.h"
+#include "BLI_map.hh"
+#include "BLI_set.hh"
 #include "BLI_sys_types.h"
 
+#include "DNA_collection_types.h"
 #include "DNA_listBase.h"
+#include "DNA_userdef_enums.h"
 
 /* Structs */
 
@@ -24,10 +28,54 @@ struct Collection;
 struct ID;
 struct CollectionChild;
 struct CollectionExport;
+struct GHash;
 struct Main;
 struct Object;
 struct Scene;
 struct ViewLayer;
+
+/** #CollectionRuntime.tag */
+enum {
+  /**
+   * That code (#BKE_main_collections_parent_relations_rebuild and the like)
+   * is called from very low-level places, like e.g ID remapping...
+   * Using a generic tag like #ID_TAG_DOIT for this is just impossible, we need our very own.
+   */
+  COLLECTION_TAG_RELATION_REBUILD = (1 << 0),
+  /**
+   * Mark the `gobject` list and/or its `runtime.gobject_hash` mapping as dirty, i.e. that their
+   * data is not reliable and should be cleaned-up or updated.
+   *
+   * This should typically only be set by ID remapping code.
+   */
+  COLLECTION_TAG_COLLECTION_OBJECT_DIRTY = (1 << 1),
+};
+
+using CollectionObjectMap = blender::Map<const Object *, CollectionObject *>;
+
+namespace blender::bke {
+
+struct CollectionRuntime {
+  /**
+   * Cache of objects in this collection and all its children.
+   * This is created on demand when e.g. some physics simulation needs it,
+   * we don't want to have it for every collections due to memory usage reasons.
+   */
+  ListBase object_cache = {};
+
+  /** Need this for line art sub-collection selections. */
+  ListBase object_cache_instanced = {};
+
+  /** List of collections that are a parent of this data-block. */
+  ListBase parents = {};
+
+  /** An optional map for faster lookups on #Collection.gobject */
+  CollectionObjectMap *gobject_hash = nullptr;
+
+  uint8_t tag = 0;
+};
+
+}  // namespace blender::bke
 
 struct CollectionParent {
   struct CollectionParent *next, *prev;
@@ -69,6 +117,21 @@ void BKE_collection_add_from_collection(Main *bmain,
 void BKE_collection_free_data(Collection *collection);
 
 /**
+ * Add a new collection exporter to the collection.
+ */
+CollectionExport *BKE_collection_exporter_add(Collection *collection, char *idname, char *label);
+
+/**
+ * Remove a collection exporter from the collection.
+ */
+void BKE_collection_exporter_remove(Collection *collection, CollectionExport *data);
+
+/**
+ * Move a collection exporter from one position to another.
+ */
+bool BKE_collection_exporter_move(Collection *collection, const int from, const int to);
+
+/**
  * Assigns a unique name to the collection exporter.
  */
 void BKE_collection_exporter_name_set(const ListBase *exporters,
@@ -89,22 +152,40 @@ bool BKE_collection_delete(Main *bmain, Collection *collection, bool hierarchy);
 /**
  * Make a deep copy (aka duplicate) of the given collection and all of its children, recursively.
  *
- * \warning This functions will clear all \a bmain #ID.idnew pointers, unless \a
- * #LIB_ID_DUPLICATE_IS_SUBPROCESS duplicate option is passed on, in which case caller is
- * responsible to reconstruct collection dependencies information's
- * (i.e. call #BKE_main_collection_sync).
+ * \param dupflag: Controls which sub-data are also duplicated
+ * (see #eDupli_ID_Flags in DNA_userdef_types.h).
+ * \param duplicate_options: Additional context information about current duplicate call (e.g. if
+ * it's part of a higher-level duplication or not, etc.). (see #eLibIDDuplicateFlags in
+ * BKE_lib_id.hh).
+ *
+ * \warning By default, this functions will clear all \a bmain #ID.idnew pointers
+ * (#BKE_main_id_newptr_and_tag_clear), and take care of post-duplication updates like remapping to
+ * new IDs (#BKE_libblock_relink_to_newid) and rebuilding of the collection hierarchy information
+ * (#BKE_main_collection_sync).
+ * If \a #LIB_ID_DUPLICATE_IS_SUBPROCESS duplicate option is passed on (typically when duplication
+ * is called recursively from another parent duplication operation), the caller is responsible to
+ * handle all of these operations.
+ *
+ * \note Caller MUST handle updates of the depsgraph (#DAG_relations_tag_update).
  */
 Collection *BKE_collection_duplicate(Main *bmain,
                                      Collection *parent,
                                      CollectionChild *child_old,
                                      Collection *collection,
-                                     uint duplicate_flags,
-                                     uint duplicate_options);
+                                     eDupli_ID_Flags duplicate_flags,
+                                     /*eLibIDDuplicateFlags*/ uint duplicate_options);
 
 /* Master Collection for Scene */
 
 #define BKE_SCENE_COLLECTION_NAME "Scene Collection"
 Collection *BKE_collection_master_add(Scene *scene);
+
+/**
+ * Check if the collection contains any geometry that can be rendered. Otherwise there's nothing to
+ * display in the preview, so don't generate one.
+ * Objects and sub-collections hidden in the render will be skipped.
+ */
+bool BKE_collection_contains_geometry_recursive(const Collection *collection);
 
 /* Collection Objects */
 
@@ -216,13 +297,15 @@ bool BKE_collection_object_cyclic_check(Main *bmain, Object *object, Collection 
 
 ListBase BKE_collection_object_cache_get(Collection *collection);
 ListBase BKE_collection_object_cache_instanced_get(Collection *collection);
-/** Free the object cache of given `collection` and all of its ancestors (recursively).
+/**
+ * Free the object cache of given `collection` and all of its ancestors (recursively).
  *
  * \param bmain: The Main database owning the collection. May be `nullptr`, only used if doing
  * depsgraph tagging.
  * \param id_create_flag: Flags controlling ID creation, used here to enable or
- * not depsgraph tagging of affected IDs (e.g. #LIB_ID_CREATE_NO_DEG_TAG would prevent depsgraph
- * tagging). */
+ * not depsgraph tagging of affected IDs
+ * (e.g. #LIB_ID_CREATE_NO_DEG_TAG would prevent depsgraph tagging).
+ */
 void BKE_collection_object_cache_free(const Main *bmain,
                                       Collection *collection,
                                       const int id_create_flag);
@@ -239,15 +322,21 @@ Base *BKE_collection_or_layer_objects(const Scene *scene,
 /* Editing. */
 
 /**
- * Return Scene Collection for a given index.
- *
- * The index is calculated from top to bottom counting the children before the siblings.
+ * Return Scene Collection for a given session_uid.
  */
-Collection *BKE_collection_from_index(Scene *scene, int index);
+Collection *BKE_collection_from_session_uid(Scene *scene, uint64_t session_uid);
+/**
+ * Return Collection for a given session_uid and its owner Scene.
+ */
+Collection *BKE_collection_from_session_uid(Main *bmain,
+                                            uint64_t session_uid,
+                                            Scene **r_scene = nullptr);
+
 /**
  * The automatic/fallback name of a new collection.
  */
-void BKE_collection_new_name_get(Collection *collection_parent, char *rname);
+void BKE_collection_new_name_get(Collection *collection_parent,
+                                 char r_name[/*MAX_ID_NAME - 2*/ 256]);
 /**
  * The name to show in the interface.
  */
@@ -397,13 +486,14 @@ void BKE_scene_objects_iterator_next_ex(BLI_Iterator *iter);
 void BKE_scene_objects_iterator_end_ex(BLI_Iterator *iter);
 
 /**
- * Generate a new #GSet (or extend given `objects_gset` if not NULL) with all objects referenced by
+ * Generate a new #Set (or extend given `objects_set` if not NULL) with all objects referenced by
  * all collections of given `scene`.
  *
  * \note This will include objects without a base currently
  * (because they would belong to excluded collections only e.g.).
  */
-GSet *BKE_scene_objects_as_gset(Scene *scene, GSet *objects_gset);
+blender::Set<Object *> *BKE_scene_objects_as_set(Scene *scene,
+                                                 blender::Set<Object *> *objects_set);
 
 #define FOREACH_SCENE_COLLECTION_BEGIN(scene, _instance) \
   ITER_BEGIN (BKE_scene_collections_iterator_begin, \
@@ -422,7 +512,7 @@ GSet *BKE_scene_objects_as_gset(Scene *scene, GSet *objects_gset);
     bool is_scene_collection = (_scene) != NULL; \
 \
     if (_scene) { \
-      _instance_next = _scene->master_collection; \
+      _instance_next = (_scene)->master_collection; \
     } \
     else { \
       _instance_next = static_cast<Collection *>((_bmain)->collections.first); \

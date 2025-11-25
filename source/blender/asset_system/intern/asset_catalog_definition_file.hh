@@ -39,7 +39,6 @@ class AssetCatalogDefinitionFile {
 
   const CatalogFilePath file_path;
 
- public:
   AssetCatalogDefinitionFile(const CatalogFilePath &file_path);
 
   /**
@@ -55,6 +54,11 @@ class AssetCatalogDefinitionFile {
    * Return true when the file was written correctly, false when there was a problem.
    */
   bool write_to_disk(const CatalogFilePath &dest_file_path) const;
+
+  /**
+   * Returns whether this file exists on disk.
+   */
+  bool exists_on_disk() const;
 
   bool contains(CatalogID catalog_id) const;
   /** Add a catalog, overwriting the one with the same catalog ID. */

@@ -3,15 +3,10 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "testing/testing.h"
 
-#include <pxr/base/plug/registry.h>
+#include <pxr/usd/usd/common.h>
 #include <pxr/usd/usd/stage.h>
 
 #include <string>
-
-#include "BLI_path_utils.hh"
-#include "BLI_utildefines.h"
-
-#include "BKE_appdir.hh"
 
 namespace blender::io::usd {
 

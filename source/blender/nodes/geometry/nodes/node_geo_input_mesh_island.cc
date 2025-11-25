@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BKE_mesh.hh"
+#include "DNA_mesh_types.h"
 
 #include "BLI_atomic_disjoint_set.hh"
 #include "BLI_task.hh"
@@ -47,7 +47,7 @@ class IslandFieldInput final : public bke::MeshFieldInput {
     islands.calc_reduced_ids(output);
 
     return mesh.attributes().adapt_domain<int>(
-        VArray<int>::ForContainer(std::move(output)), AttrDomain::Point, domain);
+        VArray<int>::from_container(std::move(output)), AttrDomain::Point, domain);
   }
 
   uint64_t hash() const override
@@ -88,7 +88,7 @@ class IslandCountFieldInput final : public bke::MeshFieldInput {
     });
 
     const int islands_num = islands.count_sets();
-    return VArray<int>::ForSingle(islands_num, mesh.attributes().domain_size(domain));
+    return VArray<int>::from_single(islands_num, mesh.attributes().domain_size(domain));
   }
 
   uint64_t hash() const override
@@ -130,7 +130,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_INPUT;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

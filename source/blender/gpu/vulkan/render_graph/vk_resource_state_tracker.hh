@@ -13,7 +13,7 @@
  * - Image layouts: The layout of pixels of an image on the GPU depends on the command being
  *   executed. A certain `vkCmd*` requires the image to be in a certain layout. Using incorrect
  *   layouts could lead to rendering artifacts.
- * - Resource ownership: Resources that are externally managed (swap chain or external) uses a
+ * - Resource ownership: Resources that are externally managed (swap-chain or external) uses a
  *   different workflow as its state can be altered externally and needs to be reset.
  * - Read/Write access masks: To generate correct and performing pipeline barriers the src/dst
  *   access masks needs to be accurate and precise. When creating pipeline barriers the resource
@@ -22,9 +22,9 @@
 
 #pragma once
 
-#include <mutex>
-
+#include "BLI_enum_flags.hh"
 #include "BLI_map.hh"
+#include "BLI_mutex.hh"
 #include "BLI_vector.hh"
 
 #include "vk_common.hh"
@@ -67,7 +67,7 @@ struct ResourceWithStamp {
  * Enum containing the different resource types that are being tracked.
  */
 enum class VKResourceType { NONE = (0 << 0), IMAGE = (1 << 0), BUFFER = (1 << 1) };
-ENUM_OPERATORS(VKResourceType, VKResourceType::BUFFER);
+ENUM_OPERATORS(VKResourceType);
 
 /**
  * State being tracked for a resource.
@@ -122,8 +122,8 @@ class VKResourceStateTracker {
       struct {
         /** VkImage handle of the resource being tracked. */
         VkImage vk_image = VK_NULL_HANDLE;
-        /** Number of layers that the resource has. */
-        uint32_t layer_count = 0;
+        /** Do we need to track subresources (layers/mipmaps). */
+        bool use_subresource_tracking = false;
       } image;
     };
 
@@ -133,29 +133,28 @@ class VKResourceStateTracker {
     /**
      * State tracking to ensure correct pipeline barriers and command creation.
      */
-    VKResourceBarrierState barrier_state;
+    VKResourceBarrierState barrier_state = {};
 
 #ifndef NDEBUG
-    const char *name;
+    const char *name = nullptr;
 #endif
 
     /**
-     * Check if the given resource handle has multiple layers.
+     * Check if the given resource handle subresources needs to be tracked.
      *
      * Returns true when
-     * - handle is a layered image with more than one layer.
+     * - handle is an image with subresource tracking enables.
      *
      * Returns false when
      * - handle isn't an image resource or
-     * - handle isn't a layered image or
-     * - handle has only a single layer.
+     * - handle doesn't have subresource tracking enabled.
      */
-    bool has_multiple_layers()
+    bool use_subresource_tracking()
     {
       if (type == VKResourceType::BUFFER) {
         return false;
       }
-      return image.layer_count > 1;
+      return image.use_subresource_tracking;
     }
   };
 
@@ -173,7 +172,7 @@ class VKResourceStateTracker {
    * - Allowing test cases to do testing without setting up a device instance which requires ghost.
    * - Device instance isn't accessible in test cases.
    */
-  std::mutex mutex;
+  Mutex mutex;
 
   /**
    * Register a buffer resource.
@@ -189,7 +188,8 @@ class VKResourceStateTracker {
    * When an image is created in VKTexture, it needs to be registered in the device resources so
    * the resource state can be tracked during its lifetime.
    */
-  void add_image(VkImage vk_image, uint32_t layer_count, const char *name = nullptr);
+  void add_image(VkImage vk_image, bool use_subresource_tracking, const char *name = nullptr);
+  void add_swapchain_image(VkImage vk_image, const char *name = nullptr);
 
   /**
    * Remove an registered image.
@@ -257,10 +257,16 @@ class VKResourceStateTracker {
     return resources_.lookup(resource_handle).type;
   }
 
-  bool use_dynamic_rendering = true;
   bool use_dynamic_rendering_local_read = true;
 
+  void debug_print() const;
+
  private:
+  void add_image(VkImage vk_image,
+                 bool use_subresource_tracking,
+                 VKResourceBarrierState barrier_state,
+                 const char *name = nullptr);
+
   /**
    * Get the current stamp of the resource.
    */

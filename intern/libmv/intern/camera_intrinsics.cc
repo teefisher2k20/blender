@@ -74,10 +74,7 @@ void libmv_cameraIntrinsicsUpdate(
   int image_height = libmv_camera_intrinsics_options->image_height;
 
   /* Try avoid unnecessary updates, so pre-computed distortion grids
-   * are not freed.
-   */
-
-  camera_intrinsics->SetThreads(libmv_camera_intrinsics_options->num_threads);
+   * are not freed. */
 
   if (camera_intrinsics->focal_length() != focal_length) {
     camera_intrinsics->SetFocalLength(focal_length, focal_length);
@@ -141,9 +138,15 @@ void libmv_cameraIntrinsicsUpdate(
       double k2 = libmv_camera_intrinsics_options->nuke_k2;
 
       if (nuke_intrinsics->k1() != k1 || nuke_intrinsics->k2() != k2) {
-        nuke_intrinsics->SetDistortion(k1, k2);
+        nuke_intrinsics->SetRadialDistortion(k1, k2);
       }
 
+      double p1 = libmv_camera_intrinsics_options->nuke_p1;
+      double p2 = libmv_camera_intrinsics_options->nuke_p2;
+
+      if (nuke_intrinsics->p1() != p1 || nuke_intrinsics->p2() != p2) {
+        nuke_intrinsics->SetTangentialDistortion(p1, p2);
+      }
       break;
     }
 
@@ -175,12 +178,6 @@ void libmv_cameraIntrinsicsUpdate(
 
     default: assert(!"Unknown distortion model");
   }
-}
-
-void libmv_cameraIntrinsicsSetThreads(libmv_CameraIntrinsics* libmv_intrinsics,
-                                      int threads) {
-  CameraIntrinsics* camera_intrinsics = (CameraIntrinsics*)libmv_intrinsics;
-  camera_intrinsics->SetThreads(threads);
 }
 
 void libmv_cameraIntrinsicsExtractOptions(
@@ -229,6 +226,8 @@ void libmv_cameraIntrinsicsExtractOptions(
       camera_intrinsics_options->distortion_model = LIBMV_DISTORTION_MODEL_NUKE;
       camera_intrinsics_options->nuke_k1 = nuke_intrinsics->k1();
       camera_intrinsics_options->nuke_k2 = nuke_intrinsics->k2();
+      camera_intrinsics_options->nuke_p1 = nuke_intrinsics->p1();
+      camera_intrinsics_options->nuke_p2 = nuke_intrinsics->p2();
       break;
     }
 
@@ -362,8 +361,11 @@ static void libmv_cameraIntrinsicsFillFromOptions(
       NukeCameraIntrinsics* nuke_intrinsics =
           static_cast<NukeCameraIntrinsics*>(camera_intrinsics);
 
-      nuke_intrinsics->SetDistortion(camera_intrinsics_options->nuke_k1,
-                                     camera_intrinsics_options->nuke_k2);
+      nuke_intrinsics->SetRadialDistortion(camera_intrinsics_options->nuke_k1,
+                                           camera_intrinsics_options->nuke_k2);
+      nuke_intrinsics->SetTangentialDistortion(
+          camera_intrinsics_options->nuke_p1,
+          camera_intrinsics_options->nuke_p2);
       break;
     }
 

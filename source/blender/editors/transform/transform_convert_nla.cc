@@ -10,6 +10,7 @@
 
 #include "DNA_anim_types.h"
 #include "DNA_space_types.h"
+#include "DNA_userdef_types.h"
 
 #include "MEM_guardedalloc.h"
 
@@ -31,6 +32,8 @@
 
 #include "transform.hh"
 #include "transform_convert.hh"
+
+namespace blender::ed::transform {
 
 /** Used for NLA transform (stored in #TransData.extra pointer). */
 struct TransDataNla {
@@ -517,11 +520,10 @@ static void createTransNlaData(bContext *C, TransInfo *t)
   /* Allocate memory for data. */
   tc->data_len = count;
 
-  tc->data = static_cast<TransData *>(
-      MEM_callocN(tc->data_len * sizeof(TransData), "TransData(NLA Editor)"));
+  tc->data = MEM_calloc_arrayN<TransData>(tc->data_len, "TransData(NLA Editor)");
   td = tc->data;
-  tc->custom.type.data = tdn = static_cast<TransDataNla *>(
-      MEM_callocN(tc->data_len * sizeof(TransDataNla), "TransDataNla (NLA Editor)"));
+  tc->custom.type.data = tdn = MEM_calloc_arrayN<TransDataNla>(tc->data_len,
+                                                               "TransDataNla (NLA Editor)");
   tc->custom.type.use_free = true;
 
   /* Loop 2: build transdata array. */
@@ -859,8 +861,7 @@ static void nlastrip_shuffle_transformed(TransDataContainer *tc, TransDataNla *f
         }
       }
       if (dst_group == nullptr) {
-        dst_group = static_cast<IDGroupedTransData *>(
-            MEM_callocN(sizeof(IDGroupedTransData), __func__));
+        dst_group = MEM_callocN<IDGroupedTransData>(__func__);
         dst_group->id = tdn->id;
         BLI_addhead(&grouped_trans_datas, dst_group);
       }
@@ -997,3 +998,5 @@ TransConvertTypeInfo TransConvertType_NLA = {
     /*recalc_data*/ recalcData_nla,
     /*special_aftertrans_update*/ special_aftertrans_update__nla,
 };
+
+}  // namespace blender::ed::transform

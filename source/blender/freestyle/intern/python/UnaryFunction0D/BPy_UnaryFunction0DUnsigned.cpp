@@ -15,10 +15,6 @@
 
 #include "BLI_sys_types.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -59,7 +55,6 @@ PyDoc_STRVAR(
     ".. method:: __init__()\n"
     "\n"
     "   Default constructor.\n");
-
 static int UnaryFunction0DUnsigned___init__(BPy_UnaryFunction0DUnsigned *self,
                                             PyObject *args,
                                             PyObject *kwds)
@@ -157,7 +152,3 @@ PyTypeObject UnaryFunction0DUnsigned_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

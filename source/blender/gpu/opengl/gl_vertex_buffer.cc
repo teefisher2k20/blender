@@ -22,7 +22,7 @@ void GLVertBuf::acquire_data()
 
   /* Discard previous data if any. */
   MEM_SAFE_FREE(data_);
-  data_ = (uchar *)MEM_mallocN(sizeof(uchar) * this->size_alloc_get(), __func__);
+  data_ = MEM_malloc_arrayN<uchar>(this->size_alloc_get(), __func__);
 }
 
 void GLVertBuf::resize_data()
@@ -42,38 +42,12 @@ void GLVertBuf::release_data()
 
   if (vbo_id_ != 0) {
     GPU_TEXTURE_FREE_SAFE(buffer_texture_);
-    GLContext::buf_free(vbo_id_);
+    GLContext::buffer_free(vbo_id_);
     vbo_id_ = 0;
     memory_usage -= vbo_size_;
   }
 
   MEM_SAFE_FREE(data_);
-}
-
-void GLVertBuf::duplicate_data(VertBuf *dst_)
-{
-  BLI_assert(GLContext::get() != nullptr);
-  GLVertBuf *src = this;
-  GLVertBuf *dst = static_cast<GLVertBuf *>(dst_);
-  dst->buffer_texture_ = nullptr;
-
-  if (src->vbo_id_ != 0) {
-    dst->vbo_size_ = src->size_used_get();
-
-    glGenBuffers(1, &dst->vbo_id_);
-    glBindBuffer(GL_COPY_WRITE_BUFFER, dst->vbo_id_);
-    glBufferData(GL_COPY_WRITE_BUFFER, dst->vbo_size_, nullptr, to_gl(dst->usage_));
-
-    glBindBuffer(GL_COPY_READ_BUFFER, src->vbo_id_);
-
-    glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0, dst->vbo_size_);
-
-    memory_usage += dst->vbo_size_;
-  }
-
-  if (data_ != nullptr) {
-    dst->data_ = (uchar *)MEM_dupallocN(src->data_);
-  }
 }
 
 void GLVertBuf::upload_data()
@@ -94,6 +68,7 @@ void GLVertBuf::bind()
   if (flag & GPU_VERTBUF_DATA_DIRTY) {
     vbo_size_ = this->size_used_get();
 
+    /* This is fine on some systems but will crash on others. */
     BLI_assert(vbo_size_ != 0);
     /* Orphan the vbo to avoid sync then upload data. */
     glBufferData(GL_ARRAY_BUFFER, ceil_to_multiple_ul(vbo_size_, 16), nullptr, to_gl(usage_));

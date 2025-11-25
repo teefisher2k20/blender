@@ -64,13 +64,13 @@ void register_node_type_sh_bsdf_diffuse()
   sh_node_type_base(&ntype, "ShaderNodeBsdfDiffuse", SH_NODE_BSDF_DIFFUSE);
   ntype.ui_name = "Diffuse BSDF";
   ntype.ui_description = "Lambertian and Oren-Nayar diffuse reflection";
-  ntype.enum_name_legacy = "DIFFUSE_BSDF";
+  ntype.enum_name_legacy = "BSDF_DIFFUSE";
   ntype.nclass = NODE_CLASS_SHADER;
   ntype.declare = file_ns::node_declare;
   ntype.add_ui_poll = object_shader_nodes_poll;
-  blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Middle);
+  blender::bke::node_type_size_preset(ntype, blender::bke::eNodeSizePreset::Middle);
   ntype.gpu_fn = file_ns::node_shader_gpu_bsdf_diffuse;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

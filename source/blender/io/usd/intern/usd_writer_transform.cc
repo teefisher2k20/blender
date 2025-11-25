@@ -48,7 +48,7 @@ bool USDTransformWriter::should_apply_root_xform(const HierarchyContext &context
     return false;
   }
 
-  if (BLI_strnlen(usd_export_context_.export_params.root_prim_path, 1024) != 0) {
+  if (!usd_export_context_.export_params.root_prim_path.empty()) {
     return false;
   }
 
@@ -61,6 +61,10 @@ bool USDTransformWriter::should_apply_root_xform(const HierarchyContext &context
 
 void USDTransformWriter::do_write(HierarchyContext &context)
 {
+  if (context.is_point_proto || context.is_point_instance) {
+    return;
+  }
+
   constexpr float UNIT_M4[4][4] = {
       {1, 0, 0, 0},
       {0, 1, 0, 0},
@@ -119,6 +123,7 @@ void USDTransformWriter::do_write(HierarchyContext &context)
 
   if (context.object) {
     auto prim = xform.GetPrim();
+    add_to_prim_map(prim.GetPath(), &context.object->id);
     write_id_properties(prim, context.object->id, get_export_time_code());
   }
 }
@@ -137,7 +142,8 @@ bool USDTransformWriter::check_is_animated(const HierarchyContext &context) cons
   return BKE_object_moves_in_time(context.object, context.animation_check_include_parent);
 }
 
-void USDTransformWriter::set_xform_ops(float xf_matrix[4][4], const pxr::UsdGeomXformable &xf)
+void USDTransformWriter::set_xform_ops(float parent_relative_matrix[4][4],
+                                       const pxr::UsdGeomXformable &xf)
 {
   if (!xf) {
     return;
@@ -175,7 +181,7 @@ void USDTransformWriter::set_xform_ops(float xf_matrix[4][4], const pxr::UsdGeom
   pxr::UsdTimeCode time_code = get_export_time_code();
 
   if (xformOps_.size() == 1) {
-    pxr::GfMatrix4d mat_val(xf_matrix);
+    pxr::GfMatrix4d mat_val(parent_relative_matrix);
     usd_value_writer_.SetAttribute(xformOps_[0].GetAttr(), mat_val, time_code);
   }
   else if (xformOps_.size() == 3) {
@@ -184,7 +190,7 @@ void USDTransformWriter::set_xform_ops(float xf_matrix[4][4], const pxr::UsdGeom
     float quat[4];
     float scale[3];
 
-    mat4_decompose(loc, quat, scale, xf_matrix);
+    mat4_decompose(loc, quat, scale, parent_relative_matrix);
 
     if (xfOpMode == USD_XFORM_OP_TRS) {
       float rot[3];

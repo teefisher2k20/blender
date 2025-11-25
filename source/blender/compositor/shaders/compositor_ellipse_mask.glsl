@@ -2,30 +2,44 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "infos/compositor_ellipse_mask_infos.hh"
+
+COMPUTE_SHADER_CREATE_INFO(compositor_ellipse_mask_add)
+
 #include "gpu_shader_compositor_texture_utilities.glsl"
+
+/* TODO(fclem): deduplicate. */
+#define CMP_NODE_MASKTYPE_ADD 0
+#define CMP_NODE_MASKTYPE_SUBTRACT 1
+#define CMP_NODE_MASKTYPE_MULTIPLY 2
+#define CMP_NODE_MASKTYPE_NOT 3
 
 void main()
 {
-  ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+  int2 texel = int2(gl_GlobalInvocationID.xy);
 
-  vec2 uv = vec2(texel) / vec2(domain_size - ivec2(1));
+  float2 uv = float2(texel + data_offset) / float2(display_size - int2(1));
   uv -= location;
-  uv.y *= float(domain_size.y) / float(domain_size.x);
-  uv = mat2(cos_angle, -sin_angle, sin_angle, cos_angle) * uv;
-  bool is_inside = length(uv / radius) < 1.0;
+  uv.y *= float(display_size.y) / float(display_size.x);
+  uv = float2x2(cos_angle, -sin_angle, sin_angle, cos_angle) * uv;
+  bool is_inside = length(uv / radius) < 1.0f;
 
   float base_mask_value = texture_load(base_mask_tx, texel).x;
   float value = texture_load(mask_value_tx, texel).x;
 
-#if defined(CMP_NODE_MASKTYPE_ADD)
-  float output_mask_value = is_inside ? max(base_mask_value, value) : base_mask_value;
-#elif defined(CMP_NODE_MASKTYPE_SUBTRACT)
-  float output_mask_value = is_inside ? clamp(base_mask_value - value, 0.0, 1.0) : base_mask_value;
-#elif defined(CMP_NODE_MASKTYPE_MULTIPLY)
-  float output_mask_value = is_inside ? base_mask_value * value : 0.0;
-#elif defined(CMP_NODE_MASKTYPE_NOT)
-  float output_mask_value = is_inside ? (base_mask_value > 0.0 ? 0.0 : value) : base_mask_value;
-#endif
+  float output_mask_value;
+  if (node_type == CMP_NODE_MASKTYPE_ADD) {
+    output_mask_value = is_inside ? max(base_mask_value, value) : base_mask_value;
+  }
+  else if (node_type == CMP_NODE_MASKTYPE_SUBTRACT) {
+    output_mask_value = is_inside ? clamp(base_mask_value - value, 0.0f, 1.0f) : base_mask_value;
+  }
+  else if (node_type == CMP_NODE_MASKTYPE_MULTIPLY) {
+    output_mask_value = is_inside ? base_mask_value * value : 0.0f;
+  }
+  else if (node_type == CMP_NODE_MASKTYPE_NOT) {
+    output_mask_value = is_inside ? (base_mask_value > 0.0f ? 0.0f : value) : base_mask_value;
+  }
 
-  imageStore(output_mask_img, texel, vec4(output_mask_value));
+  imageStore(output_mask_img, texel, float4(output_mask_value));
 }

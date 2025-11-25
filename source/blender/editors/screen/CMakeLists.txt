@@ -5,13 +5,15 @@
 set(INC
   ../asset
   ../include
+  ../space_graph
   ../../makesrna
-  ../../../../extern/fmtlib/include
+  ../../nodes
   # RNA_prototypes.hh
   ${CMAKE_BINARY_DIR}/source/blender/makesrna
 )
 
 set(INC_SYS
+  ../../../../extern/fmtlib/include
 )
 
 set(SRC

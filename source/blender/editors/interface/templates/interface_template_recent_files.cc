@@ -9,8 +9,10 @@
 #include <fmt/format.h>
 
 #include "BLI_fileops.h"
+#include "BLI_listbase.h"
 #include "BLI_path_utils.hh"
 #include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "BLO_readfile.hh"
 
@@ -26,10 +28,13 @@
 
 #include "RNA_access.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "interface_intern.hh"
 
-static void uiTemplateRecentFiles_tooltip_func(bContext & /*C*/, uiTooltipData &tip, void *argN)
+static void uiTemplateRecentFiles_tooltip_func(bContext & /*C*/,
+                                               uiTooltipData &tip,
+                                               uiBut * /*but*/,
+                                               void *argN)
 {
   char *path = (char *)argN;
 
@@ -62,7 +67,7 @@ static void uiTemplateRecentFiles_tooltip_func(bContext & /*C*/, uiTooltipData &
     /* Load Blender version directly from the file. */
     short version = BLO_version_from_file(path);
     if (version != 0) {
-      SNPRINTF(version_str, "%d.%01d", version / 100, version % 100);
+      SNPRINTF_UTF8(version_str, "%d.%01d", version / 100, version % 100);
     }
   }
 
@@ -135,19 +140,16 @@ int uiTemplateRecentFiles(uiLayout *layout, int rows)
     }
 
     const char *filename = BLI_path_basename(recent->filepath);
-    PointerRNA ptr;
-    uiItemFullO(layout,
-                "WM_OT_open_mainfile",
-                filename,
-                BKE_blendfile_extension_check(filename) ? ICON_FILE_BLEND : ICON_FILE_BACKUP,
-                nullptr,
-                WM_OP_INVOKE_DEFAULT,
-                UI_ITEM_NONE,
-                &ptr);
+    PointerRNA ptr = layout->op("WM_OT_open_mainfile",
+                                filename,
+                                BKE_blendfile_extension_check(filename) ? ICON_FILE_BLEND :
+                                                                          ICON_FILE_BACKUP,
+                                blender::wm::OpCallContext::InvokeDefault,
+                                UI_ITEM_NONE);
     RNA_string_set(&ptr, "filepath", recent->filepath);
     RNA_boolean_set(&ptr, "display_file_selector", false);
 
-    uiBlock *block = uiLayoutGetBlock(layout);
+    uiBlock *block = layout->block();
     uiBut *but = ui_but_last(block);
     UI_but_func_tooltip_custom_set(
         but, uiTemplateRecentFiles_tooltip_func, BLI_strdup(recent->filepath), MEM_freeN);

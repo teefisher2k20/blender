@@ -23,7 +23,7 @@
 #include "BKE_grease_pencil.hh"
 #include "BKE_modifier.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "GEO_smooth_curves.hh"
@@ -89,7 +89,7 @@ static void deform_drawing(const ModifierData &md,
                            const Object &ob,
                            bke::greasepencil::Drawing &drawing)
 {
-  auto &mmd = reinterpret_cast<const GreasePencilSmoothModifierData &>(md);
+  const auto &mmd = reinterpret_cast<const GreasePencilSmoothModifierData &>(md);
 
   const int iterations = mmd.step;
   const float influence = mmd.factor;
@@ -126,7 +126,7 @@ static void deform_drawing(const ModifierData &md,
   bke::MutableAttributeAccessor attributes = curves.attributes_for_write();
   const OffsetIndices points_by_curve = curves.points_by_curve();
   const VArray<bool> cyclic = curves.cyclic();
-  const VArray<bool> point_selection = VArray<bool>::ForSingle(true, curves.points_num());
+  const VArray<bool> point_selection = VArray<bool>::from_single(true, curves.points_num());
 
   VArray<float> influences;
   const bool use_influence_vertex_group = mmd.influence.vertex_group_name[0] != '\0';
@@ -140,10 +140,10 @@ static void deform_drawing(const ModifierData &md,
             vgroup_weights_factored[i] = vgroup_weights[i] * influence;
           }
         });
-    influences = VArray<float>::ForContainer(vgroup_weights_factored);
+    influences = VArray<float>::from_container(vgroup_weights_factored);
   }
   else {
-    influences = VArray<float>::ForSingle(influence, curves.points_num());
+    influences = VArray<float>::from_single(influence, curves.points_num());
   }
 
   if (smooth_position) {
@@ -233,37 +233,36 @@ static void panel_draw(const bContext *C, Panel *panel)
 
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
 
-  row = uiLayoutRow(layout, true);
-  uiItemR(row, ptr, "use_edit_position", UI_ITEM_R_TOGGLE, IFACE_("Position"), ICON_NONE);
-  uiItemR(row,
-          ptr,
-          "use_edit_strength",
-          UI_ITEM_R_TOGGLE,
-          CTX_IFACE_(BLT_I18NCONTEXT_ID_GPENCIL, "Strength"),
-          ICON_NONE);
-  uiItemR(row, ptr, "use_edit_thickness", UI_ITEM_R_TOGGLE, IFACE_("Thickness"), ICON_NONE);
+  row = &layout->row(true);
+  row->prop(ptr, "use_edit_position", UI_ITEM_R_TOGGLE, IFACE_("Position"), ICON_NONE);
+  row->prop(ptr,
+            "use_edit_strength",
+            UI_ITEM_R_TOGGLE,
+            CTX_IFACE_(BLT_I18NCONTEXT_ID_GPENCIL, "Strength"),
+            ICON_NONE);
+  row->prop(ptr, "use_edit_thickness", UI_ITEM_R_TOGGLE, IFACE_("Thickness"), ICON_NONE);
 
-  uiItemR(row, ptr, "use_edit_uv", UI_ITEM_R_TOGGLE, IFACE_("UV"), ICON_NONE);
+  row->prop(ptr, "use_edit_uv", UI_ITEM_R_TOGGLE, IFACE_("UV"), ICON_NONE);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiItemR(layout, ptr, "factor", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(layout, ptr, "step", UI_ITEM_NONE, IFACE_("Repeat"), ICON_NONE);
+  layout->prop(ptr, "factor", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "step", UI_ITEM_NONE, IFACE_("Repeat"), ICON_NONE);
 
-  col = uiLayoutColumn(layout, false);
-  uiLayoutSetActive(col, RNA_boolean_get(ptr, "use_edit_position"));
-  uiItemR(col, ptr, "use_keep_shape", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "use_smooth_ends", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col = &layout->column(false);
+  col->active_set(RNA_boolean_get(ptr, "use_edit_position"));
+  col->prop(ptr, "use_keep_shape", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col->prop(ptr, "use_smooth_ends", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  if (uiLayout *influence_panel = uiLayoutPanelProp(
-          C, layout, ptr, "open_influence_panel", IFACE_("Influence")))
+  if (uiLayout *influence_panel = layout->panel_prop(
+          C, ptr, "open_influence_panel", IFACE_("Influence")))
   {
     modifier::greasepencil::draw_layer_filter_settings(C, influence_panel, ptr);
     modifier::greasepencil::draw_material_filter_settings(C, influence_panel, ptr);
     modifier::greasepencil::draw_vertex_group_settings(C, influence_panel, ptr);
   }
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void panel_register(ARegionType *region_type)

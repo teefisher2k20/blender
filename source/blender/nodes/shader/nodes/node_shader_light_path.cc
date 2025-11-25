@@ -15,12 +15,14 @@ static void node_declare(NodeDeclarationBuilder &b)
   b.add_output<decl::Float>("Is Singular Ray");
   b.add_output<decl::Float>("Is Reflection Ray");
   b.add_output<decl::Float>("Is Transmission Ray");
+  b.add_output<decl::Float>("Is Volume Scatter Ray");
   b.add_output<decl::Float>("Ray Length");
   b.add_output<decl::Float>("Ray Depth");
   b.add_output<decl::Float>("Diffuse Depth");
   b.add_output<decl::Float>("Glossy Depth");
   b.add_output<decl::Float>("Transparent Depth");
   b.add_output<decl::Float>("Transmission Depth");
+  b.add_output<decl::Float>("Portal Depth");
 }
 
 static int node_shader_gpu_light_path(GPUMaterial *mat,
@@ -29,6 +31,18 @@ static int node_shader_gpu_light_path(GPUMaterial *mat,
                                       GPUNodeStack *in,
                                       GPUNodeStack *out)
 {
+  if (out[2].hasoutput ||  /* Is Diffuse Ray. */
+      out[3].hasoutput ||  /* Is Glossy Ray. */
+      out[4].hasoutput ||  /* Is Singular Ray. */
+      out[5].hasoutput ||  /* Is Reflection Ray. */
+      out[6].hasoutput ||  /* Is Transmission Ray. */
+      out[10].hasoutput || /* Diffuse Depth. */
+      out[11].hasoutput || /* Glossy Depth. */
+      out[13].hasoutput)   /* Transmission Depth. */
+  {
+    /* Used to detect that the world has a specific look for diffuse path. */
+    GPU_material_flag_set(mat, GPU_MATFLAG_IS_DIFFUSE_OR_GLOSSY_RAY_FLAG);
+  }
   return GPU_stack_link(mat, node, "node_light_path", in, out);
 }
 
@@ -36,10 +50,10 @@ NODE_SHADER_MATERIALX_BEGIN
 #ifdef WITH_MATERIALX
 {
   /* NOTE: This node isn't supported by MaterialX. Only default values returned. */
-  if (STREQ(socket_out_->name, "Is Camera Ray")) {
+  if (STREQ(socket_out_->identifier, "Is Camera Ray")) {
     return val(1.0f);
   }
-  if (STREQ(socket_out_->name, "Ray Length")) {
+  if (STREQ(socket_out_->identifier, "Ray Length")) {
     return val(1.0f);
   }
   NodeItem res = val(0.0f);
@@ -68,5 +82,5 @@ void register_node_type_sh_light_path()
   ntype.gpu_fn = file_ns::node_shader_gpu_light_path;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

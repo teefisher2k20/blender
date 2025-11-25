@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 /** \file
- * \ingroup sequencer
+ * \ingroup spseq
  */
 
 #include "MEM_guardedalloc.h"
@@ -14,13 +14,13 @@
 #include "BKE_context.hh"
 #include "BKE_screen.hh"
 
-#include "BLI_blenlib.h"
+#include "BLI_math_base.h"
+#include "BLI_string.h"
 #include "BLI_utildefines.h"
 
 #include "ED_screen.hh"
 
 #include "GPU_matrix.hh"
-#include "GPU_vertex_buffer.hh"
 
 #include "RNA_prototypes.hh"
 
@@ -34,8 +34,9 @@
 
 #include "WM_api.hh"
 
-/* Own include. */
 #include "sequencer_intern.hh"
+
+namespace blender::ed::vse {
 
 static float draw_offset_get(const View2D *timeline_region_v2d)
 {
@@ -81,12 +82,14 @@ static void displayed_channel_range_get(const SeqChannelDrawContext *context,
 
   rctf strip_boundbox;
   BLI_rctf_init(&strip_boundbox, 0.0f, 0.0f, 1.0f, r_channel_range[1]);
-  SEQ_timeline_expand_boundbox(context->scene, context->seqbase, &strip_boundbox);
+  seq::timeline_expand_boundbox(context->scene, context->seqbase, &strip_boundbox);
   CLAMP(r_channel_range[0], strip_boundbox.ymin, strip_boundbox.ymax);
-  CLAMP(r_channel_range[1], strip_boundbox.ymin, SEQ_MAX_CHANNELS);
+  CLAMP(r_channel_range[1], strip_boundbox.ymin, seq::MAX_CHANNELS);
 }
 
-static std::string draw_channel_widget_tooltip(bContext * /*C*/, void *argN, const char * /*tip*/)
+static std::string draw_channel_widget_tooltip(bContext * /*C*/,
+                                               void *argN,
+                                               const StringRef /*tip*/)
 {
   char *dyn_tooltip = static_cast<char *>(argN);
   return dyn_tooltip;
@@ -100,17 +103,16 @@ static float draw_channel_widget_mute(const SeqChannelDrawContext *context,
   float y = channel_index_y_min(context, channel_index) + widget_y_offset(context);
 
   const float width = icon_width_get(context);
-  SeqTimelineChannel *channel = SEQ_channel_get_by_index(context->channels, channel_index);
-  const int icon = SEQ_channel_is_muted(channel) ? ICON_CHECKBOX_DEHLT : ICON_CHECKBOX_HLT;
+  SeqTimelineChannel *channel = seq::channel_get_by_index(context->channels, channel_index);
+  const int icon = seq::channel_is_muted(channel) ? ICON_CHECKBOX_DEHLT : ICON_CHECKBOX_HLT;
 
   PointerRNA ptr = RNA_pointer_create_discrete(
       &context->scene->id, &RNA_SequenceTimelineChannel, channel);
   PropertyRNA *hide_prop = RNA_struct_type_find_property(&RNA_SequenceTimelineChannel, "mute");
 
-  UI_block_emboss_set(block, UI_EMBOSS_NONE);
+  UI_block_emboss_set(block, ui::EmbossType::None);
   uiBut *but = uiDefIconButR_prop(block,
-                                  UI_BTYPE_TOGGLE,
-                                  1,
+                                  ButType::Toggle,
                                   icon,
                                   context->v2d->cur.xmax / context->scale - offset,
                                   y,
@@ -121,10 +123,11 @@ static float draw_channel_widget_mute(const SeqChannelDrawContext *context,
                                   0,
                                   0,
                                   0,
-                                  nullptr);
+                                  std::nullopt);
+  UI_but_retval_set(but, 1);
 
   char *tooltip = BLI_sprintfN(
-      "%s channel %d", SEQ_channel_is_muted(channel) ? "Unmute" : "Mute", channel_index);
+      "%s channel %d", seq::channel_is_muted(channel) ? "Unmute" : "Mute", channel_index);
   UI_but_func_tooltip_set(but, draw_channel_widget_tooltip, tooltip, MEM_freeN);
 
   return width;
@@ -139,17 +142,16 @@ static float draw_channel_widget_lock(const SeqChannelDrawContext *context,
   float y = channel_index_y_min(context, channel_index) + widget_y_offset(context);
   const float width = icon_width_get(context);
 
-  SeqTimelineChannel *channel = SEQ_channel_get_by_index(context->channels, channel_index);
-  const int icon = SEQ_channel_is_locked(channel) ? ICON_LOCKED : ICON_UNLOCKED;
+  SeqTimelineChannel *channel = seq::channel_get_by_index(context->channels, channel_index);
+  const int icon = seq::channel_is_locked(channel) ? ICON_LOCKED : ICON_UNLOCKED;
 
   PointerRNA ptr = RNA_pointer_create_discrete(
       &context->scene->id, &RNA_SequenceTimelineChannel, channel);
   PropertyRNA *hide_prop = RNA_struct_type_find_property(&RNA_SequenceTimelineChannel, "lock");
 
-  UI_block_emboss_set(block, UI_EMBOSS_NONE);
+  UI_block_emboss_set(block, ui::EmbossType::None);
   uiBut *but = uiDefIconButR_prop(block,
-                                  UI_BTYPE_TOGGLE,
-                                  1,
+                                  ButType::Toggle,
                                   icon,
                                   context->v2d->cur.xmax / context->scale - offset,
                                   y,
@@ -161,9 +163,10 @@ static float draw_channel_widget_lock(const SeqChannelDrawContext *context,
                                   0,
                                   0,
                                   "");
+  UI_but_retval_set(but, 1);
 
   char *tooltip = BLI_sprintfN(
-      "%s channel %d", SEQ_channel_is_locked(channel) ? "Unlock" : "Lock", channel_index);
+      "%s channel %d", seq::channel_is_locked(channel) ? "Unlock" : "Lock", channel_index);
   UI_but_func_tooltip_set(but, draw_channel_widget_tooltip, tooltip, MEM_freeN);
 
   return width;
@@ -218,15 +221,14 @@ static void draw_channel_labels(const SeqChannelDrawContext *context,
   }
 
   if (channel_is_being_renamed(sseq, channel_index)) {
-    SeqTimelineChannel *channel = SEQ_channel_get_by_index(context->channels, channel_index);
+    SeqTimelineChannel *channel = seq::channel_get_by_index(context->channels, channel_index);
     PointerRNA ptr = RNA_pointer_create_discrete(
         &context->scene->id, &RNA_SequenceTimelineChannel, channel);
     PropertyRNA *prop = RNA_struct_name_property(ptr.type);
 
-    UI_block_emboss_set(block, UI_EMBOSS);
+    UI_block_emboss_set(block, ui::EmbossType::Emboss);
     uiBut *but = uiDefButR(block,
-                           UI_BTYPE_TEXT,
-                           1,
+                           ButType::Text,
                            "",
                            rect.xmin,
                            rect.ymin,
@@ -237,8 +239,9 @@ static void draw_channel_labels(const SeqChannelDrawContext *context,
                            -1,
                            0,
                            0,
-                           nullptr);
-    UI_block_emboss_set(block, UI_EMBOSS_NONE);
+                           std::nullopt);
+    UI_but_retval_set(but, 1);
+    UI_block_emboss_set(block, ui::EmbossType::None);
 
     if (UI_but_active_only(context->C, context->region, block, but) == false) {
       sseq->runtime->rename_channel_index = 0;
@@ -247,10 +250,9 @@ static void draw_channel_labels(const SeqChannelDrawContext *context,
     WM_event_add_notifier(context->C, NC_SCENE | ND_SEQUENCER, context->scene);
   }
   else {
-    const char *label = SEQ_channel_name_get(context->channels, channel_index);
+    const char *label = seq::channel_name_get(context->channels, channel_index);
     uiDefBut(block,
-             UI_BTYPE_LABEL,
-             0,
+             ButType::Label,
              label,
              rect.xmin,
              rect.ymin,
@@ -259,7 +261,7 @@ static void draw_channel_labels(const SeqChannelDrawContext *context,
              nullptr,
              0,
              0,
-             nullptr);
+             std::nullopt);
   }
 }
 
@@ -268,7 +270,7 @@ static void draw_channel_headers(const SeqChannelDrawContext *context)
   GPU_matrix_push();
   wmOrtho2_pixelspace(context->region->winx / context->scale,
                       context->region->winy / context->scale);
-  uiBlock *block = UI_block_begin(context->C, context->region, __func__, UI_EMBOSS);
+  uiBlock *block = UI_block_begin(context->C, context->region, __func__, ui::EmbossType::Emboss);
 
   int channel_range[2];
   displayed_channel_range_get(context, channel_range);
@@ -306,10 +308,10 @@ void channel_draw_context_init(const bContext *C,
   r_context->area = CTX_wm_area(C);
   r_context->region = region;
   r_context->v2d = &region->v2d;
-  r_context->scene = CTX_data_scene(C);
-  r_context->ed = SEQ_editing_get(r_context->scene);
-  r_context->seqbase = SEQ_active_seqbase_get(r_context->ed);
-  r_context->channels = SEQ_channels_displayed_get(r_context->ed);
+  r_context->scene = CTX_data_sequencer_scene(C);
+  r_context->ed = seq::editing_get(r_context->scene);
+  r_context->seqbase = seq::active_seqbase_get(r_context->ed);
+  r_context->channels = seq::channels_displayed_get(r_context->ed);
   r_context->timeline_region = BKE_area_find_region_type(r_context->area, RGN_TYPE_WINDOW);
   BLI_assert(r_context->timeline_region != nullptr);
   r_context->timeline_region_v2d = &r_context->timeline_region->v2d;
@@ -324,8 +326,12 @@ void channel_draw_context_init(const bContext *C,
 void draw_channels(const bContext *C, ARegion *region)
 {
   draw_background();
+  Scene *scene = CTX_data_sequencer_scene(C);
+  if (!scene) {
+    return;
+  }
 
-  Editing *ed = SEQ_editing_get(CTX_data_scene(C));
+  Editing *ed = seq::editing_get(scene);
   if (ed == nullptr) {
     return;
   }
@@ -343,3 +349,5 @@ void draw_channels(const bContext *C, ARegion *region)
 
   UI_view2d_view_restore(C);
 }
+
+}  // namespace blender::ed::vse

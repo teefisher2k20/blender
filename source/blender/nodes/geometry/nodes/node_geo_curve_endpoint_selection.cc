@@ -6,8 +6,6 @@
 
 #include "BKE_curves.hh"
 
-#include "UI_resources.hh"
-
 #include "node_geometry_util.hh"
 
 namespace blender::nodes::node_geo_curve_endpoint_selection_cc {
@@ -81,7 +79,7 @@ class EndpointFieldInput final : public bke::GeometryFieldInput {
       });
     });
 
-    return VArray<bool>::ForContainer(std::move(selection));
+    return VArray<bool>::from_container(std::move(selection));
   };
 
   void for_each_field_input_recursive(FunctionRef<void(const FieldInput &)> fn) const final
@@ -131,7 +129,7 @@ static void node_register()
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

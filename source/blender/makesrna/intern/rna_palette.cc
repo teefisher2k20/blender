@@ -8,9 +8,6 @@
 
 #include <cstdlib>
 
-#include "BLI_utildefines.h"
-
-#include "RNA_access.hh"
 #include "RNA_define.hh"
 
 #include "rna_internal.hh"
@@ -21,8 +18,12 @@
 
 #  include "DNA_brush_types.h"
 
+#  include "BLI_math_color.h"
+
+#  include "BKE_library.hh"
 #  include "BKE_paint.hh"
 #  include "BKE_report.hh"
+
 static PaletteColor *rna_Palette_color_new(Palette *palette)
 {
   if (!ID_IS_EDITABLE(palette) || ID_IS_OVERRIDE_LIBRARY(palette)) {
@@ -49,7 +50,7 @@ static void rna_Palette_color_remove(Palette *palette, ReportList *reports, Poin
 
   BKE_palette_color_remove(palette, color);
 
-  RNA_POINTER_INVALIDATE(color_ptr);
+  color_ptr->invalidate();
 }
 
 static void rna_Palette_color_clear(Palette *palette)
@@ -61,6 +62,13 @@ static void rna_Palette_color_clear(Palette *palette)
   BKE_palette_clear(palette);
 }
 
+static void rna_PaletteColor_color_update(Main * /*bmain*/, Scene * /*scene*/, PointerRNA *ptr)
+{
+  /* For forward compatibility. */
+  PaletteColor *color = static_cast<PaletteColor *>(ptr->data);
+  BKE_palette_color_sync_legacy(color);
+}
+
 static PointerRNA rna_Palette_active_color_get(PointerRNA *ptr)
 {
   Palette *palette = static_cast<Palette *>(ptr->data);
@@ -69,7 +77,7 @@ static PointerRNA rna_Palette_active_color_get(PointerRNA *ptr)
   color = static_cast<PaletteColor *>(BLI_findlink(&palette->colors, palette->active_color));
 
   if (color) {
-    return rna_pointer_inherit_refine(ptr, &RNA_PaletteColor, color);
+    return RNA_pointer_create_with_parent(*ptr, &RNA_PaletteColor, color);
   }
 
   return PointerRNA_NULL;
@@ -138,13 +146,13 @@ static void rna_def_palettecolor(BlenderRNA *brna)
   srna = RNA_def_struct(brna, "PaletteColor", nullptr);
   RNA_def_struct_ui_text(srna, "Palette Color", "");
 
-  prop = RNA_def_property(srna, "color", PROP_FLOAT, PROP_COLOR_GAMMA);
+  prop = RNA_def_property(srna, "color", PROP_FLOAT, PROP_COLOR);
   RNA_def_property_range(prop, 0.0, 1.0);
-  RNA_def_property_float_sdna(prop, nullptr, "rgb");
+  RNA_def_property_float_sdna(prop, nullptr, "color");
   RNA_def_property_flag(prop, PROP_LIB_EXCEPTION);
   RNA_def_property_array(prop, 3);
   RNA_def_property_ui_text(prop, "Color", "");
-  RNA_def_property_update(prop, NC_SCENE | ND_TOOLSETTINGS, nullptr);
+  RNA_def_property_update(prop, NC_SCENE | ND_TOOLSETTINGS, "rna_PaletteColor_color_update");
 
   prop = RNA_def_property(srna, "strength", PROP_FLOAT, PROP_NONE);
   RNA_def_property_range(prop, 0.0, 1.0);

@@ -4,9 +4,10 @@
 
 #include "NOD_rna_define.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
+#include "GEO_foreach_geometry.hh"
 #include "GEO_separate_geometry.hh"
 
 #include "RNA_enum_types.hh"
@@ -19,13 +20,16 @@ NODE_STORAGE_FUNCS(NodeGeometryDeleteGeometry)
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Geometry>("Geometry");
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
+  b.add_default_layout();
+  b.add_input<decl::Geometry>("Geometry").description("Geometry to delete elements from");
+  b.add_output<decl::Geometry>("Geometry").propagate_all().align_with_previous();
   b.add_input<decl::Bool>("Selection")
       .default_value(true)
       .hide_value()
       .field_on_all()
       .description("The parts of the geometry to be deleted");
-  b.add_output<decl::Geometry>("Geometry").propagate_all();
 }
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
@@ -34,16 +38,16 @@ static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
   const NodeGeometryDeleteGeometry &storage = node_storage(*node);
   const AttrDomain domain = AttrDomain(storage.domain);
 
-  uiItemR(layout, ptr, "domain", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "domain", UI_ITEM_NONE, "", ICON_NONE);
   /* Only show the mode when it is relevant. */
   if (ELEM(domain, AttrDomain::Point, AttrDomain::Edge, AttrDomain::Face)) {
-    uiItemR(layout, ptr, "mode", UI_ITEM_NONE, "", ICON_NONE);
+    layout->prop(ptr, "mode", UI_ITEM_NONE, "", ICON_NONE);
   }
 }
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
 {
-  NodeGeometryDeleteGeometry *data = MEM_cnew<NodeGeometryDeleteGeometry>(__func__);
+  NodeGeometryDeleteGeometry *data = MEM_callocN<NodeGeometryDeleteGeometry>(__func__);
   data->domain = int(AttrDomain::Point);
   data->mode = GEO_NODE_DELETE_GEOMETRY_MODE_ALL;
 
@@ -71,7 +75,7 @@ static void node_geo_exec(GeoNodeExecParams params)
     geometry::separate_geometry(geometry_set, domain, mode, selection, attribute_filter, is_error);
   }
   else {
-    geometry_set.modify_geometry_sets([&](GeometrySet &geometry_set) {
+    geometry::foreach_real_geometry(geometry_set, [&](GeometrySet &geometry_set) {
       bool is_error;
       /* Invert here because we want to keep the things not in the selection. */
       geometry::separate_geometry(
@@ -117,16 +121,14 @@ static void node_register()
   ntype.ui_description = "Remove selected elements of a geometry";
   ntype.enum_name_legacy = "DELETE_GEOMETRY";
   ntype.nclass = NODE_CLASS_GEOMETRY;
-  blender::bke::node_type_storage(&ntype,
-                                  "NodeGeometryDeleteGeometry",
-                                  node_free_standard_storage,
-                                  node_copy_standard_storage);
+  blender::bke::node_type_storage(
+      ntype, "NodeGeometryDeleteGeometry", node_free_standard_storage, node_copy_standard_storage);
 
   ntype.initfunc = node_init;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.draw_buttons = node_layout;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

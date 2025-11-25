@@ -27,8 +27,6 @@
 
     /* Event data. */
     GHOST_TEventImeData event;
-    std::string result;
-    std::string composite;
     std::string combined_result;
   } ime;
 #endif
@@ -51,8 +49,8 @@
 
 @implementation COCOA_VIEW_CLASS
 
-@synthesize systemCocoa = m_systemCocoa;
-@synthesize windowCocoa = m_windowCocoa;
+@synthesize systemCocoa = system_cocoa_;
+@synthesize windowCocoa = window_cocoa_;
 
 - (instancetype)initWithSystemCocoa:(GHOST_SystemCocoa *)sysCocoa
                         windowCocoa:(GHOST_WindowCocoa *)winCocoa
@@ -61,8 +59,8 @@
   self = [super init];
 
   if (self) {
-    m_systemCocoa = sysCocoa;
-    m_windowCocoa = winCocoa;
+    system_cocoa_ = sysCocoa;
+    window_cocoa_ = winCocoa;
 
     composing = false;
     composing_text = nil;
@@ -75,7 +73,7 @@
     ime.event.target_end = -1;
 
     /* Register a function to be executed when Input Method is changed using
-     * 'Control + Space' or language-specific keys (such as 'Eisu / Kana' key for Japanese). */
+     * "Control + Space" or language-specific keys (such as "EISU / KANA" key for Japanese). */
     @autoreleasepool {
       NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
       [center addObserver:self
@@ -110,7 +108,7 @@
 #endif
 
   if (!ime_process) {
-    m_systemCocoa->handleKeyEvent(event);
+    system_cocoa_->handleKeyEvent(event);
   }
 
   /* Start or continue composing? */
@@ -129,7 +127,7 @@
     const int controlCharForKorean = (GHOST_IME_COMPOSITION_EVENT | GHOST_IME_RESULT_EVENT |
                                       GHOST_IME_KEY_CONTROL_CHAR);
     if (((ime.state_flag & controlCharForKorean) == controlCharForKorean)) {
-      m_systemCocoa->handleKeyEvent(event);
+      system_cocoa_->handleKeyEvent(event);
     }
 
     ime.state_flag &= ~(GHOST_IME_COMPOSITION_EVENT | GHOST_IME_RESULT_EVENT);
@@ -144,19 +142,19 @@
 #define HANDLE_KEY_EVENT(eventType) \
   -(void)eventType : (NSEvent *)event \
   { \
-    m_systemCocoa->handleKeyEvent(event); \
+    system_cocoa_->handleKeyEvent(event); \
   }
 
 #define HANDLE_MOUSE_EVENT(eventType) \
   -(void)eventType : (NSEvent *)event \
   { \
-    m_systemCocoa->handleMouseEvent(event); \
+    system_cocoa_->handleMouseEvent(event); \
   }
 
 #define HANDLE_TABLET_EVENT(eventType) \
   -(void)eventType : (NSEvent *)event \
   { \
-    m_systemCocoa->handleMouseEvent(event); \
+    system_cocoa_->handleMouseEvent(event); \
   }
 
 HANDLE_KEY_EVENT(keyUp)
@@ -192,12 +190,12 @@ HANDLE_TABLET_EVENT(tabletProximity)
   }
   else {
     [super drawRect:rect];
-    m_systemCocoa->handleWindowEvent(GHOST_kEventWindowUpdate, m_windowCocoa);
+    system_cocoa_->handleWindowEvent(GHOST_kEventWindowUpdate, window_cocoa_);
 
     /* For some cases like entering full-screen we need to redraw immediately
      * so our window does not show blank during the animation */
-    if (m_windowCocoa->getImmediateDraw()) {
-      m_systemCocoa->dispatchEvents();
+    if (window_cocoa_->getImmediateDraw()) {
+      system_cocoa_->dispatchEvents();
     }
   }
 }
@@ -393,7 +391,7 @@ HANDLE_TABLET_EVENT(tabletProximity)
 - (void)setImeCandidateWinPos:(int32_t)x y:(int32_t)y w:(int32_t)w h:(int32_t)h
 {
   int32_t outX, outY;
-  m_windowCocoa->clientToScreen(x, y, outX, outY);
+  window_cocoa_->clientToScreen(x, y, outX, outY);
   ime.candidate_window_position = NSMakeRect((CGFloat)outX, (CGFloat)outY, (CGFloat)w, (CGFloat)h);
 }
 
@@ -407,8 +405,8 @@ HANDLE_TABLET_EVENT(tabletProximity)
 - (void)endIME
 {
   ime.state_flag = 0;
-  ime.result.clear();
-  ime.composite.clear();
+  ime.event.result.clear();
+  ime.event.composite.clear();
 
   [self unmarkText];
   @autoreleasepool {
@@ -418,14 +416,9 @@ HANDLE_TABLET_EVENT(tabletProximity)
 
 - (void)processImeEvent:(GHOST_TEventType)imeEventType
 {
-  ime.event.result_len = (GHOST_TUserDataPtr)ime.result.size();
-  ime.event.result = (GHOST_TUserDataPtr)ime.result.c_str();
-  ime.event.composite_len = (GHOST_TUserDataPtr)ime.composite.size();
-  ime.event.composite = (GHOST_TUserDataPtr)ime.composite.c_str();
-
   GHOST_Event *event = new GHOST_EventIME(
-      m_systemCocoa->getMilliSeconds(), imeEventType, m_windowCocoa, &ime.event);
-  m_systemCocoa->pushEvent(event);
+      system_cocoa_->getMilliSeconds(), imeEventType, window_cocoa_, &ime.event);
+  system_cocoa_->pushEvent(event);
 }
 
 - (std::string)convertNSString:(NSString *)inString
@@ -438,12 +431,12 @@ HANDLE_TABLET_EVENT(tabletProximity)
 
 - (void)setImeComposition:(NSString *)inString selectedRange:(NSRange)range
 {
-  ime.composite = [self convertNSString:inString];
+  ime.event.composite = [self convertNSString:inString];
 
   /* For Korean input, both "Result Event" and "Composition Event" can occur in a single keyDown.
    */
   if (!(ime.state_flag & GHOST_IME_RESULT_EVENT)) {
-    ime.result.clear();
+    ime.event.result.clear();
   }
 
   /* The target string is equivalent to the string in selectedRange of setMarkedText.
@@ -460,8 +453,8 @@ HANDLE_TABLET_EVENT(tabletProximity)
 
 - (void)setImeResult:(std::string)result
 {
-  ime.result = result;
-  ime.composite.clear();
+  ime.event.result = result;
+  ime.event.composite.clear();
   ime.event.cursor_position = -1;
   ime.event.target_start = -1;
   ime.event.target_end = -1;

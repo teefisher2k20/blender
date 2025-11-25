@@ -9,11 +9,11 @@
 /* System includes ----------------------------------------------------- */
 
 #include <cfloat>
-#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
-#include "BLI_math_color.h"
+#include "BLI_listbase.h"
+#include "BLI_math_vector.h"
 #include "BLI_utildefines.h"
 
 /* Types --------------------------------------------------------------- */
@@ -84,7 +84,7 @@ void draw_channel_names(bContext *C,
     }
   }
   { /* second pass: widgets */
-    uiBlock *block = UI_block_begin(C, region, __func__, UI_EMBOSS);
+    uiBlock *block = UI_block_begin(C, region, __func__, blender::ui::EmbossType::Emboss);
     size_t channel_index = 0;
     float ymax = ANIM_UI_get_first_channel_top(v2d);
 
@@ -177,8 +177,8 @@ static void draw_backdrops(bAnimContext *ac, ListBase &anim_data, View2D *v2d, u
   uchar col_summary[4];
 
   /* get theme colors */
-  UI_GetThemeColor4ubv(TH_SHADE2, col2);
-  UI_GetThemeColor4ubv(TH_HILITE, col1);
+  UI_GetThemeColor4ubv(TH_CHANNEL, col2);
+  UI_GetThemeColor4ubv(TH_CHANNEL_SELECT, col1);
   UI_GetThemeColor4ubv(TH_ANIM_ACTIVE, col_summary);
 
   UI_GetThemeColor4ubv(TH_GROUP, col2a);
@@ -216,10 +216,16 @@ static void draw_backdrops(bAnimContext *ac, ListBase &anim_data, View2D *v2d, u
     if (ELEM(ac->datatype, ANIMCONT_ACTION, ANIMCONT_DOPESHEET, ANIMCONT_SHAPEKEY)) {
       switch (ale->type) {
         case ANIMTYPE_SUMMARY: {
-          /* reddish color from NLA */
+          if (!ANIM_channel_setting_get(ac, ale, ACHANNEL_SETTING_EXPAND)) {
+            /* Only draw the summary line backdrop when it is expanded. If the entire dope sheet is
+             * just one line, there is no need for any distinction between lines, and the red-ish
+             * color is only going to be a distraction. */
+            continue;
+          }
           immUniformThemeColor(TH_ANIM_ACTIVE);
           break;
         }
+        case ANIMTYPE_ACTION_SLOT:
         case ANIMTYPE_SCENE:
         case ANIMTYPE_OBJECT: {
           immUniformColor3ubvAlpha(col1b, sel ? col1[3] : col1b[3]);
@@ -319,7 +325,7 @@ static void draw_keyframes(bAnimContext *ac,
   bDopeSheet *ads = &saction->ads;
 
   if (saction->mode == SACTCONT_TIMELINE) {
-    action_flag &= ~(SACTION_SHOW_INTERPOLATION | SACTION_SHOW_EXTREMES);
+    action_flag &= ~SACTION_SHOW_INTERPOLATION;
   }
 
   const float channel_step = ANIM_UI_get_channel_step();
@@ -372,6 +378,7 @@ static void draw_keyframes(bAnimContext *ac,
         break;
       case ALE_ACTION_LAYERED:
         ED_add_action_layered_channel(draw_list,
+                                      ac,
                                       ale,
                                       static_cast<bAction *>(ale->key_data),
                                       ycenter,
@@ -380,6 +387,7 @@ static void draw_keyframes(bAnimContext *ac,
         break;
       case ALE_ACTION_SLOT:
         ED_add_action_slot_channel(draw_list,
+                                   ac,
                                    ale,
                                    static_cast<bAction *>(ale->key_data)->wrap(),
                                    *static_cast<animrig::Slot *>(ale->data),
@@ -472,7 +480,7 @@ void draw_channel_strips(bAnimContext *ac,
 {
   View2D *v2d = &region->v2d;
 
-  /* Draw the manual frame ranges for actions in the background of the dopesheet.
+  /* Draw the manual frame ranges for actions in the background of the dope-sheet.
    * The action editor has already drawn the range for its action so it's not needed. */
   if (ac->datatype == ANIMCONT_DOPESHEET) {
     draw_channel_action_ranges(anim_data, v2d);
@@ -480,7 +488,7 @@ void draw_channel_strips(bAnimContext *ac,
 
   /* Draw the background strips. */
   GPUVertFormat *format = immVertexFormat();
-  uint pos = GPU_vertformat_attr_add(format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+  uint pos = GPU_vertformat_attr_add(format, "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
 
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
 
@@ -841,7 +849,7 @@ void timeline_draw_cache(const SpaceAction *saction, const Object *ob, const Sce
   BKE_ptcache_ids_from_object(&pidlist, const_cast<Object *>(ob), const_cast<Scene *>(scene), 0);
 
   uint pos_id = GPU_vertformat_attr_add(
-      immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   immBindBuiltinProgram(GPU_SHADER_2D_DIAG_STRIPES);
 
   GPU_blend(GPU_BLEND_ALPHA);

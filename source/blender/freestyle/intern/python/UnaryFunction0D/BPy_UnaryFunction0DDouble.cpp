@@ -22,10 +22,6 @@
 #include "UnaryFunction0D_double/BPy_LocalAverageDepthF0D.h"
 #include "UnaryFunction0D_double/BPy_ZDiscontinuityF0D.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -109,7 +105,6 @@ PyDoc_STRVAR(
     ".. method:: __init__()\n"
     "\n"
     "   Default constructor.\n");
-
 static int UnaryFunction0DDouble___init__(BPy_UnaryFunction0DDouble *self,
                                           PyObject *args,
                                           PyObject *kwds)
@@ -206,7 +201,3 @@ PyTypeObject UnaryFunction0DDouble_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

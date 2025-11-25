@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bli
+ */
+
 #pragma once
 
 #include <cmath>
@@ -191,6 +195,7 @@ template<typename T, int S> inline IntF<T, S>::IntF(const int64_t value)
 
 template<typename T, int S> inline IntF<T, S>::IntF(const UIntF<T, S> &value) : v(value.v) {}
 
+#ifdef WITH_GMP
 template<typename T, int S> UIntF<T, S>::UIntF(const StringRefNull str, const int base)
 {
   this->set_from_str(str, base);
@@ -200,6 +205,7 @@ template<typename T, int S> IntF<T, S>::IntF(const StringRefNull str, const int 
 {
   this->set_from_str(str, base);
 }
+#endif /* WITH_GMP */
 
 template<typename T, int S> inline UIntF<T, S>::operator uint64_t() const
 {

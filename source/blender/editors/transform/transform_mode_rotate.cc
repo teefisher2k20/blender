@@ -11,10 +11,13 @@
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
-#include "BLI_task.h"
+#include "BLI_task.hh"
 
+#include "BKE_context.hh"
 #include "BKE_report.hh"
 #include "BKE_unit.hh"
+
+#include "BLT_translation.hh"
 
 #include "ED_screen.hh"
 
@@ -25,6 +28,8 @@
 #include "transform_snap.hh"
 
 #include "transform_mode.hh"
+
+namespace blender::ed::transform {
 
 /* -------------------------------------------------------------------- */
 /** \name Transform (Rotation) Matrix Cache
@@ -65,25 +70,10 @@ static void rmat_cache_update(RotateMatrixCache *rmc, const float axis[3], const
 /** \name Transform (Rotation) Element
  * \{ */
 
-/**
- * \note Small arrays / data-structures should be stored copied for faster memory access.
- */
-struct TransDataArgs_Rotate {
-  const TransInfo *t;
-  const TransDataContainer *tc;
-  float axis[3];
-  float angle;
-  float angle_step;
-  bool is_large_rotation;
-};
-
-struct TransDataArgs_RotateTLS {
-  RotateMatrixCache rmc;
-};
-
 static void transdata_elem_rotate(const TransInfo *t,
                                   const TransDataContainer *tc,
                                   TransData *td,
+                                  TransDataExtension *td_ext,
                                   const float axis[3],
                                   const float angle,
                                   const float angle_step,
@@ -97,7 +87,7 @@ static void transdata_elem_rotate(const TransInfo *t,
   if (t->con.applyRot) {
     copy_v3_v3(axis_buffer, axis);
     axis_final = axis_buffer;
-    t->con.applyRot(t, tc, td, axis_buffer, nullptr);
+    t->con.applyRot(t, tc, td, axis_buffer);
     angle_final = angle * td->factor;
     /* Even though final angle might be identical to orig value,
      * we have to update the rotation matrix in that case... */
@@ -117,13 +107,13 @@ static void transdata_elem_rotate(const TransInfo *t,
    * Otherwise, just assume it's useless (e.g. in case of mesh/UV/etc. editing).
    * Also need to be in Euler rotation mode, the others never allow more than one turn anyway.
    */
-  if (is_large_rotation && td->ext != nullptr && td->ext->rotOrder == ROT_MODE_EUL) {
-    copy_v3_v3(td->ext->rot, td->ext->irot);
+  if (is_large_rotation && td_ext != nullptr && td_ext->rotOrder == ROT_MODE_EUL) {
+    copy_v3_v3(td_ext->rot, td_ext->irot);
     for (float angle_progress = angle_step; fabsf(angle_progress) < fabsf(angle_final);
          angle_progress += angle_step)
     {
       axis_angle_normalized_to_mat3(rmc->mat, axis_final, angle_progress);
-      ElementRotation(t, tc, td, rmc->mat, t->around);
+      ElementRotation(t, tc, td, td_ext, rmc->mat, t->around);
     }
     rmat_cache_reset(rmc);
   }
@@ -133,28 +123,7 @@ static void transdata_elem_rotate(const TransInfo *t,
 
   rmat_cache_update(rmc, axis_final, angle_final);
 
-  ElementRotation(t, tc, td, rmc->mat, t->around);
-}
-
-static void transdata_elem_rotate_fn(void *__restrict iter_data_v,
-                                     const int iter,
-                                     const TaskParallelTLS *__restrict tls)
-{
-  TransDataArgs_Rotate *data = static_cast<TransDataArgs_Rotate *>(iter_data_v);
-  TransDataArgs_RotateTLS *tls_data = static_cast<TransDataArgs_RotateTLS *>(tls->userdata_chunk);
-
-  TransData *td = &data->tc->data[iter];
-  if (td->flag & TD_SKIP) {
-    return;
-  }
-  transdata_elem_rotate(data->t,
-                        data->tc,
-                        td,
-                        data->axis,
-                        data->angle,
-                        data->angle_step,
-                        data->is_large_rotation,
-                        &tls_data->rmc);
+  ElementRotation(t, tc, td, td_ext, rmc->mat, t->around);
 }
 
 /** \} */
@@ -174,7 +143,7 @@ static float RotationBetween(TransInfo *t, const float p1[3], const float p2[3])
   if (t->con.applyRot != nullptr && (t->con.mode & CON_APPLY)) {
     float axis[3];
 
-    t->con.applyRot(t, nullptr, nullptr, axis, nullptr);
+    t->con.applyRot(t, nullptr, nullptr, axis);
 
     angle = -angle_signed_on_axis_v3v3_v3(start, end, axis);
   }
@@ -186,7 +155,7 @@ static float RotationBetween(TransInfo *t, const float p1[3], const float p2[3])
     mul_m3_v3(mtx, end);
     mul_m3_v3(mtx, start);
 
-    angle = atan2f(start[1], start[0]) - atan2f(end[1], end[0]);
+    angle = (atan2f(start[1], start[0]) - atan2f(end[1], end[0]));
   }
 
   if (angle > float(M_PI)) {
@@ -236,36 +205,19 @@ static void applyRotationValue(TransInfo *t,
     angle = large_rotation_limit(angle);
   }
 
-  RotateMatrixCache rmc = {0};
-  rmat_cache_init(&rmc, angle, axis);
-
   FOREACH_TRANS_DATA_CONTAINER (t, tc) {
-    if (tc->data_len < TRANSDATA_THREAD_LIMIT) {
-      TransData *td = tc->data;
-      for (int i = 0; i < tc->data_len; i++, td++) {
+    threading::parallel_for(IndexRange(tc->data_len), 1024, [&](const IndexRange range) {
+      RotateMatrixCache rmc = {0};
+      rmat_cache_init(&rmc, angle, axis);
+      for (const int i : range) {
+        TransData *td = &tc->data[i];
+        TransDataExtension *td_ext = tc->data_ext ? &tc->data_ext[i] : nullptr;
         if (td->flag & TD_SKIP) {
           continue;
         }
-        transdata_elem_rotate(t, tc, td, axis, angle, angle_step, is_large_rotation, &rmc);
+        transdata_elem_rotate(t, tc, td, td_ext, axis, angle, angle_step, is_large_rotation, &rmc);
       }
-    }
-    else {
-      TransDataArgs_Rotate data{};
-      data.t = t;
-      data.tc = tc;
-      copy_v3_v3(data.axis, axis);
-      data.angle = angle;
-      data.angle_step = angle_step;
-      data.is_large_rotation = is_large_rotation;
-      TransDataArgs_RotateTLS tls_data{};
-      tls_data.rmc = rmc;
-
-      TaskParallelSettings settings;
-      BLI_parallel_range_settings_defaults(&settings);
-      settings.userdata_chunk = &tls_data;
-      settings.userdata_chunk_size = sizeof(tls_data);
-      BLI_task_parallel_range(0, tc->data_len, &data, transdata_elem_rotate_fn, &settings);
-    }
+    });
   }
 }
 
@@ -335,22 +287,23 @@ static bool clip_uv_transform_rotate(const TransInfo *t, float *vec, float *vec_
 
 static void applyRotation(TransInfo *t)
 {
-  float axis_final[3];
-  float final = t->values[0] + t->values_modal_offset[0];
+  float3 axis_final;
+  transform_mode_rotation_axis_get(t, axis_final);
 
-  if ((t->con.mode & CON_APPLY) && t->con.applyRot) {
-    t->con.applyRot(t, nullptr, nullptr, axis_final, &final);
-  }
-  else {
-    negate_v3_v3(axis_final, t->spacemtx[t->orient_axis]);
-  }
-
+  float final;
   if (applyNumInput(&t->num, &final)) {
     /* We have to limit the amount of turns to a reasonable number here,
      * to avoid things getting *very* slow, see how applyRotationValue() handles those... */
     final = large_rotation_limit(final);
   }
   else {
+    final = t->values[0] + t->values_modal_offset[0];
+    if (!(t->flag & T_INPUT_IS_VALUES_FINAL) &&
+        transform_mode_is_axis_pointing_to_screen(t, axis_final))
+    {
+      /* Flip rotation direction if axis is pointing to screen. */
+      final = -final;
+    }
     transform_snap_mixed_apply(t, &final);
     if (!(transform_snap_is_active(t) && validSnap(t))) {
       transform_snap_increment(t, &final);
@@ -382,14 +335,9 @@ static void applyRotation(TransInfo *t)
 
 static void applyRotationMatrix(TransInfo *t, float mat_xform[4][4])
 {
-  float axis_final[3];
+  float3 axis_final;
+  transform_mode_rotation_axis_get(t, axis_final);
   const float angle_final = t->values_final[0];
-  if ((t->con.mode & CON_APPLY) && t->con.applyRot) {
-    t->con.applyRot(t, nullptr, nullptr, axis_final, nullptr);
-  }
-  else {
-    negate_v3_v3(axis_final, t->spacemtx[t->orient_axis]);
-  }
 
   float mat3[3][3];
   float mat4[4][4];
@@ -408,13 +356,20 @@ static void initRotation(TransInfo *t, wmOperator * /*op*/)
 
   t->mode = TFM_ROTATION;
 
-  initMouseInputMode(t, &t->mouse, INPUT_ANGLE);
+  if (transform_mode_affect_only_locations(t)) {
+    WorkspaceStatus status(t->context);
+    status.item(TIP_("Transform is set to only affect location"), ICON_ERROR);
+    initMouseInputMode(t, &t->mouse, INPUT_ERROR_DASH);
+  }
+  else {
+    initMouseInputMode(t, &t->mouse, INPUT_ANGLE);
+  }
 
   t->idx_max = 0;
   t->num.idx_max = 0;
   initSnapAngleIncrements(t);
 
-  copy_v3_fl(t->num.val_inc, t->snap[1]);
+  copy_v3_fl(t->num.val_inc, t->increment[0] * t->increment_precision);
   t->num.unit_sys = t->scene->unit.system;
   t->num.unit_use_radians = (t->scene->unit.system_rotation == USER_UNIT_ROT_RADIANS);
   t->num.unit_type[0] = B_UNIT_ROTATION;
@@ -438,3 +393,5 @@ TransModeInfo TransMode_rotate = {
     /*snap_apply_fn*/ ApplySnapRotation,
     /*draw_fn*/ nullptr,
 };
+
+}  // namespace blender::ed::transform

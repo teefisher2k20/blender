@@ -13,6 +13,7 @@
 #  include "BKE_report.hh"
 
 #  include "BLI_string.h"
+#  include "BLI_string_utf8.h"
 
 #  include "WM_api.hh"
 #  include "WM_types.hh"
@@ -28,13 +29,16 @@
 #  include "BLT_translation.hh"
 
 #  include "UI_interface.hh"
+#  include "UI_interface_layout.hh"
 #  include "UI_resources.hh"
 
 #  include "IO_stl.hh"
 #  include "io_stl_ops.hh"
 #  include "io_utils.hh"
 
-static int wm_stl_export_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus wm_stl_export_invoke(bContext *C,
+                                             wmOperator *op,
+                                             const wmEvent * /*event*/)
 {
   ED_fileselect_ensure_default_filepath(C, op, ".stl");
 
@@ -42,7 +46,7 @@ static int wm_stl_export_invoke(bContext *C, wmOperator *op, const wmEvent * /*e
   return OPERATOR_RUNNING_MODAL;
 }
 
-static int wm_stl_export_execute(bContext *C, wmOperator *op)
+static wmOperatorStatus wm_stl_export_exec(bContext *C, wmOperator *op)
 {
   if (!RNA_struct_property_is_set_ex(op->ptr, "filepath", false)) {
     BKE_report(op->reports, RPT_ERROR, "No filename given");
@@ -65,42 +69,48 @@ static int wm_stl_export_execute(bContext *C, wmOperator *op)
 
   STL_export(C, &export_params);
 
-  return BKE_reports_contain(op->reports, RPT_ERROR) ? OPERATOR_CANCELLED : OPERATOR_FINISHED;
+  if (BKE_reports_contain(op->reports, RPT_ERROR)) {
+    return OPERATOR_CANCELLED;
+  }
+
+  BKE_report(op->reports, RPT_INFO, "File exported successfully");
+  return OPERATOR_FINISHED;
 }
 
 static void wm_stl_export_draw(bContext *C, wmOperator *op)
 {
-  uiLayout *layout = op->layout;
+  blender::ui::Layout &layout = *op->layout;
   PointerRNA *ptr = op->ptr;
 
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout.use_property_split_set(true);
+  layout.use_property_decorate_set(false);
 
-  if (uiLayout *panel = uiLayoutPanel(C, layout, "STL_export_general", false, IFACE_("General"))) {
-    uiLayout *col = uiLayoutColumn(panel, false);
+  if (blender::ui::Layout *panel = layout.panel(C, "STL_export_general", false, IFACE_("General")))
+  {
+    blender::ui::Layout &col = panel->column(false);
 
-    uiLayout *sub = uiLayoutColumnWithHeading(col, false, IFACE_("Format"));
-    uiItemR(sub, ptr, "ascii_format", UI_ITEM_NONE, IFACE_("ASCII"), ICON_NONE);
+    blender::ui::Layout *sub = &col.column(false, IFACE_("Format"));
+    sub->prop(ptr, "ascii_format", UI_ITEM_NONE, IFACE_("ASCII"), ICON_NONE);
 
     /* The Batch mode and Selection only options only make sense when using regular export. */
     if (CTX_wm_space_file(C)) {
-      uiItemR(col, ptr, "use_batch", UI_ITEM_NONE, IFACE_("Batch"), ICON_NONE);
+      col.prop(ptr, "use_batch", UI_ITEM_NONE, IFACE_("Batch"), ICON_NONE);
 
-      sub = uiLayoutColumnWithHeading(col, false, IFACE_("Include"));
-      uiItemR(
-          sub, ptr, "export_selected_objects", UI_ITEM_NONE, IFACE_("Selection Only"), ICON_NONE);
+      sub = &col.column(false, IFACE_("Include"));
+      sub->prop(ptr, "export_selected_objects", UI_ITEM_NONE, IFACE_("Selection Only"), ICON_NONE);
     }
 
-    uiItemR(sub, ptr, "global_scale", UI_ITEM_NONE, IFACE_("Scale"), ICON_NONE);
-    uiItemR(sub, ptr, "use_scene_unit", UI_ITEM_NONE, IFACE_("Scene Unit"), ICON_NONE);
-    uiItemR(sub, ptr, "forward_axis", UI_ITEM_NONE, IFACE_("Forward"), ICON_NONE);
-    uiItemR(sub, ptr, "up_axis", UI_ITEM_NONE, IFACE_("Up"), ICON_NONE);
+    sub->prop(ptr, "global_scale", UI_ITEM_NONE, IFACE_("Scale"), ICON_NONE);
+    sub->prop(ptr, "use_scene_unit", UI_ITEM_NONE, IFACE_("Scene Unit"), ICON_NONE);
+    sub->prop(ptr, "forward_axis", UI_ITEM_NONE, IFACE_("Forward"), ICON_NONE);
+    sub->prop(ptr, "up_axis", UI_ITEM_NONE, IFACE_("Up"), ICON_NONE);
   }
 
-  if (uiLayout *panel = uiLayoutPanel(C, layout, "STL_export_geometry", false, IFACE_("Geometry")))
+  if (blender::ui::Layout *panel = layout.panel(
+          C, "STL_export_geometry", false, IFACE_("Geometry")))
   {
-    uiLayout *col = uiLayoutColumn(panel, false);
-    uiItemR(col, ptr, "apply_modifiers", UI_ITEM_NONE, IFACE_("Apply Modifiers"), ICON_NONE);
+    blender::ui::Layout &col = panel->column(false);
+    col.prop(ptr, "apply_modifiers", UI_ITEM_NONE, IFACE_("Apply Modifiers"), ICON_NONE);
   }
 }
 
@@ -133,7 +143,7 @@ void WM_OT_stl_export(wmOperatorType *ot)
   ot->idname = "WM_OT_stl_export";
 
   ot->invoke = wm_stl_export_invoke;
-  ot->exec = wm_stl_export_execute;
+  ot->exec = wm_stl_export_exec;
   ot->poll = WM_operator_winactive;
   ot->ui = wm_stl_export_draw;
   ot->check = wm_stl_export_check;
@@ -164,7 +174,7 @@ void WM_OT_stl_export(wmOperatorType *ot)
   prop = RNA_def_string(ot->srna,
                         "collection",
                         nullptr,
-                        MAX_IDPROP_NAME,
+                        MAX_ID_NAME - 2,
                         "Source Collection",
                         "Export only objects from this collection (and its children)");
   RNA_def_property_flag(prop, PROP_HIDDEN);
@@ -190,7 +200,7 @@ void WM_OT_stl_export(wmOperatorType *ot)
   RNA_def_property_flag(prop, PROP_HIDDEN);
 }
 
-static int wm_stl_import_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus wm_stl_import_exec(bContext *C, wmOperator *op)
 {
   STLImportParams params;
   params.forward_axis = eIOAxis(RNA_enum_get(op->ptr, "forward_axis"));
@@ -235,23 +245,27 @@ static bool wm_stl_import_check(bContext * /*C*/, wmOperator *op)
   return false;
 }
 
-static void ui_stl_import_settings(const bContext *C, uiLayout *layout, PointerRNA *ptr)
+static void ui_stl_import_settings(const bContext *C, blender::ui::Layout *layout, PointerRNA *ptr)
 {
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout->use_property_split_set(true);
+  layout->use_property_decorate_set(false);
 
-  if (uiLayout *panel = uiLayoutPanel(C, layout, "STL_import_general", false, IFACE_("General"))) {
-    uiLayout *col = uiLayoutColumn(panel, false);
-    uiItemR(col, ptr, "global_scale", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "use_scene_unit", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "forward_axis", UI_ITEM_NONE, IFACE_("Forward Axis"), ICON_NONE);
-    uiItemR(col, ptr, "up_axis", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  if (blender::ui::Layout *panel = layout->panel(
+          C, "STL_import_general", false, IFACE_("General")))
+  {
+    blender::ui::Layout &col = panel->column(false);
+    col.prop(ptr, "global_scale", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col.prop(ptr, "use_scene_unit", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col.prop(ptr, "forward_axis", UI_ITEM_NONE, IFACE_("Forward Axis"), ICON_NONE);
+    col.prop(ptr, "up_axis", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 
-  if (uiLayout *panel = uiLayoutPanel(C, layout, "STL_import_options", false, IFACE_("Options"))) {
-    uiLayout *col = uiLayoutColumn(panel, false);
-    uiItemR(col, ptr, "use_facet_normal", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "use_mesh_validate", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  if (blender::ui::Layout *panel = layout->panel(
+          C, "STL_import_options", false, IFACE_("Options")))
+  {
+    blender::ui::Layout &col = panel->column(false);
+    col.prop(ptr, "use_facet_normal", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col.prop(ptr, "use_mesh_validate", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 }
 
@@ -315,11 +329,11 @@ namespace blender::ed::io {
 void stl_file_handler_add()
 {
   auto fh = std::make_unique<blender::bke::FileHandlerType>();
-  STRNCPY(fh->idname, "IO_FH_stl");
-  STRNCPY(fh->import_operator, "WM_OT_stl_import");
-  STRNCPY(fh->export_operator, "WM_OT_stl_export");
-  STRNCPY(fh->label, "STL");
-  STRNCPY(fh->file_extensions_str, ".stl");
+  STRNCPY_UTF8(fh->idname, "IO_FH_stl");
+  STRNCPY_UTF8(fh->import_operator, "WM_OT_stl_import");
+  STRNCPY_UTF8(fh->export_operator, "WM_OT_stl_export");
+  STRNCPY_UTF8(fh->label, "STL");
+  STRNCPY_UTF8(fh->file_extensions_str, ".stl");
   fh->poll_drop = poll_file_object_drop;
   bke::file_handler_add(std::move(fh));
 }

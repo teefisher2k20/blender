@@ -17,6 +17,8 @@
 
 #include "BKE_attribute.h"
 
+#include "BLT_translation.hh"
+
 #include "WM_types.hh"
 
 const EnumPropertyItem rna_enum_curves_type_items[] = {
@@ -32,7 +34,7 @@ const EnumPropertyItem rna_enum_curves_handle_type_items[] = {
      "FREE",
      0,
      "Free",
-     "The handle can be moved anywhere, and doesn't influence the point's other handle"},
+     "The handle can be moved anywhere, and does not influence the point's other handle"},
     {BEZIER_HANDLE_AUTO,
      "AUTO",
      0,
@@ -55,19 +57,20 @@ const EnumPropertyItem rna_enum_curve_normal_mode_items[] = {
     {NORMAL_MODE_MINIMUM_TWIST,
      "MINIMUM_TWIST",
      ICON_NONE,
-     "Minimum Twist",
-     "Calculate normals with the smallest twist around the curve tangent across the whole curve"},
+     N_("Minimum Twist"),
+     N_("Calculate normals with the smallest twist around the curve tangent across the whole "
+        "curve")},
     {NORMAL_MODE_Z_UP,
      "Z_UP",
      ICON_NONE,
-     "Z Up",
-     "Calculate normals perpendicular to the Z axis and the curve tangent. If a series of points "
-     "is vertical, the X axis is used."},
+     N_("Z Up"),
+     N_("Calculate normals perpendicular to the Z axis and the curve tangent. If a series of "
+        "points is vertical, the X axis is used.")},
     {NORMAL_MODE_FREE,
      "FREE",
      ICON_NONE,
-     "Free",
-     "Use the stored custom normal attribute as the final normals"},
+     N_("Free"),
+     N_("Use the stored custom normal attribute as the final normals")},
     {0, nullptr, 0, nullptr, nullptr},
 };
 
@@ -104,6 +107,7 @@ static void rna_Curves_curve_offset_data_begin(CollectionPropertyIterator *iter,
 {
   Curves *curves = rna_curves(ptr);
   rna_iterator_array_begin(iter,
+                           ptr,
                            curves->geometry.wrap().offsets_for_write().data(),
                            sizeof(int),
                            curves->geometry.curve_num + 1,
@@ -117,27 +121,26 @@ static bool rna_Curves_curve_offset_data_lookup_int(PointerRNA *ptr, int index, 
   if (index < 0 || index >= curves->geometry.curve_num + 1) {
     return false;
   }
-  r_ptr->owner_id = &curves->id;
-  r_ptr->type = &RNA_IntAttributeValue;
-  r_ptr->data = &curves->geometry.wrap().offsets_for_write()[index];
+  rna_pointer_create_with_ancestors(
+      *ptr, &RNA_IntAttributeValue, &curves->geometry.wrap().offsets_for_write()[index], *r_ptr);
   return true;
 }
 
 static float (*get_curves_positions_for_write(Curves &curves))[3]
 {
-  return reinterpret_cast<float(*)[3]>(curves.geometry.wrap().positions_for_write().data());
+  return reinterpret_cast<float (*)[3]>(curves.geometry.wrap().positions_for_write().data());
 }
 
 static const float (*get_curves_positions(const Curves &curves))[3]
 {
-  return reinterpret_cast<const float(*)[3]>(curves.geometry.wrap().positions().data());
+  return reinterpret_cast<const float (*)[3]>(curves.geometry.wrap().positions().data());
 }
 
 static int rna_CurvePoint_index_get_const(const PointerRNA *ptr)
 {
   const Curves *curves = rna_curves(ptr);
-  const float(*co)[3] = static_cast<float(*)[3]>(ptr->data);
-  const float(*positions)[3] = get_curves_positions(*curves);
+  const float (*co)[3] = static_cast<float (*)[3]>(ptr->data);
+  const float (*positions)[3] = get_curves_positions(*curves);
   return int(co - positions);
 }
 
@@ -145,6 +148,7 @@ static void rna_Curves_curves_begin(CollectionPropertyIterator *iter, PointerRNA
 {
   Curves *curves = rna_curves(ptr);
   rna_iterator_array_begin(iter,
+                           ptr,
                            curves->geometry.wrap().offsets_for_write().data(),
                            sizeof(int),
                            curves->geometry.curve_num,
@@ -164,9 +168,8 @@ static bool rna_Curves_curves_lookup_int(PointerRNA *ptr, int index, PointerRNA 
   if (index < 0 || index >= curves->geometry.curve_num) {
     return false;
   }
-  r_ptr->owner_id = &curves->id;
-  r_ptr->type = &RNA_CurveSlice;
-  r_ptr->data = &curves->geometry.wrap().offsets_for_write()[index];
+  rna_pointer_create_with_ancestors(
+      *ptr, &RNA_CurveSlice, &curves->geometry.wrap().offsets_for_write()[index], *r_ptr);
   return true;
 }
 
@@ -182,9 +185,10 @@ bool rna_Curves_position_data_lookup_int(PointerRNA *ptr, int index, PointerRNA 
   if (index < 0 || index >= curves->geometry.point_num) {
     return false;
   }
-  r_ptr->owner_id = &curves->id;
-  r_ptr->type = &RNA_FloatVectorAttributeValue;
-  r_ptr->data = &get_curves_positions_for_write(*curves)[index];
+  rna_pointer_create_with_ancestors(*ptr,
+                                    &RNA_FloatVectorAttributeValue,
+                                    &get_curves_positions_for_write(*curves)[index],
+                                    *r_ptr);
   return true;
 }
 
@@ -192,6 +196,7 @@ static void rna_Curves_position_data_begin(CollectionPropertyIterator *iter, Poi
 {
   Curves *curves = rna_curves(ptr);
   rna_iterator_array_begin(iter,
+                           ptr,
                            get_curves_positions_for_write(*curves),
                            sizeof(float[3]),
                            curves->geometry.point_num,
@@ -248,9 +253,8 @@ bool rna_Curves_points_lookup_int(PointerRNA *ptr, int index, PointerRNA *r_ptr)
   if (index < 0 || index >= curves->geometry.point_num) {
     return false;
   }
-  r_ptr->owner_id = &curves->id;
-  r_ptr->type = &RNA_CurvePoint;
-  r_ptr->data = &get_curves_positions_for_write(*curves)[index];
+  rna_pointer_create_with_ancestors(
+      *ptr, &RNA_CurvePoint, &get_curves_positions_for_write(*curves)[index], *r_ptr);
   return true;
 }
 
@@ -288,17 +292,17 @@ static void rna_CurveSlice_points_begin(CollectionPropertyIterator *iter, Pointe
   Curves *curves = rna_curves(ptr);
   const int offset = rna_CurveSlice_first_point_index_get(ptr);
   const int size = rna_CurveSlice_points_length_get(ptr);
-  float(*positions)[3] = get_curves_positions_for_write(*curves);
-  float(*co)[3] = positions + offset;
-  rna_iterator_array_begin(iter, co, sizeof(float[3]), size, 0, nullptr);
+  float (*positions)[3] = get_curves_positions_for_write(*curves);
+  float (*co)[3] = positions + offset;
+  rna_iterator_array_begin(iter, ptr, co, sizeof(float[3]), size, 0, nullptr);
 }
 
 static void rna_Curves_normals_begin(CollectionPropertyIterator *iter, PointerRNA *ptr)
 {
   Curves *curves = rna_curves(ptr);
-  float(*positions)[3] = blender::ed::curves::point_normals_array_create(curves);
+  float (*positions)[3] = blender::ed::curves::point_normals_array_create(curves);
   const int size = curves->geometry.point_num;
-  rna_iterator_array_begin(iter, positions, sizeof(float[3]), size, true, nullptr);
+  rna_iterator_array_begin(iter, ptr, positions, sizeof(float[3]), size, true, nullptr);
 }
 
 static void rna_Curves_update_data(Main * /*bmain*/, Scene * /*scene*/, PointerRNA *ptr)
@@ -511,6 +515,7 @@ static void rna_def_curves(BlenderRNA *brna)
   prop = RNA_def_property(srna, "surface", PROP_POINTER, PROP_NONE);
   RNA_def_property_struct_type(prop, "Object");
   RNA_def_property_flag(prop, PROP_EDITABLE);
+  RNA_def_property_override_flag(prop, PROPOVERRIDE_OVERRIDABLE_LIBRARY);
   RNA_def_property_pointer_funcs(prop, nullptr, nullptr, nullptr, "rna_Mesh_object_poll");
   RNA_def_property_ui_text(prop, "Surface", "Mesh object that the curves can be attached to");
   RNA_def_property_update(prop, NC_OBJECT | ND_DRAW, nullptr);

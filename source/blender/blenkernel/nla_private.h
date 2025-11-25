@@ -16,10 +16,6 @@
 
 #include "RNA_types.hh"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 struct AnimationEvalContext;
 
 /* --------------- NLA Evaluation DataTypes ----------------------- */
@@ -61,6 +57,16 @@ struct NlaEvalData;
 typedef struct NlaEvalChannelKey {
   struct PointerRNA ptr;
   struct PropertyRNA *prop;
+
+  friend bool operator==(const NlaEvalChannelKey &a, const NlaEvalChannelKey &b)
+  {
+    return a.ptr.data == b.ptr.data && a.prop == b.prop;
+  }
+
+  uint64_t hash() const
+  {
+    return blender::get_default_hash(this->ptr.data, this->prop);
+  }
 } NlaEvalChannelKey;
 
 /** Bitmask of array indices touched by actions. */
@@ -76,8 +82,10 @@ typedef struct NlaEvalChannelSnapshot {
   /** For an upper snapshot channel, marks values that should be blended. */
   NlaValidMask blend_domain;
 
-  /** Only used for keyframe remapping. Any values not in the \a remap_domain will not be used
-   * for keyframe remapping. */
+  /**
+   * Only used for keyframe remapping.
+   * Any values not in the \a remap_domain will not be used for keyframe remapping.
+   */
   NlaValidMask remap_domain;
 
   int length;   /* Number of values in the property. */
@@ -134,7 +142,7 @@ typedef struct NlaEvalData {
 
   /* Mapping of paths and NlaEvalChannelKeys to channels. */
   GHash *path_hash;
-  GHash *key_hash;
+  blender::Map<NlaEvalChannelKey, NlaEvalChannel *> *key_hash;
 
   /* Base snapshot. */
   int num_channels;
@@ -294,7 +302,3 @@ void nlasnapshot_blend_strip_no_blend(PointerRNA *ptr,
                                       NlaEvalStrip *nes,
                                       NlaEvalSnapshot *snapshot,
                                       const struct AnimationEvalContext *anim_eval_context);
-
-#ifdef __cplusplus
-}
-#endif

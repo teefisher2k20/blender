@@ -2,13 +2,17 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "infos/compositor_gamma_correct_infos.hh"
+
+COMPUTE_SHADER_CREATE_INFO(compositor_gamma_correct)
+
 #include "gpu_shader_compositor_texture_utilities.glsl"
 
 void main()
 {
-  ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
-  vec4 color = texture_load(input_tx, texel);
-  float alpha = color.a > 0.0 ? color.a : 1.0;
-  vec3 corrected_color = FUNCTION(max(color.rgb / alpha, vec3(0.0))) * alpha;
-  imageStore(output_img, texel, vec4(corrected_color, color.a));
+  int2 texel = int2(gl_GlobalInvocationID.xy);
+  float4 color = texture_load(input_tx, texel);
+  float alpha = color.a > 0.0f ? color.a : 1.0f;
+  float3 corrected_color = FUNCTION(max(color.rgb / alpha, float3(0.0f))) * alpha;
+  imageStore(output_img, texel, float4(corrected_color, color.a));
 }

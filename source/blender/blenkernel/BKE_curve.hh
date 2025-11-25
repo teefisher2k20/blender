@@ -10,10 +10,14 @@
 
 #include <optional>
 
+#include "BLI_array.hh"
 #include "BLI_bounds_types.hh"
+#include "BLI_math_matrix_types.hh"
 #include "BLI_math_vector_types.hh"
+#include "BLI_span.hh"
 #include "BLI_sys_types.h"
 
+#include "DNA_curve_types.h"
 #include "DNA_listBase.h"
 
 struct BezTriple;
@@ -95,8 +99,7 @@ enum eNurbHandleTest_Mode {
 void BKE_curve_editfont_free(Curve *cu);
 void BKE_curve_init(Curve *cu, short curve_type);
 Curve *BKE_curve_add(Main *bmain, const char *name, int type);
-short BKE_curve_type_get(const Curve *cu);
-void BKE_curve_type_test(Object *ob);
+void BKE_curve_type_test(Object *ob, bool dimension_update);
 void BKE_curve_dimension_update(Curve *cu);
 
 void BKE_curve_texspace_calc(Curve *cu);
@@ -141,23 +144,25 @@ void BKE_curve_nurb_vert_active_set(Curve *cu, const Nurb *nu, const void *vert)
 bool BKE_curve_nurb_vert_active_get(Curve *cu, Nurb **r_nu, void **r_vert);
 void BKE_curve_nurb_vert_active_validate(Curve *cu);
 
-float (*BKE_curve_nurbs_vert_coords_alloc(const ListBase *lb, int *r_vert_len))[3];
-void BKE_curve_nurbs_vert_coords_get(const ListBase *lb, float (*vert_coords)[3], int vert_len);
+blender::Array<blender::float3> BKE_curve_nurbs_vert_coords_alloc(const ListBase *lb);
+void BKE_curve_nurbs_vert_coords_get(const ListBase *lb,
+                                     blender::MutableSpan<blender::float3> vert_coords);
 
 void BKE_curve_nurbs_vert_coords_apply_with_mat4(ListBase *lb,
-                                                 const float (*vert_coords)[3],
-                                                 const float mat[4][4],
+                                                 const blender::Span<blender::float3>,
+                                                 const blender::float4x4 &transform,
                                                  bool constrain_2d);
 
 void BKE_curve_nurbs_vert_coords_apply(ListBase *lb,
-                                       const float (*vert_coords)[3],
+                                       const blender::Span<blender::float3> vert_coords,
                                        bool constrain_2d);
 
-float (*BKE_curve_nurbs_key_vert_coords_alloc(const ListBase *lb, float *key, int *r_vert_len))[3];
+blender::Array<blender::float3> BKE_curve_nurbs_key_vert_coords_alloc(const ListBase *lb,
+                                                                      const float *key);
 void BKE_curve_nurbs_key_vert_tilts_apply(ListBase *lb, const float *key);
 
-void BKE_curve_editNurb_keyIndex_delCV(GHash *keyindex, const void *cv);
-void BKE_curve_editNurb_keyIndex_free(GHash **keyindex);
+void BKE_curve_editNurb_keyIndex_delCV(CVKeyIndexMap *keyindex, const void *cv);
+void BKE_curve_editNurb_keyIndex_free(CVKeyIndexMap **keyindex);
 void BKE_curve_editNurb_free(Curve *cu);
 /**
  * Get list of nurbs from edit-nurbs structure.
@@ -261,11 +266,11 @@ void BKE_curve_calc_coords_axis(const BezTriple *bezt_array,
                                 unsigned int resolu,
                                 bool is_cyclic,
                                 bool use_cyclic_duplicate_endpoint,
-                                /* array params */
+                                /* Array parameters. */
                                 unsigned int axis,
                                 unsigned int stride,
                                 float *r_points);
-
+void BKE_nurb_knot_alloc_u(Nurb *nu);
 void BKE_nurb_knot_calc_u(Nurb *nu);
 void BKE_nurb_knot_calc_v(Nurb *nu);
 

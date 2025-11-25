@@ -25,6 +25,8 @@ import ssl
 import urllib3
 import zlib
 import zstandard
+import cattrs
+import fastjsonschema
 
 # Dynamically loaded modules, to ensure they have satisfactory dependencies.
 import _blake2
@@ -34,7 +36,13 @@ from pxr import Usd
 import MaterialX
 import OpenImageIO
 import PyOpenColorIO
-import pyopenvdb
+
+# Test both old and new names, remove when all 4.4 libs have landed.
+try:
+    import pyopenvdb
+except ModuleNotFoundError:
+    import openvdb
+    import oslquery
 
 # Test modules in bundled Python standalone executable.
 if app == "Blender":

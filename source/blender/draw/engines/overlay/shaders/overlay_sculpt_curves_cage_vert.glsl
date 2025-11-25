@@ -2,18 +2,25 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "common_view_clipping_lib.glsl"
+#include "infos/overlay_sculpt_curves_infos.hh"
+
+VERTEX_SHADER_CREATE_INFO(overlay_sculpt_curves_cage)
+
 #include "draw_model_lib.glsl"
+#include "draw_view_clipping_lib.glsl"
 #include "draw_view_lib.glsl"
 
 void main()
 {
-  vec3 world_pos = drw_point_object_to_world(pos);
+  float3 world_pos = drw_point_object_to_world(pos);
   gl_Position = drw_point_world_to_homogenous(world_pos);
+  /* Small bias to always be on top of the geom. */
+  gl_Position.z -= 1e-3f;
 
-  finalColor = vec4(selection);
-  finalColor.a *= opacity;
+  final_color = float4(selection);
+  final_color.a *= opacity;
 
   /* Convert to screen position [0..sizeVp]. */
-  edgePos = edgeStart = ((gl_Position.xy / gl_Position.w) * 0.5 + 0.5) * sizeViewport.xy;
+  edge_pos = edge_start = ((gl_Position.xy / gl_Position.w) * 0.5f + 0.5f) *
+                          uniform_buf.size_viewport;
 }

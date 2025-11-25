@@ -7,30 +7,15 @@
  */
 
 #include <climits>
-#include <cstdio>
 #include <cstdlib>
 
-#include "DNA_boid_types.h"
-#include "DNA_cloth_types.h"
 #include "DNA_material_types.h"
-#include "DNA_mesh_types.h"
-#include "DNA_meshdata_types.h"
-#include "DNA_modifier_types.h"
-#include "DNA_object_force_types.h"
-#include "DNA_object_types.h"
 #include "DNA_particle_types.h"
 #include "DNA_scene_types.h"
 #include "DNA_texture_types.h"
 
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
-
-#include "BKE_mesh.hh"
-#include "BKE_mesh_legacy_convert.hh"
-
-#include "BLI_listbase.h"
-#include "BLI_math_matrix.h"
-#include "BLI_math_vector.h"
 
 #include "BLT_translation.hh"
 
@@ -113,7 +98,7 @@ static const EnumPropertyItem part_hair_ren_as_items[] = {
 
 static const EnumPropertyItem part_type_items[] = {
     {PART_EMITTER, "EMITTER", 0, "Emitter", ""},
-    /*{PART_REACTOR, "REACTOR", 0, "Reactor", ""}, */
+    // {PART_REACTOR, "REACTOR", 0, "Reactor", ""},
     {PART_HAIR, "HAIR", 0, "Hair", ""},
     {0, nullptr, 0, nullptr, nullptr},
 };
@@ -140,6 +125,13 @@ static const EnumPropertyItem part_fluid_type_items[] = {
 
 #  include "BLI_string_utils.hh"
 
+#  include "DNA_cloth_types.h"
+#  include "DNA_mesh_types.h"
+#  include "DNA_meshdata_types.h"
+
+#  include "BLI_math_matrix.h"
+#  include "BLI_math_vector.h"
+
 #  include "BKE_boids.h"
 #  include "BKE_cloth.hh"
 #  include "BKE_context.hh"
@@ -147,6 +139,8 @@ static const EnumPropertyItem part_fluid_type_items[] = {
 #  include "BKE_deform.hh"
 #  include "BKE_effect.h"
 #  include "BKE_material.hh"
+#  include "BKE_mesh.hh"
+#  include "BKE_mesh_legacy_convert.hh"
 #  include "BKE_modifier.hh"
 #  include "BKE_particle.h"
 #  include "BKE_pointcache.h"
@@ -387,11 +381,12 @@ static void rna_Particle_uv_on_emitter(ParticleData *particle,
   int num = particle->num_dmcache;
   int from = modifier->psys->part->from;
 
-  if (!CustomData_has_layer(&modifier->mesh_final->corner_data, CD_PROP_FLOAT2)) {
+  if (modifier->mesh_final->uv_map_names().is_empty()) {
     BKE_report(reports, RPT_ERROR, "Mesh has no UV data");
     return;
   }
   BKE_mesh_tessface_ensure(modifier->mesh_final); /* BMESH - UNTIL MODIFIER IS UPDATED FOR POLYS */
+#  include "BKE_mesh_legacy_convert.hh"
 
   if (ELEM(num, DMCACHE_NOTFOUND, DMCACHE_ISCHILD)) {
     if (particle->num < modifier->mesh_final->totface_legacy) {
@@ -678,14 +673,14 @@ static void rna_ParticleSystem_uv_on_emitter(ParticleSystem *particlesystem,
     zero_v2(r_uv);
     return;
   }
-  if (!CustomData_has_layer(&modifier->mesh_final->corner_data, CD_PROP_FLOAT2)) {
+  if (modifier->mesh_final->uv_map_names().is_empty()) {
     BKE_report(reports, RPT_ERROR, "Mesh has no UV data");
     zero_v2(r_uv);
     return;
   }
 
   {
-    float(*fuv)[4];
+    float (*fuv)[4];
     /* Note all sanity checks are done in this helper func. */
     const int num = rna_ParticleSystem_tessfaceidx_on_emitter(
         particlesystem, modifier, particle, particle_no, &fuv);
@@ -721,7 +716,7 @@ static void rna_ParticleSystem_mcol_on_emitter(ParticleSystem *particlesystem,
   }
 
   {
-    float(*fuv)[4];
+    float (*fuv)[4];
     /* Note all sanity checks are done in this helper func. */
     const int num = rna_ParticleSystem_tessfaceidx_on_emitter(
         particlesystem, modifier, particle, particle_no, &fuv);
@@ -822,7 +817,7 @@ static void rna_Particle_change_physics_type(Main *bmain, Scene *scene, PointerR
   if (part->phystype == PART_PHYS_BOIDS && part->boids == nullptr) {
     BoidState *state;
 
-    part->boids = static_cast<BoidSettings *>(MEM_callocN(sizeof(BoidSettings), "Boid Settings"));
+    part->boids = MEM_callocN<BoidSettings>("Boid Settings");
     boid_default_settings(part->boids);
 
     state = boid_new_state(part->boids);
@@ -835,8 +830,7 @@ static void rna_Particle_change_physics_type(Main *bmain, Scene *scene, PointerR
     BLI_addtail(&part->boids->states, state);
   }
   else if (part->phystype == PART_PHYS_FLUID && part->fluid == nullptr) {
-    part->fluid = static_cast<SPHFluidSettings *>(
-        MEM_callocN(sizeof(SPHFluidSettings), "SPH Fluid Settings"));
+    part->fluid = MEM_callocN<SPHFluidSettings>("SPH Fluid Settings");
     BKE_particlesettings_fluid_default_settings(part);
   }
 
@@ -998,8 +992,9 @@ static void rna_PartSettings_start_set(PointerRNA *ptr, float value)
   }
 
 #  if 0
-  if (settings->type == PART_REACTOR && value < 1.0)
+  if (settings->type == PART_REACTOR && value < 1.0) {
     value = 1.0;
+  }
   else
 #  endif
   if (value < MINAFRAMEF) {
@@ -1164,7 +1159,7 @@ static PointerRNA rna_ParticleSystem_active_particle_target_get(PointerRNA *ptr)
 
   for (; pt; pt = pt->next) {
     if (pt->flag & PTARGET_CURRENT) {
-      return rna_pointer_inherit_refine(ptr, &RNA_ParticleTarget, pt);
+      return RNA_pointer_create_with_parent(*ptr, &RNA_ParticleTarget, pt);
     }
   }
   return PointerRNA_NULL;
@@ -1305,7 +1300,7 @@ static PointerRNA rna_ParticleDupliWeight_active_get(PointerRNA *ptr)
 
   for (; dw; dw = dw->next) {
     if (dw->flag & PART_DUPLIW_CURRENT) {
-      return rna_pointer_inherit_refine(ptr, &RNA_ParticleDupliWeight, dw);
+      return RNA_pointer_create_with_parent(*ptr, &RNA_ParticleDupliWeight, dw);
     }
   }
   return PointerRNA_NULL;
@@ -1359,10 +1354,10 @@ static size_t rna_ParticleDupliWeight_name_get_impl(PointerRNA *ptr,
   ParticleDupliWeight *dw = static_cast<ParticleDupliWeight *>(ptr->data);
 
   if (dw->ob) {
-    return BLI_snprintf_rlen(value, value_maxncpy, "%s: %i", dw->ob->id.name + 2, dw->count);
+    return BLI_snprintf_utf8_rlen(value, value_maxncpy, "%s: %i", dw->ob->id.name + 2, dw->count);
   }
 
-  return BLI_strncpy_rlen(value, "No object", value_maxncpy);
+  return BLI_strncpy_utf8_rlen(value, "No object", value_maxncpy);
 }
 
 static void rna_ParticleDupliWeight_name_get(PointerRNA *ptr, char *value)
@@ -1455,13 +1450,13 @@ static const EnumPropertyItem *rna_Particle_ren_as_itemf(bContext * /*C*/,
 static PointerRNA rna_Particle_field1_get(PointerRNA *ptr)
 {
   ParticleSettings *part = (ParticleSettings *)ptr->owner_id;
-  return rna_pointer_inherit_refine(ptr, &RNA_FieldSettings, part->pd);
+  return RNA_pointer_create_with_parent(*ptr, &RNA_FieldSettings, part->pd);
 }
 
 static PointerRNA rna_Particle_field2_get(PointerRNA *ptr)
 {
   ParticleSettings *part = (ParticleSettings *)ptr->owner_id;
-  return rna_pointer_inherit_refine(ptr, &RNA_FieldSettings, part->pd2);
+  return RNA_pointer_create_with_parent(*ptr, &RNA_FieldSettings, part->pd2);
 }
 
 static void psys_vg_name_get__internal(PointerRNA *ptr, char *value, int index)
@@ -1529,7 +1524,7 @@ static std::optional<std::string> rna_ParticleSystem_path(const PointerRNA *ptr)
 static void rna_ParticleSettings_mtex_begin(CollectionPropertyIterator *iter, PointerRNA *ptr)
 {
   ParticleSettings *part = (ParticleSettings *)ptr->data;
-  rna_iterator_array_begin(iter, (void *)part->mtex, sizeof(MTex *), MAX_MTEX, 0, nullptr);
+  rna_iterator_array_begin(iter, ptr, (void *)part->mtex, sizeof(MTex *), MAX_MTEX, 0, nullptr);
 }
 
 static PointerRNA rna_ParticleSettings_active_texture_get(PointerRNA *ptr)
@@ -1829,7 +1824,7 @@ static void rna_def_particle(BlenderRNA *brna)
   PropertyRNA *parm;
 
   static const EnumPropertyItem alive_items[] = {
-      /*{PARS_KILLED, "KILLED", 0, "Killed", ""}, */
+      // {PARS_KILLED, "KILLED", 0, "Killed", ""},
       {PARS_DEAD, "DEAD", 0, "Dead", ""},
       {PARS_UNBORN, "UNBORN", 0, "Unborn", ""},
       {PARS_ALIVE, "ALIVE", 0, "Alive", ""},
@@ -2499,11 +2494,6 @@ static void rna_def_particle_settings(BlenderRNA *brna)
       {0, nullptr, 0, nullptr, nullptr},
   };
 
-  static const EnumPropertyItem part_mat_items[] = {
-      {0, "DUMMY", 0, "Dummy", ""},
-      {0, nullptr, 0, nullptr, nullptr},
-  };
-
   srna = RNA_def_struct(brna, "ParticleSettings", "ID");
   RNA_def_struct_ui_text(
       srna, "Particle Settings", "Particle settings, reusable by multiple particle systems");
@@ -2888,7 +2878,7 @@ static void rna_def_particle_settings(BlenderRNA *brna)
 
   prop = RNA_def_property(srna, "material_slot", PROP_ENUM, PROP_NONE);
   RNA_def_property_enum_sdna(prop, nullptr, "omat");
-  RNA_def_property_enum_items(prop, part_mat_items);
+  RNA_def_property_enum_items(prop, rna_enum_dummy_DEFAULT_items);
   RNA_def_property_enum_funcs(prop, nullptr, nullptr, "rna_Particle_Material_itemf");
   RNA_def_property_ui_text(prop, "Material Slot", "Material slot used for rendering particles");
   RNA_def_property_update(prop, 0, "rna_Particle_redo");

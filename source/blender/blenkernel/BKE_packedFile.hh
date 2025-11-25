@@ -41,6 +41,8 @@ enum ePF_FileStatus {
   PF_ASK = 10,
 };
 
+constexpr int64_t PACKED_FILE_MAX_SIZE = INT32_MAX;
+
 /* Pack. */
 
 PackedFile *BKE_packedfile_duplicate(const PackedFile *pf_src);
@@ -65,7 +67,7 @@ void BKE_packedfile_pack_all_libraries(Main *bmain, ReportList *reports);
  * It returns a char *to the existing file name / new file name or NULL when
  * there was an error or when the user decides to cancel the operation.
  *
- * \warning 'abs_name' may be relative still! (use a "//" prefix)
+ * \warning 'abs_name' may be relative still! (use a `//` prefix)
  * be sure to run #BLI_path_abs on it first.
  */
 char *BKE_packedfile_unpack_to_file(ReportList *reports,

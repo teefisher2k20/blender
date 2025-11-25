@@ -12,10 +12,6 @@
 #include "../../BPy_Convert.h"
 #include "../../BPy_IntegrationType.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -51,7 +47,6 @@ PyDoc_STRVAR(
     "   :type inter: :class:`freestyle.types.Interface1D`\n"
     "   :return: The average depth evaluated for the Interface1D.\n"
     "   :rtype: float\n");
-
 static int LocalAverageDepthF1D___init__(BPy_LocalAverageDepthF1D *self,
                                          PyObject *args,
                                          PyObject *kwds)
@@ -114,7 +109,3 @@ PyTypeObject LocalAverageDepthF1D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

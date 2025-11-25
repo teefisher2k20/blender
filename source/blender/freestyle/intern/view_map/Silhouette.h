@@ -86,19 +86,19 @@ class SVertex : public Interface0D {
     return _Point3D;
   }
 
-  /** Returns the projected 3D  x coordinate of the vertex. */
+  /** Returns the projected 3D x coordinate of the vertex. */
   virtual real getProjectedX() const
   {
     return _Point2D.x();
   }
 
-  /** Returns the projected 3D  y coordinate of the vertex. */
+  /** Returns the projected 3D y coordinate of the vertex. */
   virtual real getProjectedY() const
   {
     return _Point2D.y();
   }
 
-  /** Returns the projected 3D  z coordinate of the vertex. */
+  /** Returns the projected 3D z coordinate of the vertex. */
   virtual real getProjectedZ() const
   {
     return _Point2D.z();
@@ -451,8 +451,8 @@ class SVertex : public Interface0D {
 class ViewEdge;
 
 /** Base Class for feature edges.
- *  This FEdge can represent a silhouette, a crease, a ridge/valley, a border or a suggestive
- * contour. For silhouettes,  the FEdge is oriented such as, the visible face lies on the left of
+ * This FEdge can represent a silhouette, a crease, a ridge/valley, a border or a suggestive
+ * contour. For silhouettes, the FEdge is oriented such as, the visible face lies on the left of
  * the edge. For borders, the FEdge is oriented such as, the face lies on the left of the edge. An
  * FEdge can represent an initial edge of the mesh or runs across a face of the initial mesh
  * depending on the smoothness or sharpness of the mesh. This class is specialized into a smooth
@@ -865,7 +865,7 @@ class FEdge : public Interface1D {
   const SShape *shape() const;
   float shape_importance() const;
 
-  inline const int qi() const
+  inline int qi() const
   {
     return invisibility();
   }
@@ -1206,7 +1206,7 @@ class FEdgeSharp : public FEdge {
     return _bFrsMaterialIndex;
   }
 
-  /** Returns the  material of the face lying on the left of the FEdge. */
+  /** Returns the material of the face lying on the left of the FEdge. */
   const FrsMaterial &bFrsMaterial() const;
 
   /** Returns the face mark of the face lying on the right of the FEdge.
@@ -1676,8 +1676,8 @@ class SShape {
   }
 
   /* splits an edge into 2 edges. The new vertex and edge are added to the sshape list of vertices
-   * and edges a new chain is also created. returns the new edge. ioEdge The edge that gets
-   * splitted newpoint x,y,z coordinates of the new point.
+   * and edges a new chain is also created. returns the new edge. ioEdge The edge that gets split
+   * newpoint x,y,z coordinates of the new point.
    */
   inline FEdge *SplitEdgeIn2(FEdge *ioEdge, SVertex *ioNewVertex)
   {

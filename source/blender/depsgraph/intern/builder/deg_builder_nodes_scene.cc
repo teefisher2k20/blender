@@ -10,6 +10,8 @@
 
 #include "DNA_scene_types.h"
 
+#include "BLI_listbase.h"
+
 namespace blender::deg {
 
 void DepsgraphNodeBuilder::build_scene_render(Scene *scene, ViewLayer *view_layer)
@@ -48,11 +50,12 @@ void DepsgraphNodeBuilder::build_scene_camera(Scene *scene)
 
 void DepsgraphNodeBuilder::build_scene_parameters(Scene *scene)
 {
-  if (built_map_.checkIsBuiltAndTag(scene, BuilderMap::TAG_PARAMETERS)) {
+  if (built_map_.check_is_built_and_tag(scene, BuilderMap::TAG_PARAMETERS)) {
     return;
   }
   build_parameters(&scene->id);
   build_idproperties(scene->id.properties);
+  build_idproperties(scene->id.system_properties);
 
   add_operation_node(&scene->id, NodeType::SCENE, OperationCode::SCENE_EVAL);
 
@@ -75,13 +78,13 @@ void DepsgraphNodeBuilder::build_scene_parameters(Scene *scene)
 
 void DepsgraphNodeBuilder::build_scene_compositor(Scene *scene)
 {
-  if (built_map_.checkIsBuiltAndTag(scene, BuilderMap::TAG_SCENE_COMPOSITOR)) {
+  if (built_map_.check_is_built_and_tag(scene, BuilderMap::TAG_SCENE_COMPOSITOR)) {
     return;
   }
-  if (scene->nodetree == nullptr) {
+  if (scene->compositing_node_group == nullptr) {
     return;
   }
-  build_nodetree(scene->nodetree);
+  build_nodetree(scene->compositing_node_group);
 }
 
 }  // namespace blender::deg

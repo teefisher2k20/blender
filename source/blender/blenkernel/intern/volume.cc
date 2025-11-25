@@ -36,6 +36,7 @@
 #include "BKE_lib_id.hh"
 #include "BKE_lib_query.hh"
 #include "BKE_lib_remap.hh"
+#include "BKE_library.hh"
 #include "BKE_main.hh"
 #include "BKE_modifier.hh"
 #include "BKE_object.hh"
@@ -57,7 +58,7 @@
 #include "CLG_log.h"
 
 #ifdef WITH_OPENVDB
-static CLG_LogRef LOG = {"bke.volume"};
+static CLG_LogRef LOG = {"geom.volume"};
 #endif
 
 #define VOLUME_FRAME_NONE INT_MAX
@@ -71,7 +72,6 @@ using blender::bke::GVolumeGrid;
 
 #ifdef WITH_OPENVDB
 #  include <list>
-#  include <mutex>
 
 #  include <openvdb/openvdb.h>
 #  include <openvdb/points/PointDataGrid.h>
@@ -109,7 +109,7 @@ struct VolumeGridVector : public std::list<GVolumeGrid> {
 
   /* Mutex for file loading of grids list. `const` write access to the fields after this must be
    * protected by locking with this mutex. */
-  mutable std::mutex mutex;
+  mutable blender::Mutex mutex;
   /* Absolute file path that grids have been loaded from. */
   char filepath[FILE_MAX];
   /* File loading error message. */
@@ -275,7 +275,7 @@ static void volume_blend_read_after_liblink(BlendLibReader * /*reader*/, ID *id)
 }
 
 IDTypeInfo IDType_ID_VO = {
-    /*id_code*/ ID_VO,
+    /*id_code*/ Volume::id_type,
     /*id_filter*/ FILTER_ID_VO,
     /*dependencies_id_types*/ FILTER_ID_MA,
     /*main_listbase_index*/ INDEX_ID_VO,
@@ -293,6 +293,7 @@ IDTypeInfo IDType_ID_VO = {
     /*foreach_id*/ volume_foreach_id,
     /*foreach_cache*/ volume_foreach_cache,
     /*foreach_path*/ volume_foreach_path,
+    /*foreach_working_space_color*/ nullptr,
     /*owner_pointer_get*/ nullptr,
 
     /*blend_write*/ volume_blend_write,
@@ -317,7 +318,7 @@ void BKE_volume_init_grids(Volume *volume)
 
 Volume *BKE_volume_add(Main *bmain, const char *name)
 {
-  Volume *volume = (Volume *)BKE_id_new(bmain, ID_VO, name);
+  Volume *volume = BKE_id_new<Volume>(bmain, name);
 
   return volume;
 }
@@ -419,12 +420,12 @@ bool BKE_volume_is_loaded(const Volume *volume)
 #endif
 }
 
-bool BKE_volume_set_velocity_grid_by_name(Volume *volume, const char *base_name)
+bool BKE_volume_set_velocity_grid_by_name(Volume *volume, const StringRef ref_base_name)
 {
-  const StringRefNull ref_base_name = base_name;
+  const std::string base_name = ref_base_name;
 
   if (BKE_volume_grid_find(volume, base_name)) {
-    STRNCPY(volume->velocity_grid, base_name);
+    STRNCPY(volume->velocity_grid, base_name.c_str());
     volume->runtime->velocity_x_grid[0] = '\0';
     volume->runtime->velocity_y_grid[0] = '\0';
     volume->runtime->velocity_z_grid[0] = '\0';
@@ -438,7 +439,7 @@ bool BKE_volume_set_velocity_grid_by_name(Volume *volume, const char *base_name)
     bool found = true;
     for (int i = 0; i < 3; i++) {
       std::string post_fixed_name = ref_base_name + postfix[i];
-      if (!BKE_volume_grid_find(volume, post_fixed_name.c_str())) {
+      if (!BKE_volume_grid_find(volume, post_fixed_name)) {
         found = false;
         break;
       }
@@ -449,7 +450,7 @@ bool BKE_volume_set_velocity_grid_by_name(Volume *volume, const char *base_name)
     }
 
     /* Save the base name as well. */
-    STRNCPY(volume->velocity_grid, base_name);
+    STRNCPY(volume->velocity_grid, base_name.c_str());
     STRNCPY(volume->runtime->velocity_x_grid, (ref_base_name + postfix[0]).c_str());
     STRNCPY(volume->runtime->velocity_y_grid, (ref_base_name + postfix[1]).c_str());
     STRNCPY(volume->runtime->velocity_z_grid, (ref_base_name + postfix[2]).c_str());
@@ -479,7 +480,7 @@ bool BKE_volume_load(const Volume *volume, const Main *bmain)
   }
 
   /* Double-checked lock. */
-  std::lock_guard<std::mutex> lock(const_grids.mutex);
+  std::lock_guard lock(const_grids.mutex);
   if (BKE_volume_is_loaded(volume)) {
     return const_grids.error_msg.empty();
   }
@@ -493,12 +494,12 @@ bool BKE_volume_load(const Volume *volume, const Main *bmain)
   char filepath[FILE_MAX];
   volume_filepath_get(bmain, volume, filepath);
 
-  CLOG_INFO(&LOG, 1, "Volume %s: load %s", volume_name, filepath);
+  CLOG_INFO(&LOG, "Volume %s: load %s", volume_name, filepath);
 
   /* Test if file exists. */
   if (!BLI_exists(filepath)) {
     grids.error_msg = BLI_path_basename(filepath) + std::string(" not found");
-    CLOG_INFO(&LOG, 1, "Volume %s: %s", volume_name, grids.error_msg.c_str());
+    CLOG_INFO(&LOG, "Volume %s: %s", volume_name, grids.error_msg.c_str());
     return false;
   }
 
@@ -507,7 +508,7 @@ bool BKE_volume_load(const Volume *volume, const Main *bmain)
 
   if (!grids_from_file.error_message.empty()) {
     grids.error_msg = grids_from_file.error_message;
-    CLOG_INFO(&LOG, 1, "Volume %s: %s", volume_name, grids.error_msg.c_str());
+    CLOG_INFO(&LOG, "Volume %s: %s", volume_name, grids.error_msg.c_str());
     return false;
   }
 
@@ -539,7 +540,7 @@ void BKE_volume_unload(Volume *volume)
   VolumeGridVector &grids = *volume->runtime->grids;
   if (grids.filepath[0] != '\0') {
     const char *volume_name = volume->id.name + 2;
-    CLOG_INFO(&LOG, 1, "Volume %s: unload", volume_name);
+    CLOG_INFO(&LOG, "Volume %s: unload", volume_name);
     grids.clear_all();
   }
 #else
@@ -708,8 +709,7 @@ static void volume_evaluate_modifiers(Depsgraph *depsgraph,
 
   /* Evaluate modifiers. */
   for (; md; md = md->next) {
-    const ModifierTypeInfo *mti = (const ModifierTypeInfo *)BKE_modifier_get_info(
-        (ModifierType)md->type);
+    const ModifierTypeInfo *mti = BKE_modifier_get_info((ModifierType)md->type);
 
     if (!BKE_modifier_is_enabled(scene, md, required_mode)) {
       continue;
@@ -738,7 +738,7 @@ void BKE_volume_eval_geometry(Depsgraph *depsgraph, Volume *volume)
 
   /* Flush back to original. */
   if (DEG_is_active(depsgraph)) {
-    Volume *volume_orig = (Volume *)DEG_get_original_id(&volume->id);
+    Volume *volume_orig = DEG_get_original(volume);
     if (volume_orig->runtime->frame != volume->runtime->frame) {
       BKE_volume_unload(volume_orig);
       volume_orig->runtime->frame = volume->runtime->frame;
@@ -909,7 +909,8 @@ const blender::bke::VolumeGridData *BKE_volume_grid_active_get_for_read(const Vo
   return BKE_volume_grid_get(volume, index);
 }
 
-const blender::bke::VolumeGridData *BKE_volume_grid_find(const Volume *volume, const char *name)
+const blender::bke::VolumeGridData *BKE_volume_grid_find(const Volume *volume,
+                                                         const StringRef name)
 {
   int num_grids = BKE_volume_num_grids(volume);
   for (int i = 0; i < num_grids; i++) {
@@ -922,7 +923,7 @@ const blender::bke::VolumeGridData *BKE_volume_grid_find(const Volume *volume, c
   return nullptr;
 }
 
-blender::bke::VolumeGridData *BKE_volume_grid_find_for_write(Volume *volume, const char *name)
+blender::bke::VolumeGridData *BKE_volume_grid_find_for_write(Volume *volume, const StringRef name)
 {
   int num_grids = BKE_volume_num_grids(volume);
   for (int i = 0; i < num_grids; i++) {
@@ -941,7 +942,7 @@ blender::bke::VolumeGridData *BKE_volume_grid_find_for_write(Volume *volume, con
 
 Volume *BKE_volume_new_for_eval(const Volume *volume_src)
 {
-  Volume *volume_dst = (Volume *)BKE_id_new_nomain(ID_VO, nullptr);
+  Volume *volume_dst = BKE_id_new_nomain<Volume>(nullptr);
 
   STRNCPY(volume_dst->id.name, volume_src->id.name);
   volume_dst->mat = (Material **)MEM_dupallocN(volume_src->mat);
@@ -978,12 +979,17 @@ blender::bke::VolumeGridData *BKE_volume_grid_add_vdb(Volume &volume,
                                                       openvdb::GridBase::Ptr vdb_grid)
 {
   VolumeGridVector &grids = *volume.runtime->grids;
-  BLI_assert(BKE_volume_grid_find(&volume, name.data()) == nullptr);
+  BLI_assert(BKE_volume_grid_find(&volume, name) == nullptr);
   BLI_assert(blender::bke::volume_grid::get_type(*vdb_grid) != VOLUME_GRID_UNKNOWN);
 
   vdb_grid->setName(name);
   grids.emplace_back(GVolumeGrid(std::move(vdb_grid)));
   return &grids.back().get_for_write();
+}
+
+void BKE_volume_metadata_set(Volume &volume, openvdb::MetaMap::Ptr metadata)
+{
+  volume.runtime->grids->metadata = metadata;
 }
 #endif
 
@@ -1021,6 +1027,16 @@ bool BKE_volume_grid_determinant_valid(const double determinant)
   UNUSED_VARS(determinant);
   return true;
 #endif
+}
+
+bool BKE_volume_voxel_size_valid(const float3 &voxel_size)
+{
+  return BKE_volume_grid_determinant_valid(voxel_size[0] * voxel_size[1] * voxel_size[2]);
+}
+
+bool BKE_volume_grid_transform_valid(const float4x4 &transform)
+{
+  return BKE_volume_grid_determinant_valid(blender::math::determinant(transform));
 }
 
 int BKE_volume_simplify_level(const Depsgraph *depsgraph)
@@ -1062,8 +1078,12 @@ std::optional<blender::Bounds<float3>> BKE_volume_grid_bounds(openvdb::GridBase:
     return std::nullopt;
   }
 
-  openvdb::BBoxd bbox = grid->transform().indexToWorld(coordbbox);
+  openvdb::BBoxd index_bbox = {
+      openvdb::BBoxd(coordbbox.min().asVec3d(), coordbbox.max().asVec3d())};
+  /* Add half voxel padding that is expected by volume rendering code. */
+  index_bbox.expand(0.5);
 
+  const openvdb::BBoxd bbox = grid->transform().indexToWorld(index_bbox);
   return blender::Bounds<float3>{float3(bbox.min().asPointer()), float3(bbox.max().asPointer())};
 }
 
@@ -1075,6 +1095,32 @@ openvdb::GridBase::ConstPtr BKE_volume_grid_shallow_transform(openvdb::GridBase:
 
   /* Create a transformed grid. The underlying tree is shared. */
   return grid->copyGridReplacingTransform(grid_transform);
+}
+
+blender::float4x4 BKE_volume_transform_to_blender(const openvdb::math::Transform &transform)
+{
+  /* Perspective not supported for now, getAffineMap() will leave out the
+   * perspective part of the transform. */
+  const openvdb::math::Mat4f matrix = transform.baseMap()->getAffineMap()->getMat4();
+  /* Blender column-major and OpenVDB right-multiplication conventions match. */
+  float4x4 result;
+  for (int col = 0; col < 4; col++) {
+    for (int row = 0; row < 4; row++) {
+      result[col][row] = matrix(col, row);
+    }
+  }
+  return result;
+}
+
+openvdb::math::Transform BKE_volume_transform_to_openvdb(const blender::float4x4 &transform)
+{
+  openvdb::math::Mat4f matrix_openvdb;
+  for (int col = 0; col < 4; col++) {
+    for (int row = 0; row < 4; row++) {
+      matrix_openvdb(col, row) = transform[col][row];
+    }
+  }
+  return openvdb::math::Transform(std::make_shared<openvdb::math::AffineMap>(matrix_openvdb));
 }
 
 /* Changing the resolution of a grid. */

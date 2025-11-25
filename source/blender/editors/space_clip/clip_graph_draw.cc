@@ -8,21 +8,20 @@
 
 #include "DNA_movieclip_types.h"
 #include "DNA_scene_types.h"
+#include "DNA_screen_types.h"
 
 #include "BLI_utildefines.h"
 
 #include "BKE_movieclip.h"
 #include "BKE_tracking.h"
 
+#include "ED_anim_api.hh"
 #include "ED_clip.hh"
-#include "ED_screen.hh"
 
 #include "GPU_immediate.hh"
 #include "GPU_immediate_util.hh"
 #include "GPU_matrix.hh"
 #include "GPU_state.hh"
-
-#include "WM_types.hh"
 
 #include "UI_resources.hh"
 #include "UI_view2d.hh"
@@ -68,13 +67,13 @@ static void tracking_segment_start_cb(void *userdata,
 
   switch (value_source) {
     case CLIP_VALUE_SOURCE_SPEED_X:
-      col[0] = 1.0f;
+      UI_GetThemeColor4fv(TH_AXIS_X, col);
       break;
     case CLIP_VALUE_SOURCE_SPEED_Y:
-      col[1] = 1.0f;
+      UI_GetThemeColor4fv(TH_AXIS_Y, col);
       break;
     case CLIP_VALUE_SOURCE_REPROJECTION_ERROR:
-      col[2] = 1.0f;
+      UI_GetThemeColor4fv(TH_AXIS_Z, col);
       break;
   }
 
@@ -87,6 +86,13 @@ static void tracking_segment_start_cb(void *userdata,
     GPU_line_width(1.0f);
   }
 
+  if (is_point) {
+    immBindBuiltinProgram(GPU_SHADER_3D_POINT_UNIFORM_COLOR);
+    immUniform1f("size", 3.0f);
+  }
+  else {
+    immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
+  }
   immUniformColor4fv(col);
 
   if (is_point) {
@@ -106,6 +112,7 @@ static void tracking_segment_end_cb(void *userdata, eClipCurveValueSource value_
     return;
   }
   immEnd();
+  immUnbindProgram();
 }
 
 static void tracking_segment_knot_cb(void *userdata,
@@ -129,6 +136,8 @@ static void tracking_segment_knot_cb(void *userdata,
   const bool sel = (marker->flag & sel_flag) != 0;
 
   if (sel == data->sel) {
+    GPU_line_width(1.0f);
+    immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
     immUniformThemeColor(sel ? TH_HANDLE_VERTEX_SELECT : TH_HANDLE_VERTEX);
 
     GPU_matrix_push();
@@ -138,6 +147,7 @@ static void tracking_segment_knot_cb(void *userdata,
     imm_draw_circle_wire_2d(data->pos, 0, 0, 0.7, 8);
 
     GPU_matrix_pop();
+    immUnbindProgram();
   }
 }
 
@@ -210,7 +220,9 @@ static void draw_frame_curves(SpaceClip *sc, uint pos)
   /* Indicates whether immBegin() was called. */
   bool is_lines_segment_open = false;
 
-  immUniformColor3f(0.0f, 0.0f, 1.0f);
+  GPU_line_width(1.0f);
+  immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
+  immUniformColor4f(0.0f, 0.0f, 1.0f, 1.0f);
 
   for (int i = 0; i < reconstruction->camnr; i++) {
     MovieReconstructedCamera *camera = &reconstruction->cameras[i];
@@ -244,6 +256,7 @@ static void draw_frame_curves(SpaceClip *sc, uint pos)
   if (is_lines_segment_open) {
     immEnd();
   }
+  immUnbindProgram();
 }
 
 void clip_draw_graph(SpaceClip *sc, ARegion *region, Scene *scene)
@@ -252,14 +265,12 @@ void clip_draw_graph(SpaceClip *sc, ARegion *region, Scene *scene)
   View2D *v2d = &region->v2d;
 
   /* grid */
-  UI_view2d_draw_lines_x__values(v2d);
-  UI_view2d_draw_lines_y__values(v2d);
+  UI_view2d_draw_lines_x__values(v2d, 10);
+  UI_view2d_draw_lines_y__values(v2d, 10);
 
   if (clip) {
-    uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
-    immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
-
-    GPU_point_size(3.0f);
+    uint pos = GPU_vertformat_attr_add(
+        immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
 
     if (sc->flag & (SC_SHOW_GRAPH_TRACKS_MOTION | SC_SHOW_GRAPH_TRACKS_ERROR)) {
       draw_tracks_motion_and_error_curves(v2d, sc, pos);
@@ -268,10 +279,10 @@ void clip_draw_graph(SpaceClip *sc, ARegion *region, Scene *scene)
     if (sc->flag & SC_SHOW_GRAPH_FRAMES) {
       draw_frame_curves(sc, pos);
     }
-
-    immUnbindProgram();
   }
 
-  /* frame range */
-  clip_draw_sfra_efra(v2d, scene);
+  /* Frame and preview range. */
+  UI_view2d_view_ortho(v2d);
+  ANIM_draw_framerange(scene, v2d);
+  ANIM_draw_previewrange(scene, v2d, 0);
 }

@@ -13,7 +13,7 @@
 #include "BLI_array.hh"
 #include "BLI_bounds.hh"
 #include "BLI_boxpack_2d.h"
-#include "BLI_convexhull_2d.h"
+#include "BLI_convexhull_2d.hh"
 #include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
@@ -30,18 +30,13 @@ namespace blender::geometry {
 /** Store information about an island's placement such as translation, rotation and reflection. */
 class UVPhi {
  public:
-  UVPhi();
+  UVPhi() = default;
   bool is_valid() const;
 
-  float2 translation;
-  float rotation;
-  // bool reflect;
+  float2 translation = float2(-1.0f, -1.0f);
+  float rotation = 0.0f;
+  // bool reflect = false;
 };
-
-UVPhi::UVPhi() : translation(-1.0f, -1.0f), rotation(0.0f)
-{
-  /* Initialize invalid. */
-}
 
 bool UVPhi::is_valid() const
 {
@@ -173,7 +168,7 @@ void PackIsland::add_polygon(const Span<float2> uvs, MemArena *arena, Heap *heap
   /* Storage. */
   uint(*tris)[3] = static_cast<uint(*)[3]>(
       BLI_memarena_alloc(arena, sizeof(*tris) * size_t(nfilltri)));
-  const float(*source)[2] = reinterpret_cast<const float(*)[2]>(uvs.data());
+  const float (*source)[2] = reinterpret_cast<const float (*)[2]>(uvs.data());
 
   /* Triangulate. */
   BLI_polyfill_calc_arena(source, vert_count, 0, tris, arena);
@@ -266,8 +261,7 @@ void PackIsland::calculate_pre_rotation_(const UVPackIsland_Params &params)
       coords[i].y = triangle_vertices_[i].y;
     }
 
-    const float(*source)[2] = reinterpret_cast<const float(*)[2]>(coords.data());
-    float angle = -BLI_convexhull_aabb_fit_points_2d(source, int(coords.size()));
+    float angle = -BLI_convexhull_aabb_fit_points_2d(coords);
 
     if (true) {
       /* "Stand-up" islands. */
@@ -346,18 +340,15 @@ void PackIsland::finalize_geometry_(const UVPackIsland_Params &params, MemArena 
     int *index_map = static_cast<int *>(
         BLI_memarena_alloc(arena, sizeof(*index_map) * vert_count));
 
-    /* Prepare input for convex hull. */
-    const float(*source)[2] = reinterpret_cast<const float(*)[2]>(triangle_vertices_.data());
-
     /* Compute convex hull. */
-    int convex_len = BLI_convexhull_2d(source, vert_count, index_map);
+    int convex_len = BLI_convexhull_2d(triangle_vertices_, index_map);
     if (convex_len >= 3) {
       /* Write back. */
       triangle_vertices_.clear();
       float2 *convex_verts = static_cast<float2 *>(
           BLI_memarena_alloc(arena, sizeof(*convex_verts) * convex_len));
       for (int i = 0; i < convex_len; i++) {
-        convex_verts[i] = source[index_map[i]];
+        convex_verts[i] = triangle_vertices_[index_map[i]];
       }
       add_polygon(Span(convex_verts, convex_len), arena, heap);
     }
@@ -1067,8 +1058,8 @@ static void pack_islands_optimal_pack(const Span<std::unique_ptr<UVAABBIsland>> 
   if (island_count_patch == 66) {
     island_count_patch = 67; /* TODO, Stenlund 1980. */
   }
-  /*  See https://www.combinatorics.org/files/Surveys/ds7/ds7v5-2009/ds7-2009.html
-   *  https://erich-friedman.github.io/packing/squinsqu */
+  /* See https://www.combinatorics.org/files/Surveys/ds7/ds7v5-2009/ds7-2009.html
+   * https://erich-friedman.github.io/packing/squinsqu */
   for (int a = 1; a < 20; a++) {
     int n = a * a + a + 3 + floorf((a - 1) * sqrtf(2.0f));
     if (island_count_patch == n) {
@@ -1090,8 +1081,7 @@ static void pack_island_box_pack_2d(const Span<std::unique_ptr<UVAABBIsland>> aa
                                     rctf *r_extent)
 {
   /* Allocate storage. */
-  BoxPack *box_array = static_cast<BoxPack *>(
-      MEM_mallocN(sizeof(*box_array) * aabbs.size(), __func__));
+  BoxPack *box_array = MEM_malloc_arrayN<BoxPack>(size_t(aabbs.size()), __func__);
 
   /* Prepare for box_pack_2d. */
   for (const int64_t i : aabbs.index_range()) {
@@ -1152,8 +1142,8 @@ class Occupancy {
                      const float margin,
                      const bool write) const;
 
-  int bitmap_radix;              /* Width and Height of `bitmap`. */
-  float bitmap_scale_reciprocal; /* == 1.0f / `bitmap_scale`. */
+  int bitmap_radix = 800;               /* Width and Height of `bitmap`. */
+  float bitmap_scale_reciprocal = 1.0f; /* == 1.0f / `bitmap_scale`. */
  private:
   mutable Array<float> bitmap_;
 
@@ -1164,10 +1154,8 @@ class Occupancy {
   const float terminal = 1048576.0f; /* 4 * bitmap_radix < terminal < INT_MAX / 4. */
 };
 
-Occupancy::Occupancy(const float initial_scale)
-    : bitmap_radix(800), bitmap_(bitmap_radix * bitmap_radix, false)
+Occupancy::Occupancy(const float initial_scale) : bitmap_(bitmap_radix * bitmap_radix, false)
 {
-  bitmap_scale_reciprocal = 1.0f; /* lint, prevent uninitialized memory access. */
   increase_scale();
   bitmap_scale_reciprocal = bitmap_radix / initial_scale; /* Actually set the value. */
 }
@@ -1320,7 +1308,7 @@ float Occupancy::trace_island(const PackIsland *island,
   float2 pivot_transformed;
   mul_v2_m2v2(pivot_transformed, matrix, island->pivot_);
 
-  /* TODO: Support `ED_UVPACK_SHAPE_AABB`. */
+  /* TODO: Support #ED_UVPACK_SHAPE_AABB. */
 
   /* TODO: If the PackIsland has the same shape as it's convex hull, we can trace the hull instead
    * of the individual triangles, which is faster and provides a better value of `extent`.
@@ -1563,11 +1551,8 @@ static bool rotate_inside_square(const Span<std::unique_ptr<UVAABBIsland>> islan
   }
 
   /* Now we have all the points in the correct space, compute the 2D convex hull. */
-  const float(*source)[2] = reinterpret_cast<const float(*)[2]>(square_finder.points.data());
-
   square_finder.indices.resize(square_finder.points.size()); /* Allocate worst-case. */
-  int convex_size = BLI_convexhull_2d(
-      source, int(square_finder.points.size()), square_finder.indices.data());
+  int convex_size = BLI_convexhull_2d(square_finder.points, square_finder.indices.data());
   square_finder.indices.resize(convex_size); /* Resize to actual size. */
 
   /* Run the computation to find the best angle. (Slow!) */
@@ -1797,7 +1782,7 @@ static int64_t pack_island_xatlas(const Span<std::unique_ptr<UVAABBIsland>> isla
  * \param margin: Add `margin` units around islands before packing.
  * \param params: Additional parameters. Scale and margin information is ignored.
  * \param r_phis: Island layout information will be written here.
- * \return Size of square covering the resulting packed UVs. The maximum `u` or `v` co-ordinate.
+ * \return Size of square covering the resulting packed UVs. The maximum `u` or `v` coordinate.
  */
 static float pack_islands_scale_margin(const Span<PackIsland *> islands,
                                        const float scale,

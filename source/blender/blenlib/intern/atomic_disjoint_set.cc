@@ -2,6 +2,12 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bli
+ */
+
+#include <algorithm>
+
 #include "BLI_atomic_disjoint_set.hh"
 #include "BLI_enumerable_thread_specific.hh"
 #include "BLI_map.hh"
@@ -24,11 +30,7 @@ static void update_first_occurrence(Map<int, int> &map, const int root, const in
   map.add_or_modify(
       root,
       [&](int *first_occurrence) { *first_occurrence = index; },
-      [&](int *first_occurrence) {
-        if (index < *first_occurrence) {
-          *first_occurrence = index;
-        }
-      });
+      [&](int *first_occurrence) { *first_occurrence = std::min(index, *first_occurrence); });
 }
 
 int AtomicDisjointSet::calc_reduced_ids(MutableSpan<int> result) const

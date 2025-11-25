@@ -19,16 +19,6 @@ struct Image;
 struct MTex;
 struct Material;
 
-typedef struct BrushClone {
-  /** Image for clone tool. */
-  struct Image *image;
-  /** Offset of clone image from canvas. */
-  float offset[2];
-  /** Transparency for drawing of clone image. */
-  float alpha;
-  char _pad[4];
-} BrushClone;
-
 typedef struct BrushGpencilSettings {
   /** Amount of smoothing to apply to newly created strokes. */
   float draw_smoothfac;
@@ -114,6 +104,9 @@ typedef struct BrushGpencilSettings {
   /** Randomness for Value. */
   float random_value;
 
+  int color_jitter_flag;
+  char _pad1[4];
+
   /** Factor to extend stroke extremes using fill tool. */
   float fill_extend_fac;
   /** Number of pixels to dilate fill area. */
@@ -171,26 +164,22 @@ typedef struct BrushCurvesSculptSettings {
  * saved in the asset library should be followed by a #BKE_brush_tag_unsaved_changes() call.
  */
 typedef struct Brush {
+#ifdef __cplusplus
   DNA_DEFINE_CXX_METHODS(Brush)
+  /** See #ID_Type comment for why this is here. */
+  static constexpr ID_Type id_type = ID_BR;
+#endif
 
   ID id;
 
-  struct BrushClone clone;
-  /** Falloff curve. */
-  struct CurveMapping *curve;
+  struct CurveMapping *curve_distance_falloff;
   struct MTex mtex;
   struct MTex mask_mtex;
 
-  struct Brush *toggle_brush;
-
-  struct ImBuf *icon_imbuf;
   PreviewImage *preview;
   /** Color gradient. */
   struct ColorBand *gradient;
   struct PaintCurve *paint_curve;
-
-  /** 1024 = FILE_MAX. */
-  char icon_filepath[1024];
 
   float normal_weight;
   /** Rake actual data (not texture), used for sculpt. */
@@ -229,7 +218,19 @@ typedef struct Brush {
   float rate;
 
   /** Color. */
-  float rgb[3];
+  float color[3];
+  int color_jitter_flag;
+  float hsv_jitter[3];
+
+  /** Color jitter pressure curves. */
+  struct CurveMapping *curve_rand_hue;
+  struct CurveMapping *curve_rand_saturation;
+  struct CurveMapping *curve_rand_value;
+
+  struct CurveMapping *curve_size;
+  struct CurveMapping *curve_strength;
+  struct CurveMapping *curve_jitter;
+
   /** Opacity. */
   float alpha;
   /** Hardness */
@@ -250,7 +251,11 @@ typedef struct Brush {
   float tip_scale_x;
 
   /** Background color. */
-  float secondary_rgb[3];
+  float secondary_color[3];
+
+  /* Deprecated sRGB color for forward compatibility. */
+  float rgb[3] DNA_DEPRECATED;
+  float secondary_rgb[3] DNA_DEPRECATED;
 
   /** Rate */
   float dash_ratio;
@@ -298,7 +303,7 @@ typedef struct Brush {
   char gpencil_weight_brush_type;
   /** Active curves sculpt brush type (#eBrushCurvesSculptType). */
   char curves_sculpt_brush_type;
-  char _pad1[6];
+  char _pad1[10];
 
   float autosmooth_factor;
 
@@ -316,9 +321,21 @@ typedef struct Brush {
   /** Affectable height of brush (layer height for layer tool, i.e.). */
   float height;
 
+  /* Plane Brush */
+  float plane_height;
+  float plane_depth;
+  float stabilize_normal;
+  float stabilize_plane;
+  int plane_inversion_mode;
+
   float texture_sample_bias;
 
-  int curve_preset;
+  /**
+   * This preset is used to specify an exact function used for the distance falloff instead
+   * of doing a Bezier spline evaluation via CurveMapping for performance reasons.
+   * \see #eBrushCurvePreset and #eCurveMappingPreset
+   */
+  int curve_distance_falloff_preset;
 
   /* Maximum distance to search fake neighbors from a vertex. */
   float disconnected_distance_max;
@@ -385,7 +402,7 @@ typedef struct Brush {
   int mask_overlay_alpha;
   int cursor_overlay_alpha;
 
-  float unprojected_radius;
+  float unprojected_size;
 
   /* soften/sharpen */
   float sharp_threshold;
@@ -414,6 +431,8 @@ typedef struct Brush {
 } Brush;
 
 /* Struct to hold palette colors for sorting. */
+#
+#
 typedef struct tPaletteColorHSV {
   float rgb[3];
   float value;
@@ -424,12 +443,21 @@ typedef struct tPaletteColorHSV {
 
 typedef struct PaletteColor {
   struct PaletteColor *next, *prev;
-  /* two values, one to store rgb, other to store values for sculpt/weight */
-  float rgb[3];
+  /* Two values, one to store color, other to store values for sculpt/weight. */
+  float color[3];
   float value;
+
+  /* For forward compatibility. */
+  float rgb[3] DNA_DEPRECATED;
+  float _pad;
 } PaletteColor;
 
 typedef struct Palette {
+#ifdef __cplusplus
+  /** See #ID_Type comment for why this is here. */
+  static constexpr ID_Type id_type = ID_PAL;
+#endif
+
   ID id;
 
   /** Pointer to individual colors. */
@@ -447,6 +475,11 @@ typedef struct PaintCurvePoint {
 } PaintCurvePoint;
 
 typedef struct PaintCurve {
+#ifdef __cplusplus
+  /** See #ID_Type comment for why this is here. */
+  static constexpr ID_Type id_type = ID_PC;
+#endif
+
   ID id;
   /** Points of curve. */
   PaintCurvePoint *points;

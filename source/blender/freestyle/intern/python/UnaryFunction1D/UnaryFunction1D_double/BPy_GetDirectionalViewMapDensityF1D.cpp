@@ -14,10 +14,6 @@
 
 #include "BLI_sys_types.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -66,7 +62,6 @@ PyDoc_STRVAR(
     "   :return: the density evaluated for an Interface1D in of the\n"
     "      steerable viewmaps image.\n"
     "   :rtype: float\n");
-
 static int GetDirectionalViewMapDensityF1D___init__(BPy_GetDirectionalViewMapDensityF1D *self,
                                                     PyObject *args,
                                                     PyObject *kwds)
@@ -131,7 +126,3 @@ PyTypeObject GetDirectionalViewMapDensityF1D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

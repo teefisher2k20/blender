@@ -10,12 +10,11 @@
 
 #pragma once
 
-#include "MEM_guardedalloc.h"
-
 #include "BKE_global.hh"
 
 #include "GPU_batch.hh"
 #include "GPU_context.hh"
+#include "GPU_texture_pool.hh"
 
 #include "gpu_debug_private.hh"
 #include "gpu_framebuffer_private.hh"
@@ -38,8 +37,6 @@ class Context {
   StateManager *state_manager = nullptr;
   Immediate *imm = nullptr;
 
-  ShaderCompiler *compiler = nullptr;
-
   /**
    * All 4 window frame-buffers.
    * None of them are valid in an off-screen context.
@@ -54,6 +51,7 @@ class Context {
 
   DebugStack debug_stack;
   bool debug_is_capturing = false;
+  bool debug_pipeline_creation = false;
 
   /* GPUContext counter used to assign a unique ID to each GPUContext.
    * NOTE(Metal): This is required by the Metal Backend, as a bug exists in the global OS shader
@@ -64,10 +62,22 @@ class Context {
   int context_id = 0;
 
   /* Used as a stack. Each render_begin/end pair will push pop from the stack. */
-  Vector<GPUStorageBuf *> printf_buf;
+  Vector<StorageBuf *> printf_buf;
 
-  /** Dummy triangle batch for polyline workaround. */
-  Batch *polyline_batch = nullptr;
+  /** Dummy VBO to feed the procedural batches. */
+  VertBuf *dummy_vbo = nullptr;
+  /** Dummy batches for procedural geometry rendering. */
+  Batch *procedural_points_batch = nullptr;
+  Batch *procedural_lines_batch = nullptr;
+  Batch *procedural_triangles_batch = nullptr;
+  Batch *procedural_triangle_strips_batch = nullptr;
+
+  /** Texture pool used to recycle temporary texture (or render target) memory. */
+  TexturePool *texture_pool = nullptr;
+
+  /** Global state to avoid setting the srgb builtin uniform for every shader bind. */
+  int shader_builtin_srgb_transform = 0;
+  bool shader_builtin_srgb_is_dirty = false;
 
  protected:
   /** Thread on which this context is active. */
@@ -94,8 +104,8 @@ class Context {
 
   virtual void memory_statistics_get(int *r_total_mem, int *r_free_mem) = 0;
 
-  virtual void debug_group_begin(const char * /*name*/, int /*index*/){};
-  virtual void debug_group_end(){};
+  virtual void debug_group_begin(const char * /*name*/, int /*index*/) {};
+  virtual void debug_group_end() {};
 
   /* Returns true if capture successfully started. */
   virtual bool debug_capture_begin(const char *title) = 0;
@@ -111,7 +121,11 @@ class Context {
 
   bool is_active_on_thread();
 
-  Batch *polyline_batch_get();
+  VertBuf *dummy_vbo_get();
+  Batch *procedural_points_batch_get();
+  Batch *procedural_lines_batch_get();
+  Batch *procedural_triangles_batch_get();
+  Batch *procedural_triangle_strips_batch_get();
 
   /* When using `--debug-gpu`, assert that the shader fragments write to all the writable
    * attachments of the bound frame-buffer. */
@@ -121,7 +135,7 @@ class Context {
       return;
     }
 
-    if (!(state_manager->state.write_mask & eGPUWriteMask::GPU_WRITE_COLOR)) {
+    if (!(state_manager->state.write_mask & GPUWriteMask::GPU_WRITE_COLOR)) {
       return;
     }
 
@@ -138,9 +152,11 @@ class Context {
   }
 
  protected:
-  /* Derived classes should call this from the destructor, as freeing framebuffers may need the
-   * derived context to be valid. */
-  void free_framebuffers();
+  /**
+   * Derived classes should call this from the destructor,
+   * as freeing textures and frame-buffers may need the derived context to be valid.
+   */
+  void free_resources();
 };
 
 /* Syntactic sugar. */

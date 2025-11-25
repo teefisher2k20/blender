@@ -12,10 +12,6 @@
 #include "../../BPy_Convert.h"
 #include "../../BPy_IntegrationType.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -56,7 +52,6 @@ PyDoc_STRVAR(
     "   :type inter: :class:`freestyle.types.Interface1D`\n"
     "   :return: The density evaluated for an Interface1D.\n"
     "   :rtype: float\n");
-
 static int DensityF1D___init__(BPy_DensityF1D *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"sigma", "integration_type", "sampling", nullptr};
@@ -118,7 +113,3 @@ PyTypeObject DensityF1D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

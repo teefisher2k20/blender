@@ -14,6 +14,10 @@
 #  include "../generic/py_capi_utils.hh"
 #endif
 
+namespace blender::gpu {
+class Shader;
+}  // namespace blender::gpu
+
 struct GPUShaderCreateInfo;
 struct GPUStageInterfaceInfo;
 
@@ -29,12 +33,12 @@ extern PyTypeObject BPyGPUShader_Type;
 
 struct BPyGPUShader {
   PyObject_VAR_HEAD
-  struct GPUShader *shader;
+  blender::gpu::Shader *shader;
   bool is_builtin;
 };
 
-PyObject *BPyGPUShader_CreatePyObject(struct GPUShader *shader, bool is_builtin);
-PyObject *bpygpu_shader_init();
+[[nodiscard]] PyObject *BPyGPUShader_CreatePyObject(blender::gpu::Shader *shader, bool is_builtin);
+[[nodiscard]] PyObject *bpygpu_shader_init();
 
 /* gpu_py_shader_create_info.cc */
 
@@ -68,6 +72,6 @@ struct BPyGPUShaderCreateInfo {
   size_t constants_total_size;
 };
 
-PyObject *BPyGPUStageInterfaceInfo_CreatePyObject(GPUStageInterfaceInfo *interface);
-PyObject *BPyGPUShaderCreateInfo_CreatePyObject(GPUShaderCreateInfo *info);
-bool bpygpu_shader_is_polyline(GPUShader *shader);
+[[nodiscard]] PyObject *BPyGPUStageInterfaceInfo_CreatePyObject(GPUStageInterfaceInfo *interface);
+[[nodiscard]] PyObject *BPyGPUShaderCreateInfo_CreatePyObject(GPUShaderCreateInfo *info);
+[[nodiscard]] bool bpygpu_shader_is_polyline(blender::gpu::Shader *shader);

@@ -12,7 +12,7 @@
 
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "BLT_translation.hh"
 
@@ -86,19 +86,19 @@ static void edbm_inset_update_header(wmOperator *op, bContext *C)
       BKE_unit_value_as_string(flts_str,
                                NUM_STR_REP_LEN,
                                RNA_float_get(op->ptr, "thickness"),
-                               4,
+                               -4,
                                B_UNIT_LENGTH,
                                sce->unit,
                                true);
       BKE_unit_value_as_string(flts_str + NUM_STR_REP_LEN,
                                NUM_STR_REP_LEN,
                                RNA_float_get(op->ptr, "depth"),
-                               4,
+                               -4,
                                B_UNIT_LENGTH,
                                sce->unit,
                                true);
     }
-    SNPRINTF(msg, IFACE_("Thickness: %s, Depth: %s"), flts_str, flts_str + NUM_STR_REP_LEN);
+    SNPRINTF_UTF8(msg, IFACE_("Thickness: %s, Depth: %s"), flts_str, flts_str + NUM_STR_REP_LEN);
     ED_area_status_text(area, msg);
   }
 
@@ -122,8 +122,7 @@ static bool edbm_inset_init(bContext *C, wmOperator *op, const bool is_modal)
     RNA_float_set(op->ptr, "depth", 0.0f);
   }
 
-  op->customdata = opdata = static_cast<InsetData *>(
-      MEM_mallocN(sizeof(InsetData), "inset_operator_data"));
+  op->customdata = opdata = MEM_mallocN<InsetData>("inset_operator_data");
 
   uint objects_used_len = 0;
 
@@ -201,14 +200,13 @@ static void edbm_inset_exit(bContext *C, wmOperator *op)
   ED_workspace_status_text(C, nullptr);
 
   MEM_SAFE_FREE(opdata->ob_store);
-  MEM_SAFE_FREE(op->customdata);
+  MEM_freeN(opdata);
+  op->customdata = nullptr;
 }
 
 static void edbm_inset_cancel(bContext *C, wmOperator *op)
 {
-  InsetData *opdata;
-
-  opdata = static_cast<InsetData *>(op->customdata);
+  InsetData *opdata = static_cast<InsetData *>(op->customdata);
   if (opdata->is_modal) {
     for (uint ob_index = 0; ob_index < opdata->ob_store_len; ob_index++) {
       Object *obedit = opdata->ob_store[ob_index].ob;
@@ -318,7 +316,7 @@ static bool edbm_inset_calc(wmOperator *op)
   return changed;
 }
 
-static int edbm_inset_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus edbm_inset_exec(bContext *C, wmOperator *op)
 {
   if (!edbm_inset_init(C, op, false)) {
     return OPERATOR_CANCELLED;
@@ -333,7 +331,7 @@ static int edbm_inset_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int edbm_inset_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus edbm_inset_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
   RegionView3D *rv3d = CTX_wm_region_view3d(C);
   InsetData *opdata;
@@ -349,7 +347,9 @@ static int edbm_inset_invoke(bContext *C, wmOperator *op, const wmEvent *event)
   opdata->launch_event = WM_userdef_event_type_from_keymap_type(event->type);
 
   /* initialize mouse values */
-  if (!calculateTransformCenter(C, V3D_AROUND_CENTER_MEDIAN, center_3d, opdata->mcenter)) {
+  if (!blender::ed::transform::calculateTransformCenter(
+          C, V3D_AROUND_CENTER_MEDIAN, center_3d, opdata->mcenter))
+  {
     /* in this case the tool will likely do nothing,
      * ideally this will never happen and should be checked for above */
     opdata->mcenter[0] = opdata->mcenter[1] = 0;
@@ -367,7 +367,7 @@ static int edbm_inset_invoke(bContext *C, wmOperator *op, const wmEvent *event)
   return OPERATOR_RUNNING_MODAL;
 }
 
-static int edbm_inset_modal(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus edbm_inset_modal(bContext *C, wmOperator *op, const wmEvent *event)
 {
   InsetData *opdata = static_cast<InsetData *>(op->customdata);
   const bool has_numinput = hasNumInput(&opdata->num_input);
@@ -545,6 +545,9 @@ static int edbm_inset_modal(bContext *C, wmOperator *op, const wmEvent *event)
         handled = true;
       }
       break;
+    default: {
+      break;
+    }
   }
 
   /* Modal numinput inactive, try to handle numeric inputs last... */
@@ -575,7 +578,7 @@ void MESH_OT_inset(wmOperatorType *ot)
   ot->idname = "MESH_OT_inset";
   ot->description = "Inset new faces into selected faces";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = edbm_inset_invoke;
   ot->modal = edbm_inset_modal;
   ot->exec = edbm_inset_exec;

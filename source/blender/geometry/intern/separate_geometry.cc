@@ -51,7 +51,7 @@ static std::optional<bke::CurvesGeometry> separate_curves_selection(
 }
 
 /** \return std::nullopt if the geometry should remain unchanged. */
-static std::optional<PointCloud *> separate_point_cloud_selection(
+static std::optional<PointCloud *> separate_pointcloud_selection(
     const PointCloud &src_pointcloud,
     const fn::Field<bool> &selection_field,
     const bke::AttributeFilter &attribute_filter)
@@ -182,7 +182,7 @@ void separate_geometry(bke::GeometrySet &geometry_set,
   bool some_valid_domain = false;
   if (const PointCloud *points = geometry_set.get_pointcloud()) {
     if (domain == AttrDomain::Point) {
-      std::optional<PointCloud *> dst_points = separate_point_cloud_selection(
+      std::optional<PointCloud *> dst_points = separate_pointcloud_selection(
           *points, selection, attribute_filter);
       if (dst_points) {
         geometry_set.replace_pointcloud(*dst_points);
@@ -195,27 +195,6 @@ void separate_geometry(bke::GeometrySet &geometry_set,
       std::optional<Mesh *> dst_mesh = separate_mesh_selection(
           *mesh, selection, domain, mode, attribute_filter);
       if (dst_mesh) {
-        if (*dst_mesh) {
-          const char *active_layer = CustomData_get_active_layer_name(&mesh->corner_data,
-                                                                      CD_PROP_FLOAT2);
-          if (active_layer != nullptr) {
-            int id = CustomData_get_named_layer(
-                &((*dst_mesh)->corner_data), CD_PROP_FLOAT2, active_layer);
-            if (id >= 0) {
-              CustomData_set_layer_active(&((*dst_mesh)->corner_data), CD_PROP_FLOAT2, id);
-            }
-          }
-
-          const char *render_layer = CustomData_get_render_layer_name(&mesh->corner_data,
-                                                                      CD_PROP_FLOAT2);
-          if (render_layer != nullptr) {
-            int id = CustomData_get_named_layer(
-                &((*dst_mesh)->corner_data), CD_PROP_FLOAT2, render_layer);
-            if (id >= 0) {
-              CustomData_set_layer_render(&((*dst_mesh)->corner_data), CD_PROP_FLOAT2, id);
-            }
-          }
-        }
         geometry_set.replace_mesh(*dst_mesh);
       }
       some_valid_domain = true;

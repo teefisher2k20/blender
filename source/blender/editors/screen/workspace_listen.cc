@@ -2,7 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "BLI_listbase.h"
+
 #include "BKE_context.hh"
+#include "BKE_viewer_path.hh"
 
 #include "ED_screen.hh"
 #include "ED_viewer_path.hh"

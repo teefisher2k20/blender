@@ -12,10 +12,6 @@
 #include "../Interface1D/BPy_Stroke.h"
 #include "BPy_Interface0DIterator.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -46,8 +42,7 @@ PyDoc_STRVAR(
     "   default constructor or the copy constructor.\n"
     "\n"
     "   :arg brother: A StrokeVertexIterator object.\n"
-    "   :type brother: :class:`StrokeVertexIterator`");
-
+    "   :type brother: :class:`StrokeVertexIterator`\n");
 static int StrokeVertexIterator_init(BPy_StrokeVertexIterator *self,
                                      PyObject *args,
                                      PyObject *kwds)
@@ -144,8 +139,7 @@ PyDoc_STRVAR(
     "   Returns a copy of an incremented StrokeVertexIterator.\n"
     "\n"
     "   :return: A StrokeVertexIterator pointing the next StrokeVertex.\n"
-    "   :rtype: :class:`StrokeVertexIterator`");
-
+    "   :rtype: :class:`StrokeVertexIterator`\n");
 static PyObject *StrokeVertexIterator_incremented(BPy_StrokeVertexIterator *self)
 {
   if (self->sv_it->isEnd()) {
@@ -165,8 +159,7 @@ PyDoc_STRVAR(
     "   Returns a copy of a decremented StrokeVertexIterator.\n"
     "\n"
     "   :return: A StrokeVertexIterator pointing the previous StrokeVertex.\n"
-    "   :rtype: :class:`StrokeVertexIterator`");
-
+    "   :rtype: :class:`StrokeVertexIterator`\n");
 static PyObject *StrokeVertexIterator_decremented(BPy_StrokeVertexIterator *self)
 {
   if (self->sv_it->isBegin()) {
@@ -187,12 +180,21 @@ PyDoc_STRVAR(
     "   reversed order.\n"
     "\n"
     "   :return: A StrokeVertexIterator traversing stroke vertices backward.\n"
-    "   :rtype: :class:`StrokeVertexIterator`");
-
+    "   :rtype: :class:`StrokeVertexIterator`\n");
 static PyObject *StrokeVertexIterator_reversed(BPy_StrokeVertexIterator *self)
 {
   return BPy_StrokeVertexIterator_from_StrokeVertexIterator(*self->sv_it, !self->reversed);
 }
+
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
+#endif
 
 static PyMethodDef BPy_StrokeVertexIterator_methods[] = {
     {"incremented",
@@ -210,6 +212,14 @@ static PyMethodDef BPy_StrokeVertexIterator_methods[] = {
     {nullptr, nullptr, 0, nullptr},
 };
 
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
+#endif
+
 /*----------------------StrokeVertexIterator get/setters ----------------------------*/
 
 PyDoc_STRVAR(
@@ -217,8 +227,7 @@ PyDoc_STRVAR(
     StrokeVertexIterator_object_doc,
     "The StrokeVertex object currently pointed to by this iterator.\n"
     "\n"
-    ":type: :class:`StrokeVertex`");
-
+    ":type: :class:`StrokeVertex`\n");
 static PyObject *StrokeVertexIterator_object_get(BPy_StrokeVertexIterator *self,
                                                  void * /*closure*/)
 {
@@ -238,8 +247,7 @@ PyDoc_STRVAR(
     StrokeVertexIterator_t_doc,
     "The curvilinear abscissa of the current point.\n"
     "\n"
-    ":type: float");
-
+    ":type: float\n");
 static PyObject *StrokeVertexIterator_t_get(BPy_StrokeVertexIterator *self, void * /*closure*/)
 {
   return PyFloat_FromDouble(self->sv_it->t());
@@ -250,8 +258,7 @@ PyDoc_STRVAR(
     StrokeVertexIterator_u_doc,
     "The point parameter at the current point in the stroke (0 <= u <= 1).\n"
     "\n"
-    ":type: float");
-
+    ":type: float\n");
 static PyObject *StrokeVertexIterator_u_get(BPy_StrokeVertexIterator *self, void * /*closure*/)
 {
   return PyFloat_FromDouble(self->sv_it->u());
@@ -263,12 +270,21 @@ PyDoc_STRVAR(
     "True if the iterator points to the last valid element.\n"
     "For its counterpart (pointing to the first valid element), use it.is_begin.\n"
     "\n"
-    ":type: bool");
-
+    ":type: bool\n");
 static PyObject *StrokeVertexIterator_at_last_get(BPy_StrokeVertexIterator *self)
 {
   return PyBool_from_bool(self->sv_it->atLast());
 }
+
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
+#endif
 
 static PyGetSetDef BPy_StrokeVertexIterator_getseters[] = {
     {"object",
@@ -293,6 +309,14 @@ static PyGetSetDef BPy_StrokeVertexIterator_getseters[] = {
      nullptr},
     {nullptr, nullptr, nullptr, nullptr, nullptr} /* Sentinel */
 };
+
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
+#endif
 
 /*-----------------------BPy_StrokeVertexIterator type definition ------------------------------*/
 
@@ -338,7 +362,3 @@ PyTypeObject StrokeVertexIterator_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

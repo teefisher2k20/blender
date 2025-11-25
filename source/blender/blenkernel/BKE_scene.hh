@@ -7,15 +7,19 @@
  * \ingroup bke
  */
 
+#include "BLI_function_ref.hh"
 #include "BLI_sys_types.h"
+
+#include "BKE_duplilist.hh"
+
+#include "DNA_userdef_enums.h"
 
 struct Base;
 struct Collection;
 struct Depsgraph;
-struct DupliObject;
+struct ImageFormatData;
 struct GHash;
 struct Main;
-struct ListBase;
 struct Object;
 struct RenderData;
 struct Scene;
@@ -73,8 +77,9 @@ Object *BKE_scene_object_find_by_name(const Scene *scene, const char *name);
  * Define struct here, so no need to bother with alloc/free it.
  */
 struct SceneBaseIter {
-  ListBase *duplilist;
+  DupliList duplilist;
   DupliObject *dupob;
+  int dupob_index;
   float omat[4][4];
   Object *dupli_refob;
   int phase;
@@ -118,17 +123,40 @@ Scene *BKE_scene_set_name(Main *bmain, const char *name);
 ToolSettings *BKE_toolsettings_copy(ToolSettings *toolsettings, int flag);
 void BKE_toolsettings_free(ToolSettings *toolsettings);
 
-Scene *BKE_scene_duplicate(Main *bmain, Scene *sce, eSceneCopyMethod type);
+Scene *BKE_scene_duplicate(Main *bmain,
+                           Scene *sce,
+                           eSceneCopyMethod type,
+                           eDupli_ID_Flags duplicate_flags,
+                           /*eLibIDDuplicateFlags*/ uint duplicate_options);
 void BKE_scene_groups_relink(Scene *sce);
 
+/**
+ * Check if the given scene can be deleted, i.e. if there is at least one other local Scene in the
+ * given Main.
+ */
 bool BKE_scene_can_be_removed(const Main *bmain, const Scene *scene);
+/**
+ * Find a replacement scene for the given one (typically when the given scene is going to be
+ * deleted).
+ *
+ * By default, it will simply return one of its nearest neighbors in Main (the previous one if
+ * possible).
+ *
+ * If a validation callback is provided, only a scene which returns `true` when passed to this
+ * callback will be returned. Scenes before the given one are checked first, in reversed order (so
+ * starting from the given one).
+ *
+ * \returns A valid replacement scene, or nullptr if no suitable replacement scene was found.
+ */
+Scene *BKE_scene_find_replacement(
+    const Main &bmain,
+    const Scene &scene,
+    blender::FunctionRef<bool(const Scene &scene)> scene_validate_cb = nullptr);
 
 bool BKE_scene_has_view_layer(const Scene *scene, const ViewLayer *layer);
 Scene *BKE_scene_find_from_collection(const Main *bmain, const Collection *collection);
 
-#ifdef DURIAN_CAMERA_SWITCH
-Object *BKE_scene_camera_switch_find(Scene *scene); /* DURIAN_CAMERA_SWITCH */
-#endif
+Object *BKE_scene_camera_switch_find(Scene *scene);
 bool BKE_scene_camera_switch_update(Scene *scene);
 
 const char *BKE_scene_find_marker_name(const Scene *scene, int frame);
@@ -138,7 +166,7 @@ const char *BKE_scene_find_marker_name(const Scene *scene, int frame);
  */
 const char *BKE_scene_find_last_marker_name(const Scene *scene, int frame);
 
-int BKE_scene_frame_snap_by_seconds(Scene *scene, double interval_in_seconds, int frame);
+float BKE_scene_frame_snap_by_seconds(const Scene *scene, double interval_in_seconds, float frame);
 
 /**
  * Checks for cycle, returns true if it's all OK.
@@ -220,14 +248,6 @@ bool BKE_scene_uses_cycles(const Scene *scene);
 
 bool BKE_scene_uses_shader_previews(const Scene *scene);
 
-/**
- * Return whether the Cycles experimental feature is enabled. It is invalid to call without first
- * ensuring that Cycles is the active render engine (e.g. with #BKE_scene_uses_cycles).
- *
- * \note We cannot use `const` as RNA_id_pointer_create is not using a const ID.
- */
-bool BKE_scene_uses_cycles_experimental_features(Scene *scene);
-
 void BKE_scene_copy_data_eevee(Scene *sce_dst, const Scene *sce_src);
 
 void BKE_scene_disable_color_management(Scene *scene);
@@ -279,9 +299,17 @@ void BKE_scene_multiview_view_prefix_get(Scene *scene,
                                          const char *filepath,
                                          char *r_prefix,
                                          const char **r_ext);
-void BKE_scene_multiview_videos_dimensions_get(
-    const RenderData *rd, size_t width, size_t height, size_t *r_width, size_t *r_height);
-int BKE_scene_multiview_num_videos_get(const RenderData *rd);
+void BKE_scene_multiview_videos_dimensions_get(const RenderData *rd,
+                                               const ImageFormatData *imf,
+                                               size_t width,
+                                               size_t height,
+                                               size_t *r_width,
+                                               size_t *r_height);
+int BKE_scene_multiview_num_videos_get(const RenderData *rd, const ImageFormatData *imf);
+/**
+ * Calculate the final pixels-per-meter, from the scenes PPM & aspect data.
+ */
+void BKE_scene_ppm_get(const RenderData *rd, double r_ppm[2]);
 
 /* depsgraph */
 void BKE_scene_allocate_depsgraph_hash(Scene *scene);

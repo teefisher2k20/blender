@@ -167,9 +167,22 @@ class STORM_HYDRA_LIGHT_PT_light(Panel):
         layout.use_property_decorate = False
 
         main_col = layout.column()
+        heading = main_col.column(align=True, heading="Temperature")
+        row = heading.column(align=True).row(align=True)
+        row.prop(light, "use_temperature", text="")
+        sub = row.row()
+        sub.active = light.use_temperature
+        sub.prop(light, "temperature", text="")
 
-        main_col.prop(light, "color")
+        if light.use_temperature:
+            main_col.prop(light, "color", text="Tint")
+        else:
+            main_col.prop(light, "color", text="Color")
+
+        main_col = layout.column()
         main_col.prop(light, "energy")
+        main_col.prop(light, "exposure")
+        main_col.prop(light, "normalize")
         main_col.separator()
 
         if light.type == 'POINT':
@@ -178,7 +191,7 @@ class STORM_HYDRA_LIGHT_PT_light(Panel):
 
         elif light.type == 'SPOT':
             col = main_col.column(align=True)
-            col.prop(light, 'spot_size', slider=True)
+            col.prop(light, 'spot_size', text="Angle", slider=True)
             col.prop(light, 'spot_blend', slider=True)
 
             main_col.prop(light, 'show_cone')
@@ -232,7 +245,6 @@ def get_panels():
         'EEVEE_MATERIAL_PT_context_material',
         'EEVEE_MATERIAL_PT_surface',
         'EEVEE_MATERIAL_PT_volume',
-        # TODO: move to `EEVEE_NEXT_MATERIAL_PT_settings`.
         'EEVEE_MATERIAL_PT_settings',
         'EEVEE_WORLD_PT_surface',
     }
@@ -246,8 +258,7 @@ def get_panels():
                 'BLENDER_RENDER' in compat_engines and
                 panel_cls.__name__ not in exclude_panels
             ) or (
-                # NOTE: once `EEVEE_NEXT_MATERIAL_PT_settings` has been removed, `BLENDER_EEVEE` can be removed too.
-                ('BLENDER_EEVEE' in compat_engines or 'BLENDER_EEVEE_NEXT' in compat_engines) and
+                'BLENDER_EEVEE' in compat_engines and
                 panel_cls.__name__ in include_eevee_panels
             )
         ):

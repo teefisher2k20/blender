@@ -11,6 +11,7 @@
 #include "MEM_guardedalloc.h"
 
 #include "DNA_brush_types.h"
+#include "DNA_userdef_types.h"
 
 #include "BKE_paint.hh"
 #include "BKE_undo_system.hh"
@@ -30,11 +31,15 @@
 /** \name Undo Conversion
  * \{ */
 
+namespace {
+
 struct UndoCurve {
   PaintCurvePoint *points; /* points of curve */
   int tot_points;
   int add_index;
 };
+
+}  // namespace
 
 static void undocurve_from_paintcurve(UndoCurve *uc, const PaintCurve *pc)
 {

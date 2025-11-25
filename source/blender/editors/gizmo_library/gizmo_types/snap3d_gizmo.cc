@@ -12,9 +12,6 @@
  * \brief Snap gizmo which exposes the location, normal and index in the props.
  */
 
-#include "MEM_guardedalloc.h"
-
-#include "BLI_math_color.h"
 #include "BLI_math_vector.h"
 
 #include "BKE_context.hh"
@@ -43,7 +40,8 @@ struct SnapGizmo3D {
 /** \name ED_gizmo_library specific API
  * \{ */
 
-SnapObjectContext *ED_gizmotypes_snap_3d_context_ensure(Scene *scene, wmGizmo * /*gz*/)
+blender::ed::transform::SnapObjectContext *ED_gizmotypes_snap_3d_context_ensure(Scene *scene,
+                                                                                wmGizmo * /*gz*/)
 {
   return ED_view3d_cursor_snap_context_ensure(scene);
 }
@@ -72,11 +70,12 @@ void ED_gizmotypes_snap_3d_data_get(const bContext *C,
     const wmEvent *event = CTX_wm_window(C)->eventstate;
     if (event) {
       ARegion *region = CTX_wm_region(C);
-      int x = event->xy[0] - region->winrct.xmin;
-      int y = event->xy[1] - region->winrct.ymin;
-
+      const blender::int2 mval = {
+          event->xy[0] - region->winrct.xmin,
+          event->xy[1] - region->winrct.ymin,
+      };
       SnapGizmo3D *snap_gizmo = (SnapGizmo3D *)gz;
-      ED_view3d_cursor_snap_data_update(snap_gizmo->snap_state, C, region, x, y);
+      ED_view3d_cursor_snap_data_update(snap_gizmo->snap_state, C, region, mval);
     }
   }
 
@@ -259,19 +258,20 @@ static int snap_gizmo_test_select(bContext *C, wmGizmo *gz, const int mval[2])
   const ARegion *region = CTX_wm_region(C);
 
   /* Snap values are updated too late at the cursor. Be sure to update ahead of time. */
-  int x, y;
+  blender::int2 mval_copy;
   {
     const wmEvent *event = CTX_wm_window(C)->eventstate;
     if (event) {
-      x = event->xy[0] - region->winrct.xmin;
-      y = event->xy[1] - region->winrct.ymin;
+      mval_copy = {
+          event->xy[0] - region->winrct.xmin,
+          event->xy[1] - region->winrct.ymin,
+      };
     }
     else {
-      x = mval[0];
-      y = mval[1];
+      mval_copy = mval;
     }
   }
-  ED_view3d_cursor_snap_data_update(snap_gizmo->snap_state, C, region, x, y);
+  ED_view3d_cursor_snap_data_update(snap_gizmo->snap_state, C, region, mval_copy);
   V3DSnapCursorData *snap_data = ED_view3d_cursor_snap_data_get();
 
   if (snap_data->type_target != SCE_SNAP_TO_NONE) {
@@ -280,15 +280,17 @@ static int snap_gizmo_test_select(bContext *C, wmGizmo *gz, const int mval[2])
   return -1;
 }
 
-static int snap_gizmo_modal(bContext * /*C*/,
-                            wmGizmo * /*gz*/,
-                            const wmEvent * /*event*/,
-                            eWM_GizmoFlagTweak /*tweak_flag*/)
+static wmOperatorStatus snap_gizmo_modal(bContext * /*C*/,
+                                         wmGizmo * /*gz*/,
+                                         const wmEvent * /*event*/,
+                                         eWM_GizmoFlagTweak /*tweak_flag*/)
 {
   return OPERATOR_RUNNING_MODAL;
 }
 
-static int snap_gizmo_invoke(bContext * /*C*/, wmGizmo * /*gz*/, const wmEvent * /*event*/)
+static wmOperatorStatus snap_gizmo_invoke(bContext * /*C*/,
+                                          wmGizmo * /*gz*/,
+                                          const wmEvent * /*event*/)
 {
   return OPERATOR_RUNNING_MODAL;
 }
@@ -303,7 +305,7 @@ static void GIZMO_GT_snap_3d(wmGizmoType *gzt)
   /* identifiers */
   gzt->idname = "GIZMO_GT_snap_3d";
 
-  /* api callbacks */
+  /* API callbacks. */
   gzt->setup = snap_gizmo_setup;
   gzt->draw = snap_gizmo_draw;
   gzt->test_select = snap_gizmo_test_select;
@@ -337,8 +339,12 @@ static void GIZMO_GT_snap_3d(wmGizmoType *gzt)
                              "Point that defines the location of the perpendicular snap",
                              FLT_MIN,
                              FLT_MAX);
-  RNA_def_property_float_array_funcs_runtime(
-      prop, gizmo_snap_rna_prevpoint_get_fn, gizmo_snap_rna_prevpoint_set_fn, nullptr);
+  RNA_def_property_float_array_funcs_runtime(prop,
+                                             gizmo_snap_rna_prevpoint_get_fn,
+                                             gizmo_snap_rna_prevpoint_set_fn,
+                                             nullptr,
+                                             nullptr,
+                                             nullptr);
 
   /* Returns. */
   prop = RNA_def_float_translation(gzt->srna,
@@ -351,8 +357,12 @@ static void GIZMO_GT_snap_3d(wmGizmoType *gzt)
                                    "Snap Point Location",
                                    FLT_MIN,
                                    FLT_MAX);
-  RNA_def_property_float_array_funcs_runtime(
-      prop, gizmo_snap_rna_location_get_fn, gizmo_snap_rna_location_set_fn, nullptr);
+  RNA_def_property_float_array_funcs_runtime(prop,
+                                             gizmo_snap_rna_location_get_fn,
+                                             gizmo_snap_rna_location_set_fn,
+                                             nullptr,
+                                             nullptr,
+                                             nullptr);
 
   prop = RNA_def_float_vector_xyz(gzt->srna,
                                   "normal",
@@ -364,7 +374,8 @@ static void GIZMO_GT_snap_3d(wmGizmoType *gzt)
                                   "Snap Point Normal",
                                   FLT_MIN,
                                   FLT_MAX);
-  RNA_def_property_float_array_funcs_runtime(prop, gizmo_snap_rna_normal_get_fn, nullptr, nullptr);
+  RNA_def_property_float_array_funcs_runtime(
+      prop, gizmo_snap_rna_normal_get_fn, nullptr, nullptr, nullptr, nullptr);
 
   prop = RNA_def_int_vector(gzt->srna,
                             "snap_elem_index",
@@ -377,7 +388,7 @@ static void GIZMO_GT_snap_3d(wmGizmoType *gzt)
                             INT_MIN,
                             INT_MAX);
   RNA_def_property_int_array_funcs_runtime(
-      prop, gizmo_snap_rna_snap_elem_index_get_fn, nullptr, nullptr);
+      prop, gizmo_snap_rna_snap_elem_index_get_fn, nullptr, nullptr, nullptr, nullptr);
 
   prop = RNA_def_enum(gzt->srna,
                       "snap_source_type",
@@ -388,6 +399,8 @@ static void GIZMO_GT_snap_3d(wmGizmoType *gzt)
   RNA_def_property_enum_funcs_runtime(prop,
                                       gizmo_snap_rna_snap_srouce_type_get_fn,
                                       gizmo_snap_rna_snap_srouce_type_set_fn,
+                                      nullptr,
+                                      nullptr,
                                       nullptr);
 }
 

@@ -38,8 +38,8 @@ template<typename T> struct AngleRadianBase {
  public:
   AngleRadianBase() = default;
 
-  AngleRadianBase(const T &radian) : value_(radian){};
-  explicit AngleRadianBase(const T &cos, const T &sin) : value_(math::atan2(sin, cos)){};
+  AngleRadianBase(const T &radian) : value_(radian) {};
+  explicit AngleRadianBase(const T &cos, const T &sin) : value_(math::atan2(sin, cos)) {};
 
   /** Static functions. */
 
@@ -121,25 +121,25 @@ template<typename T> struct AngleRadianBase {
     return -a.value_;
   }
 
-  AngleRadianBase &operator+=(const AngleRadianBase &b)
+  AngleRadianBase &operator+=(const AngleRadianBase &b) &
   {
     value_ += b.value_;
     return *this;
   }
 
-  AngleRadianBase &operator-=(const AngleRadianBase &b)
+  AngleRadianBase &operator-=(const AngleRadianBase &b) &
   {
     value_ -= b.value_;
     return *this;
   }
 
-  AngleRadianBase &operator*=(const AngleRadianBase &b)
+  AngleRadianBase &operator*=(const AngleRadianBase &b) &
   {
     value_ *= b.value_;
     return *this;
   }
 
-  AngleRadianBase &operator/=(const AngleRadianBase &b)
+  AngleRadianBase &operator/=(const AngleRadianBase &b) &
   {
     value_ /= b.value_;
     return *this;
@@ -184,9 +184,9 @@ template<typename T> struct AngleCartesianBase {
    * Create an angle from a radian value.
    */
   explicit AngleCartesianBase(const T &radian)
-      : AngleCartesianBase(math::cos(radian), math::sin(radian)){};
+      : AngleCartesianBase(math::cos(radian), math::sin(radian)) {};
   explicit AngleCartesianBase(const AngleRadianBase<T> &angle)
-      : AngleCartesianBase(math::cos(angle.radian()), math::sin(angle.radian())){};
+      : AngleCartesianBase(math::cos(angle.radian()), math::sin(angle.radian())) {};
 
   /** Static functions. */
 
@@ -317,25 +317,25 @@ template<typename T> struct AngleCartesianBase {
     return {a.cos_, -a.sin_};
   }
 
-  AngleCartesianBase &operator+=(const AngleCartesianBase &b)
+  AngleCartesianBase &operator+=(const AngleCartesianBase &b) &
   {
     *this = *this + b;
     return *this;
   }
 
-  AngleCartesianBase &operator*=(const T &b)
+  AngleCartesianBase &operator*=(const T &b) &
   {
     *this = *this * b;
     return *this;
   }
 
-  AngleCartesianBase &operator-=(const AngleCartesianBase &b)
+  AngleCartesianBase &operator-=(const AngleCartesianBase &b) &
   {
     *this = *this - b;
     return *this;
   }
 
-  AngleCartesianBase &operator/=(const T &b)
+  AngleCartesianBase &operator/=(const T &b) &
   {
     *this = *this / b;
     return *this;
@@ -385,7 +385,7 @@ template<typename T = float> struct AngleFraction {
    * fractions.
    */
   AngleFraction(int64_t numerator, int64_t denominator = 1)
-      : numerator_(numerator), denominator_(denominator){};
+      : numerator_(numerator), denominator_(denominator) {};
 
  public:
   /** Static functions. */
@@ -538,32 +538,32 @@ template<typename T = float> struct AngleFraction {
     return {-a.numerator_, a.denominator_};
   }
 
-  AngleFraction &operator+=(const AngleFraction &b)
+  AngleFraction &operator+=(const AngleFraction &b) &
   {
     return *this = *this + b;
   }
 
-  AngleFraction &operator-=(const AngleFraction &b)
+  AngleFraction &operator-=(const AngleFraction &b) &
   {
     return *this = *this - b;
   }
 
-  AngleFraction &operator*=(const AngleFraction &b)
+  AngleFraction &operator*=(const AngleFraction &b) &
   {
     return *this = *this * b;
   }
 
-  AngleFraction &operator/=(const AngleFraction &b)
+  AngleFraction &operator/=(const AngleFraction &b) &
   {
     return *this = *this / b;
   }
 
-  AngleFraction &operator*=(const int64_t &b)
+  AngleFraction &operator*=(const int64_t &b) &
   {
     return *this = *this * b;
   }
 
-  AngleFraction &operator/=(const int64_t &b)
+  AngleFraction &operator/=(const int64_t &b) &
   {
     return *this = *this / b;
   }

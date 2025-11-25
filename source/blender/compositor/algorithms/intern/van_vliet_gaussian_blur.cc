@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "BLI_assert.h"
-#include "BLI_math_base.hh"
 #include "BLI_math_vector.hh"
 
 #include "GPU_shader.hh"
@@ -26,7 +25,7 @@ static void sum_causal_and_non_causal_results_gpu(Context &context,
                                                   const Result &second_non_causal_input,
                                                   Result &output)
 {
-  GPUShader *shader = context.get_shader("compositor_van_vliet_gaussian_blur_sum");
+  gpu::Shader *shader = context.get_shader("compositor_van_vliet_gaussian_blur_sum");
   GPU_shader_bind(shader);
 
   first_causal_input.bind_as_texture(shader, "first_causal_input_tx");
@@ -35,11 +34,11 @@ static void sum_causal_and_non_causal_results_gpu(Context &context,
   second_non_causal_input.bind_as_texture(shader, "second_non_causal_input_tx");
 
   const Domain domain = first_causal_input.domain();
-  const int2 transposed_domain = int2(domain.size.y, domain.size.x);
+  const Domain transposed_domain = domain.transposed();
   output.allocate_texture(transposed_domain);
   output.bind_as_image(shader, "output_img");
 
-  compute_dispatch_threads_at_least(shader, domain.size);
+  compute_dispatch_threads_at_least(shader, domain.data_size);
 
   GPU_shader_unbind();
   first_causal_input.unbind_as_texture();
@@ -57,19 +56,19 @@ static void sum_causal_and_non_causal_results_cpu(const Result &first_causal_inp
                                                   Result &output)
 {
   const Domain domain = first_causal_input.domain();
-  const int2 transposed_domain = int2(domain.size.y, domain.size.x);
+  const Domain transposed_domain = domain.transposed();
   output.allocate_texture(transposed_domain);
-  parallel_for(domain.size, [&](const int2 texel) {
+  parallel_for(domain.data_size, [&](const int2 texel) {
     /* The Van Vliet filter is a parallel interconnection filter, meaning its output is the sum of
      * all of its causal and non causal filters. */
-    float4 filter_output = first_causal_input.load_pixel<float4>(texel) +
-                           first_non_causal_input.load_pixel<float4>(texel) +
-                           second_causal_input.load_pixel<float4>(texel) +
-                           second_non_causal_input.load_pixel<float4>(texel);
+    float4 filter_output = float4(first_causal_input.load_pixel<Color>(texel)) +
+                           float4(first_non_causal_input.load_pixel<Color>(texel)) +
+                           float4(second_causal_input.load_pixel<Color>(texel)) +
+                           float4(second_non_causal_input.load_pixel<Color>(texel));
 
     /* Write the color using the transposed texel. See the sum_causal_and_non_causal_results method
      * for more information on the rational behind this. */
-    output.store_pixel(int2(texel.y, texel.x), filter_output);
+    output.store_pixel(int2(texel.y, texel.x), Color(filter_output));
   });
 }
 
@@ -86,10 +85,10 @@ static void sum_causal_and_non_causal_results_cpu(const Result &first_causal_inp
  * the transposition in the horizontal pass. This is done to improve spatial cache locality in the
  * shader and to avoid having two separate shaders for each blur pass. */
 static void sum_causal_and_non_causal_results(Context &context,
-                                              Result &first_causal_input,
-                                              Result &first_non_causal_input,
-                                              Result &second_causal_input,
-                                              Result &second_non_causal_input,
+                                              const Result &first_causal_input,
+                                              const Result &first_non_causal_input,
+                                              const Result &second_causal_input,
+                                              const Result &second_non_causal_input,
                                               Result &output)
 {
   if (context.use_gpu()) {
@@ -117,7 +116,7 @@ static void blur_pass_gpu(Context &context,
                           Result &second_non_causal_result,
                           const float sigma)
 {
-  GPUShader *shader = context.get_shader("compositor_van_vliet_gaussian_blur");
+  gpu::Shader *shader = context.get_shader("compositor_van_vliet_gaussian_blur");
   GPU_shader_bind(shader);
 
   const VanVlietGaussianCoefficients &coefficients =
@@ -171,7 +170,7 @@ static void blur_pass_gpu(Context &context,
   /* The second dispatch dimension is 4 dispatches, one for the first causal filter, one for the
    * first non causal filter, one for the second causal filter, and one for the second non causal
    * filter. */
-  compute_dispatch_threads_at_least(shader, int2(domain.size.y, 4), int2(64, 4));
+  compute_dispatch_threads_at_least(shader, int2(domain.data_size.y, 4), int2(64, 4));
 
   GPU_shader_unbind();
   input.unbind_as_texture();
@@ -220,7 +219,7 @@ static void blur_pass_cpu(Context &context,
   /* The first dispatch dimension is 4 dispatches, one for the first causal filter, one for the
    * first non causal filter, one for the second causal filter, and one for the second non causal
    * filter. */
-  const int2 parallel_for_size = int2(4, domain.size.y);
+  const int2 parallel_for_size = int2(4, domain.data_size.y);
   /* Blur the input horizontally by applying a fourth order IIR filter approximating a Gaussian
    * filter using Van Vliet's design method. This is based on the following paper:
    *
@@ -236,7 +235,7 @@ static void blur_pass_cpu(Context &context,
   parallel_for(parallel_for_size, [&](const int2 invocation) {
     /* The shader runs parallel across rows but serially across columns. */
     int y = invocation.y;
-    int width = input.domain().size.x;
+    int width = input.domain().data_size.x;
 
     /* The second dispatch dimension is four dispatches:
      *
@@ -269,7 +268,7 @@ static void blur_pass_cpu(Context &context,
      * current input is at index 0 and the oldest input is at index FILTER_ORDER. We assume Neumann
      * boundary condition, so we initialize all inputs by the boundary pixel. */
     int2 boundary_texel = is_causal ? int2(0, y) : int2(width - 1, y);
-    float4 input_boundary = input.load_pixel<float4>(boundary_texel);
+    float4 input_boundary = float4(input.load_pixel<Color>(boundary_texel));
     float4 inputs[FILTER_ORDER + 1] = {input_boundary, input_boundary, input_boundary};
 
     /* Create an array that holds the last FILTER_ORDER outputs along with the current output. The
@@ -283,7 +282,7 @@ static void blur_pass_cpu(Context &context,
     for (int x = 0; x < width; x++) {
       /* Run forward across rows for the causal filter and backward for the non causal filter. */
       int2 texel = is_causal ? int2(x, y) : int2(width - 1 - x, y);
-      inputs[0] = input.load_pixel<float4>(texel);
+      inputs[0] = float4(input.load_pixel<Color>(texel));
 
       /* Compute the filter based on its difference equation, this is not in the Van Vliet paper
        * because the filter was decomposed, but it is essentially similar to Equation (28) for the
@@ -307,18 +306,18 @@ static void blur_pass_cpu(Context &context,
        * them in a separate shader dispatch for better parallelism. */
       if (is_causal) {
         if (is_first_filter) {
-          first_causal_output.store_pixel(texel, outputs[0]);
+          first_causal_output.store_pixel(texel, Color(outputs[0]));
         }
         else {
-          second_causal_output.store_pixel(texel, outputs[0]);
+          second_causal_output.store_pixel(texel, Color(outputs[0]));
         }
       }
       else {
         if (is_first_filter) {
-          first_non_causal_output.store_pixel(texel, outputs[0]);
+          first_non_causal_output.store_pixel(texel, Color(outputs[0]));
         }
         else {
-          second_non_causal_output.store_pixel(texel, outputs[0]);
+          second_non_causal_output.store_pixel(texel, Color(outputs[0]));
         }
       }
 
@@ -339,7 +338,7 @@ static void blur_pass_cpu(Context &context,
   });
 }
 
-static void blur_pass(Context &context, Result &input, Result &output, float sigma)
+static void blur_pass(Context &context, const Result &input, Result &output, const float sigma)
 {
   Result first_causal_result = context.create_result(ResultType::Color);
   Result first_non_causal_result = context.create_result(ResultType::Color);
@@ -377,7 +376,10 @@ static void blur_pass(Context &context, Result &input, Result &output, float sig
   second_non_causal_result.release();
 }
 
-void van_vliet_gaussian_blur(Context &context, Result &input, Result &output, float2 sigma)
+void van_vliet_gaussian_blur(Context &context,
+                             const Result &input,
+                             Result &output,
+                             const float2 &sigma)
 {
   BLI_assert_msg(math::reduce_max(sigma) >= 32.0f,
                  "Van Vliet filter is less accurate for sigma values less than 32. Use Deriche "

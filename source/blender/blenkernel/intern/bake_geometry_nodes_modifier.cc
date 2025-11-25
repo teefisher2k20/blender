@@ -6,11 +6,13 @@
 
 #include "BKE_bake_geometry_nodes_modifier.hh"
 #include "BKE_collection.hh"
+#include "BKE_library.hh"
 #include "BKE_main.hh"
 
 #include "DNA_modifier_types.h"
 #include "DNA_node_types.h"
 
+#include "BLI_listbase.h"
 #include "BLI_path_utils.hh"
 #include "BLI_string.h"
 

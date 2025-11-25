@@ -7,22 +7,15 @@
  */
 
 #include <iostream>
-#include <map>
-#include <set>
 
-#include "../application/AppCanvas.h"
 #include "../application/AppConfig.h"
 #include "../application/AppView.h"
 #include "../application/Controller.h"
 
 #include "BlenderStrokeRenderer.h"
 
-using namespace std;
-using namespace Freestyle;
-
 #include "MEM_guardedalloc.h"
 
-#include "DNA_camera_types.h"
 #include "DNA_collection_types.h"
 #include "DNA_freestyle_types.h"
 #include "DNA_material_types.h"
@@ -39,7 +32,7 @@ using namespace Freestyle;
 
 #include "BLT_translation.hh"
 
-#include "BLI_blenlib.h"
+#include "BLI_listbase.h"
 #include "BLI_math_color_blend.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
@@ -54,7 +47,8 @@ using namespace Freestyle;
 
 #include "FRS_freestyle.h"
 
-extern "C" {
+using namespace std;
+using namespace Freestyle;
 
 FreestyleGlobals g_freestyle;
 
@@ -167,7 +161,7 @@ static void init_view(Render *re)
 
 static char *escape_quotes(char *name)
 {
-  char *s = (char *)MEM_mallocN(strlen(name) * 2 + 1, "escape_quotes");
+  char *s = MEM_malloc_arrayN<char>(strlen(name) * 2 + 1, "escape_quotes");
   char *p = s;
   while (*name) {
     if (*name == '\'') {
@@ -280,13 +274,13 @@ static void prepare(Render *re, ViewLayer *view_layer, Depsgraph *depsgraph)
 {
   // load mesh
   re->i.infostr = RPT_("Freestyle: Mesh loading");
-  re->stats_draw(&re->i);
+  re->display->stats_draw(&re->i);
   re->i.infostr = nullptr;
   if (controller->LoadMesh(re, view_layer, depsgraph)) {
     /* Returns if scene cannot be loaded or if empty. */
     return;
   }
-  if (re->test_break()) {
+  if (re->display->test_break()) {
     return;
   }
 
@@ -450,7 +444,7 @@ static void prepare(Render *re, ViewLayer *view_layer, Depsgraph *depsgraph)
       controller->setPassDiffuse(rpass_buffer_data, rpass->rectx, rpass->recty);
       diffuse = true;
     }
-    if (STREQ(rpass->name, RE_PASSNAME_Z)) {
+    if (STREQ(rpass->name, RE_PASSNAME_DEPTH)) {
       controller->setPassZ(rpass_buffer_data, rpass->rectx, rpass->recty);
       z = true;
     }
@@ -467,7 +461,7 @@ static void prepare(Render *re, ViewLayer *view_layer, Depsgraph *depsgraph)
 
   // compute view map
   re->i.infostr = RPT_("Freestyle: View map creation");
-  re->stats_draw(&re->i);
+  re->display->stats_draw(&re->i);
   re->i.infostr = nullptr;
   controller->ComputeViewMap();
 }
@@ -616,9 +610,9 @@ void FRS_do_stroke_rendering(Render *re, ViewLayer *view_layer)
 
   /* Init camera
    * Objects are transformed into camera coordinate system, therefore the camera position
-   * is zero and the modelview matrix is the identity matrix. */
+   * is zero and the model-view matrix is the identity matrix. */
   Object *ob_camera_orig = RE_GetCamera(re);
-  Object *ob_camera_eval = DEG_get_evaluated_object(depsgraph, ob_camera_orig);
+  Object *ob_camera_eval = DEG_get_evaluated(depsgraph, ob_camera_orig);
   zero_v3(g_freestyle.viewpoint);
   unit_m4(g_freestyle.mv);
   RE_GetCameraWindow(re, ob_camera_eval, g_freestyle.proj);
@@ -630,7 +624,7 @@ void FRS_do_stroke_rendering(Render *re, ViewLayer *view_layer)
   //   - compute view map
   prepare(re, view_layer, depsgraph);
 
-  if (re->test_break()) {
+  if (re->display->test_break()) {
     controller->CloseFile();
     if (G.debug & G_DEBUG_FREESTYLE) {
       cout << "Break" << endl;
@@ -641,7 +635,7 @@ void FRS_do_stroke_rendering(Render *re, ViewLayer *view_layer)
     if (controller->_ViewMap) {
       // render strokes
       re->i.infostr = RPT_("Freestyle: Stroke rendering");
-      re->stats_draw(&re->i);
+      re->display->stats_draw(&re->i);
       re->i.infostr = nullptr;
       g_freestyle.scene = DEG_get_evaluated_scene(depsgraph);
       int strokeCount = controller->DrawStrokes();
@@ -764,5 +758,3 @@ Material *FRS_create_stroke_material(Main *bmain, FreestyleLineStyle *linestyle)
   ma->id.us = 0;
   return ma;
 }
-
-}  // extern "C"

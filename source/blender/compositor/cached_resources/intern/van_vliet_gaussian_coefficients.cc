@@ -128,7 +128,7 @@ static double compute_scaled_poles_variance_derivative(
  * half sigma, then iteratively improve the guess using Newton's method by computing the variance
  * and its derivative based on Equation (20). */
 static double find_scale_factor(const std::array<std::complex<double>, 4> &poles,
-                                float reference_sigma)
+                                double reference_sigma)
 {
   const double reference_variance = math::square(reference_sigma);
 
@@ -142,7 +142,7 @@ static double find_scale_factor(const std::array<std::complex<double>, 4> &poles
     const double variance = compute_scaled_poles_variance(poles, scale_factor);
 
     /* Close enough, we have found our scale factor. */
-    if (math::abs(reference_variance - variance) < 1.0e-8) {
+    if (math::abs(reference_variance - variance) < 1.0e-7) {
       return scale_factor;
     }
 
@@ -356,7 +356,7 @@ static void compute_second_order_section(const std::complex<double> &pole,
 }
 
 /**
-   The IIR filter difference equation relies on previous outputs to compute new outputs, those
+ * The IIR filter difference equation relies on previous outputs to compute new outputs, those
  * previous outputs are not really defined at the start of the filter. To do Neumann boundary
  * condition, we initialize the previous output with a special value that is a function of the
  * boundary value. This special value is computed by multiply the boundary value with a coefficient

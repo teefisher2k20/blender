@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+set(OCIO_PATCH echo .)
+
 set(OPENCOLORIO_EXTRA_ARGS
   -DOCIO_BUILD_APPS=OFF
   -DOCIO_BUILD_PYTHON=ON
@@ -30,14 +32,16 @@ set(OPENCOLORIO_EXTRA_ARGS
 )
 
 if(APPLE)
-  # Work around issue where minizip-ng_LIBRARY assumes -ng in file name.
   set(OPENCOLORIO_EXTRA_ARGS
     ${OPENCOLORIO_EXTRA_ARGS}
+    # Work around issue where minizip-ng_LIBRARY assumes -ng in file name.
     -Dminizip_LIBRARY=${LIBDIR}/minizipng/lib/libminizip${LIBEXT}
+    # Work around issue where homebrew Imath's can be prioritized over our own dependency during linking if installed.
+    -DImath_LIBRARY=${LIBDIR}/imath/lib/libImath${SHAREDLIBEXT}
   )
 endif()
 
-if(BLENDER_PLATFORM_ARM)
+if(BLENDER_PLATFORM_ARM AND NOT WIN32)
   set(OPENCOLORIO_EXTRA_ARGS
     ${OPENCOLORIO_EXTRA_ARGS}
     -DOCIO_USE_SSE=OFF
@@ -68,6 +72,7 @@ ExternalProject_Add(external_opencolorio
   URL_HASH ${OPENCOLORIO_HASH_TYPE}=${OPENCOLORIO_HASH}
   CMAKE_GENERATOR ${PLATFORM_ALT_GENERATOR}
   PREFIX ${BUILD_DIR}/opencolorio
+  PATCH_COMMAND ${OCIO_PATCH}
 
   CMAKE_ARGS
     -DCMAKE_INSTALL_PREFIX=${LIBDIR}/opencolorio
@@ -96,8 +101,8 @@ if(WIN32)
         ${LIBDIR}/opencolorio/include
         ${HARVEST_TARGET}/opencolorio/include
       COMMAND ${CMAKE_COMMAND} -E copy
-        ${LIBDIR}/opencolorio/bin/OpenColorIO_2_3.dll
-        ${HARVEST_TARGET}/opencolorio/bin/OpenColorIO_2_3.dll
+        ${LIBDIR}/opencolorio/bin/OpenColorIO_2_4.dll
+        ${HARVEST_TARGET}/opencolorio/bin/OpenColorIO_2_4.dll
       COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${LIBDIR}/opencolorio/lib
         ${HARVEST_TARGET}/opencolorio/lib
@@ -108,8 +113,8 @@ if(WIN32)
   if(BUILD_MODE STREQUAL Debug)
     ExternalProject_Add_Step(external_opencolorio after_install
       COMMAND ${CMAKE_COMMAND} -E copy
-        ${LIBDIR}/opencolorio/bin/OpenColorIO_d_2_3.dll
-        ${HARVEST_TARGET}/opencolorio/bin/OpenColorIO_d_2_3.dll
+        ${LIBDIR}/opencolorio/bin/OpenColorIO_d_2_4.dll
+        ${HARVEST_TARGET}/opencolorio/bin/OpenColorIO_d_2_4.dll
       COMMAND ${CMAKE_COMMAND} -E copy
         ${LIBDIR}/opencolorio/lib/Opencolorio_d.lib
         ${HARVEST_TARGET}/opencolorio/lib/OpenColorIO_d.lib

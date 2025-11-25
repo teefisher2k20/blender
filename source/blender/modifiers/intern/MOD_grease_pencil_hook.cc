@@ -7,8 +7,6 @@
  */
 
 #include "BLI_index_mask.hh"
-#include "BLI_math_rotation.hh"
-#include "BLI_string.h" /* For #STRNCPY. */
 
 #include "BLT_translation.hh"
 
@@ -30,6 +28,7 @@
 #include "BKE_object_types.hh"
 
 #include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "MOD_grease_pencil_util.hh"
@@ -123,7 +122,7 @@ static float hook_falloff(const float falloff,
   if (falloff_type == MOD_GREASE_PENCIL_HOOK_Falloff_Const) {
     return fac_orig;
   }
-  else if (falloff_type == MOD_GREASE_PENCIL_HOOK_Falloff_InvSquare) {
+  if (falloff_type == MOD_GREASE_PENCIL_HOOK_Falloff_InvSquare) {
     /* Avoid sqrt below. */
     return (1.0f - (len_sq / falloff_sq)) * fac_orig;
   }
@@ -270,47 +269,46 @@ static void panel_draw(const bContext *C, Panel *panel)
 
   PointerRNA hook_object_ptr = RNA_pointer_get(ptr, "object");
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiLayout *col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "object", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiLayout *col = &layout->column(false);
+  col->prop(ptr, "object", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   if (!RNA_pointer_is_null(&hook_object_ptr) &&
       RNA_enum_get(&hook_object_ptr, "type") == OB_ARMATURE)
   {
     PointerRNA hook_object_data_ptr = RNA_pointer_get(&hook_object_ptr, "data");
-    uiItemPointerR(
-        col, ptr, "subtarget", &hook_object_data_ptr, "bones", IFACE_("Bone"), ICON_NONE);
+    col->prop_search(ptr, "subtarget", &hook_object_data_ptr, "bones", IFACE_("Bone"), ICON_NONE);
   }
 
-  uiItemR(layout, ptr, "strength", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "strength", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
 
-  if (uiLayout *sub = uiLayoutPanelProp(C, layout, ptr, "open_falloff_panel", IFACE_("Falloff"))) {
-    uiLayoutSetPropSep(sub, true);
+  if (uiLayout *sub = layout->panel_prop(C, ptr, "open_falloff_panel", IFACE_("Falloff"))) {
+    sub->use_property_split_set(true);
 
-    uiItemR(sub, ptr, "falloff_type", UI_ITEM_NONE, IFACE_("Type"), ICON_NONE);
+    sub->prop(ptr, "falloff_type", UI_ITEM_NONE, IFACE_("Type"), ICON_NONE);
 
     bool use_falloff = RNA_enum_get(ptr, "falloff_type") != eWarp_Falloff_None;
 
-    uiLayout *row = uiLayoutRow(sub, false);
-    uiLayoutSetActive(row, use_falloff);
-    uiItemR(row, ptr, "falloff_radius", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    uiLayout *row = &sub->row(false);
+    row->active_set(use_falloff);
+    row->prop(ptr, "falloff_radius", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-    uiItemR(sub, ptr, "use_falloff_uniform", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    sub->prop(ptr, "use_falloff_uniform", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
     if (RNA_enum_get(ptr, "falloff_type") == eWarp_Falloff_Curve) {
-      uiTemplateCurveMapping(sub, ptr, "custom_curve", 0, false, false, false, false);
+      uiTemplateCurveMapping(sub, ptr, "custom_curve", 0, false, false, false, false, false);
     }
   }
 
-  if (uiLayout *influence_panel = uiLayoutPanelProp(
-          C, layout, ptr, "open_influence_panel", IFACE_("Influence")))
+  if (uiLayout *influence_panel = layout->panel_prop(
+          C, ptr, "open_influence_panel", IFACE_("Influence")))
   {
     modifier::greasepencil::draw_layer_filter_settings(C, influence_panel, ptr);
     modifier::greasepencil::draw_material_filter_settings(C, influence_panel, ptr);
     modifier::greasepencil::draw_vertex_group_settings(C, influence_panel, ptr);
   }
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void panel_register(ARegionType *region_type)

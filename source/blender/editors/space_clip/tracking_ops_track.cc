@@ -8,8 +8,9 @@
 
 #include "MEM_guardedalloc.h"
 
+#include "BLI_listbase.h"
+#include "BLI_math_base.h"
 #include "BLI_time.h"
-#include "BLI_utildefines.h"
 
 #include "BLT_translation.hh"
 
@@ -195,7 +196,7 @@ static bool track_markers_initjob(bContext *C, TrackMarkersJob *tmj, bool backwa
     return false;
   }
 
-  WM_set_locked_interface(tmj->wm, true);
+  WM_locked_interface_set(tmj->wm, true);
 
   return true;
 }
@@ -278,12 +279,12 @@ static void track_markers_freejob(void *tmv)
 {
   TrackMarkersJob *tmj = (TrackMarkersJob *)tmv;
   tmj->clip->tracking_context = nullptr;
-  WM_set_locked_interface(tmj->wm, false);
+  WM_locked_interface_set(tmj->wm, false);
   BKE_autotrack_context_free(tmj->context);
   MEM_freeN(tmj);
 }
 
-static int track_markers(bContext *C, wmOperator *op, bool use_job)
+static wmOperatorStatus track_markers(bContext *C, wmOperator *op, bool use_job)
 {
   TrackMarkersJob *tmj;
   SpaceClip *sc = CTX_wm_space_clip(C);
@@ -306,7 +307,7 @@ static int track_markers(bContext *C, wmOperator *op, bool use_job)
     return OPERATOR_CANCELLED;
   }
 
-  tmj = MEM_cnew<TrackMarkersJob>("TrackMarkersJob data");
+  tmj = MEM_callocN<TrackMarkersJob>("TrackMarkersJob data");
   if (!track_markers_initjob(C, tmj, backwards, sequence)) {
     track_markers_freejob(tmj);
     return OPERATOR_CANCELLED;
@@ -317,7 +318,7 @@ static int track_markers(bContext *C, wmOperator *op, bool use_job)
     wm_job = WM_jobs_get(CTX_wm_manager(C),
                          CTX_wm_window(C),
                          CTX_data_scene(C),
-                         "Track Markers",
+                         "Tracking markers...",
                          WM_JOB_PROGRESS,
                          WM_JOB_TYPE_CLIP_TRACK_MARKERS);
     WM_jobs_customdata_set(wm_job, tmj, track_markers_freejob);
@@ -354,17 +355,19 @@ static int track_markers(bContext *C, wmOperator *op, bool use_job)
   return OPERATOR_FINISHED;
 }
 
-static int track_markers_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus track_markers_exec(bContext *C, wmOperator *op)
 {
   return track_markers(C, op, false);
 }
 
-static int track_markers_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus track_markers_invoke(bContext *C,
+                                             wmOperator *op,
+                                             const wmEvent * /*event*/)
 {
   return track_markers(C, op, true);
 }
 
-static int track_markers_modal(bContext *C, wmOperator * /*op*/, const wmEvent *event)
+static wmOperatorStatus track_markers_modal(bContext *C, wmOperator * /*op*/, const wmEvent *event)
 {
   /* No running tracking, remove handler and pass through. */
   if (0 == WM_jobs_test(CTX_wm_manager(C), CTX_data_scene(C), WM_JOB_TYPE_ANY)) {
@@ -375,6 +378,9 @@ static int track_markers_modal(bContext *C, wmOperator * /*op*/, const wmEvent *
   switch (event->type) {
     case EVT_ESCKEY:
       return OPERATOR_RUNNING_MODAL;
+    default: {
+      break;
+    }
   }
 
   return OPERATOR_PASS_THROUGH;
@@ -411,7 +417,7 @@ void CLIP_OT_track_markers(wmOperatorType *ot)
   ot->description = "Track selected markers";
   ot->idname = "CLIP_OT_track_markers";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = track_markers_exec;
   ot->invoke = track_markers_invoke;
   ot->modal = track_markers_modal;
@@ -433,7 +439,7 @@ void CLIP_OT_track_markers(wmOperatorType *ot)
 
 /********************** Refine track position operator *********************/
 
-static int refine_marker_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus refine_marker_exec(bContext *C, wmOperator *op)
 {
   SpaceClip *sc = CTX_wm_space_clip(C);
   MovieClip *clip = ED_space_clip_get_clip(sc);
@@ -464,7 +470,7 @@ void CLIP_OT_refine_markers(wmOperatorType *ot)
       "to current frame";
   ot->idname = "CLIP_OT_refine_markers";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = refine_marker_exec;
   ot->poll = ED_space_clip_tracking_poll;
 

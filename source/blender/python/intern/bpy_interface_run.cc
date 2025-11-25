@@ -16,8 +16,10 @@
 #include "BLI_listbase.h"
 #include "BLI_path_utils.hh"
 #include "BLI_string.h"
+#include "BLI_string_utils.hh"
 
 #include "BKE_context.hh"
+#include "BKE_library.hh"
 #include "BKE_main.hh"
 #include "BKE_report.hh"
 #include "BKE_text.h"
@@ -56,12 +58,8 @@ static void bpy_text_filepath_get(char *filepath,
                                   const Main *bmain,
                                   const Text *text)
 {
-  BLI_snprintf(filepath,
-               filepath_maxncpy,
-               "%s%c%s",
-               ID_BLEND_PATH(bmain, &text->id),
-               SEP,
-               text->id.name + 2);
+  BLI_string_join_by_sep_char(
+      filepath, filepath_maxncpy, SEP, ID_BLEND_PATH(bmain, &text->id), text->id.name + 2);
 }
 
 /**
@@ -129,21 +127,20 @@ static PyObject *python_compat_wrapper_PyRun_FileExFlags(FILE *fp,
 static bool python_script_exec(
     bContext *C, const char *filepath, Text *text, ReportList *reports, const bool do_jump)
 {
-  Main *bmain_old = CTX_data_main(C);
-  PyObject *py_dict = nullptr, *py_result = nullptr;
-  PyGILState_STATE gilstate;
-
-  char filepath_dummy[FILE_MAX];
-  /** The `__file__` added into the name-space. */
-  const char *filepath_namespace = nullptr;
-
   BLI_assert(filepath || text);
-
   if (filepath == nullptr && text == nullptr) {
     return false;
   }
 
+  PyGILState_STATE gilstate;
   bpy_context_set(C, &gilstate);
+
+  Main *bmain_old = CTX_data_main(C);
+  PyObject *py_dict = nullptr, *py_result = nullptr;
+
+  char filepath_dummy[FILE_MAX];
+  /** The `__file__` added into the name-space. */
+  const char *filepath_namespace = nullptr;
 
   PyObject *main_mod = PyC_MainModule_Backup();
 
@@ -206,16 +203,22 @@ static bool python_script_exec(
         }
       }
     }
-    if (!reports) {
+    if (reports) {
+      PyErr_Clear();
+    }
+    else {
       PyErr_Print();
     }
-    PyErr_Clear();
   }
   else {
     Py_DECREF(py_result);
   }
 
   PyC_MainModule_Restore(main_mod);
+
+  /* Flush `stdout` & `stderr` to ensure the script output is visible.
+   * Using `fflush(stdout)` does not solve it. */
+  PyC_StdFilesFlush();
 
   bpy_context_clear(C, &gilstate);
 
@@ -276,7 +279,6 @@ static bool bpy_run_string_impl(bContext *C,
       BPy_errors_to_report(wm_reports);
     }
     PyErr_Print();
-    PyErr_Clear();
   }
   else {
     Py_DECREF(retval);
@@ -314,7 +316,6 @@ static void run_string_handle_error(BPy_RunErrInfo *err_info)
 
   if (err_info == nullptr) {
     PyErr_Print();
-    PyErr_Clear();
     return;
   }
 
@@ -359,7 +360,6 @@ bool BPY_run_string_as_number(bContext *C,
                               BPy_RunErrInfo *err_info,
                               double *r_value)
 {
-  PyGILState_STATE gilstate;
   bool ok = true;
 
   if (expr[0] == '\0') {
@@ -367,6 +367,7 @@ bool BPY_run_string_as_number(bContext *C,
     return ok;
   }
 
+  PyGILState_STATE gilstate;
   bpy_context_set(C, &gilstate);
 
   ok = PyC_RunString_AsNumber(imports, expr, "<expr as number>", r_value);
@@ -387,7 +388,6 @@ bool BPY_run_string_as_string_and_len(bContext *C,
                                       char **r_value,
                                       size_t *r_value_len)
 {
-  PyGILState_STATE gilstate;
   bool ok = true;
 
   if (expr[0] == '\0') {
@@ -395,6 +395,7 @@ bool BPY_run_string_as_string_and_len(bContext *C,
     return ok;
   }
 
+  PyGILState_STATE gilstate;
   bpy_context_set(C, &gilstate);
 
   ok = PyC_RunString_AsStringAndSize(imports, expr, "<expr as str>", r_value, r_value_len);
@@ -422,7 +423,6 @@ bool BPY_run_string_as_string_and_len_or_none(bContext *C,
                                               char **r_value,
                                               size_t *r_value_len)
 {
-  PyGILState_STATE gilstate;
   bool ok = true;
 
   if (expr[0] == '\0') {
@@ -430,6 +430,7 @@ bool BPY_run_string_as_string_and_len_or_none(bContext *C,
     return ok;
   }
 
+  PyGILState_STATE gilstate;
   bpy_context_set(C, &gilstate);
 
   ok = PyC_RunString_AsStringAndSizeOrNone(
@@ -458,7 +459,6 @@ bool BPY_run_string_as_intptr(bContext *C,
                               BPy_RunErrInfo *err_info,
                               intptr_t *r_value)
 {
-  PyGILState_STATE gilstate;
   bool ok = true;
 
   if (expr[0] == '\0') {
@@ -466,6 +466,7 @@ bool BPY_run_string_as_intptr(bContext *C,
     return ok;
   }
 
+  PyGILState_STATE gilstate;
   bpy_context_set(C, &gilstate);
 
   ok = PyC_RunString_AsIntPtr(imports, expr, "<expr as intptr>", r_value);

@@ -10,9 +10,7 @@
 
 #include "BPy_Convert.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "../generic/py_capi_utils.hh"
 
 using namespace Freestyle;
 
@@ -72,7 +70,6 @@ PyDoc_STRVAR(
     "   :type attribute2: :class:`StrokeAttribute`\n"
     "   :arg t: The interpolation parameter (0 <= t <= 1).\n"
     "   :type t: float\n");
-
 static int StrokeAttribute_init(BPy_StrokeAttribute *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist_1[] = {"brother", nullptr};
@@ -143,7 +140,7 @@ static PyObject *StrokeAttribute_repr(BPy_StrokeAttribute *self)
        << " b: " << self->sa->getColorB() << " a: " << self->sa->getAlpha()
        << " - R: " << self->sa->getThicknessR() << " L: " << self->sa->getThicknessL();
 
-  return PyUnicode_FromString(repr.str().c_str());
+  return PyC_UnicodeFromStdStr(repr.str());
 }
 
 PyDoc_STRVAR(
@@ -157,7 +154,6 @@ PyDoc_STRVAR(
     "   :type name: str\n"
     "   :return: The attribute value.\n"
     "   :rtype: float\n");
-
 static PyObject *StrokeAttribute_get_attribute_real(BPy_StrokeAttribute *self,
                                                     PyObject *args,
                                                     PyObject *kwds)
@@ -183,7 +179,6 @@ PyDoc_STRVAR(
     "   :type name: str\n"
     "   :return: The attribute value.\n"
     "   :rtype: :class:`mathutils.Vector`\n");
-
 static PyObject *StrokeAttribute_get_attribute_vec2(BPy_StrokeAttribute *self,
                                                     PyObject *args,
                                                     PyObject *kwds)
@@ -209,7 +204,6 @@ PyDoc_STRVAR(
     "   :type name: str\n"
     "   :return: The attribute value.\n"
     "   :rtype: :class:`mathutils.Vector`\n");
-
 static PyObject *StrokeAttribute_get_attribute_vec3(BPy_StrokeAttribute *self,
                                                     PyObject *args,
                                                     PyObject *kwds)
@@ -235,7 +229,6 @@ PyDoc_STRVAR(
     "   :type name: str\n"
     "   :return: True if the attribute is available.\n"
     "   :rtype: bool\n");
-
 static PyObject *StrokeAttribute_has_attribute_real(BPy_StrokeAttribute *self,
                                                     PyObject *args,
                                                     PyObject *kwds)
@@ -261,7 +254,6 @@ PyDoc_STRVAR(
     "   :type name: str\n"
     "   :return: True if the attribute is available.\n"
     "   :rtype: bool\n");
-
 static PyObject *StrokeAttribute_has_attribute_vec2(BPy_StrokeAttribute *self,
                                                     PyObject *args,
                                                     PyObject *kwds)
@@ -287,7 +279,6 @@ PyDoc_STRVAR(
     "   :type name: str\n"
     "   :return: True if the attribute is available.\n"
     "   :rtype: bool\n");
-
 static PyObject *StrokeAttribute_has_attribute_vec3(BPy_StrokeAttribute *self,
                                                     PyObject *args,
                                                     PyObject *kwds)
@@ -314,7 +305,6 @@ PyDoc_STRVAR(
     "   :type name: str\n"
     "   :arg value: The attribute value.\n"
     "   :type value: float\n");
-
 static PyObject *StrokeAttribute_set_attribute_real(BPy_StrokeAttribute *self,
                                                     PyObject *args,
                                                     PyObject *kwds)
@@ -343,7 +333,6 @@ PyDoc_STRVAR(
     "   :type name: str\n"
     "   :arg value: The attribute value.\n"
     "   :type value: :class:`mathutils.Vector` | tuple[float, float, float] | list[float]\n");
-
 static PyObject *StrokeAttribute_set_attribute_vec2(BPy_StrokeAttribute *self,
                                                     PyObject *args,
                                                     PyObject *kwds)
@@ -378,7 +367,6 @@ PyDoc_STRVAR(
     "   :type name: str\n"
     "   :arg value: The attribute value as a 3D vector.\n"
     "   :type value: :class:`mathutils.Vector` | tuple[float, float, float] | list[float]\n");
-
 static PyObject *StrokeAttribute_set_attribute_vec3(BPy_StrokeAttribute *self,
                                                     PyObject *args,
                                                     PyObject *kwds)
@@ -399,6 +387,16 @@ static PyObject *StrokeAttribute_set_attribute_vec3(BPy_StrokeAttribute *self,
   self->sa->setAttributeVec3f(s, vec);
   Py_RETURN_NONE;
 }
+
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
+#endif
 
 static PyMethodDef BPy_StrokeAttribute_methods[] = {
     {"get_attribute_real",
@@ -439,6 +437,14 @@ static PyMethodDef BPy_StrokeAttribute_methods[] = {
      StrokeAttribute_set_attribute_vec3_doc},
     {nullptr, nullptr, 0, nullptr},
 };
+
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
+#endif
 
 /*----------------------mathutils callbacks ----------------------------*/
 
@@ -571,8 +577,7 @@ PyDoc_STRVAR(
     StrokeAttribute_alpha_doc,
     "Alpha component of the stroke color.\n"
     "\n"
-    ":type: float");
-
+    ":type: float\n");
 static PyObject *StrokeAttribute_alpha_get(BPy_StrokeAttribute *self, void * /*closure*/)
 {
   return PyFloat_FromDouble(self->sa->getAlpha());
@@ -597,8 +602,7 @@ PyDoc_STRVAR(
     StrokeAttribute_color_doc,
     "RGB components of the stroke color.\n"
     "\n"
-    ":type: :class:`mathutils.Color`");
-
+    ":type: :class:`mathutils.Color`\n");
 static PyObject *StrokeAttribute_color_get(BPy_StrokeAttribute *self, void * /*closure*/)
 {
   return Color_CreatePyObject_cb(
@@ -624,8 +628,7 @@ PyDoc_STRVAR(
     "The right (left) component is the thickness on the right (left) of the vertex\n"
     "when following the stroke.\n"
     "\n"
-    ":type: :class:`mathutils.Vector`");
-
+    ":type: :class:`mathutils.Vector`\n");
 static PyObject *StrokeAttribute_thickness_get(BPy_StrokeAttribute *self, void * /*closure*/)
 {
   return Vector_CreatePyObject_cb(
@@ -649,8 +652,7 @@ PyDoc_STRVAR(
     StrokeAttribute_visible_doc,
     "The visibility flag. True if the StrokeVertex is visible.\n"
     "\n"
-    ":type: bool");
-
+    ":type: bool\n");
 static PyObject *StrokeAttribute_visible_get(BPy_StrokeAttribute *self, void * /*closure*/)
 {
   return PyBool_from_bool(self->sa->isVisible());
@@ -736,7 +738,3 @@ PyTypeObject StrokeAttribute_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

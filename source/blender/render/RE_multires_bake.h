@@ -8,53 +8,48 @@
 
 #pragma once
 
-#include "DNA_listBase.h"
+#include "DNA_scene_types.h"
+
+#include "BLI_set.hh"
+#include "BLI_vector.hh"
+
+#include "RE_pipeline.h"
 
 struct Image;
-struct DerivedMesh;
+struct Mesh;
 struct MultiresBakeRender;
-struct Scene;
+struct MultiresModifierData;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+struct MultiresBakeRender {
+  /* Base mesh at the input of the multiresolution modifier and data of the modifier which is being
+   * baked. */
+  Mesh *base_mesh = nullptr;
+  MultiresModifierData *multires_modifier = nullptr;
 
-typedef struct MultiresBakeRender {
-  Scene *scene;
-  DerivedMesh *lores_dm, *hires_dm;
-  int bake_margin;
-  char bake_margin_type;
-  int lvl, tot_lvl;
-  short mode;
-  bool use_lores_mesh; /* Use low-resolution mesh when baking displacement maps */
+  int bake_margin = 0;
+  eBakeMarginType bake_margin_type = R_BAKE_ADJACENT_FACES;
+  eBakeType type = R_BAKE_NORMALS;
+  eBakeSpace displacement_space = R_BAKE_SPACE_OBJECT;
 
-  /* material aligned image array (for per-face bake image) */
-  struct {
-    Image **array;
-    int len;
-  } ob_image;
+  /* Use low-resolution mesh when baking displacement maps.
+   * When true displacement is calculated between the final position in the SubdivCCG and the
+   * corresponding location on the base mesh.
+   * When false displacement is calculated between the final position in the SubdivCCG and the
+   * multiresolution modifier calculated at the bake level, further subdivided (without adding
+   * displacement) to the final multi-resolution level. */
+  bool use_low_resolution_mesh = false;
 
-  int number_of_rays; /* Number of rays to be cast when doing AO baking */
-  float bias;         /* Bias between object and start ray point when doing AO baking */
+  /* Material aligned image array (for per-face bake image), */
+  blender::Vector<Image *> ob_image;
 
-  int tot_obj, tot_image;
-  ListBase image;
+  blender::Set<Image *> images;
 
-  int baked_objects, baked_faces;
+  int num_total_objects = 0;
+  int num_baked_objects = 0;
 
-  int raytrace_structure; /* Optimization structure to be used for AO baking */
-  int octree_resolution;  /* Resolution of octree when using octree optimization structure */
-  int threads;            /* Number of threads to be used for baking */
+  bool *stop = nullptr;
+  bool *do_update = nullptr;
+  float *progress = nullptr;
+};
 
-  float user_scale; /* User scale used to scale displacement when baking derivative map. */
-
-  bool *stop;
-  bool *do_update;
-  float *progress;
-} MultiresBakeRender;
-
-void RE_multires_bake_images(struct MultiresBakeRender *bkr);
-
-#ifdef __cplusplus
-}
-#endif
+void RE_multires_bake_images(MultiresBakeRender &bake);

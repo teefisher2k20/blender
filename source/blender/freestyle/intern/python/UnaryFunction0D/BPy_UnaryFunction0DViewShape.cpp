@@ -14,10 +14,6 @@
 #include "UnaryFunction0D_ViewShape/BPy_GetOccludeeF0D.h"
 #include "UnaryFunction0D_ViewShape/BPy_GetShapeF0D.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -62,7 +58,6 @@ PyDoc_STRVAR(
     ".. method:: __init__()\n"
     "\n"
     "   Default constructor.\n");
-
 static int UnaryFunction0DViewShape___init__(BPy_UnaryFunction0DViewShape *self,
                                              PyObject *args,
                                              PyObject *kwds)
@@ -160,7 +155,3 @@ PyTypeObject UnaryFunction0DViewShape_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

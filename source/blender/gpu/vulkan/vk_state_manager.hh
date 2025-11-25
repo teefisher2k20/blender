@@ -72,7 +72,10 @@ template<int Offset> class BindSpaceImages {
  public:
   Vector<VKTexture *> bound_resources;
 
-  void bind(VKTexture *resource, int binding)
+  void bind(VKTexture *resource,
+            int binding,
+            TextureWriteFormat format,
+            StateManager *state_manager)
   {
     if (binding >= Offset) {
       binding -= Offset;
@@ -81,6 +84,7 @@ template<int Offset> class BindSpaceImages {
       bound_resources.resize(binding + 1);
     }
     bound_resources[binding] = resource;
+    state_manager->image_formats[binding] = format;
   }
 
   VKTexture *get(int binding) const
@@ -91,11 +95,12 @@ template<int Offset> class BindSpaceImages {
     return bound_resources[binding];
   }
 
-  void unbind(void *resource)
+  void unbind(void *resource, StateManager *state_manager)
   {
     for (int index : IndexRange(bound_resources.size())) {
       if (bound_resources[index] == resource) {
         bound_resources[index] = nullptr;
+        state_manager->image_formats[index] = TextureWriteFormat::Invalid;
       }
     }
   }
@@ -174,16 +179,22 @@ class BindSpaceTextures {
   void bind(Type resource_type, void *resource, GPUSamplerState sampler, int binding)
   {
     if (bound_resources.size() <= binding) {
-      bound_resources.resize(binding + 1);
+      bound_resources.resize(binding + 1, {});
     }
     bound_resources[binding].resource_type = resource_type;
     bound_resources[binding].resource = resource;
     bound_resources[binding].sampler = sampler;
   }
 
-  const Elem &get(int binding) const
+  const Elem *get(int binding) const
   {
-    return bound_resources[binding];
+    if (binding >= bound_resources.size()) {
+      /* TODO: Check with @Jeroen-Bakker.
+       * Could we ensure state_manager adds default initialized bindings for each ShaderInterface
+       * resource? (See #142097). */
+      return nullptr;
+    }
+    return &bound_resources[binding];
   }
 
   void unbind(void *resource)
@@ -204,7 +215,7 @@ class BindSpaceTextures {
 };
 
 class VKStateManager : public StateManager {
-  friend class VKDescriptorSetTracker;
+  friend class VKDescriptorSetUpdator;
 
   uint texture_unpack_row_length_ = 0;
 
@@ -219,7 +230,7 @@ class VKStateManager : public StateManager {
   void apply_state() override;
   void force_state() override;
 
-  void issue_barrier(eGPUBarrier barrier_bits) override;
+  void issue_barrier(GPUBarrier barrier_bits) override;
 
   void texture_bind(Texture *tex, GPUSamplerState sampler, int unit) override;
   void texture_unbind(Texture *tex) override;
@@ -240,7 +251,7 @@ class VKStateManager : public StateManager {
                            void *resource,
                            int binding)
   {
-    storage_buffer_bind(resource_type, resource, binding, 0u);
+    storage_buffer_bind(resource_type, resource, binding, 0);
   }
   void storage_buffer_bind(BindSpaceStorageBuffers::Type resource_type,
                            void *resource,
@@ -249,14 +260,12 @@ class VKStateManager : public StateManager {
   void storage_buffer_unbind(void *resource);
   void storage_buffer_unbind_all();
 
-  void unbind_from_all_namespaces(void *resource);
-
   void texture_unpack_row_length_set(uint len) override;
 
   /**
    * Row length for unpacking host data when uploading texture data.
    *
-   * When set to zero (0) host data can be assumed to be stored sequential.
+   * When set to zero (0) host data can be assumed to be stored sequentially.
    */
   uint texture_unpack_row_length_get() const;
 };

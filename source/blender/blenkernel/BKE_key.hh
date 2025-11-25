@@ -7,6 +7,11 @@
 #include <string>
 
 #include "BLI_array.hh"
+#include "BLI_math_matrix_types.hh"
+#include "BLI_math_vector_types.hh"
+#include "BLI_span.hh"
+
+#include "DNA_key_types.h"
 
 /** \file
  * \ingroup bke
@@ -21,10 +26,6 @@ struct Main;
 struct Mesh;
 struct Object;
 
-/**
- * Free (or release) any data used by this shape-key (does not free the key itself).
- */
-void BKE_key_free_data(Key *key);
 void BKE_key_free_nolib(Key *key);
 Key *BKE_key_add(Main *bmain, ID *id);
 /**
@@ -34,15 +35,15 @@ Key *BKE_key_add(Main *bmain, ID *id);
  */
 void BKE_key_sort(Key *key);
 
-void key_curve_position_weights(float t, float data[4], int type);
+void key_curve_position_weights(float t, float data[4], KeyInterpolationType type);
 /**
  * First derivative.
  */
-void key_curve_tangent_weights(float t, float data[4], int type);
+void key_curve_tangent_weights(float t, float data[4], KeyInterpolationType type);
 /**
  * Second derivative.
  */
-void key_curve_normal_weights(float t, float data[4], int type);
+void key_curve_normal_weights(float t, float data[4], KeyInterpolationType type);
 
 /**
  * Returns key coordinates (+ tilt) when key applied, NULL otherwise.
@@ -78,6 +79,10 @@ KeyBlock *BKE_keyblock_from_object(Object *ob);
 KeyBlock *BKE_keyblock_from_object_reference(Object *ob);
 
 KeyBlock *BKE_keyblock_add(Key *key, const char *name);
+
+/** Add a copy of the source key-block with a copy of its data array. */
+KeyBlock *BKE_keyblock_duplicate(Key *key, KeyBlock *kb_src);
+
 /**
  * \note sorting is a problematic side effect in some cases,
  * better only do this explicitly by having its own function,
@@ -126,7 +131,8 @@ void BKE_keyblock_convert_to_curve(KeyBlock *kb, Curve *cu, ListBase *nurb);
 
 void BKE_keyblock_update_from_mesh(const Mesh *mesh, KeyBlock *kb);
 void BKE_keyblock_convert_from_mesh(const Mesh *mesh, const Key *key, KeyBlock *kb);
-void BKE_keyblock_convert_to_mesh(const KeyBlock *kb, float (*vert_positions)[3], int totvert);
+void BKE_keyblock_convert_to_mesh(const KeyBlock *kb,
+                                  blender::MutableSpan<blender::float3> vert_positions);
 
 /**
  * Computes normals (vertices, faces and/or loops ones) of given mesh for given shape key.
@@ -174,22 +180,27 @@ std::optional<blender::Array<bool>> BKE_keyblock_get_dependent_keys(const Key *k
 /**
  * \param shape_index: The index to use or all (when -1).
  */
-void BKE_keyblock_data_get_from_shape(const Key *key, float (*arr)[3], int shape_index);
-void BKE_keyblock_data_get(const Key *key, float (*arr)[3]);
+void BKE_keyblock_data_get_from_shape(const Key *key,
+                                      blender::MutableSpan<blender::float3> arr,
+                                      int shape_index);
+void BKE_keyblock_data_get(const Key *key, blender::MutableSpan<blender::float3> arr);
 
 /**
  * Set the data to all key-blocks (or shape_index if != -1).
  */
 void BKE_keyblock_data_set_with_mat4(Key *key,
                                      int shape_index,
-                                     const float (*coords)[3],
-                                     const float mat[4][4]);
+                                     blender::Span<blender::float3> coords,
+                                     const blender::float4x4 &transform);
 /**
  * Set the data for all key-blocks (or shape_index if != -1),
  * transforming by \a mat.
  */
-void BKE_keyblock_curve_data_set_with_mat4(
-    Key *key, const ListBase *nurb, int shape_index, const void *data, const float mat[4][4]);
+void BKE_keyblock_curve_data_set_with_mat4(Key *key,
+                                           const ListBase *nurb,
+                                           int shape_index,
+                                           const void *data,
+                                           const blender::float4x4 &transform);
 /**
  * Set the data for all key-blocks (or shape_index if != -1).
  */

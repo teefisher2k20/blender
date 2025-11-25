@@ -8,6 +8,8 @@
  * Array modifier: duplicates the object multiple times along an axis.
  */
 
+#include <algorithm>
+
 #include "MEM_guardedalloc.h"
 
 #include "BLI_utildefines.h"
@@ -25,6 +27,7 @@
 
 #include "BKE_anim_path.h"
 #include "BKE_attribute.hh"
+#include "BKE_attribute_legacy_convert.hh"
 #include "BKE_curve.hh"
 #include "BKE_customdata.hh"
 #include "BKE_lib_id.hh"
@@ -35,7 +38,7 @@
 #include "BKE_object_deform.h"
 #include "BKE_object_types.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "RNA_access.hh"
@@ -164,10 +167,10 @@ static void dm_mvert_map_doubles(int *doubles_map,
   source_end = source_start + source_verts_num;
 
   /* build array of MVerts to be tested for merging */
-  SortVertsElem *sorted_verts_target = static_cast<SortVertsElem *>(
-      MEM_malloc_arrayN(target_verts_num, sizeof(SortVertsElem), __func__));
-  SortVertsElem *sorted_verts_source = static_cast<SortVertsElem *>(
-      MEM_malloc_arrayN(source_verts_num, sizeof(SortVertsElem), __func__));
+  SortVertsElem *sorted_verts_target = MEM_malloc_arrayN<SortVertsElem>(size_t(target_verts_num),
+                                                                        __func__);
+  SortVertsElem *sorted_verts_source = MEM_malloc_arrayN<SortVertsElem>(size_t(source_verts_num),
+                                                                        __func__);
 
   /* Copy target vertices index and cos into SortVertsElem array */
   svert_from_mvert(sorted_verts_target, vert_positions, target_start, target_end);
@@ -230,8 +233,8 @@ static void dm_mvert_map_doubles(int *doubles_map,
     while ((i_target < target_verts_num) && (sve_target->sum_co <= sve_source_sumco + dist3)) {
       /* Testing distance for candidate double in target */
       /* v_target is within dist3 of v_source in terms of sumco;  check real distance */
-      float dist_sq;
-      if ((dist_sq = len_squared_v3v3(sve_source->co, sve_target->co)) <= best_dist_sq) {
+      const float dist_sq = len_squared_v3v3(sve_source->co, sve_target->co);
+      if (dist_sq <= best_dist_sq) {
         /* Potential double found */
         best_dist_sq = dist_sq;
         best_target_vertex = sve_target->vertex_num;
@@ -291,12 +294,17 @@ static void mesh_merge_transform(Mesh *result,
   blender::MutableSpan<int> result_face_offsets = result->face_offsets_for_write();
   blender::MutableSpan<int> result_corner_verts = result->corner_verts_for_write();
   blender::MutableSpan<int> result_corner_edges = result->corner_edges_for_write();
+  bke::MutableAttributeAccessor result_attributes = result->attributes_for_write();
 
-  CustomData_copy_data(&cap_mesh->vert_data, &result->vert_data, 0, cap_verts_index, cap_nverts);
-  CustomData_copy_data(&cap_mesh->edge_data, &result->edge_data, 0, cap_edges_index, cap_nedges);
-  CustomData_copy_data(
-      &cap_mesh->corner_data, &result->corner_data, 0, cap_loops_index, cap_nloops);
-  CustomData_copy_data(&cap_mesh->face_data, &result->face_data, 0, cap_faces_index, cap_nfaces);
+  bke::LegacyMeshInterpolator vert_interp(*cap_mesh, *result, bke::AttrDomain::Point);
+  bke::LegacyMeshInterpolator edge_interp(*cap_mesh, *result, bke::AttrDomain::Edge);
+  bke::LegacyMeshInterpolator face_interp(*cap_mesh, *result, bke::AttrDomain::Face);
+  bke::LegacyMeshInterpolator corner_interp(*cap_mesh, *result, bke::AttrDomain::Corner);
+
+  vert_interp.copy(0, cap_verts_index, cap_nverts);
+  edge_interp.copy(0, cap_edges_index, cap_nedges);
+  face_interp.copy(0, cap_faces_index, cap_nfaces);
+  corner_interp.copy(0, cap_loops_index, cap_nloops);
 
   for (i = 0; i < cap_nverts; i++) {
     mul_m4_v3(cap_offset, result_positions[cap_verts_index + i]);
@@ -337,7 +345,6 @@ static void mesh_merge_transform(Mesh *result,
   if (const VArray cap_material_indices = *cap_attributes.lookup<int>("material_index",
                                                                       bke::AttrDomain::Face))
   {
-    bke::MutableAttributeAccessor result_attributes = result->attributes_for_write();
     bke::SpanAttributeWriter<int> result_material_indices =
         result_attributes.lookup_or_add_for_write_span<int>("material_index",
                                                             bke::AttrDomain::Face);
@@ -546,9 +553,7 @@ static Mesh *arrayModifier_doArray(ArrayModifierData *amd,
                            "geometry it would require");
   }
 
-  if (count < 1) {
-    count = 1;
-  }
+  count = std::max(count, 1);
 
   /* The number of verts, edges, loops, faces, before eventually merging doubles */
   result_nverts = chunk_nverts * count + start_cap_nverts + end_cap_nverts;
@@ -564,18 +569,23 @@ static Mesh *arrayModifier_doArray(ArrayModifierData *amd,
   blender::MutableSpan<int> result_face_offsets = result->face_offsets_for_write();
   blender::MutableSpan<int> result_corner_verts = result->corner_verts_for_write();
   blender::MutableSpan<int> result_corner_edges = result->corner_edges_for_write();
+  bke::MutableAttributeAccessor result_attributes = result->attributes_for_write();
 
   if (use_merge) {
     /* Will need full_doubles_map for handling merge */
-    full_doubles_map = static_cast<int *>(MEM_malloc_arrayN(result_nverts, sizeof(int), __func__));
+    full_doubles_map = MEM_malloc_arrayN<int>(size_t(result_nverts), __func__);
     copy_vn_i(full_doubles_map, result_nverts, -1);
   }
 
   /* copy customdata to original geometry */
-  CustomData_copy_data(&mesh->vert_data, &result->vert_data, 0, 0, chunk_nverts);
-  CustomData_copy_data(&mesh->edge_data, &result->edge_data, 0, 0, chunk_nedges);
-  CustomData_copy_data(&mesh->corner_data, &result->corner_data, 0, 0, chunk_nloops);
-  CustomData_copy_data(&mesh->face_data, &result->face_data, 0, 0, chunk_nfaces);
+  bke::LegacyMeshInterpolator vert_interp(*mesh, *result, bke::AttrDomain::Point);
+  bke::LegacyMeshInterpolator edge_interp(*mesh, *result, bke::AttrDomain::Edge);
+  bke::LegacyMeshInterpolator face_interp(*mesh, *result, bke::AttrDomain::Face);
+  bke::LegacyMeshInterpolator corner_interp(*mesh, *result, bke::AttrDomain::Corner);
+  vert_interp.copy(0, 0, chunk_nverts);
+  edge_interp.copy(0, 0, chunk_nedges);
+  face_interp.copy(0, 0, chunk_nfaces);
+  corner_interp.copy(0, 0, chunk_nloops);
 
   result_face_offsets.take_front(mesh->faces_num).copy_from(mesh->face_offsets().drop_back(1));
 
@@ -596,11 +606,10 @@ static Mesh *arrayModifier_doArray(ArrayModifierData *amd,
 
   for (c = 1; c < count; c++) {
     /* copy customdata to new geometry */
-    CustomData_copy_data(&mesh->vert_data, &result->vert_data, 0, c * chunk_nverts, chunk_nverts);
-    CustomData_copy_data(&mesh->edge_data, &result->edge_data, 0, c * chunk_nedges, chunk_nedges);
-    CustomData_copy_data(
-        &mesh->corner_data, &result->corner_data, 0, c * chunk_nloops, chunk_nloops);
-    CustomData_copy_data(&mesh->face_data, &result->face_data, 0, c * chunk_nfaces, chunk_nfaces);
+    vert_interp.copy(0, c * chunk_nverts, chunk_nverts);
+    edge_interp.copy(0, c * chunk_nedges, chunk_nedges);
+    face_interp.copy(0, c * chunk_nfaces, chunk_nfaces);
+    corner_interp.copy(0, c * chunk_nloops, chunk_nloops);
 
     /* recalculate cumulative offset here */
     mul_m4_m4m4(current_offset, current_offset, offset);
@@ -687,22 +696,24 @@ static Mesh *arrayModifier_doArray(ArrayModifierData *amd,
 
   /* handle UVs */
   if (chunk_nloops > 0 && is_zero_v2(amd->uv_offset) == false) {
-    const int totuv = CustomData_number_of_layers(&result->corner_data, CD_PROP_FLOAT2);
-    for (i = 0; i < totuv; i++) {
-      blender::float2 *dmloopuv = static_cast<blender::float2 *>(CustomData_get_layer_n_for_write(
-          &result->corner_data, CD_PROP_FLOAT2, i, result->corners_num));
-      dmloopuv += chunk_nloops;
+    const VectorSet<StringRefNull> uv_map_names = result->uv_map_names();
+    for (i = 0; i < uv_map_names.size(); i++) {
+      bke::SpanAttributeWriter uv_map_attr = result_attributes.lookup_for_write_span<float2>(
+          uv_map_names[i]);
+      float2 *uv_map = uv_map_attr.span.data();
+      uv_map += chunk_nloops;
       for (c = 1; c < count; c++) {
         const float uv_offset[2] = {
             amd->uv_offset[0] * float(c),
             amd->uv_offset[1] * float(c),
         };
         int l_index = chunk_nloops;
-        for (; l_index-- != 0; dmloopuv++) {
-          (*dmloopuv)[0] += uv_offset[0];
-          (*dmloopuv)[1] += uv_offset[1];
+        for (; l_index-- != 0; uv_map++) {
+          (*uv_map)[0] += uv_offset[0];
+          (*uv_map)[1] += uv_offset[1];
         }
       }
+      uv_map_attr.finish();
     }
   }
 
@@ -895,22 +906,22 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   PointerRNA ob_ptr;
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, &ob_ptr);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiItemR(layout, ptr, "fit_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "fit_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   int fit_type = RNA_enum_get(ptr, "fit_type");
   if (fit_type == MOD_ARR_FIXEDCOUNT) {
-    uiItemR(layout, ptr, "count", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    layout->prop(ptr, "count", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
   else if (fit_type == MOD_ARR_FITLENGTH) {
-    uiItemR(layout, ptr, "fit_length", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    layout->prop(ptr, "fit_length", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
   else if (fit_type == MOD_ARR_FITCURVE) {
-    uiItemR(layout, ptr, "curve", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    layout->prop(ptr, "curve", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void relative_offset_header_draw(const bContext * /*C*/, Panel *panel)
@@ -919,7 +930,7 @@ static void relative_offset_header_draw(const bContext * /*C*/, Panel *panel)
 
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
 
-  uiItemR(layout, ptr, "use_relative_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "use_relative_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
 static void relative_offset_draw(const bContext * /*C*/, Panel *panel)
@@ -928,12 +939,12 @@ static void relative_offset_draw(const bContext * /*C*/, Panel *panel)
 
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiLayout *col = uiLayoutColumn(layout, false);
+  uiLayout *col = &layout->column(false);
 
-  uiLayoutSetActive(col, RNA_boolean_get(ptr, "use_relative_offset"));
-  uiItemR(col, ptr, "relative_offset_displace", UI_ITEM_NONE, IFACE_("Factor"), ICON_NONE);
+  col->active_set(RNA_boolean_get(ptr, "use_relative_offset"));
+  col->prop(ptr, "relative_offset_displace", UI_ITEM_NONE, IFACE_("Factor"), ICON_NONE);
 }
 
 static void constant_offset_header_draw(const bContext * /*C*/, Panel *panel)
@@ -942,7 +953,7 @@ static void constant_offset_header_draw(const bContext * /*C*/, Panel *panel)
 
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
 
-  uiItemR(layout, ptr, "use_constant_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "use_constant_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
 static void constant_offset_draw(const bContext * /*C*/, Panel *panel)
@@ -951,12 +962,12 @@ static void constant_offset_draw(const bContext * /*C*/, Panel *panel)
 
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiLayout *col = uiLayoutColumn(layout, false);
+  uiLayout *col = &layout->column(false);
 
-  uiLayoutSetActive(col, RNA_boolean_get(ptr, "use_constant_offset"));
-  uiItemR(col, ptr, "constant_offset_displace", UI_ITEM_NONE, IFACE_("Distance"), ICON_NONE);
+  col->active_set(RNA_boolean_get(ptr, "use_constant_offset"));
+  col->prop(ptr, "constant_offset_displace", UI_ITEM_NONE, IFACE_("Distance"), ICON_NONE);
 }
 
 /**
@@ -968,7 +979,7 @@ static void object_offset_header_draw(const bContext * /*C*/, Panel *panel)
 
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
 
-  uiItemR(layout, ptr, "use_object_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "use_object_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
 static void object_offset_draw(const bContext * /*C*/, Panel *panel)
@@ -977,12 +988,12 @@ static void object_offset_draw(const bContext * /*C*/, Panel *panel)
 
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiLayout *col = uiLayoutColumn(layout, false);
+  uiLayout *col = &layout->column(false);
 
-  uiLayoutSetActive(col, RNA_boolean_get(ptr, "use_object_offset"));
-  uiItemR(col, ptr, "offset_object", UI_ITEM_NONE, IFACE_("Object"), ICON_NONE);
+  col->active_set(RNA_boolean_get(ptr, "use_object_offset"));
+  col->prop(ptr, "offset_object", UI_ITEM_NONE, IFACE_("Object"), ICON_NONE);
 }
 
 static void symmetry_panel_header_draw(const bContext * /*C*/, Panel *panel)
@@ -991,7 +1002,7 @@ static void symmetry_panel_header_draw(const bContext * /*C*/, Panel *panel)
 
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
 
-  uiItemR(layout, ptr, "use_merge_vertices", UI_ITEM_NONE, IFACE_("Merge"), ICON_NONE);
+  layout->prop(ptr, "use_merge_vertices", UI_ITEM_NONE, IFACE_("Merge"), ICON_NONE);
 }
 
 static void symmetry_panel_draw(const bContext * /*C*/, Panel *panel)
@@ -1000,17 +1011,13 @@ static void symmetry_panel_draw(const bContext * /*C*/, Panel *panel)
 
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiLayout *col = uiLayoutColumn(layout, false);
-  uiLayoutSetActive(col, RNA_boolean_get(ptr, "use_merge_vertices"));
-  uiItemR(col, ptr, "merge_threshold", UI_ITEM_NONE, IFACE_("Distance"), ICON_NONE);
-  uiItemR(col,
-          ptr,
-          "use_merge_vertices_cap",
-          UI_ITEM_NONE,
-          IFACE_("First and Last Copies"),
-          ICON_NONE);
+  uiLayout *col = &layout->column(false);
+  col->active_set(RNA_boolean_get(ptr, "use_merge_vertices"));
+  col->prop(ptr, "merge_threshold", UI_ITEM_NONE, IFACE_("Distance"), ICON_NONE);
+  col->prop(
+      ptr, "use_merge_vertices_cap", UI_ITEM_NONE, IFACE_("First and Last Copies"), ICON_NONE);
 }
 
 static void uv_panel_draw(const bContext * /*C*/, Panel *panel)
@@ -1020,11 +1027,11 @@ static void uv_panel_draw(const bContext * /*C*/, Panel *panel)
 
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  col = uiLayoutColumn(layout, true);
-  uiItemR(col, ptr, "offset_u", UI_ITEM_R_EXPAND, IFACE_("Offset U"), ICON_NONE);
-  uiItemR(col, ptr, "offset_v", UI_ITEM_R_EXPAND, IFACE_("V"), ICON_NONE);
+  col = &layout->column(true);
+  col->prop(ptr, "offset_u", UI_ITEM_R_EXPAND, IFACE_("Offset U"), ICON_NONE);
+  col->prop(ptr, "offset_v", UI_ITEM_R_EXPAND, IFACE_("V"), ICON_NONE);
 }
 
 static void caps_panel_draw(const bContext * /*C*/, Panel *panel)
@@ -1034,11 +1041,11 @@ static void caps_panel_draw(const bContext * /*C*/, Panel *panel)
 
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "start_cap", UI_ITEM_NONE, IFACE_("Cap Start"), ICON_NONE);
-  uiItemR(col, ptr, "end_cap", UI_ITEM_NONE, IFACE_("End"), ICON_NONE);
+  col = &layout->column(false);
+  col->prop(ptr, "start_cap", UI_ITEM_NONE, IFACE_("Cap Start"), ICON_NONE);
+  col->prop(ptr, "end_cap", UI_ITEM_NONE, IFACE_("End"), ICON_NONE);
 }
 
 static void panel_register(ARegionType *region_type)
@@ -1099,4 +1106,5 @@ ModifierTypeInfo modifierType_Array = {
     /*blend_write*/ nullptr,
     /*blend_read*/ nullptr,
     /*foreach_cache*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
 };

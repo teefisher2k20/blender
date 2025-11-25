@@ -75,17 +75,17 @@ static void clamp(rcti &bounds, int2 resolution)
   BLI_rcti_isect(&bounds, &clamping_bounds, &bounds);
 }
 
-static const Vertex<CoordSpace::Tile> convert_coord_space(const Vertex<CoordSpace::UV> &uv_vertex,
-                                                          const image::ImageTileWrapper image_tile,
-                                                          const int2 tile_resolution)
+static Vertex<CoordSpace::Tile> convert_coord_space(const Vertex<CoordSpace::UV> &uv_vertex,
+                                                    const image::ImageTileWrapper image_tile,
+                                                    const int2 tile_resolution)
 {
   return Vertex<CoordSpace::Tile>{(uv_vertex.coordinate - float2(image_tile.get_tile_offset())) *
                                   float2(tile_resolution)};
 }
 
-static const Edge<CoordSpace::Tile> convert_coord_space(const Edge<CoordSpace::UV> &uv_edge,
-                                                        const image::ImageTileWrapper image_tile,
-                                                        const int2 tile_resolution)
+static Edge<CoordSpace::Tile> convert_coord_space(const Edge<CoordSpace::UV> &uv_edge,
+                                                  const image::ImageTileWrapper image_tile,
+                                                  const int2 tile_resolution)
 {
   return Edge<CoordSpace::Tile>{
       convert_coord_space(uv_edge.vertex_1, image_tile, tile_resolution),
@@ -103,7 +103,7 @@ class NonManifoldUVEdges : public Vector<Edge<CoordSpace::UV>> {
     reserve(num_non_manifold_edges);
     for (const int primitive_id : mesh_data.corner_tris.index_range()) {
       for (const int edge_id : mesh_data.primitive_to_edge_map[primitive_id]) {
-        if (is_manifold(mesh_data, edge_id)) {
+        if (mesh_data.is_edge_manifold(edge_id)) {
           continue;
         }
         const int3 &tri = mesh_data.corner_tris[primitive_id];
@@ -137,18 +137,13 @@ class NonManifoldUVEdges : public Vector<Edge<CoordSpace::UV>> {
     int64_t result = 0;
     for (const int primitive_id : mesh_data.corner_tris.index_range()) {
       for (const int edge_id : mesh_data.primitive_to_edge_map[primitive_id]) {
-        if (is_manifold(mesh_data, edge_id)) {
+        if (mesh_data.is_edge_manifold(edge_id)) {
           continue;
         }
         result += 1;
       }
     }
     return result;
-  }
-
-  static bool is_manifold(const uv_islands::MeshData &mesh_data, const int edge_id)
-  {
-    return mesh_data.edge_to_primitive_map[edge_id].size() == 2;
   }
 
   static float2 find_uv(const uv_islands::MeshData &mesh_data, const int3 &tri, int vertex_i)
@@ -334,7 +329,7 @@ struct Rows {
     /* Initialize to the first source, so when no other source could be found it will use the
      * first_source. */
     int2 found_source = first_source;
-    float found_distance = std::numeric_limits<float>().max();
+    float found_distance = std::numeric_limits<float>::max();
     for (int sy : IndexRange(search_bounds.ymin, BLI_rcti_size_y(&search_bounds) + 1)) {
       for (int sx : IndexRange(search_bounds.xmin, BLI_rcti_size_x(&search_bounds) + 1)) {
         int2 source(sx, sy);
@@ -392,7 +387,7 @@ struct Rows {
     add_margin(bounds, margin);
     clamp(bounds, resolution);
 
-    float found_distance = std::numeric_limits<float>().max();
+    float found_distance = std::numeric_limits<float>::max();
     int2 found_source(0);
 
     for (int sy : IndexRange(bounds.ymin, BLI_rcti_size_y(&bounds))) {
@@ -411,7 +406,7 @@ struct Rows {
       }
     }
 
-    if (found_distance == std::numeric_limits<float>().max()) {
+    if (found_distance == std::numeric_limits<float>::max()) {
       return;
     }
     pixel.type = PixelType::CopyFromClosestEdge;

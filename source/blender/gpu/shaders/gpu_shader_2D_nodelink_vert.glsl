@@ -12,124 +12,118 @@
  * `pos` is the verts position in the curve tangent space
  */
 
-#include "infos/gpu_shader_2D_nodelink_info.hh"
+#include "infos/gpu_shader_2D_nodelink_infos.hh"
 
 VERTEX_SHADER_CREATE_INFO(gpu_shader_2D_nodelink)
 
-#define MID_VERTEX 65
+#include "gpu_shader_attribute_load_lib.glsl"
+#include "gpu_shader_math_vector_compare_lib.glsl"
 
 void main()
 {
-  const float start_gradient_threshold = 0.35;
-  const float end_gradient_threshold = 0.65;
+  constexpr float start_gradient_threshold = 0.35f;
+  constexpr float end_gradient_threshold = 0.65f;
 
-#ifdef USE_INSTANCE
-#  define colStart (colid_doarrow[0] < 3u ? start_color : node_link_data.colors[colid_doarrow[0]])
-#  define colEnd (colid_doarrow[1] < 3u ? end_color : node_link_data.colors[colid_doarrow[1]])
-#  define colShadow node_link_data.colors[colid_doarrow[2]]
-#  define doArrow (colid_doarrow[3] != 0u)
-#  define doMuted (domuted[0] != 0u)
-#else
-  vec2 P0 = node_link_data.bezierPts[0].xy;
-  vec2 P1 = node_link_data.bezierPts[1].xy;
-  vec2 P2 = node_link_data.bezierPts[2].xy;
-  vec2 P3 = node_link_data.bezierPts[3].xy;
-  bool doArrow = node_link_data.doArrow;
-  bool doMuted = node_link_data.doMuted;
-  float dim_factor = node_link_data.dim_factor;
-  float thickness = node_link_data.thickness;
-  vec3 dash_params = node_link_data.dash_params.xyz;
-  int has_back_link = node_link_data.has_back_link ? 1 : 0;
+  const NodeLinkData link = link_data_buf[gl_InstanceID];
 
-  vec4 colShadow = node_link_data.colors[0];
-  vec4 colStart = node_link_data.colors[1];
-  vec4 colEnd = node_link_data.colors[2];
-#endif
+  const float2 P0 = link.bezier_P0;
+  const float2 P1 = link.bezier_P1;
+  const float2 P2 = link.bezier_P2;
+  const float2 P3 = link.bezier_P3;
 
-  float line_thickness = thickness;
-  bool is_outline_pass = gl_VertexID < MID_VERTEX;
-  isMainLine = expand.y == 1.0 && !is_outline_pass ? 1 : 0;
+  const uint3 color_ids = gpu_attr_decode_uchar4_to_uint4(link.color_ids).xyz;
 
-  if ((expand.y == 1.0) && has_back_link != 0) {
+  const float4 color_start = (color_ids[0] < 3u) ? link.start_color :
+                                                   link_uniforms.colors[color_ids[0]];
+  const float4 color_end = (color_ids[1] < 3u) ? link.end_color :
+                                                 link_uniforms.colors[color_ids[1]];
+  const float4 color_shadow = link_uniforms.colors[color_ids[2]];
+  float line_thickness = link.thickness;
+
+  /* Each instance contains both the outline and the "main" line on top. */
+  constexpr int mid_vertex = 65;
+  bool is_outline_pass = gl_VertexID < mid_vertex;
+
+  interp_flat.line_thickness = line_thickness;
+  interp_flat.is_main_line = (expand.y == 1.0f && !is_outline_pass) ? 1 : 0;
+  interp_flat.has_back_link = int(link.has_back_link);
+  interp_flat.aspect = link_uniforms.aspect;
+  /* Parameters for the dashed line. */
+  interp_flat.dash_length = link.dash_length;
+  interp_flat.dash_factor = link.dash_factor;
+  interp_flat.dash_alpha = link.dash_alpha;
+  /* Approximate line length, no need for real bezier length calculation. */
+  interp_flat.line_length = distance(P0, P3);
+  /* TODO: Incorrect U, this leads to non-uniform dash distribution. */
+  interp.line_uv = uv;
+
+  if ((expand.y == 1.0f) && link.has_back_link) {
     /* Increase width because two links are drawn. */
-    line_thickness *= 1.7;
+    line_thickness *= 1.7f;
   }
 
   if (is_outline_pass) {
     /* Outline pass. */
-    finalColor = colShadow;
+    interp.final_color = color_shadow;
   }
   else {
     /* Second pass. */
     if (uv.x < start_gradient_threshold) {
-      finalColor = colStart;
+      interp.final_color = color_start;
     }
     else if (uv.x > end_gradient_threshold) {
-      finalColor = colEnd;
+      interp.final_color = color_end;
     }
     else {
       float mixFactor = (uv.x - start_gradient_threshold) /
                         (end_gradient_threshold - start_gradient_threshold);
-      finalColor = mix(colStart, colEnd, mixFactor);
+      interp.final_color = mix(color_start, color_end, mixFactor);
     }
     line_thickness *= 0.65f;
-    if (doMuted) {
-      finalColor[3] = 0.65;
+    if (link.do_muted) {
+      interp.final_color[3] = 0.65f;
     }
   }
-
-  aspect = node_link_data.aspect;
-  /* Parameters for the dashed line. */
-  dashLength = dash_params.x;
-  dashFactor = dash_params.y;
-  dashAlpha = dash_params.z;
-  /* Approximate line length, no need for real bezier length calculation. */
-  lineLength = distance(P0, P3);
-  /* TODO: Incorrect U, this leads to non-uniform dash distribution. */
-  lineUV = uv;
-  hasBackLink = has_back_link;
+  interp.final_color.a *= link.dim_factor;
 
   float t = uv.x;
   float t2 = t * t;
-  float t2_3 = 3.0 * t2;
-  float one_minus_t = 1.0 - t;
+  float t2_3 = 3.0f * t2;
+  float one_minus_t = 1.0f - t;
   float one_minus_t2 = one_minus_t * one_minus_t;
-  float one_minus_t2_3 = 3.0 * one_minus_t2;
+  float one_minus_t2_3 = 3.0f * one_minus_t2;
 
-  vec2 point = (P0 * one_minus_t2 * one_minus_t + P1 * one_minus_t2_3 * t +
-                P2 * t2_3 * one_minus_t + P3 * t2 * t);
+  float2 point = (P0 * one_minus_t2 * one_minus_t + P1 * one_minus_t2_3 * t +
+                  P2 * t2_3 * one_minus_t + P3 * t2 * t);
 
-  vec2 tangent = ((P1 - P0) * one_minus_t2_3 + (P2 - P1) * 6.0 * (t - t2) + (P3 - P2) * t2_3);
+  float2 tangent = ((P1 - P0) * one_minus_t2_3 + (P2 - P1) * 6.0f * (t - t2) + (P3 - P2) * t2_3);
 
   /* Tangent space at t. If the inner and outer control points overlap, the tangent is invalid.
    * Use the vector between the sockets instead. */
   tangent = is_zero(tangent) ? normalize(P3 - P0) : normalize(tangent);
-  vec2 normal = tangent.yx * vec2(-1.0, 1.0);
+  float2 normal = tangent.yx * float2(-1.0f, 1.0f);
 
   /* Position vertex on the curve tangent space */
-  point += (pos.x * tangent + pos.y * normal) * node_link_data.arrowSize;
+  point += (pos.x * tangent + pos.y * normal) * link_uniforms.arrow_size;
 
-  gl_Position = ModelViewProjectionMatrix * vec4(point, 0.0, 1.0);
+  gl_Position = ModelViewProjectionMatrix * float4(point, 0.0f, 1.0f);
 
-  vec2 exp_axis = expand.x * tangent + expand.y * normal;
+  float2 exp_axis = expand.x * tangent + expand.y * normal;
 
   /* rotate & scale the expand axis */
   exp_axis = ModelViewProjectionMatrix[0].xy * exp_axis.xx +
              ModelViewProjectionMatrix[1].xy * exp_axis.yy;
 
-  float expand_dist = line_thickness * (uv.y * 2.0 - 1.0);
-  lineThickness = line_thickness;
-
-  finalColor[3] *= dim_factor;
+  float expand_dist = line_thickness * (uv.y * 2.0f - 1.0f);
 
   /* Expand into a line */
-  gl_Position.xy += exp_axis * node_link_data.aspect * expand_dist;
+  gl_Position.xy += exp_axis * link_uniforms.aspect * expand_dist;
 
   /* If the link is not muted or is not a reroute arrow the points are squashed to the center of
    * the line. Magic numbers are defined in `drawnode.cc`. */
-  if ((expand.x == 1.0 && !doMuted) ||
-      (expand.y != 1.0 && (pos.x < 0.70 || pos.x > 0.71) && !doArrow))
+  if ((expand.x == 1.0f && !link.do_muted) ||
+      (expand.y != 1.0f && (pos.x < 0.70f || pos.x > 0.71f) && !link.do_arrow))
   {
-    gl_Position.xy *= 0.0;
+    gl_Position.xy *= 0.0f;
   }
 }

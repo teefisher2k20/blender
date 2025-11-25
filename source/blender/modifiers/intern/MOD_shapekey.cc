@@ -7,7 +7,6 @@
  */
 
 #include "BLI_math_matrix.h"
-#include "BLI_utildefines.h"
 
 #include "BLT_translation.hh"
 
@@ -134,4 +133,5 @@ ModifierTypeInfo modifierType_ShapeKey = {
     /*blend_write*/ nullptr,
     /*blend_read*/ nullptr,
     /*foreach_cache*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
 };

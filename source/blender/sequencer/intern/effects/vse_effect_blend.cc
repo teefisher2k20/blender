@@ -8,7 +8,6 @@
 
 #include "BLI_math_color_blend.h"
 
-#include "DNA_scene_types.h"
 #include "DNA_sequence_types.h"
 
 #include "IMB_imbuf.hh"
@@ -17,18 +16,18 @@
 
 #include "effects.hh"
 
-using namespace blender;
+namespace blender::seq {
 
 /* -------------------------------------------------------------------- */
 /* Alpha Over Effect */
 
 static void init_alpha_over_or_under(Strip *strip)
 {
-  Strip *seq1 = strip->seq1;
-  Strip *seq2 = strip->seq2;
+  Strip *input1 = strip->input1;
+  Strip *input2 = strip->input2;
 
-  strip->seq2 = seq1;
-  strip->seq1 = seq2;
+  strip->input2 = input1;
+  strip->input1 = input2;
 }
 
 static bool alpha_opaque(uchar alpha)
@@ -76,7 +75,8 @@ struct AlphaOverEffectOp {
   float factor;
 };
 
-static ImBuf *do_alphaover_effect(const SeqRenderData *context,
+static ImBuf *do_alphaover_effect(const RenderData *context,
+                                  SeqRenderState * /*state*/,
                                   Strip * /*strip*/,
                                   float /*timeline_frame*/,
                                   float fac,
@@ -125,7 +125,8 @@ struct AlphaUnderEffectOp {
   float factor;
 };
 
-static ImBuf *do_alphaunder_effect(const SeqRenderData *context,
+static ImBuf *do_alphaunder_effect(const RenderData *context,
+                                   SeqRenderState * /*state*/,
                                    Strip * /*strip*/,
                                    float /*timeline_frame*/,
                                    float fac,
@@ -159,71 +160,75 @@ static void apply_blend_function(
   }
 }
 
-static void do_blend_effect_float(
-    float fac, int64_t size, const float *rect1, const float *rect2, int btype, float *out)
+static void do_blend_effect_float(float fac,
+                                  int64_t size,
+                                  const float *rect1,
+                                  const float *rect2,
+                                  StripBlendMode btype,
+                                  float *out)
 {
   switch (btype) {
-    case STRIP_TYPE_ADD:
+    case STRIP_BLEND_ADD:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_add_float);
       break;
-    case STRIP_TYPE_SUB:
+    case STRIP_BLEND_SUB:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_sub_float);
       break;
-    case STRIP_TYPE_MUL:
+    case STRIP_BLEND_MUL:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_mul_float);
       break;
-    case STRIP_TYPE_DARKEN:
+    case STRIP_BLEND_DARKEN:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_darken_float);
       break;
-    case STRIP_TYPE_COLOR_BURN:
+    case STRIP_BLEND_COLOR_BURN:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_burn_float);
       break;
-    case STRIP_TYPE_LINEAR_BURN:
+    case STRIP_BLEND_LINEAR_BURN:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_linearburn_float);
       break;
-    case STRIP_TYPE_SCREEN:
+    case STRIP_BLEND_SCREEN:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_screen_float);
       break;
-    case STRIP_TYPE_LIGHTEN:
+    case STRIP_BLEND_LIGHTEN:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_lighten_float);
       break;
-    case STRIP_TYPE_DODGE:
+    case STRIP_BLEND_DODGE:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_dodge_float);
       break;
-    case STRIP_TYPE_OVERLAY:
+    case STRIP_BLEND_OVERLAY:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_overlay_float);
       break;
-    case STRIP_TYPE_SOFT_LIGHT:
+    case STRIP_BLEND_SOFT_LIGHT:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_softlight_float);
       break;
-    case STRIP_TYPE_HARD_LIGHT:
+    case STRIP_BLEND_HARD_LIGHT:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_hardlight_float);
       break;
-    case STRIP_TYPE_PIN_LIGHT:
+    case STRIP_BLEND_PIN_LIGHT:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_pinlight_float);
       break;
-    case STRIP_TYPE_LIN_LIGHT:
+    case STRIP_BLEND_LIN_LIGHT:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_linearlight_float);
       break;
-    case STRIP_TYPE_VIVID_LIGHT:
+    case STRIP_BLEND_VIVID_LIGHT:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_vividlight_float);
       break;
-    case STRIP_TYPE_BLEND_COLOR:
+    case STRIP_BLEND_BLEND_COLOR:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_color_float);
       break;
-    case STRIP_TYPE_HUE:
+    case STRIP_BLEND_HUE:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_hue_float);
       break;
-    case STRIP_TYPE_SATURATION:
+    case STRIP_BLEND_SATURATION:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_saturation_float);
       break;
-    case STRIP_TYPE_VALUE:
+    case STRIP_BLEND_VALUE:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_luminosity_float);
       break;
-    case STRIP_TYPE_DIFFERENCE:
+    case STRIP_BLEND_DIFFERENCE:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_difference_float);
       break;
-    case STRIP_TYPE_EXCLUSION:
+    case STRIP_BLEND_EXCLUSION:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_exclusion_float);
       break;
     default:
@@ -231,71 +236,75 @@ static void do_blend_effect_float(
   }
 }
 
-static void do_blend_effect_byte(
-    float fac, int64_t size, const uchar *rect1, const uchar *rect2, int btype, uchar *out)
+static void do_blend_effect_byte(float fac,
+                                 int64_t size,
+                                 const uchar *rect1,
+                                 const uchar *rect2,
+                                 StripBlendMode btype,
+                                 uchar *out)
 {
   switch (btype) {
-    case STRIP_TYPE_ADD:
+    case STRIP_BLEND_ADD:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_add_byte);
       break;
-    case STRIP_TYPE_SUB:
+    case STRIP_BLEND_SUB:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_sub_byte);
       break;
-    case STRIP_TYPE_MUL:
+    case STRIP_BLEND_MUL:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_mul_byte);
       break;
-    case STRIP_TYPE_DARKEN:
+    case STRIP_BLEND_DARKEN:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_darken_byte);
       break;
-    case STRIP_TYPE_COLOR_BURN:
+    case STRIP_BLEND_COLOR_BURN:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_burn_byte);
       break;
-    case STRIP_TYPE_LINEAR_BURN:
+    case STRIP_BLEND_LINEAR_BURN:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_linearburn_byte);
       break;
-    case STRIP_TYPE_SCREEN:
+    case STRIP_BLEND_SCREEN:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_screen_byte);
       break;
-    case STRIP_TYPE_LIGHTEN:
+    case STRIP_BLEND_LIGHTEN:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_lighten_byte);
       break;
-    case STRIP_TYPE_DODGE:
+    case STRIP_BLEND_DODGE:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_dodge_byte);
       break;
-    case STRIP_TYPE_OVERLAY:
+    case STRIP_BLEND_OVERLAY:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_overlay_byte);
       break;
-    case STRIP_TYPE_SOFT_LIGHT:
+    case STRIP_BLEND_SOFT_LIGHT:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_softlight_byte);
       break;
-    case STRIP_TYPE_HARD_LIGHT:
+    case STRIP_BLEND_HARD_LIGHT:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_hardlight_byte);
       break;
-    case STRIP_TYPE_PIN_LIGHT:
+    case STRIP_BLEND_PIN_LIGHT:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_pinlight_byte);
       break;
-    case STRIP_TYPE_LIN_LIGHT:
+    case STRIP_BLEND_LIN_LIGHT:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_linearlight_byte);
       break;
-    case STRIP_TYPE_VIVID_LIGHT:
+    case STRIP_BLEND_VIVID_LIGHT:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_vividlight_byte);
       break;
-    case STRIP_TYPE_BLEND_COLOR:
+    case STRIP_BLEND_BLEND_COLOR:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_color_byte);
       break;
-    case STRIP_TYPE_HUE:
+    case STRIP_BLEND_HUE:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_hue_byte);
       break;
-    case STRIP_TYPE_SATURATION:
+    case STRIP_BLEND_SATURATION:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_saturation_byte);
       break;
-    case STRIP_TYPE_VALUE:
+    case STRIP_BLEND_VALUE:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_luminosity_byte);
       break;
-    case STRIP_TYPE_DIFFERENCE:
+    case STRIP_BLEND_DIFFERENCE:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_difference_byte);
       break;
-    case STRIP_TYPE_EXCLUSION:
+    case STRIP_BLEND_EXCLUSION:
       apply_blend_function(fac, size, rect1, rect2, out, blend_color_exclusion_byte);
       break;
     default:
@@ -313,11 +322,12 @@ struct BlendModeEffectOp {
       do_blend_effect_byte(this->factor, size, src1, src2, this->blend_mode, dst);
     }
   }
-  int blend_mode; /* STRIP_TYPE_ */
+  StripBlendMode blend_mode;
   float factor;
 };
 
-static ImBuf *do_blend_mode_effect(const SeqRenderData *context,
+static ImBuf *do_blend_mode_effect(const RenderData *context,
+                                   SeqRenderState * /*state*/,
                                    Strip *strip,
                                    float /*timeline_frame*/,
                                    float fac,
@@ -327,7 +337,7 @@ static ImBuf *do_blend_mode_effect(const SeqRenderData *context,
   ImBuf *dst = prepare_effect_imbufs(context, src1, src2);
   BlendModeEffectOp op;
   op.factor = fac;
-  op.blend_mode = strip->blend_mode;
+  op.blend_mode = StripBlendMode(strip->blend_mode);
   apply_effect_op(op, src1, src2, dst);
   return dst;
 }
@@ -337,16 +347,15 @@ static ImBuf *do_blend_mode_effect(const SeqRenderData *context,
 
 static void init_colormix_effect(Strip *strip)
 {
-  if (strip->effectdata) {
-    MEM_freeN(strip->effectdata);
-  }
-  strip->effectdata = MEM_callocN(sizeof(ColorMixVars), "colormixvars");
-  ColorMixVars *data = (ColorMixVars *)strip->effectdata;
-  data->blend_effect = STRIP_TYPE_OVERLAY;
+  MEM_SAFE_FREE(strip->effectdata);
+  ColorMixVars *data = MEM_callocN<ColorMixVars>("colormixvars");
+  strip->effectdata = data;
+  data->blend_effect = STRIP_BLEND_OVERLAY;
   data->factor = 1.0f;
 }
 
-static ImBuf *do_colormix_effect(const SeqRenderData *context,
+static ImBuf *do_colormix_effect(const RenderData *context,
+                                 SeqRenderState * /*state*/,
                                  Strip *strip,
                                  float /*timeline_frame*/,
                                  float /*fac*/,
@@ -356,69 +365,36 @@ static ImBuf *do_colormix_effect(const SeqRenderData *context,
   ImBuf *dst = prepare_effect_imbufs(context, src1, src2);
   const ColorMixVars *data = static_cast<const ColorMixVars *>(strip->effectdata);
   BlendModeEffectOp op;
-  op.blend_mode = data->blend_effect;
+  op.blend_mode = StripBlendMode(data->blend_effect);
   op.factor = data->factor;
   apply_effect_op(op, src1, src2, dst);
   return dst;
 }
 
-/* -------------------------------------------------------------------- */
-/* Over-Drop Effect */
-
-/* Before Blender 2.42 (2006), over-drop effect used to have some
- * sort of drop shadow with itself blended on top. However since then
- * (commit 327d413eb3c0c), it is effectively just alpha-over with swapped
- * inputs and thus the effect "fade" factor controlling the other input. */
-
-static ImBuf *do_overdrop_effect(const SeqRenderData *context,
-                                 Strip *strip,
-                                 float timeline_frame,
-                                 float fac,
-                                 ImBuf *src1,
-                                 ImBuf *src2)
-{
-  return do_alphaover_effect(context, strip, timeline_frame, fac, src1, src2);
-}
-
-static void copy_effect_default(Strip *dst, const Strip *src, const int /*flag*/)
-{
-  dst->effectdata = MEM_dupallocN(src->effectdata);
-}
-
-static void free_effect_default(Strip *strip, const bool /*do_id_user*/)
-{
-  MEM_SAFE_FREE(strip->effectdata);
-}
-
-void blend_mode_effect_get_handle(SeqEffectHandle &rval)
+void blend_mode_effect_get_handle(EffectHandle &rval)
 {
   rval.execute = do_blend_mode_effect;
   rval.early_out = early_out_mul_input2;
 }
 
-void color_mix_effect_get_handle(SeqEffectHandle &rval)
+void color_mix_effect_get_handle(EffectHandle &rval)
 {
   rval.init = init_colormix_effect;
-  rval.free = free_effect_default;
-  rval.copy = copy_effect_default;
   rval.execute = do_colormix_effect;
   rval.early_out = early_out_mul_input2;
 }
 
-void alpha_over_effect_get_handle(SeqEffectHandle &rval)
+void alpha_over_effect_get_handle(EffectHandle &rval)
 {
   rval.init = init_alpha_over_or_under;
   rval.execute = do_alphaover_effect;
   rval.early_out = early_out_mul_input1;
 }
 
-void over_drop_effect_get_handle(SeqEffectHandle &rval)
-{
-  rval.execute = do_overdrop_effect;
-}
-
-void alpha_under_effect_get_handle(SeqEffectHandle &rval)
+void alpha_under_effect_get_handle(EffectHandle &rval)
 {
   rval.init = init_alpha_over_or_under;
   rval.execute = do_alphaunder_effect;
 }
+
+}  // namespace blender::seq

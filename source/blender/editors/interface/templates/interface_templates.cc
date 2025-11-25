@@ -6,8 +6,10 @@
  * \ingroup edinterface
  */
 
+#include "BKE_library.hh"
 #include "BKE_screen.hh"
 
+#include "BLI_math_color.h"
 #include "BLI_string_ref.hh"
 
 #include "ED_fileselect.hh"
@@ -15,7 +17,7 @@
 
 #include "RNA_access.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "interface_intern.hh"
 #include "interface_templates_intern.hh"
 
@@ -39,7 +41,7 @@ int template_search_textbut_width(PointerRNA *ptr, PropertyRNA *name_prop)
   const int estimated_width = UI_fontstyle_string_width(fstyle, name) + margin;
 
   if (name != str) {
-    MEM_freeN((void *)name);
+    MEM_freeN(name);
   }
 
   /* Clamp to some min/max width. */
@@ -52,9 +54,6 @@ int template_search_textbut_height()
   return TEMPLATE_SEARCH_TEXTBUT_HEIGHT;
 }
 
-/**
- * Add a block button for the search menu for templateID and templateSearch.
- */
 void template_add_button_search_menu(const bContext *C,
                                      uiLayout *layout,
                                      uiBlock *block,
@@ -62,7 +61,7 @@ void template_add_button_search_menu(const bContext *C,
                                      PropertyRNA *prop,
                                      uiBlockCreateFunc block_func,
                                      void *block_argN,
-                                     const char *const tip,
+                                     const std::optional<blender::StringRef> tip,
                                      const bool use_previews,
                                      const bool editable,
                                      const bool live_icon,
@@ -91,7 +90,7 @@ void template_add_button_search_menu(const bContext *C,
     if (use_big_size) {
       /* Assume column layout here. To be more correct, we should check if the layout passed to
        * template_id is a column one, but this should work well in practice. */
-      col = uiLayoutColumn(layout, true);
+      col = &layout->column(true);
     }
 
     but = uiDefBlockButN(block,
@@ -118,7 +117,7 @@ void template_add_button_search_menu(const bContext *C,
       UI_but_flag_enable(but, UI_BUT_DISABLED);
     }
     if (use_big_size) {
-      uiLayoutRow(col ? col : layout, true);
+      (col ? col : layout)->row(true);
     }
   }
   else {
@@ -171,48 +170,48 @@ uiBlock *template_common_search_menu(const bContext *C,
   /* clear initial search string, then all items show */
   search[0] = 0;
 
-  uiBlock *block = UI_block_begin(C, region, "_popup", UI_EMBOSS);
+  uiBlock *block = UI_block_begin(C, region, "_popup", blender::ui::EmbossType::Emboss);
   UI_block_flag_enable(block, UI_BLOCK_LOOP | UI_BLOCK_SEARCH_MENU);
   UI_block_theme_style_set(block, UI_BLOCK_THEME_STYLE_POPUP);
 
   /* preview thumbnails */
   if (preview_rows > 0 && preview_cols > 0) {
     const int w = 4 * U.widget_unit * preview_cols * scale;
-    const int h = 5 * U.widget_unit * preview_rows * scale;
+    const int h = 5 * U.widget_unit * preview_rows * scale + 2 * UI_SEARCHBOX_TRIA_H -
+                  UI_SEARCHBOX_BOUNDS;
 
     /* fake button, it holds space for search items */
-    uiDefBut(block, UI_BTYPE_LABEL, 0, "", 10, 26, w, h, nullptr, 0, 0, nullptr);
-
-    but = uiDefSearchBut(block, search, 0, ICON_VIEWZOOM, sizeof(search), 10, 0, w, UI_UNIT_Y, "");
+    uiDefBut(block, ButType::Label, "", 0, UI_UNIT_Y, w, h, nullptr, 0, 0, std::nullopt);
+    but = uiDefSearchBut(block, search, ICON_VIEWZOOM, sizeof(search), 0, 0, w, UI_UNIT_Y, "");
     UI_but_search_preview_grid_size_set(but, preview_rows, preview_cols);
   }
   /* list view */
   else {
-    const int searchbox_width = int(float(UI_searchbox_size_x()) * 1.4f);
+    const int searchbox_width = UI_searchbox_size_x_guess(C, search_update_fn, search_arg);
     const int searchbox_height = UI_searchbox_size_y();
+    const int search_but_height = UI_UNIT_Y - 1.0f * UI_SCALE_FAC;
 
     /* fake button, it holds space for search items */
     uiDefBut(block,
-             UI_BTYPE_LABEL,
-             0,
+             ButType::Label,
              "",
-             10,
-             15,
+             0,
+             search_but_height,
              searchbox_width,
-             searchbox_height,
+             searchbox_height - UI_SEARCHBOX_BOUNDS,
              nullptr,
              0,
              0,
-             nullptr);
+             std::nullopt);
     but = uiDefSearchBut(block,
                          search,
-                         0,
+
                          ICON_VIEWZOOM,
                          sizeof(search),
-                         10,
+                         0,
                          0,
                          searchbox_width,
-                         UI_UNIT_Y - 1,
+                         search_but_height,
                          "");
   }
   UI_but_func_search_set(but,
@@ -225,7 +224,7 @@ uiBlock *template_common_search_menu(const bContext *C,
                          active_item);
   UI_but_func_search_set_tooltip(but, item_tooltip_fn);
 
-  UI_block_bounds_set_normal(block, 0.3f * U.widget_unit);
+  UI_block_bounds_set_normal(block, UI_SEARCHBOX_BOUNDS);
   UI_block_direction_set(block, UI_DIR_DOWN);
 
   /* give search-field focus */
@@ -244,7 +243,7 @@ uiBlock *template_common_search_menu(const bContext *C,
 
 void uiTemplateHeader(uiLayout *layout, bContext *C)
 {
-  uiBlock *block = uiLayoutAbsoluteBlock(layout);
+  uiBlock *block = layout->absolute_block();
   ED_area_header_switchbutton(C, block, 0);
 }
 
@@ -269,10 +268,10 @@ void uiTemplatePathBuilder(uiLayout *layout,
   }
 
   /* Start drawing UI Elements using standard defines */
-  uiLayout *row = uiLayoutRow(layout, true);
+  uiLayout *row = &layout->row(true);
 
   /* Path (existing string) Widget */
-  uiItemR(row, ptr, propname, UI_ITEM_NONE, text, ICON_RNA);
+  row->prop(ptr, propname, UI_ITEM_NONE, text, ICON_RNA);
 
   /* TODO: attach something to this to make allow
    * searching of nested properties to 'build' the path */
@@ -286,14 +285,14 @@ void uiTemplatePathBuilder(uiLayout *layout,
 
 void uiTemplateNodeSocket(uiLayout *layout, bContext * /*C*/, const float color[4])
 {
-  uiBlock *block = uiLayoutGetBlock(layout);
+  uiBlock *block = layout->block();
   UI_block_align_begin(block);
 
   /* XXX using explicit socket colors is not quite ideal.
    * Eventually it should be possible to use theme colors for this purpose,
    * but this requires a better design for extendable color palettes in user preferences. */
   uiBut *but = uiDefBut(
-      block, UI_BTYPE_NODE_SOCKET, 0, "", 0, 0, UI_UNIT_X, UI_UNIT_Y, nullptr, 0, 0, "");
+      block, ButType::NodeSocket, "", 0, 0, UI_UNIT_X, UI_UNIT_Y, nullptr, 0, 0, "");
   rgba_float_to_uchar(but->col, color);
 
   UI_block_align_end(block);
@@ -308,7 +307,7 @@ void uiTemplateFileSelectPath(uiLayout *layout, bContext *C, FileSelectParams *p
   bScreen *screen = CTX_wm_screen(C);
   SpaceFile *sfile = CTX_wm_space_file(C);
 
-  ED_file_path_button(screen, sfile, params, uiLayoutGetBlock(layout));
+  ED_file_path_button(screen, sfile, params, layout->block());
 }
 
 /** \} */

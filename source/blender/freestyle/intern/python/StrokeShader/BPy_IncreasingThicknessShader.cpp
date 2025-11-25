@@ -10,10 +10,6 @@
 
 #include "../../stroke/BasicStrokeShaders.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -46,7 +42,6 @@ PyDoc_STRVAR(
     "\n"
     "   :arg stroke: A Stroke object.\n"
     "   :type stroke: :class:`freestyle.types.Stroke`\n");
-
 static int IncreasingThicknessShader___init__(BPy_IncreasingThicknessShader *self,
                                               PyObject *args,
                                               PyObject *kwds)
@@ -105,7 +100,3 @@ PyTypeObject IncreasingThicknessShader_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

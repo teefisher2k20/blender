@@ -14,10 +14,13 @@
 #pragma once
 
 #include "kernel/globals.h"
-#include "kernel/image.h"
 
 #include "kernel/geom/attribute.h"
 #include "kernel/geom/object.h"
+
+#include "kernel/sample/lcg.h"
+
+#include "kernel/util/texture_3d.h"
 
 CCL_NAMESPACE_BEGIN
 
@@ -43,17 +46,20 @@ ccl_device_inline float3 volume_normalized_position(KernelGlobals kg,
   return P;
 }
 
-ccl_device float volume_attribute_value_to_float(const float4 value)
+template<typename T> ccl_device_inline T volume_attribute_value(const float4 value);
+
+ccl_device_template_spec float volume_attribute_value(const float4 value)
 {
   return average(make_float3(value));
 }
 
-ccl_device float volume_attribute_value_to_alpha(const float4 value)
+ccl_device_template_spec float2 volume_attribute_value(const float4 /*value*/)
 {
-  return value.w;
+  kernel_assert(!"Float2 attribute not supported for volumes");
+  return zero_float2();
 }
 
-ccl_device float3 volume_attribute_value_to_float3(const float4 value)
+ccl_device_template_spec float3 volume_attribute_value(const float4 value)
 {
   if (value.w > 1e-6f && value.w != 1.0f) {
     /* For RGBA colors, unpremultiply after interpolation. */
@@ -62,9 +68,20 @@ ccl_device float3 volume_attribute_value_to_float3(const float4 value)
   return make_float3(value);
 }
 
+ccl_device_template_spec float4 volume_attribute_value(const float4 value)
+{
+  return value;
+}
+
+ccl_device float volume_attribute_alpha(const float4 value)
+{
+  return value.w;
+}
+
 ccl_device float4 volume_attribute_float4(KernelGlobals kg,
-                                          const ccl_private ShaderData *sd,
-                                          const AttributeDescriptor desc)
+                                          ccl_private ShaderData *sd,
+                                          const AttributeDescriptor desc,
+                                          const bool stochastic)
 {
   if (desc.element & (ATTR_ELEMENT_OBJECT | ATTR_ELEMENT_MESH)) {
     return kernel_data_fetch(attributes_float4, desc.offset);
@@ -77,7 +94,7 @@ ccl_device float4 volume_attribute_float4(KernelGlobals kg,
     object_inverse_position_transform(kg, sd, &P);
     const InterpolationType interp = (sd->flag & SD_VOLUME_CUBIC) ? INTERPOLATION_CUBIC :
                                                                     INTERPOLATION_NONE;
-    return kernel_tex_image_interp_3d(kg, desc.offset, P, interp);
+    return kernel_tex_image_interp_3d(kg, sd, desc.offset, P, interp, stochastic);
   }
   return zero_float4();
 }

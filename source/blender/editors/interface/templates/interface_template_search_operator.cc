@@ -23,7 +23,7 @@
 #include "WM_api.hh"
 #include "WM_types.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "interface_intern.hh"
 
 /* -------------------------------------------------------------------- */
@@ -35,7 +35,7 @@ static void operator_search_exec_fn(bContext *C, void * /*arg1*/, void *arg2)
   wmOperatorType *ot = static_cast<wmOperatorType *>(arg2);
 
   if (ot) {
-    WM_operator_name_call_ptr(C, ot, WM_OP_INVOKE_DEFAULT, nullptr, nullptr);
+    WM_operator_name_call_ptr(C, ot, blender::wm::OpCallContext::InvokeDefault, nullptr, nullptr);
   }
 }
 
@@ -50,26 +50,26 @@ static void operator_search_update_fn(const bContext *C,
   const int words_max = BLI_string_max_possible_word_count(str_len);
   blender::Array<blender::int2> words(words_max);
   const int words_len = BLI_string_find_split_words(
-      str, str_len, ' ', (int(*)[2])words.data(), words_max);
+      str, str_len, ' ', (int (*)[2])words.data(), words_max);
 
-  for (wmOperatorType *ot : WM_operatortype_map().values()) {
+  for (wmOperatorType *ot : WM_operatortypes_registered_get()) {
     const char *ot_ui_name = CTX_IFACE_(ot->translation_context, ot->name);
 
     if ((ot->flag & OPTYPE_INTERNAL) && (G.debug & G_DEBUG_WM) == 0) {
       continue;
     }
 
-    if (BLI_string_all_words_matched(ot_ui_name, str, (int(*)[2])words.data(), words_len)) {
+    if (BLI_string_all_words_matched(ot_ui_name, str, (int (*)[2])words.data(), words_len)) {
       if (WM_operator_poll((bContext *)C, ot)) {
         std::string name = ot_ui_name;
         if (const std::optional<std::string> kmi_str = WM_key_event_operator_string(
-                C, ot->idname, WM_OP_EXEC_DEFAULT, nullptr, true))
+                C, ot->idname, blender::wm::OpCallContext::ExecDefault, nullptr, true))
         {
           name += UI_SEP_CHAR;
           name += *kmi_str;
         }
 
-        if (!UI_search_item_add(items, name.c_str(), ot, ICON_NONE, 0, 0)) {
+        if (!UI_search_item_add(items, name, ot, ICON_NONE, 0, 0)) {
           break;
         }
       }
@@ -101,11 +101,11 @@ void uiTemplateOperatorSearch(uiLayout *layout)
   uiBut *but;
   static char search[256] = "";
 
-  block = uiLayoutGetBlock(layout);
-  UI_block_layout_set_current(block, layout);
+  block = layout->block();
+  blender::ui::block_layout_set_current(block, layout);
 
   but = uiDefSearchBut(
-      block, search, 0, ICON_VIEWZOOM, sizeof(search), 0, 0, UI_UNIT_X * 6, UI_UNIT_Y, "");
+      block, search, ICON_VIEWZOOM, sizeof(search), 0, 0, UI_UNIT_X * 6, UI_UNIT_Y, "");
   UI_but_func_operator_search(but);
 }
 

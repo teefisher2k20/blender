@@ -18,8 +18,10 @@
 
 struct DRWData;
 struct GPUViewport;
-struct GPUFrameBuffer;
 struct GPUOffScreen;
+namespace blender::gpu {
+class FrameBuffer;
+}  // namespace blender::gpu
 
 GPUViewport *GPU_viewport_create();
 GPUViewport *GPU_viewport_stereo_create();
@@ -48,7 +50,7 @@ void GPU_viewport_draw_to_screen_ex(GPUViewport *viewport,
 void GPU_viewport_free(GPUViewport *viewport);
 
 void GPU_viewport_colorspace_set(GPUViewport *viewport,
-                                 ColorManagedViewSettings *view_settings,
+                                 const ColorManagedViewSettings *view_settings,
                                  const ColorManagedDisplaySettings *display_settings,
                                  float dither);
 
@@ -79,11 +81,12 @@ bool GPU_viewport_do_update(GPUViewport *viewport);
 int GPU_viewport_active_view_get(GPUViewport *viewport);
 bool GPU_viewport_is_stereo_get(GPUViewport *viewport);
 
-GPUTexture *GPU_viewport_color_texture(GPUViewport *viewport, int view);
-GPUTexture *GPU_viewport_overlay_texture(GPUViewport *viewport, int view);
-GPUTexture *GPU_viewport_depth_texture(GPUViewport *viewport);
+blender::gpu::Texture *GPU_viewport_color_texture(GPUViewport *viewport, int view);
+blender::gpu::Texture *GPU_viewport_overlay_texture(GPUViewport *viewport, int view);
+blender::gpu::Texture *GPU_viewport_depth_texture(GPUViewport *viewport);
 
 /**
- * Overlay frame-buffer for drawing outside of DRW module.
+ * Color render and overlay frame-buffers for drawing outside of DRW module.
  */
-GPUFrameBuffer *GPU_viewport_framebuffer_overlay_get(GPUViewport *viewport);
+blender::gpu::FrameBuffer *GPU_viewport_framebuffer_render_get(GPUViewport *viewport);
+blender::gpu::FrameBuffer *GPU_viewport_framebuffer_overlay_get(GPUViewport *viewport);

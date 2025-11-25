@@ -15,7 +15,11 @@
 
 #include "BLI_color.hh"
 #include "BLI_enumerable_thread_specific.hh"
+#include "BLI_fileops.h"
+#include "BLI_math_matrix.h"
 #include "BLI_math_matrix.hh"
+#include "BLI_math_rotation.h"
+#include "BLI_math_vector.h"
 #include "BLI_path_utils.hh"
 #include "BLI_string.h"
 #include "BLI_task.hh"
@@ -463,59 +467,90 @@ void OBJWriter::write_edges_indices(FormatHandler &fh,
   }
 }
 
-void OBJWriter::write_nurbs_curve(FormatHandler &fh, const OBJCurve &obj_nurbs_data) const
+static float4x4 compute_world_axes_transform(const OBJExportParams &export_params,
+                                             const blender::float4x4 &object_to_world)
+{
+  float4x4 world_axes_transform;
+  float axes_transform[3][3];
+  unit_m3(axes_transform);
+  /* +Y-forward and +Z-up are the Blender's default axis settings. */
+  mat3_from_axis_conversion(
+      export_params.forward_axis, export_params.up_axis, IO_AXIS_Y, IO_AXIS_Z, axes_transform);
+  mul_m4_m3m4(world_axes_transform.ptr(), axes_transform, object_to_world.ptr());
+  /* #mul_m4_m3m4 does not transform last row of #Object.object_to_world, i.e. location data. */
+  mul_v3_m3v3(world_axes_transform[3], axes_transform, object_to_world.location());
+  world_axes_transform[3][3] = object_to_world[3][3];
+
+  /* Apply global scale transform. */
+  mul_v3_fl(world_axes_transform[0], export_params.global_scale);
+  mul_v3_fl(world_axes_transform[1], export_params.global_scale);
+  mul_v3_fl(world_axes_transform[2], export_params.global_scale);
+  mul_v3_fl(world_axes_transform[3], export_params.global_scale);
+
+  return world_axes_transform;
+}
+
+void OBJWriter::write_nurbs_curve(FormatHandler &fh, const IOBJCurve &obj_nurbs_data) const
 {
   const int total_splines = obj_nurbs_data.total_splines();
   for (int spline_idx = 0; spline_idx < total_splines; spline_idx++) {
-    const int total_vertices = obj_nurbs_data.total_spline_vertices(spline_idx);
-    for (int vertex_idx = 0; vertex_idx < total_vertices; vertex_idx++) {
-      const float3 vertex_coords = obj_nurbs_data.vertex_coordinates(
-          spline_idx, vertex_idx, export_params_.global_scale);
-      fh.write_obj_vertex(vertex_coords[0], vertex_coords[1], vertex_coords[2]);
-    }
+    /* Double check no surface is passed in as they are no supported (this is filtered when parsed)
+     */
+    BLI_assert(obj_nurbs_data.num_control_points_v(spline_idx) == 1);
+
+    const float4x4 world_axes_transform = compute_world_axes_transform(
+        export_params_, obj_nurbs_data.object_transform());
 
     const char *nurbs_name = obj_nurbs_data.get_curve_name();
-    const int nurbs_degree = obj_nurbs_data.get_nurbs_degree(spline_idx);
+    const int degree_u = obj_nurbs_data.get_nurbs_degree_u(spline_idx);
     fh.write_obj_group(nurbs_name);
     fh.write_obj_cstype();
-    fh.write_obj_nurbs_degree(nurbs_degree);
-    /**
-     * The numbers written here are indices into the vertex coordinates written
-     * earlier, relative to the line that is going to be written.
-     * [0.0 - 1.0] is the curve parameter range.
-     * 0.0 1.0 -1 -2 -3 -4 for a non-cyclic curve with 4 vertices.
-     * 0.0 1.0 -1 -2 -3 -4 -1 -2 -3 for a cyclic curve with 4 vertices.
-     */
-    const int total_control_points = obj_nurbs_data.total_spline_control_points(spline_idx);
+    fh.write_obj_nurbs_degree(degree_u);
+
+    const int num_points_u = obj_nurbs_data.num_control_points_u(spline_idx);
+
+    Vector<float> knot_buffer;
+    Span<float> knots_u = obj_nurbs_data.get_knots_u(spline_idx, knot_buffer);
+    IndexRange point_range(0, num_points_u);
+    knots_u = valid_nurb_control_point_range(degree_u + 1, knots_u, point_range);
+
+    /* Write coords */
+    Vector<float3> dynamic_point_buffer;
+    Span<float3> vertex_coords = obj_nurbs_data.vertex_coordinates(spline_idx,
+                                                                   dynamic_point_buffer);
+
+    /* Write only unique points. */
+    IndexRange point_loop_range = point_range.size() > vertex_coords.size() ?
+                                      point_range.drop_back(point_range.size() -
+                                                            vertex_coords.size()) :
+                                      point_range;
+    for (const int64_t index : point_loop_range) {
+      /* Modulo will loop back to the 0:th point, not the start of the point range! */
+      float3 co = vertex_coords[index % vertex_coords.size()];
+      mul_m4_v3(world_axes_transform.ptr(), &co.x);
+      fh.write_obj_vertex(co[0], co[1], co[2]);
+    }
+
     fh.write_obj_curve_begin();
-    for (int i = 0; i < total_control_points; i++) {
-      /* "+1" to keep indices one-based, even if they're negative: i.e., -1 refers to the
-       * last vertex coordinate, -2 second last. */
-      fh.write_obj_face_v(-((i % total_vertices) + 1));
+    fh.write_obj_nurbs_parm(knots_u[degree_u]);
+    fh.write_obj_nurbs_parm(knots_u.last(degree_u));
+
+    /* Loop over the [0, N) range, not its actual interval [x, N + x).
+     * For cyclic curves, up to [0, order) will be repeated.
+     */
+    for (int64_t index : point_range.index_range()) {
+      /* Write one based (1 ==> coords[0]) relative/negative indices.
+       * TODO: Write positive indices...
+       */
+      index = -(point_loop_range.size() - (index % point_loop_range.size()));
+      fh.write_obj_face_v(index);
     }
     fh.write_obj_curve_end();
 
-    /**
-     * In `parm u 0 0.1 ..` line:, (total control points + 2) equidistant numbers in the
-     * parameter range are inserted. However for curves with endpoint flag,
-     * first degree+1 numbers are zeroes, and last degree+1 numbers are ones
-     */
-
-    const short flagsu = obj_nurbs_data.get_nurbs_flagu(spline_idx);
-    const bool cyclic = flagsu & CU_NURB_CYCLIC;
-    const bool endpoint = !cyclic && (flagsu & CU_NURB_ENDPOINT);
+    /* Write knot vector. */
     fh.write_obj_nurbs_parm_begin();
-    for (int i = 1; i <= total_control_points + 2; i++) {
-      float parm = 1.0f * i / (total_control_points + 2 + 1);
-      if (endpoint) {
-        if (i <= nurbs_degree) {
-          parm = 0;
-        }
-        else if (i > total_control_points + 2 - nurbs_degree) {
-          parm = 1;
-        }
-      }
-      fh.write_obj_nurbs_parm(parm);
+    for (const float &u : knots_u) {
+      fh.write_obj_nurbs_parm(u);
     }
     fh.write_obj_nurbs_parm_end();
     fh.write_obj_nurbs_group_end();
@@ -738,25 +773,25 @@ void MTLWriter::write_materials(const char *blen_filepath,
 
 Vector<int> MTLWriter::add_materials(const OBJMesh &mesh_to_export)
 {
-  Vector<int> r_mtl_indices;
-  r_mtl_indices.resize(mesh_to_export.tot_materials());
+  Vector<int> mtl_indices;
+  mtl_indices.resize(mesh_to_export.tot_materials());
   for (int16_t i = 0; i < mesh_to_export.tot_materials(); i++) {
     const Material *material = mesh_to_export.materials[i];
     if (!material) {
-      r_mtl_indices[i] = -1;
+      mtl_indices[i] = -1;
       continue;
     }
     int mtlmat_index = material_map_.lookup_default(material, -1);
     if (mtlmat_index != -1) {
-      r_mtl_indices[i] = mtlmat_index;
+      mtl_indices[i] = mtlmat_index;
     }
     else {
       mtlmaterials_.append(mtlmaterial_for_material(material));
-      r_mtl_indices[i] = mtlmaterials_.size() - 1;
-      material_map_.add_new(material, r_mtl_indices[i]);
+      mtl_indices[i] = mtlmaterials_.size() - 1;
+      material_map_.add_new(material, mtl_indices[i]);
     }
   }
-  return r_mtl_indices;
+  return mtl_indices;
 }
 
 const char *MTLWriter::mtlmaterial_name(int index)

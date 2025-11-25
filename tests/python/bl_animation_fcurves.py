@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 """
-blender -b --factory-startup --python tests/python/bl_animation_fcurves.py -- --testdir /path/to/tests/data/animation
+blender -b --factory-startup --python tests/python/bl_animation_fcurves.py -- --testdir tests/files/animation
 """
 
 import pathlib
@@ -20,8 +20,23 @@ class AbstractAnimationTest:
         cls.testdir = args.testdir
 
     def setUp(self):
+        assert isinstance(self, unittest.TestCase)
         self.assertTrue(self.testdir.exists(),
                         'Test dir %s should exist' % self.testdir)
+
+
+def _channelbag(animated_id: bpy.types.ID) -> bpy.types.ActionChannelbag:
+    """Return the first layer's Channelbag of the animated ID's Action."""
+    action = animated_id.animation_data.action
+    action_slot = animated_id.animation_data.action_slot
+    channelbag = action.layers[0].strips[0].channelbag(action_slot)
+    assert channelbag is not None
+    return channelbag
+
+
+def _first_fcurve(animated_id: bpy.types.ID) -> bpy.types.FCurve:
+    """Return the first F-Curve of the animated ID's Action."""
+    return _channelbag(animated_id).fcurves[0]
 
 
 class FCurveEvaluationTest(AbstractAnimationTest, unittest.TestCase):
@@ -29,7 +44,8 @@ class FCurveEvaluationTest(AbstractAnimationTest, unittest.TestCase):
         # See D8752.
         bpy.ops.wm.open_mainfile(filepath=str(self.testdir / "fcurve-versioning-291.blend"))
         cube = bpy.data.objects['Cube']
-        fcurve = cube.animation_data.action.fcurves.find('location', index=0)
+        channelbag = cube.animation_data.action.layers[0].strips[0].channelbags[0]
+        fcurve = channelbag.fcurves.find('location', index=0)
 
         self.assertAlmostEqual(0.0, fcurve.evaluate(1))
         self.assertAlmostEqual(0.019638698548078537, fcurve.evaluate(2))
@@ -46,7 +62,8 @@ class FCurveEvaluationTest(AbstractAnimationTest, unittest.TestCase):
         # See D8752.
         bpy.ops.wm.open_mainfile(filepath=str(self.testdir / "fcurve-extreme-handles.blend"))
         cube = bpy.data.objects['Cube']
-        fcurve = cube.animation_data.action.fcurves.find('location', index=0)
+        channelbag = cube.animation_data.action.layers[0].strips[0].channelbags[0]
+        fcurve = channelbag.fcurves.find('location', index=0)
 
         self.assertAlmostEqual(0.0, fcurve.evaluate(1))
         self.assertAlmostEqual(0.004713400732725859, fcurve.evaluate(2))
@@ -58,6 +75,142 @@ class FCurveEvaluationTest(AbstractAnimationTest, unittest.TestCase):
         self.assertAlmostEqual(0.9776642322540283, fcurve.evaluate(8))
         self.assertAlmostEqual(0.9952865839004517, fcurve.evaluate(9))
         self.assertAlmostEqual(1.0, fcurve.evaluate(10))
+
+
+class PropertyInterpolationTest(AbstractAnimationTest, unittest.TestCase):
+    """Test F-Curve interpolation on RNA properties.
+
+    This tests both the evaluation of the RNA property and the F-Curve
+    interpolation itself (the not-exposed-to-RNA flags `FCURVE_INT_VALUES` and
+    `FCURVE_DISCRETE_VALUES` have an impact on the latter as well).
+    """
+
+    def setUp(self):
+        bpy.ops.wm.read_homefile(use_factory_startup=True)
+
+    def test_float(self) -> None:
+        scene: bpy.types.Scene = bpy.context.scene
+
+        camera_ob: bpy.types.Object = scene.objects["Camera"]
+        camera: bpy.types.Camera = camera_ob.data
+        camera.lens = 16
+        camera.keyframe_insert('lens', frame=0)
+        camera.lens = 32
+        camera.keyframe_insert('lens', frame=64)
+
+        self._make_all_keys_linear()
+        fcurve = _first_fcurve(camera)
+
+        scene.frame_set(0)
+        self.assertAlmostEqual(16, camera.lens)
+        self.assertAlmostEqual(16, fcurve.evaluate(0))
+        scene.frame_set(1)
+        self.assertAlmostEqual(16.25, camera.lens)
+        self.assertAlmostEqual(16.25, fcurve.evaluate(1))
+        scene.frame_set(2)
+        self.assertAlmostEqual(16.5, camera.lens)
+        self.assertAlmostEqual(16.5, fcurve.evaluate(2))
+        scene.frame_set(11)
+        self.assertAlmostEqual(18.75, camera.lens)
+        self.assertAlmostEqual(18.75, fcurve.evaluate(11))
+        scene.frame_set(64)
+        self.assertAlmostEqual(32, camera.lens)
+        self.assertAlmostEqual(32, fcurve.evaluate(64))
+
+    def test_int(self) -> None:
+        scene: bpy.types.Scene = bpy.context.scene
+        render: bpy.types.RenderSettings = scene.render
+
+        render.simplify_subdivision = 16
+        render.keyframe_insert('simplify_subdivision', frame=0)
+        render.simplify_subdivision = 32
+        render.keyframe_insert('simplify_subdivision', frame=64)
+
+        self._make_all_keys_linear()
+        fcurve = _first_fcurve(scene)
+
+        scene.frame_set(0)
+        self.assertAlmostEqual(16, render.simplify_subdivision)
+        self.assertAlmostEqual(16, fcurve.evaluate(0))
+        scene.frame_set(1)  # 16.25 rounds down.
+        self.assertAlmostEqual(16, render.simplify_subdivision)
+        self.assertAlmostEqual(16, fcurve.evaluate(1))
+        scene.frame_set(2)  # 16.50 rounds up.
+        self.assertAlmostEqual(17, render.simplify_subdivision)
+        self.assertAlmostEqual(17, fcurve.evaluate(2))
+        scene.frame_set(11)  # 18.75 rounds up.
+        self.assertAlmostEqual(19, render.simplify_subdivision)
+        self.assertAlmostEqual(19, fcurve.evaluate(11))
+        scene.frame_set(64)
+        self.assertAlmostEqual(32, render.simplify_subdivision)
+        self.assertAlmostEqual(32, fcurve.evaluate(64))
+
+    def test_bool(self) -> None:
+        scene: bpy.types.Scene = bpy.context.scene
+        render: bpy.types.RenderSettings = scene.render
+
+        render.use_simplify = False
+        render.keyframe_insert('use_simplify', frame=0)
+        render.use_simplify = True
+        render.keyframe_insert('use_simplify', frame=64)
+
+        self._make_all_keys_linear()
+        fcurve = _first_fcurve(scene)
+
+        scene.frame_set(0)
+        self.assertEqual(False, render.use_simplify)
+        self.assertAlmostEqual(0, fcurve.evaluate(0))
+        scene.frame_set(32)  # Boolean F-Curves should not interpolate at all.
+        self.assertEqual(False, render.use_simplify)
+        self.assertAlmostEqual(0, fcurve.evaluate(63))
+        scene.frame_set(63)  # Should remain False until the frame it goes to True.
+        self.assertEqual(False, render.use_simplify)
+        self.assertAlmostEqual(0, fcurve.evaluate(63))
+        scene.frame_set(64)
+        self.assertEqual(True, render.use_simplify)
+        self.assertAlmostEqual(1, fcurve.evaluate(64))
+
+    def test_enum(self) -> None:
+        scene: bpy.types.Scene = bpy.context.scene
+        cube: bpy.types.Object = scene.objects["Cube"]
+
+        cube.rotation_mode = 'QUATERNION'  # First item in the enum.
+        cube.keyframe_insert('rotation_mode', frame=0)
+        cube.rotation_mode = 'ZYX'  # Item in the enum with the highest value.
+        # Yes, 'AXIS_ANGLE' is the last one in the enum, but that has value -1
+        # for historical reasons, and so for this test it's a bit weird.
+        cube.keyframe_insert('rotation_mode', frame=64)
+
+        self._make_all_keys_linear()
+        fcurve = _first_fcurve(cube)
+
+        scene.frame_set(0)
+        self.assertEqual('QUATERNION', cube.rotation_mode)
+        self.assertAlmostEqual(0, fcurve.evaluate(0))
+        scene.frame_set(32)  # Enum F-Curves should not interpolate at all.
+        self.assertEqual('QUATERNION', cube.rotation_mode)
+        scene.frame_set(63)  # Should remain 'QUATERNION' until the frame it goes to another value.
+        self.assertEqual('QUATERNION', cube.rotation_mode)
+        self.assertAlmostEqual(0, fcurve.evaluate(63))
+        scene.frame_set(64)
+        self.assertEqual('ZYX', cube.rotation_mode)
+        self.assertAlmostEqual(6, fcurve.evaluate(64))
+
+    def _make_all_keys_linear(self) -> None:
+        """Make all keys in all Actions linearly interpolated.
+
+        This makes the code in this test a bit simpler, and shouldn't have any
+        effect on the actual mapping of the F-Curve value to the property value.
+        """
+
+        for action in bpy.data.actions:
+            for layer in action.layers:
+                for strip in layer.strips:
+                    self.assertEqual(strip.type, 'KEYFRAME')
+                    for channelbag in strip.channelbags:
+                        for fcurve in channelbag.fcurves:
+                            for key in fcurve.keyframe_points:
+                                key.interpolation = 'LINEAR'
 
 
 class EulerFilterTest(AbstractAnimationTest, unittest.TestCase):
@@ -149,8 +302,8 @@ class EulerFilterTest(AbstractAnimationTest, unittest.TestCase):
     @staticmethod
     def active_object_rotation_channels() -> list[bpy.types.FCurve]:
         ob = bpy.context.view_layer.objects.active
-        action = ob.animation_data.action
-        return [action.fcurves.find('rotation_euler', index=idx) for idx in range(3)]
+        channelbag = _channelbag(ob)
+        return [channelbag.fcurves.find('rotation_euler', index=idx) for idx in range(3)]
 
 
 def get_view3d_context():
@@ -181,8 +334,9 @@ class KeyframeInsertTest(AbstractAnimationTest, unittest.TestCase):
                 bpy.ops.anim.keyframe_insert_by_name(type="Location")
 
         key_object = bpy.context.active_object
+        fcurve = _first_fcurve(key_object)
         for key_index in range(key_count):
-            key = key_object.animation_data.action.fcurves[0].keyframe_points[key_index]
+            key = fcurve.keyframe_points[key_index]
             self.assertEqual(key.co.x, key_index)
 
         bpy.ops.object.delete(use_global=False)
@@ -198,7 +352,7 @@ class KeyframeInsertTest(AbstractAnimationTest, unittest.TestCase):
             key_object.keyframe_insert("rotation_euler", keytype='UNSUPPORTED')
 
         # Only a single key should have been inserted.
-        keys = key_object.animation_data.action.fcurves[0].keyframe_points
+        keys = _first_fcurve(key_object).keyframe_points
         self.assertEqual(len(keys), 1)
         self.assertEqual(keys[0].type, 'GENERATED')
 
@@ -213,7 +367,7 @@ class KeyframeInsertTest(AbstractAnimationTest, unittest.TestCase):
 
         key_object = bpy.context.active_object
         for key_index in range(key_count):
-            key = key_object.animation_data.action.fcurves[0].keyframe_points[key_index]
+            key = _first_fcurve(key_object).keyframe_points[key_index]
             self.assertEqual(key.co.x, key_index + frame_offset)
 
         bpy.ops.object.delete(use_global=False)
@@ -228,7 +382,7 @@ class KeyframeInsertTest(AbstractAnimationTest, unittest.TestCase):
 
         key_object = bpy.context.active_object
         for key_index in range(key_count):
-            key = key_object.animation_data.action.fcurves[0].keyframe_points[key_index]
+            key = _first_fcurve(key_object).keyframe_points[key_index]
             self.assertAlmostEqual(key.co.x, key_index / key_count)
 
         bpy.ops.object.delete(use_global=False)
@@ -264,7 +418,7 @@ class KeyframeInsertTest(AbstractAnimationTest, unittest.TestCase):
             # Even though range() is exclusive, the floating point limitations mean keys end up on that position.
             1000001.0
         ]
-        keyframe_points = key_object.animation_data.action.fcurves[0].keyframe_points
+        keyframe_points = _first_fcurve(key_object).keyframe_points
         for i, value in enumerate(floating_point_steps):
             key = keyframe_points[i]
             self.assertAlmostEqual(key.co.x, value)
@@ -288,7 +442,7 @@ class KeyframeDeleteTest(AbstractAnimationTest, unittest.TestCase):
             bpy.ops.anim.keyframe_insert_by_name(type="Location")
 
         key_object = bpy.context.active_object
-        fcu = key_object.animation_data.action.fcurves[0]
+        fcu = _first_fcurve(key_object)
         for i in range(key_count):
             fcu.keyframe_points.insert(frame=i, value=0)
 
@@ -311,7 +465,7 @@ class KeyframeDeleteTest(AbstractAnimationTest, unittest.TestCase):
             bpy.ops.anim.keyframe_insert_by_name(type="Location")
 
         key_object = bpy.context.active_object
-        fcu = key_object.animation_data.action.fcurves[0]
+        fcu = _first_fcurve(key_object)
         for i in range(key_count):
             fcu.keyframe_points.insert(frame=i + frame_offset, value=0)
 
@@ -333,7 +487,7 @@ class KeyframeDeleteTest(AbstractAnimationTest, unittest.TestCase):
             bpy.ops.anim.keyframe_insert_by_name(type="Location")
 
         key_object = bpy.context.active_object
-        fcu = key_object.animation_data.action.fcurves[0]
+        fcu = _first_fcurve(key_object)
         for i in range(key_count):
             fcu.keyframe_points.insert(frame=i / key_count, value=0)
 
@@ -356,7 +510,7 @@ class KeyframeDeleteTest(AbstractAnimationTest, unittest.TestCase):
             bpy.ops.anim.keyframe_insert_by_name(type="Location")
 
         key_object = bpy.context.active_object
-        fcu = key_object.animation_data.action.fcurves[0]
+        fcu = _first_fcurve(key_object)
         for i in range(key_count):
             fcu.keyframe_points.insert(frame=i / key_count + frame_offset, value=0)
 

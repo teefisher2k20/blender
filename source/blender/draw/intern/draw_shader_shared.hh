@@ -4,9 +4,11 @@
 
 #pragma once
 
-#if !defined(GPU_SHADER) && !defined(GLSL_CPP_STUBS)
+#include "GPU_shader_shared_utils.hh"
+
+#ifndef GPU_SHADER
+#  include "BLI_math_vector.hh"
 #  include "GPU_shader.hh"
-#  include "GPU_shader_shared_utils.hh"
 #  include "draw_defines.hh"
 
 struct ViewCullingData;
@@ -21,7 +23,7 @@ struct LayerAttribute;
 struct DrawCommand;
 struct DispatchCommand;
 struct DRWDebugPrintBuffer;
-struct DRWDebugVert;
+struct DRWDebugVertPair;
 struct DRWDebugDrawBuffer;
 struct FrustumCorners;
 struct FrustumPlanes;
@@ -37,9 +39,11 @@ struct GPULayerAttr;
 
 namespace blender::draw {
 
-struct ObjectRef;
+class ObjectRef;
 
 }  // namespace blender::draw
+
+using namespace blender::math;
 
 #  endif
 #endif
@@ -85,7 +89,7 @@ uint drw_view_id = 0;
      (DRW_VIEW_LEN > 2)  ? 2 : \
                            1)
 #  define DRW_VIEW_MASK ~(0xFFFFFFFFu << DRW_VIEW_SHIFT)
-#  define DRW_VIEW_FROM_RESOURCE_ID drw_view_id = (uint(drw_ResourceID) & DRW_VIEW_MASK)
+#  define DRW_VIEW_FROM_RESOURCE_ID drw_view_id = (drw_resource_id_raw() & DRW_VIEW_MASK)
 #endif
 
 struct FrustumCorners {
@@ -105,7 +109,7 @@ struct FrustumPlanes {
 BLI_STATIC_ASSERT_ALIGN(FrustumPlanes, 16)
 
 struct ViewCullingData {
-  /** \note vec3 array padded to vec4. */
+  /** \note float3 array padded to float4. */
   /** Frustum corners. */
   FrustumCorners frustum_corners;
   FrustumPlanes frustum_planes;
@@ -121,15 +125,6 @@ struct ViewMatrices {
 };
 BLI_STATIC_ASSERT_ALIGN(ViewMatrices, 16)
 
-/* Do not override old definitions if the shader uses this header but not shader info. */
-#ifdef USE_GPU_SHADER_CREATE_INFO
-/* TODO(@fclem): Mass rename. */
-#  define ViewMatrix drw_view.viewmat
-#  define ViewMatrixInverse drw_view.viewinv
-#  define ProjectionMatrix drw_view.winmat
-#  define ProjectionMatrixInverse drw_view.wininv
-#endif
-
 /** \} */
 
 /* -------------------------------------------------------------------- */
@@ -140,7 +135,7 @@ struct ObjectMatrices {
   float4x4 model;
   float4x4 model_inverse;
 
-#if !defined(GPU_SHADER) && defined(__cplusplus)
+#ifndef GPU_SHADER
   void sync(const Object &object);
   void sync(const float4x4 &model_matrix);
 #endif
@@ -154,17 +149,18 @@ enum eObjectInfoFlag : uint32_t {
   OBJECT_ACTIVE = (1u << 3u),
   OBJECT_NEGATIVE_SCALE = (1u << 4u),
   OBJECT_HOLDOUT = (1u << 5u),
+  /* Implies all objects that match the current active object's mode and able to be edited
+   * simultaneously. Currently only applicable for edit mode. */
+  OBJECT_ACTIVE_EDIT_MODE = (1u << 6u),
   /* Avoid skipped info to change culling. */
   OBJECT_NO_INFO = ~OBJECT_HOLDOUT
 };
 
+#ifndef GPU_SHADER
+ENUM_OPERATORS(eObjectInfoFlag);
+#endif
+
 struct ObjectInfos {
-#if defined(GPU_SHADER) && !defined(DRAW_FINALIZE_SHADER)
-  /* TODO Rename to struct member for GLSL too. */
-  float4 orco_mul_bias[2];
-  float4 ob_color;
-  float4 infos;
-#else
   /** Uploaded as center + size. Converted to mul+bias to local coord. */
   packed_float3 orco_add;
   uint object_attrs_offset;
@@ -177,31 +173,26 @@ struct ObjectInfos {
   uint light_and_shadow_set_membership;
   float random;
   eObjectInfoFlag flag;
-#endif
+  float shadow_terminator_normal_offset;
+  float shadow_terminator_geometry_offset;
+  float _pad1;
+  float _pad2;
 
-#if !defined(GPU_SHADER) && defined(__cplusplus)
+#ifndef GPU_SHADER
   void sync();
-  void sync(const blender::draw::ObjectRef ref, bool is_active_object);
+  void sync(const blender::draw::ObjectRef ref, bool is_active_object, bool is_active_edit_mode);
 #endif
 };
 BLI_STATIC_ASSERT_ALIGN(ObjectInfos, 16)
 
 inline uint receiver_light_set_get(ObjectInfos object_infos)
 {
-#if defined(GPU_SHADER) && !defined(DRAW_FINALIZE_SHADER)
-  return floatBitsToUint(object_infos.infos.y) & 0xFFu;
-#else
   return object_infos.light_and_shadow_set_membership & 0xFFu;
-#endif
 }
 
 inline uint blocker_shadow_set_get(ObjectInfos object_infos)
 {
-#if defined(GPU_SHADER) && !defined(DRAW_FINALIZE_SHADER)
-  return (floatBitsToUint(object_infos.infos.y) >> 8u) & 0xFFu;
-#else
   return (object_infos.light_and_shadow_set_membership >> 8u) & 0xFFu;
-#endif
 }
 
 struct ObjectBounds {
@@ -215,7 +206,7 @@ struct ObjectBounds {
   /** Radius of the inscribed sphere derived from the bounding corner. Computed on GPU. */
 #define _inner_sphere_radius bounding_corners[3].w
 
-#if !defined(GPU_SHADER) && defined(__cplusplus)
+#ifndef GPU_SHADER
   void sync();
   void sync(const Object &ob, float inflate_bounds = 0.0f);
   void sync(const float3 &center, const float3 &size);
@@ -249,7 +240,7 @@ inline bool drw_bounds_are_valid(ObjectBounds bounds)
 struct VolumeInfos {
   /** Object to grid-space. */
   float4x4 grids_xform[DRW_GRID_PER_VOLUME_MAX];
-  /** \note vec4 for alignment. Only float3 needed. */
+  /** \note float4 for alignment. Only float3 needed. */
   float4 color_mul;
   float density_scale;
   float temperature_mul;
@@ -259,10 +250,18 @@ struct VolumeInfos {
 BLI_STATIC_ASSERT_ALIGN(VolumeInfos, 16)
 
 struct CurvesInfos {
+  /* TODO(fclem): Make it a single uint. */
   /** Per attribute scope, follows loading order.
    * \note uint as bool in GLSL is 4 bytes.
    * \note GLSL pad arrays of scalar to 16 bytes (std140). */
   uint4 is_point_attribute[DRW_ATTRIBUTE_PER_CURVES_MAX];
+
+  /* Number of vertex in a segment (including restart vertex for cylinder). */
+  uint vertex_per_segment;
+  /* Edge count for the visible half cylinder. Equal to face count + 1. */
+  uint half_cylinder_face_count;
+  uint _pad0;
+  uint _pad1;
 };
 BLI_STATIC_ASSERT_ALIGN(CurvesInfos, 16)
 
@@ -273,7 +272,7 @@ struct ObjectAttribute {
   float data_x, data_y, data_z, data_w;
   uint hash_code;
 
-#if !defined(GPU_SHADER) && defined(__cplusplus)
+#ifndef GPU_SHADER
   /**
    * Go through all possible source of the given object uniform attribute.
    * Returns true if the attribute was correctly filled.
@@ -293,7 +292,7 @@ struct LayerAttribute {
   uint buffer_length; /* Only in the first record. */
   uint _pad1, _pad2;
 
-#if !defined(GPU_SHADER) && defined(__cplusplus)
+#ifndef GPU_SHADER
   bool sync(const Scene *scene, const ViewLayer *layer, const GPULayerAttr &attr);
 #endif
 };
@@ -343,44 +342,72 @@ BLI_STATIC_ASSERT_ALIGN(DispatchCommand, 16)
 /** \name Debug draw shapes
  * \{ */
 
-struct DRWDebugVert {
-  /* This is a weird layout, but needed to be able to use DRWDebugVert as
-   * a DrawCommand and avoid alignment issues. See drw_debug_verts_buf[] definition. */
-  uint pos0;
-  uint pos1;
-  uint pos2;
+struct DRWDebugVertPair {
+  /* This is a weird layout, but needed to be able to use DRWDebugVertPair as
+   * a DrawCommand and avoid alignment issues. See drw_debug_lines_buf[] definition. */
+  uint pos1_x;
+  uint pos1_y;
+  uint pos1_z;
   /* Named vert_color to avoid global namespace collision with uniform color. */
   uint vert_color;
-};
-BLI_STATIC_ASSERT_ALIGN(DRWDebugVert, 16)
 
-inline DRWDebugVert debug_vert_make(uint in_pos0, uint in_pos1, uint in_pos2, uint in_vert_color)
+  uint pos2_x;
+  uint pos2_y;
+  uint pos2_z;
+  /* Number of time this line is supposed to be displayed. Decremented by one on display. */
+  uint lifetime;
+};
+BLI_STATIC_ASSERT_ALIGN(DRWDebugVertPair, 16)
+
+inline DRWDebugVertPair debug_line_make(uint in_pos1_x,
+                                        uint in_pos1_y,
+                                        uint in_pos1_z,
+                                        uint in_pos2_x,
+                                        uint in_pos2_y,
+                                        uint in_pos2_z,
+                                        uint in_vert_color,
+                                        uint in_lifetime)
 {
-  DRWDebugVert debug_vert;
-  debug_vert.pos0 = in_pos0;
-  debug_vert.pos1 = in_pos1;
-  debug_vert.pos2 = in_pos2;
+  DRWDebugVertPair debug_vert;
+  debug_vert.pos1_x = in_pos1_x;
+  debug_vert.pos1_y = in_pos1_y;
+  debug_vert.pos1_z = in_pos1_z;
+  debug_vert.pos2_x = in_pos2_x;
+  debug_vert.pos2_y = in_pos2_y;
+  debug_vert.pos2_z = in_pos2_z;
   debug_vert.vert_color = in_vert_color;
+  debug_vert.lifetime = in_lifetime;
   return debug_vert;
 }
 
+inline uint debug_color_pack(float4 v_color)
+{
+  v_color = clamp(v_color, 0.0f, 1.0f);
+  uint result = 0;
+  result |= uint(v_color.x * 255.0) << 0u;
+  result |= uint(v_color.y * 255.0) << 8u;
+  result |= uint(v_color.z * 255.0) << 16u;
+  result |= uint(v_color.w * 255.0) << 24u;
+  return result;
+}
+
 /* Take the header (DrawCommand) into account. */
-#define DRW_DEBUG_DRAW_VERT_MAX (64 * 8192) - 1
+#define DRW_DEBUG_DRAW_VERT_MAX (2 * 1024) - 1
 
 /* The debug draw buffer is laid-out as the following struct.
  * But we use plain array in shader code instead because of driver issues. */
 struct DRWDebugDrawBuffer {
   DrawCommand command;
-  DRWDebugVert verts[DRW_DEBUG_DRAW_VERT_MAX];
+  DRWDebugVertPair verts[DRW_DEBUG_DRAW_VERT_MAX];
 };
 BLI_STATIC_ASSERT_ALIGN(DRWDebugDrawBuffer, 16)
 
 /* Equivalent to `DRWDebugDrawBuffer.command.v_count`. */
-#define drw_debug_draw_v_count drw_debug_verts_buf[0].pos0
+#define drw_debug_draw_v_count(buf) buf[0].pos1_x
 /**
- * Offset to the first data. Equal to: `sizeof(DrawCommand) / sizeof(DRWDebugVert)`.
- * This is needed because we bind the whole buffer as a `DRWDebugVert` array.
+ * Offset to the first data. Equal to: `sizeof(DrawCommand) / sizeof(DRWDebugVertPair)`.
+ * This is needed because we bind the whole buffer as a `DRWDebugVertPair` array.
  */
-#define drw_debug_draw_offset 2
+#define drw_debug_draw_offset 1
 
 /** \} */

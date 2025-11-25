@@ -10,15 +10,17 @@
 
 #include "BLI_fileops.hh"
 #include "BLI_map.hh"
+#include "BLI_math_color.h"
 #include "BLI_math_vector.h"
 #include "BLI_math_vector_types.hh"
 #include "BLI_string.h"
 #include "BLI_string_ref.hh"
 #include "BLI_vector.hh"
 
+#include "IO_string_utils.hh"
+
 #include "obj_export_mtl.hh"
 #include "obj_import_file_reader.hh"
-#include "obj_import_string_utils.hh"
 
 #include <algorithm>
 #include <charconv>
@@ -64,10 +66,6 @@ static Geometry *create_geometry(Geometry *const prev_geometry,
       prev_geometry->geom_type_ = GEOM_CURVE;
       return prev_geometry;
     }
-  }
-
-  if (prev_geometry && prev_geometry->geom_type_ == GEOM_CURVE) {
-    return new_geometry();
   }
 
   return new_geometry();
@@ -323,7 +321,7 @@ static Geometry *geom_set_curve_type(Geometry *geom,
 {
   p = drop_whitespace(p, end);
   if (!StringRef(p, end).startswith("bspline") && !StringRef(p, end).startswith("rat bspline")) {
-    CLOG_WARN(&LOG, "Curve type not supported: '%s'", std::string(p, end).c_str());
+    CLOG_WARN(&LOG, "Curve type not supported: '%s'", string(p, end).c_str());
     return geom;
   }
   geom = create_geometry(geom, GEOM_CURVE, group_name, r_all_geometries);
@@ -382,7 +380,7 @@ static void geom_add_curve_parameters(Geometry *geom, const char *p, const char 
   }
 }
 
-static void geom_update_group(const StringRef rest_line, std::string &r_group_name)
+static void geom_update_group(const StringRef rest_line, string &r_group_name)
 {
   if (rest_line.find("off") != string::npos || rest_line.find("null") != string::npos ||
       rest_line.find("default") != string::npos)
@@ -412,14 +410,14 @@ static void geom_update_smooth_group(const char *p, const char *end, bool &r_sta
 static void geom_new_object(const char *p,
                             const char *end,
                             bool &r_state_shaded_smooth,
-                            std::string &r_state_group_name,
+                            string &r_state_group_name,
                             int &r_state_material_index,
                             Geometry *&r_curr_geom,
                             Vector<std::unique_ptr<Geometry>> &r_all_geometries)
 {
   r_state_shaded_smooth = false;
   r_state_group_name = "";
-  /* Reset object-local material index that's used in face infos.
+  /* Reset object-local material index that's used in face information.
    * NOTE: do not reset the material name; that has to carry over
    * into the next object if needed. */
   r_state_material_index = -1;
@@ -432,7 +430,7 @@ OBJParser::OBJParser(const OBJImportParams &import_params, size_t read_buffer_si
 {
   obj_file_ = BLI_fopen(import_params_.filepath, "rb");
   if (!obj_file_) {
-    CLOG_ERROR(&LOG, "Cannot read from OBJ file:'%s'.\n", import_params_.filepath);
+    CLOG_ERROR(&LOG, "Cannot read from OBJ file:'%s'.", import_params_.filepath);
     BKE_reportf(import_params_.reports,
                 RPT_ERROR,
                 "OBJ Import: Cannot open file '%s'",
@@ -481,6 +479,140 @@ static void use_all_vertices_if_no_faces(Geometry *geom,
       geom->track_all_vertices(global_vertices.vertices.size());
     }
   }
+}
+
+size_t OBJParser::parse_string_buffer(StringRef &buffer_str,
+                                      Vector<std::unique_ptr<Geometry>> &r_all_geometries,
+                                      GlobalVertices &r_global_vertices,
+                                      Geometry *&curr_geom,
+                                      bool &state_shaded_smooth,
+                                      string &state_group_name,
+                                      int &state_group_index,
+                                      string &state_material_name,
+                                      int &state_material_index)
+{
+  size_t read_lines_num = 0;
+  while (!buffer_str.is_empty()) {
+    StringRef line = read_next_line(buffer_str);
+    const char *p = line.begin(), *end = line.end();
+    p = drop_whitespace(p, end);
+    ++read_lines_num;
+    if (p == end) {
+      continue;
+    }
+    /* Most common things that start with 'v': vertices, normals, UVs. */
+    if (*p == 'v') {
+      if (parse_keyword(p, end, "v")) {
+        geom_add_vertex(p, end, r_global_vertices);
+      }
+      else if (parse_keyword(p, end, "vn")) {
+        geom_add_vertex_normal(p, end, r_global_vertices);
+      }
+      else if (parse_keyword(p, end, "vt")) {
+        geom_add_uv_vertex(p, end, r_global_vertices);
+      }
+    }
+    /* Faces. */
+    else if (parse_keyword(p, end, "f")) {
+      /* If we don't have a material index assigned yet, get one.
+       * It means "usemtl" state came from the previous object. */
+      if (state_material_index == -1 && !state_material_name.empty() &&
+          curr_geom->material_indices_.is_empty())
+      {
+        curr_geom->material_indices_.add_new(state_material_name, 0);
+        curr_geom->material_order_.append(state_material_name);
+        state_material_index = 0;
+      }
+
+      geom_add_polygon(curr_geom,
+                       p,
+                       end,
+                       r_global_vertices,
+                       state_material_index,
+                       state_group_index,
+                       state_shaded_smooth);
+    }
+    /* Faces. */
+    else if (parse_keyword(p, end, "l")) {
+      geom_add_polyline(curr_geom, p, end, r_global_vertices);
+    }
+    /* Objects. */
+    else if (parse_keyword(p, end, "o")) {
+      if (import_params_.use_split_objects) {
+        geom_new_object(p,
+                        end,
+                        state_shaded_smooth,
+                        state_group_name,
+                        state_material_index,
+                        curr_geom,
+                        r_all_geometries);
+      }
+    }
+    /* Groups. */
+    else if (parse_keyword(p, end, "g")) {
+      if (import_params_.use_split_groups) {
+        geom_new_object(p,
+                        end,
+                        state_shaded_smooth,
+                        state_group_name,
+                        state_material_index,
+                        curr_geom,
+                        r_all_geometries);
+      }
+      else {
+        geom_update_group(StringRef(p, end).trim(), state_group_name);
+        int new_index = curr_geom->group_indices_.size();
+        state_group_index = curr_geom->group_indices_.lookup_or_add(state_group_name, new_index);
+        if (new_index == state_group_index) {
+          curr_geom->group_order_.append(state_group_name);
+        }
+      }
+    }
+    /* Smoothing groups. */
+    else if (parse_keyword(p, end, "s")) {
+      geom_update_smooth_group(p, end, state_shaded_smooth);
+    }
+    /* Materials and their libraries. */
+    else if (parse_keyword(p, end, "usemtl")) {
+      state_material_name = StringRef(p, end).trim();
+      int new_mat_index = curr_geom->material_indices_.size();
+      state_material_index = curr_geom->material_indices_.lookup_or_add(state_material_name,
+                                                                        new_mat_index);
+      if (new_mat_index == state_material_index) {
+        curr_geom->material_order_.append(state_material_name);
+      }
+    }
+    else if (parse_keyword(p, end, "mtllib")) {
+      add_mtl_library(StringRef(p, end).trim());
+    }
+    else if (parse_keyword(p, end, "#MRGB")) {
+      geom_add_mrgb_colors(p, end, r_global_vertices);
+    }
+    /* Comments. */
+    else if (*p == '#') {
+      /* Nothing to do. */
+    }
+    /* Curve related things. */
+    else if (parse_keyword(p, end, "cstype")) {
+      curr_geom = geom_set_curve_type(curr_geom, p, end, state_group_name, r_all_geometries);
+    }
+    else if (parse_keyword(p, end, "deg")) {
+      geom_set_curve_degree(curr_geom, p, end);
+    }
+    else if (parse_keyword(p, end, "curv")) {
+      geom_add_curve_vertex_indices(curr_geom, p, end, r_global_vertices);
+    }
+    else if (parse_keyword(p, end, "parm")) {
+      geom_add_curve_parameters(curr_geom, p, end);
+    }
+    else if (StringRef(p, end).startswith("end")) {
+      /* End of curve definition, nothing else to do. */
+    }
+    else {
+      CLOG_WARN(&LOG, "OBJ element not recognized: '%s'", string(p, end).c_str());
+    }
+  }
+  return read_lines_num;
 }
 
 void OBJParser::parse(Vector<std::unique_ptr<Geometry>> &r_all_geometries,
@@ -557,126 +689,15 @@ void OBJParser::parse(Vector<std::unique_ptr<Geometry>> &r_all_geometries,
     /* Parse the buffer (until last newline) that we have so far,
      * line by line. */
     StringRef buffer_str{buffer.data(), int64_t(last_nl)};
-    while (!buffer_str.is_empty()) {
-      StringRef line = read_next_line(buffer_str);
-      const char *p = line.begin(), *end = line.end();
-      p = drop_whitespace(p, end);
-      ++line_number;
-      if (p == end) {
-        continue;
-      }
-      /* Most common things that start with 'v': vertices, normals, UVs. */
-      if (*p == 'v') {
-        if (parse_keyword(p, end, "v")) {
-          geom_add_vertex(p, end, r_global_vertices);
-        }
-        else if (parse_keyword(p, end, "vn")) {
-          geom_add_vertex_normal(p, end, r_global_vertices);
-        }
-        else if (parse_keyword(p, end, "vt")) {
-          geom_add_uv_vertex(p, end, r_global_vertices);
-        }
-      }
-      /* Faces. */
-      else if (parse_keyword(p, end, "f")) {
-        /* If we don't have a material index assigned yet, get one.
-         * It means "usemtl" state came from the previous object. */
-        if (state_material_index == -1 && !state_material_name.empty() &&
-            curr_geom->material_indices_.is_empty())
-        {
-          curr_geom->material_indices_.add_new(state_material_name, 0);
-          curr_geom->material_order_.append(state_material_name);
-          state_material_index = 0;
-        }
-
-        geom_add_polygon(curr_geom,
-                         p,
-                         end,
-                         r_global_vertices,
-                         state_material_index,
-                         state_group_index,
-                         state_shaded_smooth);
-      }
-      /* Faces. */
-      else if (parse_keyword(p, end, "l")) {
-        geom_add_polyline(curr_geom, p, end, r_global_vertices);
-      }
-      /* Objects. */
-      else if (parse_keyword(p, end, "o")) {
-        if (import_params_.use_split_objects) {
-          geom_new_object(p,
-                          end,
-                          state_shaded_smooth,
-                          state_group_name,
-                          state_material_index,
-                          curr_geom,
-                          r_all_geometries);
-        }
-      }
-      /* Groups. */
-      else if (parse_keyword(p, end, "g")) {
-        if (import_params_.use_split_groups) {
-          geom_new_object(p,
-                          end,
-                          state_shaded_smooth,
-                          state_group_name,
-                          state_material_index,
-                          curr_geom,
-                          r_all_geometries);
-        }
-        else {
-          geom_update_group(StringRef(p, end).trim(), state_group_name);
-          int new_index = curr_geom->group_indices_.size();
-          state_group_index = curr_geom->group_indices_.lookup_or_add(state_group_name, new_index);
-          if (new_index == state_group_index) {
-            curr_geom->group_order_.append(state_group_name);
-          }
-        }
-      }
-      /* Smoothing groups. */
-      else if (parse_keyword(p, end, "s")) {
-        geom_update_smooth_group(p, end, state_shaded_smooth);
-      }
-      /* Materials and their libraries. */
-      else if (parse_keyword(p, end, "usemtl")) {
-        state_material_name = StringRef(p, end).trim();
-        int new_mat_index = curr_geom->material_indices_.size();
-        state_material_index = curr_geom->material_indices_.lookup_or_add(state_material_name,
-                                                                          new_mat_index);
-        if (new_mat_index == state_material_index) {
-          curr_geom->material_order_.append(state_material_name);
-        }
-      }
-      else if (parse_keyword(p, end, "mtllib")) {
-        add_mtl_library(StringRef(p, end).trim());
-      }
-      else if (parse_keyword(p, end, "#MRGB")) {
-        geom_add_mrgb_colors(p, end, r_global_vertices);
-      }
-      /* Comments. */
-      else if (*p == '#') {
-        /* Nothing to do. */
-      }
-      /* Curve related things. */
-      else if (parse_keyword(p, end, "cstype")) {
-        curr_geom = geom_set_curve_type(curr_geom, p, end, state_group_name, r_all_geometries);
-      }
-      else if (parse_keyword(p, end, "deg")) {
-        geom_set_curve_degree(curr_geom, p, end);
-      }
-      else if (parse_keyword(p, end, "curv")) {
-        geom_add_curve_vertex_indices(curr_geom, p, end, r_global_vertices);
-      }
-      else if (parse_keyword(p, end, "parm")) {
-        geom_add_curve_parameters(curr_geom, p, end);
-      }
-      else if (StringRef(p, end).startswith("end")) {
-        /* End of curve definition, nothing else to do. */
-      }
-      else {
-        CLOG_WARN(&LOG, "OBJ element not recognized: '%s'", std::string(p, end).c_str());
-      }
-    }
+    line_number += OBJParser::parse_string_buffer(buffer_str,
+                                                  r_all_geometries,
+                                                  r_global_vertices,
+                                                  curr_geom,
+                                                  state_shaded_smooth,
+                                                  state_group_name,
+                                                  state_group_index,
+                                                  state_material_name,
+                                                  state_material_index);
 
     /* We might have a line that was cut in the middle by the previous buffer;
      * copy it over for next chunk reading. */
@@ -765,7 +786,7 @@ static bool parse_texture_option(const char *&p,
     if (!line.startswith("sphere")) {
       CLOG_WARN(&LOG,
                 "Only the 'sphere' MTL projection type is supported, found: '%s'",
-                std::string(line).c_str());
+                string(line).c_str());
     }
     p = drop_non_whitespace(p, end);
     return true;
@@ -800,7 +821,7 @@ static void parse_texture_map(const char *p,
   MTLTexMapType key = mtl_line_start_to_texture_type(p, end);
   if (key == MTLTexMapType::Count) {
     /* No supported texture map found. */
-    CLOG_WARN(&LOG, "MTL texture map type not supported: '%s'", std::string(line).c_str());
+    CLOG_WARN(&LOG, "MTL texture map type not supported: '%s'", string(line).c_str());
     return;
   }
   MTLTexMap &tex_map = material->tex_map_of_type(key);
@@ -814,7 +835,7 @@ static void parse_texture_map(const char *p,
   tex_map.image_path = StringRef(p, end).trim();
 }
 
-Span<std::string> OBJParser::mtl_libraries() const
+Span<string> OBJParser::mtl_libraries() const
 {
   return mtl_libraries_;
 }
@@ -853,6 +874,10 @@ MTLParser::MTLParser(StringRefNull mtl_library, StringRefNull obj_filepath)
   char obj_file_dir[FILE_MAXDIR];
   BLI_path_split_dir_part(obj_filepath.data(), obj_file_dir, FILE_MAXDIR);
   BLI_path_join(mtl_file_path_, FILE_MAX, obj_file_dir, mtl_library.data());
+
+  /* Normalize the path to handle different paths pointing to the same file */
+  BLI_path_normalize(mtl_file_path_);
+
   BLI_path_split_dir_part(mtl_file_path_, mtl_dir_path_, FILE_MAXDIR);
 }
 
@@ -878,13 +903,9 @@ void MTLParser::parse_and_store(Map<string, std::unique_ptr<MTLMaterial>> &r_mat
 
     if (parse_keyword(p, end, "newmtl")) {
       StringRef mat_name = StringRef(p, end).trim();
-      if (r_materials.contains(mat_name)) {
-        material = nullptr;
-      }
-      else {
-        material =
-            r_materials.lookup_or_add(string(mat_name), std::make_unique<MTLMaterial>()).get();
-      }
+      /* Always try to get or create the material, even if it already exists */
+      material =
+          r_materials.lookup_or_add(string(mat_name), std::make_unique<MTLMaterial>()).get();
     }
     else if (material != nullptr) {
       if (parse_keyword(p, end, "Ns")) {

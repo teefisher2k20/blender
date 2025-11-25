@@ -28,14 +28,10 @@ class DeviceScene {
   device_vector<uint> tri_shader;
   device_vector<packed_float3> tri_vnormal;
   device_vector<packed_uint3> tri_vindex;
-  device_vector<uint> tri_patch;
-  device_vector<float2> tri_patch_uv;
 
   device_vector<KernelCurve> curves;
   device_vector<float4> curve_keys;
   device_vector<KernelCurveSegment> curve_segments;
-
-  device_vector<uint> patches;
 
   /* point-cloud */
   device_vector<float4> points;
@@ -46,7 +42,6 @@ class DeviceScene {
   device_vector<Transform> object_motion_pass;
   device_vector<DecomposedTransform> object_motion;
   device_vector<uint> object_flag;
-  device_vector<float> object_volume_step;
   device_vector<uint> object_prim_offset;
 
   /* cameras */
@@ -89,6 +84,12 @@ class DeviceScene {
 
   /* IES lights */
   device_vector<float> ies_lights;
+
+  /* Volume. */
+  device_vector<KernelOctreeNode> volume_tree_nodes;
+  device_vector<KernelOctreeRoot> volume_tree_roots;
+  device_vector<int> volume_tree_root_ids;
+  device_vector<float> volume_step_size;
 
   KernelData data;
 

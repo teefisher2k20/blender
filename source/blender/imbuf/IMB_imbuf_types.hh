@@ -1,37 +1,32 @@
 /* SPDX-FileCopyrightText: 2001-2002 NaN Holding BV. All rights reserved.
+ * SPDX-FileCopyrightText: 2025 Blender Authors
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #pragma once
 
-#include "DNA_vec_types.h" /* for rcti */
+/** \file
+ * \ingroup imbuf
+ *
+ * Image buffer types.
+ */
 
-#include "BLI_sys_types.h"
+#include "DNA_vec_types.h" /* for rcti */
 
 #include "IMB_imbuf_enums.h"
 
 struct ColormanageCache;
-struct ColorSpace;
-struct GPUTexture;
+struct ExrHandle;
+namespace blender::gpu {
+class Texture;
+}
 struct IDProperty;
 
-/** \file
- * \ingroup imbuf
- * \brief Contains defines and structs used throughout the imbuf module.
- * \todo Clean up includes.
- *
- * Types needed for using the image buffer.
- *
- * ImBuf is external code, slightly adapted to live in the Blender
- * context. It requires an external JPEG module, and the AVI-module
- * (also external code) in order to function correctly.
- *
- * This file contains types and some constants that go with them. Most
- * are self-explanatory (e.g. IS_amiga tests whether the buffer
- * contains an Amiga-format file).
- */
+namespace blender::ocio {
+class ColorSpace;
+}
+using ColorSpace = blender::ocio::ColorSpace;
 
-#define IMB_MIPMAP_LEVELS 20
 #define IMB_FILEPATH_SIZE 1024
 
 /**
@@ -47,17 +42,18 @@ struct IDProperty;
  */
 
 #define OPENEXR_HALF (1 << 8)
+#define OPENEXR_MULTIPART (1 << 9)
 /* Lowest bits of foptions.flag / exr_codec contain actual codec enum. */
 #define OPENEXR_CODEC_MASK (0xF)
 
-#ifdef WITH_CINEON
+#ifdef WITH_IMAGE_CINEON
 #  define CINEON_LOG (1 << 8)
 #  define CINEON_16BIT (1 << 7)
 #  define CINEON_12BIT (1 << 6)
 #  define CINEON_10BIT (1 << 5)
 #endif
 
-#ifdef WITH_OPENJPEG
+#ifdef WITH_IMAGE_OPENJPEG
 #  define JP2_12BIT (1 << 9)
 #  define JP2_16BIT (1 << 8)
 #  define JP2_YCC (1 << 7)
@@ -89,10 +85,12 @@ struct ImbFormatOptions {
  * \{ */
 
 enum eImBufFlags {
-  IB_rect = 1 << 0,
+  /** Image has byte data (unsigned 0..1 range in a byte, always 4 channels). */
+  IB_byte_data = 1 << 0,
   IB_test = 1 << 1,
   IB_mem = 1 << 4,
-  IB_rectfloat = 1 << 5,
+  /** Image has float data (usually 1..4 channels, 32 bit float per channel). */
+  IB_float_data = 1 << 5,
   IB_multilayer = 1 << 7,
   IB_metadata = 1 << 8,
   IB_animdeinterlace = 1 << 9,
@@ -102,17 +100,19 @@ enum eImBufFlags {
    * faster since it avoids a memory clear. */
   IB_uninitialized_pixels = 1 << 10,
 
-  /** indicates whether image on disk have premul alpha */
+  /** Indicates whether image on disk have pre-multiplied alpha. */
   IB_alphamode_premul = 1 << 12,
-  /** if this flag is set, alpha mode would be guessed from file */
+  /** If this flag is set, alpha mode would be guessed from file. */
   IB_alphamode_detect = 1 << 13,
-  /* alpha channel is unrelated to RGB and should not affect it */
+  /** Alpha channel is unrelated to RGB and should not affect it. */
   IB_alphamode_channel_packed = 1 << 14,
-  /** ignore alpha on load and substitute it with 1.0f */
+  /** Ignore alpha on load and substitute it with 1.0f. */
   IB_alphamode_ignore = 1 << 15,
   IB_thumbnail = 1 << 16,
-  IB_multiview = 1 << 17,
-  IB_halffloat = 1 << 18,
+  /**
+   * The image contains display window information. See ImbBuf.display_size and other members for
+   * more information. */
+  IB_has_display_window = 1 << 17,
 };
 
 /** \} */
@@ -121,15 +121,21 @@ enum eImBufFlags {
 /** \name ImBuf buffer storage
  * \{ */
 
-/* Specialization of an ownership whenever a bare pointer is provided to the ImBuf buffers
- * assignment API. */
+/**
+ * Specialization of an ownership whenever a bare pointer is provided to the ImBuf buffers
+ * assignment API.
+ */
 enum ImBufOwnership {
-  /* The ImBuf simply shares pointer with data owned by someone else, and will not perform any
-   * memory management when the ImBuf frees the buffer. */
+  /**
+   * The ImBuf simply shares pointer with data owned by someone else, and will not perform any
+   * memory management when the ImBuf frees the buffer.
+   */
   IB_DO_NOT_TAKE_OWNERSHIP = 0,
 
-  /* The ImBuf takes ownership of the buffer data, and will use MEM_freeN() to free this memory
-   * when the ImBuf needs to free the data. */
+  /**
+   * The ImBuf takes ownership of the buffer data, and will use MEM_freeN() to free this memory
+   * when the ImBuf needs to free the data.
+   */
   IB_TAKE_OWNERSHIP = 1,
 };
 
@@ -157,24 +163,27 @@ struct ImBufByteBuffer {
   uint8_t *data;
   ImBufOwnership ownership;
 
-  ColorSpace *colorspace;
+  const ColorSpace *colorspace;
 };
 
 struct ImBufFloatBuffer {
   float *data;
   ImBufOwnership ownership;
 
-  ColorSpace *colorspace;
+  const ColorSpace *colorspace;
 };
 
 struct ImBufGPU {
-  /* Texture which corresponds to the state of the ImBug on the GPU.
+  /**
+   * Texture which corresponds to the state of the ImBug on the GPU.
    *
    * Allocation is supposed to happen outside of the ImBug module from a proper GPU context.
-   * De-referencing the ImBuf or its GPU texture can happen from any state. */
-  /* TODO(sergey): This should become a list of textures, to support having high-res ImBuf on GPU
-   * without hitting hardware limitations. */
-  GPUTexture *texture;
+   * De-referencing the ImBuf or its GPU texture can happen from any state.
+   *
+   * TODO(@sergey): This should become a list of textures, to support having high-res ImBuf on GPU
+   * without hitting hardware limitations.
+   */
+  blender::gpu::Texture *texture;
 };
 
 /** \} */
@@ -190,6 +199,18 @@ struct ImBuf {
    * but this is problematic with texture math in `imagetexture.c`
    * avoid problems and use int. - campbell */
   int x, y;
+
+  /* Stores the Data and Display Window information. Those are only initialized if the image buffer
+   * has the IB_has_display_window flag active, otherwise, they should be ignored as the image has
+   * no display window.
+   *
+   * The data size is already stored in the x and y members. The data_offset member stores the
+   * offset from the display window to the data window, if positive, then only part of the display
+   * window has data, while if negative, it means the image has overscan. The display_offset member
+   * is the offset from the origin, can can be interpreted as a global translation. */
+  int display_size[2];
+  int data_offset[2];
+  int display_offset[2];
 
   /** Active amount of bits/bit-planes. */
   unsigned char planes;
@@ -218,20 +239,14 @@ struct ImBuf {
    */
   ImBufFloatBuffer float_buffer;
 
-  /* Image buffer on the GPU. */
+  /** Image buffer on the GPU. */
   ImBufGPU gpu;
 
   /** Resolution in pixels per meter. Multiply by `0.0254` for DPI. */
   double ppm[2];
 
-  /* parameters used by conversion between byte and float */
-  /** random dither value, for conversion from float -> byte rect */
+  /** Amount of dithering to apply, when converting float -> byte. */
   float dither;
-
-  /* mipmapping */
-  /** MipMap levels, a series of halved images */
-  ImBuf *mipmap[IMB_MIPMAP_LEVELS];
-  int miptot, miplevel;
 
   /* externally used data */
   /** reference index for ImBuf lists */
@@ -240,8 +255,8 @@ struct ImBuf {
   int userflags;
   /** image metadata */
   IDProperty *metadata;
-  /** temporary storage */
-  void *userdata;
+  /** OpenEXR handle. */
+  ExrHandle *exrhandle;
 
   /* file information */
   /** file type we are going to save as */
@@ -250,10 +265,11 @@ struct ImBuf {
   ImbFormatOptions foptions;
   /** The absolute file path associated with this image. */
   char filepath[IMB_FILEPATH_SIZE];
+  /** For movie files, the frame number loaded from the file. */
+  int fileframe;
 
-  /* memory cache limiter */
   /** reference counter for multiple users */
-  int refcounter;
+  int32_t refcounter;
 
   /* some parameters to pass along for packing images */
   /** Compressed image only used with PNG and EXR currently. */
@@ -271,19 +287,16 @@ struct ImBuf {
   int colormanage_flag;
   rcti invalid_rect;
 
-  /* information for compressed textures */
+  /** Information for compressed textures. */
   DDSData dds_data;
 };
 
 /**
  * \brief userflags: Flags used internally by blender for image-buffers.
  */
-
 enum {
   /** image needs to be saved is not the same as filename */
   IB_BITMAPDIRTY = (1 << 1),
-  /** image mipmaps are invalid, need recreate */
-  IB_MIPMAP_INVALID = (1 << 2),
   /** float buffer changed, needs recreation of byte rect */
   IB_RECT_INVALID = (1 << 3),
   /** either float or byte buffer changed, need to re-calculate display buffers */
@@ -326,6 +339,12 @@ enum {
 #define FOURCC_DXT4 (DDS_MAKEFOURCC('D', 'X', 'T', '4'))
 #define FOURCC_DXT5 (DDS_MAKEFOURCC('D', 'X', 'T', '5'))
 
+/**
+ * Known image extensions, in most cases these match values
+ * for images which Blender creates, there are some exceptions to this.
+ *
+ * See #BKE_image_path_ext_from_imformat which also stores known extensions.
+ */
 extern const char *imb_ext_image[];
 extern const char *imb_ext_movie[];
 extern const char *imb_ext_audio[];

@@ -56,18 +56,22 @@ ccl_device_noinline void svm_node_geometry_bump_dx(KernelGlobals kg,
                                                    ccl_private ShaderData *sd,
                                                    ccl_private float *stack,
                                                    const uint type,
-                                                   const uint out_offset)
+                                                   const uint out_offset,
+                                                   const float bump_filter_width)
 {
 #ifdef __RAY_DIFFERENTIALS__
   float3 data;
 
   switch (type) {
     case NODE_GEOM_P:
-      data = svm_node_bump_P_dx(sd);
+      data = svm_node_bump_P_dx(sd, bump_filter_width);
       break;
-    case NODE_GEOM_uv:
-      data = make_float3(1.0f - sd->u - sd->du.dx - sd->v - sd->dv.dx, sd->u + sd->du.dx, 0.0f);
+    case NODE_GEOM_uv: {
+      const float u_x = sd->u + sd->du.dx * bump_filter_width;
+      const float v_x = sd->v + sd->dv.dx * bump_filter_width;
+      data = make_float3(1.0f - u_x - v_x, u_x, 0.0f);
       break;
+    }
     default:
       svm_node_geometry(kg, sd, stack, type, out_offset);
       return;
@@ -83,18 +87,22 @@ ccl_device_noinline void svm_node_geometry_bump_dy(KernelGlobals kg,
                                                    ccl_private ShaderData *sd,
                                                    ccl_private float *stack,
                                                    const uint type,
-                                                   const uint out_offset)
+                                                   const uint out_offset,
+                                                   const float bump_filter_width)
 {
 #ifdef __RAY_DIFFERENTIALS__
   float3 data;
 
   switch (type) {
     case NODE_GEOM_P:
-      data = svm_node_bump_P_dy(sd);
+      data = svm_node_bump_P_dy(sd, bump_filter_width);
       break;
-    case NODE_GEOM_uv:
-      data = make_float3(1.0f - sd->u - sd->du.dy - sd->v - sd->dv.dy, sd->u + sd->du.dy, 0.0f);
+    case NODE_GEOM_uv: {
+      const float u_y = sd->u + sd->du.dy * bump_filter_width;
+      const float v_y = sd->v + sd->dv.dy * bump_filter_width;
+      data = make_float3(1.0f - u_y - v_y, u_y, 0.0f);
       break;
+    }
     default:
       svm_node_geometry(kg, sd, stack, type, out_offset);
       return;
@@ -135,12 +143,7 @@ ccl_device_noinline void svm_node_object_info(KernelGlobals kg,
       data = shader_pass_id(kg, sd);
       break;
     case NODE_INFO_OB_RANDOM: {
-      if (sd->lamp != LAMP_NONE) {
-        data = lamp_random_number(kg, sd->lamp);
-      }
-      else {
-        data = object_random_number(kg, sd->object);
-      }
+      data = object_random_number(kg, sd->object);
       break;
     }
     default:
@@ -242,7 +245,7 @@ ccl_device_noinline void svm_node_hair_info(KernelGlobals kg,
       break;
     }
     case NODE_INFO_CURVE_TANGENT_NORMAL: {
-      data3 = curve_tangent_normal(kg, sd);
+      data3 = curve_tangent_normal(sd);
       stack_store_float3(stack, out_offset, data3);
       break;
     }

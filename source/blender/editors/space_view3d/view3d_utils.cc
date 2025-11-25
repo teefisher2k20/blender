@@ -8,6 +8,7 @@
  * 3D View checks and manipulation (no operators).
  */
 
+#include <algorithm>
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
@@ -25,6 +26,8 @@
 
 #include "BLI_array_utils.h"
 #include "BLI_bitmap_draw_2d.h"
+#include "BLI_listbase.h"
+#include "BLI_math_color.h"
 #include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
@@ -35,6 +38,7 @@
 
 #include "BKE_camera.h"
 #include "BKE_context.hh"
+#include "BKE_library.hh"
 #include "BKE_object.hh"
 #include "BKE_scene.hh"
 #include "BKE_screen.hh"
@@ -145,10 +149,17 @@ Camera *ED_view3d_camera_data_get(View3D *v3d, RegionView3D *rv3d)
   return nullptr;
 }
 
-void ED_view3d_dist_range_get(const View3D *v3d, float r_dist_range[2])
+float ED_view3d_dist_soft_min_get(const View3D *v3d, const bool use_persp_range)
 {
-  r_dist_range[0] = v3d->grid * 0.001f;
-  r_dist_range[1] = v3d->clip_end * 10.0f;
+  return use_persp_range ? (v3d->clip_start * 1.5f) : v3d->grid * 0.001f;
+}
+
+blender::Bounds<float> ED_view3d_dist_soft_range_get(const View3D *v3d, const bool use_persp_range)
+{
+  return {
+      ED_view3d_dist_soft_min_get(v3d, use_persp_range),
+      v3d->clip_end * 10.0f,
+  };
 }
 
 bool ED_view3d_clip_range_get(const Depsgraph *depsgraph,
@@ -217,19 +228,18 @@ bool ED_view3d_viewplane_get(const Depsgraph *depsgraph,
 /** \name View State/Context Utilities
  * \{ */
 
-void view3d_operator_needs_opengl(const bContext *C)
+void view3d_operator_needs_gpu(const bContext *C)
 {
-  wmWindow *win = CTX_wm_window(C);
   ARegion *region = CTX_wm_region(C);
 
-  view3d_region_operator_needs_opengl(win, region);
+  view3d_region_operator_needs_gpu(region);
 }
 
-void view3d_region_operator_needs_opengl(wmWindow * /*win*/, ARegion *region)
+void view3d_region_operator_needs_gpu(ARegion *region)
 {
   /* for debugging purpose, context should always be OK */
   if ((region == nullptr) || (region->regiontype != RGN_TYPE_WINDOW)) {
-    printf("view3d_region_operator_needs_opengl error, wrong region\n");
+    printf("view3d_region_operator_needs_gpu error, wrong region\n");
   }
   else {
     RegionView3D *rv3d = static_cast<RegionView3D *>(region->regiondata);
@@ -457,7 +467,7 @@ bool ED_view3d_boundbox_clip_ex(const RegionView3D *rv3d, const BoundBox *bb, fl
     return true;
   }
 
-  mul_m4_m4m4(persmatob, (float(*)[4])rv3d->persmat, obmat);
+  mul_m4_m4m4(persmatob, (float (*)[4])rv3d->persmat, obmat);
 
   return view3d_boundbox_clip_m4(bb, persmatob);
 }
@@ -511,10 +521,11 @@ void ED_view3d_persp_switch_from_camera(const Depsgraph *depsgraph,
   BLI_assert(persp != RV3D_CAMOB);
 
   if (v3d->camera) {
-    Object *ob_camera_eval = DEG_get_evaluated_object(depsgraph, v3d->camera);
+    Object *ob_camera_eval = DEG_get_evaluated(depsgraph, v3d->camera);
     rv3d->dist = ED_view3d_offset_distance(
         ob_camera_eval->object_to_world().ptr(), rv3d->ofs, VIEW3D_DIST_FALLBACK);
     ED_view3d_from_object(ob_camera_eval, rv3d->ofs, rv3d->viewquat, &rv3d->dist, nullptr);
+    WM_main_add_notifier(NC_SPACE | ND_SPACE_VIEW3D, v3d);
   }
 
   if (!ED_view3d_camera_lock_check(v3d, rv3d)) {
@@ -601,7 +612,7 @@ void ED_view3d_camera_lock_init_ex(const Depsgraph *depsgraph,
                                    const bool calc_dist)
 {
   if (ED_view3d_camera_lock_check(v3d, rv3d)) {
-    Object *ob_camera_eval = DEG_get_evaluated_object(depsgraph, v3d->camera);
+    Object *ob_camera_eval = DEG_get_evaluated(depsgraph, v3d->camera);
     if (calc_dist) {
       /* using a fallback dist is OK here since ED_view3d_from_object() compensates for it */
       rv3d->dist = ED_view3d_offset_distance(
@@ -635,8 +646,8 @@ bool ED_view3d_camera_lock_sync(const Depsgraph *depsgraph, View3D *v3d, RegionV
       while (root_parent->parent) {
         root_parent = root_parent->parent;
       }
-      Object *ob_camera_eval = DEG_get_evaluated_object(depsgraph, v3d->camera);
-      Object *root_parent_eval = DEG_get_evaluated_object(depsgraph, root_parent);
+      Object *ob_camera_eval = DEG_get_evaluated(depsgraph, v3d->camera);
+      Object *root_parent_eval = DEG_get_evaluated(depsgraph, root_parent);
 
       ED_view3d_to_m4(view_mat, rv3d->ofs, rv3d->viewquat, rv3d->dist);
 
@@ -806,7 +817,7 @@ bool ED_view3d_camera_lock_undo_grouped_push(const char *str,
 
 static void view3d_boxview_clip(ScrArea *area)
 {
-  BoundBox *bb = static_cast<BoundBox *>(MEM_callocN(sizeof(BoundBox), "clipbb"));
+  BoundBox *bb = MEM_callocN<BoundBox>("clipbb");
   float clip[6][4];
   float x1 = 0.0f, y1 = 0.0f, z1 = 0.0f, ofs[3] = {0.0f, 0.0f, 0.0f};
 
@@ -1301,7 +1312,7 @@ float ED_view3d_radius_to_dist(const View3D *v3d,
       BKE_camera_params_init(&params);
       params.clip_start = v3d->clip_start;
       params.clip_end = v3d->clip_end;
-      Object *camera_eval = DEG_get_evaluated_object(depsgraph, v3d->camera);
+      Object *camera_eval = DEG_get_evaluated(depsgraph, v3d->camera);
       BKE_camera_params_from_object(&params, camera_eval);
 
       lens = params.lens;
@@ -1652,7 +1663,7 @@ void ED_view3d_to_object(const Depsgraph *depsgraph,
   float mat[4][4];
   ED_view3d_to_m4(mat, ofs, quat, dist);
 
-  Object *ob_eval = DEG_get_evaluated_object(depsgraph, ob);
+  Object *ob_eval = DEG_get_evaluated(depsgraph, ob);
   BKE_object_apply_mat4_ex(ob, mat, ob_eval->parent, ob_eval->parentinv, true);
 }
 
@@ -1663,7 +1674,7 @@ static bool view3d_camera_to_view_selected_impl(Main *bmain,
                                                 float *r_clip_start,
                                                 float *r_clip_end)
 {
-  Object *camera_ob_eval = DEG_get_evaluated_object(depsgraph, camera_ob);
+  Object *camera_ob_eval = DEG_get_evaluated(depsgraph, camera_ob);
   float co[3]; /* the new location to apply */
   float scale; /* only for ortho cameras */
 
@@ -1724,7 +1735,7 @@ bool ED_view3d_camera_to_view_selected_with_set_clipping(Main *bmain,
     ((Camera *)camera_ob->data)->clip_end = clip_end;
 
     /* TODO: Support update via #ID_RECALC_PARAMETERS. */
-    Object *camera_ob_eval = DEG_get_evaluated_object(depsgraph, camera_ob);
+    Object *camera_ob_eval = DEG_get_evaluated(depsgraph, camera_ob);
     ((Camera *)camera_ob_eval->data)->clip_start = clip_start;
     ((Camera *)camera_ob_eval->data)->clip_end = clip_end;
 
@@ -1750,9 +1761,7 @@ static bool depth_read_test_fn(const void *value, void *userdata)
 {
   ReadData *data = static_cast<ReadData *>(userdata);
   float depth = *(float *)value;
-  if (depth < data->r_depth) {
-    data->r_depth = depth;
-  }
+  data->r_depth = std::min(depth, data->r_depth);
 
   if ((++data->count) >= data->count_max) {
     /* Outside the margin. */

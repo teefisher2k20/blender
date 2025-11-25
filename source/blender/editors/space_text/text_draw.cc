@@ -12,7 +12,10 @@
 
 #include "BLF_api.hh"
 
-#include "BLI_blenlib.h"
+#include "BLI_listbase.h"
+#include "BLI_rect.h"
+#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "DNA_screen_types.h"
 #include "DNA_space_types.h"
@@ -105,7 +108,7 @@ static int text_font_draw_character_utf8(
 }
 
 #if 0
-/* Formats every line of the current text */
+/** Formats every line of the current text. */
 static void txt_format_text(SpaceText *st)
 {
   TextLine *linep;
@@ -120,7 +123,7 @@ static void txt_format_text(SpaceText *st)
 }
 #endif
 
-/* Sets the current drawing color based on the format character specified */
+/** Sets the current drawing color based on the format character specified. */
 static void format_draw_color(const TextDrawContext *tdc, char formatchar)
 {
   switch (formatchar) {
@@ -172,7 +175,7 @@ static void format_draw_color(const TextDrawContext *tdc, char formatchar)
  *   The maximum number of characters displayable in the region
  *   This equals region_width/font_width for the region
  * - wrap_chars:
- *   Characters that allow wrapping. This equals [' ', '\t', '-']
+ *   Characters that allow wrapping. This equals [" ", "\t", "-"]
  *
  * \code{.py}
  * def wrap(line, view_width, wrap_chars):
@@ -222,16 +225,16 @@ void space_text_wrap_offset(
 
   text = st->text;
 
-  /* Move pointer to first visible line (top) */
+  /* Move pointer to first visible line (top). */
   linep = static_cast<TextLine *>(text->lines.first);
   i = st->top;
   while (i > 0 && linep) {
     int lines = space_text_get_visible_lines(st, region, linep->line);
 
-    /* Line before top */
+    /* Line before top. */
     if (linep == linein) {
       if (lines <= i) {
-        /* no visible part of line */
+        /* No visible part of line. */
         return;
       }
     }
@@ -255,9 +258,9 @@ void space_text_wrap_offset(
     *offc = 0;
     for (i = 0, j = 0; linep->line[j]; j += BLI_str_utf8_size_safe(linep->line + j)) {
       int chars;
-      const int columns = BLI_str_utf8_char_width_safe(linep->line + j); /* = 1 for tab */
+      const int columns = BLI_str_utf8_char_width_safe(linep->line + j); /* = 1 for tab. */
 
-      /* Mimic replacement of tabs */
+      /* Mimic replacement of tabs. */
       ch = linep->line[j];
       if (ch == '\t') {
         chars = st->tabnumber - i % st->tabnumber;
@@ -332,9 +335,9 @@ void space_text_wrap_offset_in_line(
   cursin = BLI_str_utf8_offset_to_column(linein->line, linein->len, cursin);
 
   for (i = 0, j = 0; linein->line[j]; j += BLI_str_utf8_size_safe(linein->line + j)) {
-    const int columns = BLI_str_utf8_char_width_safe(linein->line + j); /* = 1 for tab */
+    const int columns = BLI_str_utf8_char_width_safe(linein->line + j); /* = 1 for tab. */
 
-    /* Mimic replacement of tabs */
+    /* Mimic replacement of tabs. */
     ch = linein->line[j];
     if (ch == '\t') {
       chars = st->tabnumber - i % st->tabnumber;
@@ -426,20 +429,18 @@ static int space_text_draw_wrapped(const SpaceText *st,
   const bool use_syntax = (tdc->syntax_highlight && format);
   FlattenString fs;
   int basex, lines;
-  int i, wrap, end, max, columns, padding; /* column */
-  /* warning, only valid when 'use_syntax' is set */
-  int a, fstart, fpos;      /* utf8 chars */
-  int mi, ma, mstart, mend; /* mem */
+  int i, wrap, end, max, columns, padding; /* Column. */
+  /* Warning, only valid when `use_syntax` is set. */
+  int a, fstart, fpos; /* UTF8 characters. */
+  int mi, ma, mstart, mend;
   char fmt_prev = 0xff;
-  /* don't draw lines below this */
-  const int clip_min_y = -int(st->runtime->lheight_px - 1);
+  /* Don't draw lines below this. */
+  const int clip_min_y = -(st->runtime->lheight_px - 1);
 
   flatten_string(st, &fs, str);
   str = fs.buf;
   max = w / st->runtime->cwidth_px;
-  if (max < 8) {
-    max = 8;
-  }
+  max = std::max(max, 8);
   basex = x;
   lines = 1;
 
@@ -451,11 +452,11 @@ static int space_text_draw_wrapped(const SpaceText *st,
   for (i = 0, mi = 0; str[mi]; i += columns, mi += BLI_str_utf8_size_safe(str + mi)) {
     columns = BLI_str_utf8_char_width_safe(str + mi);
     if (i + columns > end) {
-      /* skip hidden part of line */
+      /* Skip hidden part of line. */
       if (skip) {
         skip--;
         if (use_syntax) {
-          /* currently fpos only used when formatting */
+          /* Currently fpos only used when formatting. */
           fpos += BLI_strnlen_utf8(str + mstart, mend - mstart);
         }
         fstart = fpos;
@@ -465,7 +466,7 @@ static int space_text_draw_wrapped(const SpaceText *st,
         continue;
       }
 
-      /* Draw the visible portion of text on the overshot line */
+      /* Draw the visible portion of text on the overshot line. */
       for (a = fstart, ma = mstart; ma < mend; a++) {
         if (use_syntax) {
           if (fmt_prev != format[a]) {
@@ -495,7 +496,7 @@ static int space_text_draw_wrapped(const SpaceText *st,
     }
   }
 
-  /* Draw the remaining text */
+  /* Draw the remaining text. */
   for (a = fstart, ma = mstart; str[ma] && y > clip_min_y; a++) {
     if (use_syntax) {
       if (fmt_prev != format[a]) {
@@ -552,7 +553,7 @@ static void space_text_draw(const SpaceText *st,
   }
   if (!in) {
     flatten_string_free(&fs);
-    return; /* String is shorter than shift or ends with a padding */
+    return; /* String is shorter than shift or ends with a padding. */
   }
 
   x += tdc->cwidth_px * padding;
@@ -587,21 +588,20 @@ struct DrawCache {
   int *line_height;
   int total_lines, nlines;
 
-  /* this is needed to check cache relevance */
+  /* This is needed to check cache relevance. */
   int winx, wordwrap, showlinenrs, tabnumber;
   short lheight;
   char cwidth_px;
-  char text_id[MAX_ID_NAME];
+  char text_id[MAX_ID_NAME - 2];
 
   /** For partial lines recalculation. */
   bool update;
-  int valid_head, valid_tail; /* amount of unchanged lines */
+  int valid_head, valid_tail; /* Amount of unchanged lines. */
 };
 
 static void space_text_drawcache_init(SpaceText *st)
 {
-  DrawCache *drawcache = static_cast<DrawCache *>(
-      MEM_callocN(sizeof(DrawCache), "text draw cache"));
+  DrawCache *drawcache = MEM_callocN<DrawCache>("text draw cache");
 
   drawcache->winx = -1;
   drawcache->nlines = BLI_listbase_count(&st->text->lines);
@@ -626,25 +626,25 @@ static void space_text_update_drawcache(SpaceText *st, const ARegion *region)
   drawcache = static_cast<DrawCache *>(st->runtime->drawcache);
   nlines = drawcache->nlines;
 
-  /* check if full cache update is needed */
+  /* Check if full cache update is needed. */
 
-  /* area was resized */
+  /* Area was resized. */
   full_update |= drawcache->winx != region->winx;
-  /* word-wrapping option was toggled */
+  /* Word-wrapping option was toggled. */
   full_update |= drawcache->wordwrap != st->wordwrap;
-  /* word-wrapping option was toggled */
+  /* Word-wrapping option was toggled. */
   full_update |= drawcache->showlinenrs != st->showlinenrs;
-  /* word-wrapping option was toggled */
+  /* Word-wrapping option was toggled. */
   full_update |= drawcache->tabnumber != st->tabnumber;
-  /* word-wrapping option was toggled */
+  /* Word-wrapping option was toggled. */
   full_update |= drawcache->lheight != st->runtime->lheight_px;
-  /* word-wrapping option was toggled */
+  /* Word-wrapping option was toggled. */
   full_update |= drawcache->cwidth_px != st->runtime->cwidth_px;
-  /* text datablock was changed */
-  full_update |= !STREQLEN(drawcache->text_id, txt->id.name, MAX_ID_NAME);
+  /* Text datablock was changed. */
+  full_update |= !STREQLEN(drawcache->text_id, txt->id.name, MAX_ID_NAME - 2);
 
   if (st->wordwrap) {
-    /* update line heights */
+    /* Update line heights. */
     if (full_update || !drawcache->line_height) {
       drawcache->valid_head = 0;
       drawcache->valid_tail = 0;
@@ -678,11 +678,11 @@ static void space_text_update_drawcache(SpaceText *st, const ARegion *region)
       }
 
       while (line) {
-        if (drawcache->valid_head) { /* we're inside valid head lines */
+        if (drawcache->valid_head) { /* We're inside valid head lines. */
           lines_count = fp[lineno];
           drawcache->valid_head--;
         }
-        else if (lineno > new_tail - fp) { /* we-re inside valid tail lines */
+        else if (lineno > new_tail - fp) { /* We-re inside valid tail lines. */
           lines_count = fp[lineno];
         }
         else {
@@ -715,7 +715,7 @@ static void space_text_update_drawcache(SpaceText *st, const ARegion *region)
 
   drawcache->nlines = nlines;
 
-  /* store settings */
+  /* Store settings. */
   drawcache->winx = region->winx;
   drawcache->wordwrap = st->wordwrap;
   drawcache->lheight = st->runtime->lheight_px;
@@ -723,9 +723,9 @@ static void space_text_update_drawcache(SpaceText *st, const ARegion *region)
   drawcache->showlinenrs = st->showlinenrs;
   drawcache->tabnumber = st->tabnumber;
 
-  STRNCPY(drawcache->text_id, txt->id.name);
+  STRNCPY(drawcache->text_id, txt->id.name + 2);
 
-  /* clear update flag */
+  /* Clear update flag. */
   drawcache->update = false;
   drawcache->valid_head = 0;
   drawcache->valid_tail = 0;
@@ -743,8 +743,8 @@ void space_text_drawcache_tag_update(SpaceText *st, const bool full)
     Text *txt = st->text;
 
     if (drawcache->update) {
-      /* happens when tagging update from space listener */
-      /* should do nothing to prevent locally tagged cache be fully recalculated */
+      /* Happens when tagging update from space listener. */
+      /* Should do nothing to prevent locally tagged cache be fully recalculated. */
       return;
     }
 
@@ -761,9 +761,9 @@ void space_text_drawcache_tag_update(SpaceText *st, const bool full)
         drawcache->valid_tail = drawcache->nlines - curlno - 1;
       }
 
-      /* quick cache recalculation is also used in delete operator,
+      /* Quick cache recalculation is also used in delete operator,
        * which could merge lines which are adjacent to current selection lines
-       * expand recalculate area to this lines */
+       * expand recalculate area to this lines. */
       if (drawcache->valid_head > 0) {
         drawcache->valid_head--;
       }
@@ -799,7 +799,7 @@ void space_text_free_caches(SpaceText *st)
 /** \name Word-Wrap Utilities
  * \{ */
 
-/* cache should be updated in caller */
+/** Cache should be updated in caller. */
 static int space_text_get_visible_lines_no(const SpaceText *st, int lineno)
 {
   const DrawCache *drawcache = static_cast<const DrawCache *>(st->runtime->drawcache);
@@ -817,9 +817,9 @@ int space_text_get_visible_lines(const SpaceText *st, const ARegion *region, con
   start = 0;
   end = max;
   for (i = 0, j = 0; str[j]; j += BLI_str_utf8_size_safe(str + j)) {
-    const int columns = BLI_str_utf8_char_width_safe(str + j); /* = 1 for tab */
+    const int columns = BLI_str_utf8_char_width_safe(str + j); /* = 1 for tab. */
 
-    /* Mimic replacement of tabs */
+    /* Mimic replacement of tabs. */
     ch = str[j];
     if (ch == '\t') {
       chars = st->tabnumber - i % st->tabnumber;
@@ -855,7 +855,7 @@ int space_text_get_span_wrap(const SpaceText *st,
     int ret = 0;
     const TextLine *tmp = from;
 
-    /* Look forwards */
+    /* Look forwards. */
     while (tmp) {
       if (tmp == to) {
         return ret;
@@ -897,7 +897,7 @@ static void calc_text_rcts(SpaceText *st, ARegion *region, rcti *r_scroll, rcti 
   ltexth = space_text_get_total_lines(st, region);
   blank_lines = st->runtime->viewlines / 2;
 
-  /* nicer code: use scroll rect for entire bar */
+  /* Nicer code: use scroll rect for entire bar. */
   r_back->xmin = region->winx - (0.6 * U.widget_unit);
   r_back->xmax = region->winx;
   r_back->ymin = 0;
@@ -908,8 +908,8 @@ static void calc_text_rcts(SpaceText *st, ARegion *region, rcti *r_scroll, rcti 
   r_scroll->ymin = pix_top_margin;
   r_scroll->ymax = pix_available;
 
-  /* when re-sizing a 2D Viewport with the bar at the bottom to a greater height
-   * more blank lines will be added */
+  /* When re-sizing a 2D Viewport with the bar at the bottom to a greater height
+   * more blank lines will be added. */
   if (ltexth + blank_lines < st->top + st->runtime->viewlines) {
     blank_lines = st->top + st->runtime->viewlines - ltexth;
   }
@@ -919,7 +919,7 @@ static void calc_text_rcts(SpaceText *st, ARegion *region, rcti *r_scroll, rcti 
   barheight = (ltexth > 0) ? (st->runtime->viewlines * pix_available) / ltexth : 0;
   pix_bardiff = 0;
   if (barheight < 20) {
-    pix_bardiff = 20 - barheight; /* take into account the now non-linear sizing of the bar */
+    pix_bardiff = 20 - barheight; /* Take into account the now non-linear sizing of the bar. */
     barheight = 20;
   }
   barstart = (ltexth > 0) ? ((pix_available - pix_bardiff) * st->top) / ltexth : 0;
@@ -932,9 +932,7 @@ static void calc_text_rcts(SpaceText *st, ARegion *region, rcti *r_scroll, rcti 
   CLAMP(st->runtime->scroll_region_handle.ymax, pix_bottom_margin, region->winy - pix_top_margin);
 
   st->runtime->scroll_px_per_line = (pix_available > 0) ? float(ltexth) / pix_available : 0;
-  if (st->runtime->scroll_px_per_line < 0.1f) {
-    st->runtime->scroll_px_per_line = 0.1f;
-  }
+  st->runtime->scroll_px_per_line = std::max(st->runtime->scroll_px_per_line, 0.1f);
 
   curl_off = space_text_get_span_wrap(
       st, region, static_cast<TextLine *>(st->text->lines.first), st->text->curl);
@@ -949,7 +947,7 @@ static void calc_text_rcts(SpaceText *st, ARegion *region, rcti *r_scroll, rcti 
 
     /* The scroll-bar is non-linear sized. */
     if (pix_bardiff > 0) {
-      /* the start of the highlight is in the current viewport */
+      /* The start of the highlight is in the current viewport. */
       if (st->runtime->viewlines && lhlstart >= st->top &&
           lhlstart <= st->top + st->runtime->viewlines)
       {
@@ -972,7 +970,7 @@ static void calc_text_rcts(SpaceText *st, ARegion *region, rcti *r_scroll, rcti 
         hlend = hlstart + 2;
       }
 
-      /* the end of the highlight is in the current viewport */
+      /* The end of the highlight is in the current viewport. */
       if (st->runtime->viewlines && lhlend >= st->top &&
           lhlend <= st->top + st->runtime->viewlines)
       {
@@ -1022,10 +1020,10 @@ static void draw_textscroll(const SpaceText *st, const rcti *scroll, const rcti 
 
   /* Background so highlights don't go behind the scroll-bar. */
   uint pos = GPU_vertformat_attr_add(
-      immVertexFormat(), "pos", GPU_COMP_I32, 2, GPU_FETCH_INT_TO_FLOAT);
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
   immUniformThemeColor(TH_BACK);
-  immRecti(pos, back->xmin, back->ymin, back->xmax, back->ymax);
+  immRectf(pos, back->xmin, back->ymin, back->xmax, back->ymax);
   immUnbindProgram();
 
   UI_draw_widget_scroll(&wcol,
@@ -1048,10 +1046,6 @@ static void draw_textscroll(const SpaceText *st, const rcti *scroll, const rcti 
 }
 
 /** \} */
-
-/* -------------------------------------------------------------------- */
-/** \name Draw Documentation
- * \{ */
 
 /* -------------------------------------------------------------------- */
 /** \name Draw Suggestion List
@@ -1092,8 +1086,8 @@ static void draw_suggestion_list(const SpaceText *st, const TextDrawContext *tdc
   x = TXT_BODY_LEFT(st) + (vcurc * st->runtime->cwidth_px);
   y = region->winy - (vcurl + 1) * lheight - 2;
 
-  /* offset back so the start of the text lines up with the suggestions,
-   * not essential but makes suggestions easier to follow */
+  /* Offset back so the start of the text lines up with the suggestions,
+   * not essential but makes suggestions easier to follow. */
   x -= st->runtime->cwidth_px *
        (st->text->curc - text_find_identifier_start(st->text->curl->line, st->text->curc));
 
@@ -1104,7 +1098,7 @@ static void draw_suggestion_list(const SpaceText *st, const TextDrawContext *tdc
     x = std::max(0, region->winx - boxw);
   }
 
-  /* not needed but stands out nicer */
+  /* Not needed but stands out nicer. */
   {
     rctf rect;
     rect.xmin = x;
@@ -1115,19 +1109,19 @@ static void draw_suggestion_list(const SpaceText *st, const TextDrawContext *tdc
   }
 
   uint pos = GPU_vertformat_attr_add(
-      immVertexFormat(), "pos", GPU_COMP_I32, 2, GPU_FETCH_INT_TO_FLOAT);
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
 
   immUniformThemeColor(TH_SHADE1);
-  immRecti(pos, x - 1, y + 1, x + boxw + 1, y - boxh - 1);
+  immRectf(pos, x - 1, y + 1, x + boxw + 1, y - boxh - 1);
   immUniformThemeColorShade(TH_BACK, 16);
-  immRecti(pos, x, y, x + boxw, y - boxh);
+  immRectf(pos, x, y, x + boxw, y - boxh);
 
   immUnbindProgram();
 
-  /* Set the top 'item' of the visible list */
+  /* Set the top `item` of the visible list. */
   for (i = 0, item = first; i < *top && item->next; i++, item = item->next) {
-    /* pass */
+    /* Pass. */
   }
 
   for (i = 0; i < SUGG_LIST_SIZE && item; i++, item = item->next) {
@@ -1135,17 +1129,17 @@ static void draw_suggestion_list(const SpaceText *st, const TextDrawContext *tdc
 
     y -= lheight;
 
-    BLI_strncpy(str, item->name, len + 1);
+    BLI_strncpy_utf8(str, item->name, len + 1);
 
     w = st->runtime->cwidth_px * space_text_get_char_pos(st, str, len);
 
     if (item == sel) {
       uint posi = GPU_vertformat_attr_add(
-          immVertexFormat(), "pos", GPU_COMP_I32, 2, GPU_FETCH_INT_TO_FLOAT);
+          immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
       immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
 
       immUniformThemeColor(TH_SHADE2);
-      immRecti(posi, x + margin_x, y - 3, x + margin_x + w, y + lheight - 3);
+      immRectf(posi, x + margin_x, y - 3, x + margin_x + w, y + lheight - 3);
 
       immUnbindProgram();
     }
@@ -1173,7 +1167,7 @@ static void draw_text_decoration(SpaceText *st, ARegion *region)
   int offl, offc;
   const int lheight = TXT_LINE_HEIGHT(st);
 
-  /* Convert to view space character coordinates to determine if cursor is hidden */
+  /* Convert to view space character coordinates to determine if cursor is hidden. */
   space_text_wrap_offset(st, region, text->sell, text->selc, &offl, &offc);
   vsell = txt_get_span(static_cast<TextLine *>(text->lines.first), text->sell) - st->top + offl;
   vselc = space_text_get_char_pos(st, text->sell->line, text->selc) - st->left + offc;
@@ -1184,24 +1178,22 @@ static void draw_text_decoration(SpaceText *st, ARegion *region)
   }
 
   if (text->curl == text->sell && text->curc == text->selc && !st->line_hlight && hidden) {
-    /* Nothing to draw here */
+    /* Nothing to draw here. */
     return;
   }
 
   uint pos = GPU_vertformat_attr_add(
-      immVertexFormat(), "pos", GPU_COMP_I32, 2, GPU_FETCH_INT_TO_FLOAT);
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
 
-  /* Draw the selection */
+  /* Draw the selection. */
   if (text->curl != text->sell || text->curc != text->selc) {
-    /* Convert all to view space character coordinates */
+    /* Convert all to view space character coordinates. */
     space_text_wrap_offset(st, region, text->curl, text->curc, &offl, &offc);
     vcurl = txt_get_span(static_cast<TextLine *>(text->lines.first), text->curl) - st->top + offl;
     vcurc = space_text_get_char_pos(st, text->curl->line, text->curc) - st->left + offc;
 
-    if (vcurc < 0) {
-      vcurc = 0;
-    }
+    vcurc = std::max(vcurc, 0);
 
     immUniformThemeColor(TH_SHADE2);
 
@@ -1215,14 +1207,14 @@ static void draw_text_decoration(SpaceText *st, ARegion *region)
       y -= vcurl * lheight;
 
       if (vcurc < vselc) {
-        immRecti(pos,
+        immRectf(pos,
                  x + vcurc * st->runtime->cwidth_px,
                  y,
                  x + vselc * st->runtime->cwidth_px,
                  y - lheight);
       }
       else {
-        immRecti(pos,
+        immRectf(pos,
                  x + vselc * st->runtime->cwidth_px,
                  y,
                  x + vcurc * st->runtime->cwidth_px,
@@ -1247,17 +1239,17 @@ static void draw_text_decoration(SpaceText *st, ARegion *region)
 
       y -= froml * lheight;
 
-      immRecti(
+      immRectf(
           pos, x + fromc * st->runtime->cwidth_px - U.pixelsize, y, region->winx, y - lheight);
       y -= lheight;
 
       for (int i = froml + 1; i < tol; i++) {
-        immRecti(pos, x - U.pixelsize, y, region->winx, y - lheight);
+        immRectf(pos, x - U.pixelsize, y, region->winx, y - lheight);
         y -= lheight;
       }
 
       if (x + toc * st->runtime->cwidth_px > x) {
-        immRecti(pos, x - U.pixelsize, y, x + toc * st->runtime->cwidth_px, y - lheight);
+        immRectf(pos, x - U.pixelsize, y, x + toc * st->runtime->cwidth_px, y - lheight);
       }
       y -= lheight;
     }
@@ -1287,19 +1279,19 @@ static void draw_text_decoration(SpaceText *st, ARegion *region)
       y2 = y1 - (lheight);
     }
 
-    if (!(y1 < 0 || y2 > region->winy)) { /* check we need to draw */
+    if (!(y1 < 0 || y2 > region->winy)) { /* Check we need to draw. */
       float highlight_color[4];
       UI_GetThemeColor4fv(TH_TEXT, highlight_color);
       highlight_color[3] = 0.1f;
       immUniformColor4fv(highlight_color);
       GPU_blend(GPU_BLEND_ALPHA);
-      immRecti(pos, 0, y1, region->winx, y2);
+      immRectf(pos, 0, y1, region->winx, y2);
       GPU_blend(GPU_BLEND_NONE);
     }
   }
 
   if (!hidden) {
-    /* Draw the cursor itself (we draw the sel. cursor as this is the leading edge) */
+    /* Draw the cursor itself (we draw the sel. cursor as this is the leading edge). */
     int x = TXT_BODY_LEFT(st) + (vselc * st->runtime->cwidth_px);
     int y = region->winy - vsell * lheight;
     if (st->flags & ST_SCROLL_SELECT) {
@@ -1317,11 +1309,11 @@ static void draw_text_decoration(SpaceText *st, ARegion *region)
         w *= st->tabnumber - (vselc + st->left) % st->tabnumber;
       }
 
-      immRecti(
+      immRectf(
           pos, x, y - lheight - U.pixelsize, x + w + U.pixelsize, y - lheight - (3 * U.pixelsize));
     }
     else {
-      immRecti(pos, x - U.pixelsize, y, x + U.pixelsize, y - lheight);
+      immRectf(pos, x - U.pixelsize, y, x + U.pixelsize, y - lheight);
     }
   }
 
@@ -1343,7 +1335,7 @@ static void draw_brackets(const SpaceText *st, const TextDrawContext *tdc, ARegi
 
   char ch;
 
-  /* syntax_highlight must be on or else the format string will be null */
+  /* Syntax_highlight must be on or else the format string will be null. */
   if (!text->curl || !tdc->syntax_highlight) {
     return;
   }
@@ -1374,7 +1366,7 @@ static void draw_brackets(const SpaceText *st, const TextDrawContext *tdc, ARegi
   }
 
   if (b > 0) {
-    /* opening bracket, search forward for close */
+    /* Opening bracket, search forward for close. */
     fc++;
     c += BLI_str_utf8_size_safe(linep->line + c);
     while (linep) {
@@ -1407,7 +1399,7 @@ static void draw_brackets(const SpaceText *st, const TextDrawContext *tdc, ARegi
     }
   }
   else {
-    /* closing bracket, search backward for open */
+    /* Closing bracket, search backward for open. */
     fc--;
     if (c > 0) {
       c -= linep->line + c - BLI_str_find_prev_char_utf8(linep->line + c, linep->line);
@@ -1467,7 +1459,7 @@ static void draw_brackets(const SpaceText *st, const TextDrawContext *tdc, ARegi
     y += st->runtime->scroll_ofs_px[1];
   }
 
-  /* draw opening bracket */
+  /* Draw opening bracket. */
   ch = startl->line[startc];
   space_text_wrap_offset(st, region, startl, startc, &offl, &offc);
   viewc = space_text_get_char_pos(st, startl->line, startc) - st->left + offc;
@@ -1481,7 +1473,7 @@ static void draw_brackets(const SpaceText *st, const TextDrawContext *tdc, ARegi
         tdc, x + viewc * st->runtime->cwidth_px + 1, y - viewl * TXT_LINE_HEIGHT(st), ch);
   }
 
-  /* draw closing bracket */
+  /* Draw closing bracket. */
   ch = endl->line[endc];
   space_text_wrap_offset(st, region, endl, endc, &offl, &offc);
   viewc = space_text_get_char_pos(st, endl->line, endc) - st->left + offc;
@@ -1514,7 +1506,7 @@ void draw_text_main(SpaceText *st, ARegion *region)
   int wraplinecount = 0, wrap_skip = 0;
   int margin_column_x;
 
-  /* if no text, nothing to do */
+  /* If no text, nothing to do. */
   if (!text) {
     return;
   }
@@ -1522,8 +1514,8 @@ void draw_text_main(SpaceText *st, ARegion *region)
   /* DPI controlled line height and font size. */
   st->runtime->lheight_px = (U.widget_unit * st->lheight) / 20;
 
-  /* don't draw lines below this */
-  const int clip_min_y = -int(st->runtime->lheight_px - 1);
+  /* Don't draw lines below this. */
+  const int clip_min_y = -(st->runtime->lheight_px - 1);
 
   st->runtime->viewlines = (st->runtime->lheight_px) ?
                                int(region->winy - clip_min_y) / TXT_LINE_HEIGHT(st) :
@@ -1533,15 +1525,15 @@ void draw_text_main(SpaceText *st, ARegion *region)
 
   space_text_update_drawcache(st, region);
 
-  /* make sure all the positional pointers exist */
+  /* Make sure all the positional pointers exist. */
   if (!text->curl || !text->sell || !text->lines.first || !text->lines.last) {
     txt_clean_text(text);
   }
 
   /* Update rectangles for scroll. */
-  calc_text_rcts(st, region, &scroll, &back); /* scroll will hold the entire bar size */
+  calc_text_rcts(st, region, &scroll, &back); /* Scroll will hold the entire bar size. */
 
-  /* update syntax formatting if needed */
+  /* Update syntax formatting if needed. */
   tft = ED_text_format_get(text);
   tmp = static_cast<TextLine *>(text->lines.first);
   lineno = 0;
@@ -1575,17 +1567,17 @@ void draw_text_main(SpaceText *st, ARegion *region)
   tdc.cwidth_px = max_ii(int(BLF_fixed_width(tdc.font_id)), 1);
   st->runtime->cwidth_px = tdc.cwidth_px;
 
-  /* draw line numbers background */
+  /* Draw line numbers background. */
   if (st->showlinenrs) {
     uint pos = GPU_vertformat_attr_add(
-        immVertexFormat(), "pos", GPU_COMP_I32, 2, GPU_FETCH_INT_TO_FLOAT);
+        immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
     immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
     immUniformThemeColor(TH_GRID);
-    immRecti(pos, 0, 0, TXT_NUMCOL_WIDTH(st), region->winy);
+    immRectf(pos, 0, 0, TXT_NUMCOL_WIDTH(st), region->winy);
     immUnbindProgram();
   }
   else {
-    st->runtime->line_number_display_digits = 0; /* not used */
+    st->runtime->line_number_display_digits = 0; /* Not used. */
   }
 
   x = TXT_BODY_LEFT(st);
@@ -1598,10 +1590,10 @@ void draw_text_main(SpaceText *st, ARegion *region)
 
   winx = region->winx - TXT_SCROLL_WIDTH;
 
-  /* draw cursor, margin, selection and highlight */
+  /* Draw cursor, margin, selection and highlight. */
   draw_text_decoration(st, region);
 
-  /* draw the text */
+  /* Draw the text. */
   UI_FontThemeColor(tdc.font_id, TH_TEXT);
 
   for (i = 0; y > clip_min_y && i < viewlines && tmp; i++, tmp = tmp->next) {
@@ -1612,20 +1604,20 @@ void draw_text_main(SpaceText *st, ARegion *region)
     if (st->showlinenrs && !wrap_skip) {
       /* Draw line number. */
       UI_FontThemeColor(tdc.font_id, (tmp == text->sell) ? TH_HILITE : TH_LINENUMBERS);
-      SNPRINTF(linenr, "%*d", st->runtime->line_number_display_digits, i + linecount + 1);
+      SNPRINTF_UTF8(linenr, "%*d", st->runtime->line_number_display_digits, i + linecount + 1);
       text_font_draw(&tdc, TXT_NUMCOL_PAD * st->runtime->cwidth_px, y, linenr);
       /* Change back to text color. */
       UI_FontThemeColor(tdc.font_id, TH_TEXT);
     }
 
     if (st->wordwrap) {
-      /* draw word wrapped text */
+      /* Draw word wrapped text. */
       int lines = space_text_draw_wrapped(
           st, &tdc, tmp->line, x, y, winx - x, tmp->format, wrap_skip);
       y -= lines * TXT_LINE_HEIGHT(st);
     }
     else {
-      /* draw unwrapped text */
+      /* Draw unwrapped text. */
       space_text_draw(
           st, &tdc, tmp->line, st->left, region->winx / st->runtime->cwidth_px, x, y, tmp->format);
       y -= TXT_LINE_HEIGHT(st);
@@ -1638,23 +1630,23 @@ void draw_text_main(SpaceText *st, ARegion *region)
     margin_column_x = x + st->runtime->cwidth_px * (st->margin_column - st->left);
     if (margin_column_x >= x) {
       uint pos = GPU_vertformat_attr_add(
-          immVertexFormat(), "pos", GPU_COMP_I32, 2, GPU_FETCH_INT_TO_FLOAT);
+          immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
       immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
       float margin_color[4];
       UI_GetThemeColor4fv(TH_TEXT, margin_color);
       margin_color[3] = 0.2f;
       immUniformColor4fv(margin_color);
       GPU_blend(GPU_BLEND_ALPHA);
-      immRecti(pos, margin_column_x, 0, margin_column_x + U.pixelsize, region->winy);
+      immRectf(pos, margin_column_x, 0, margin_column_x + U.pixelsize, region->winy);
       GPU_blend(GPU_BLEND_NONE);
       immUnbindProgram();
     }
   }
 
-  /* draw other stuff */
+  /* Draw other stuff. */
   draw_brackets(st, &tdc, region);
   draw_textscroll(st, &scroll, &back);
-  /* draw_documentation(st, region); - No longer supported */
+  /* Draw_documentation(st, region); - No longer supported. */
   draw_suggestion_list(st, &tdc, region);
 
   text_font_end(&tdc);
@@ -1752,12 +1744,8 @@ void ED_space_text_scroll_to_cursor(SpaceText *st, ARegion *region, const bool c
     }
   }
 
-  if (st->top < 0) {
-    st->top = 0;
-  }
-  if (st->left < 0) {
-    st->left = 0;
-  }
+  st->top = std::max(st->top, 0);
+  st->left = std::max(st->left, 0);
 
   st->runtime->scroll_ofs_px[0] = 0;
   st->runtime->scroll_ofs_px[1] = 0;

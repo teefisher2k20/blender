@@ -713,8 +713,8 @@ class Vector {
   }
 
   /**
-   * Insert values at the beginning of the vector. The has to move all the other elements, so it
-   * has a linear running time.
+   * Insert values at the beginning of the vector.
+   * This has to move all the other elements, so it has a linear running time.
    */
   void prepend(const T &value)
   {
@@ -1150,5 +1150,9 @@ class Vector {
  */
 template<typename T, int64_t InlineBufferCapacity = default_inline_buffer_capacity(sizeof(T))>
 using RawVector = Vector<T, InlineBufferCapacity, RawAllocator>;
+
+template<typename T> static constexpr bool is_Vector_v = false;
+template<typename T, int64_t InlineBufferCapacity, typename Allocator>
+static constexpr bool is_Vector_v<Vector<T, InlineBufferCapacity, Allocator>> = true;
 
 } /* namespace blender */

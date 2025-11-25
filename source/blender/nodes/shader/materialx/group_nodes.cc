@@ -5,7 +5,6 @@
 #include "group_nodes.h"
 #include "node_parser.h"
 
-#include "BKE_node.hh"
 #include "BKE_node_runtime.hh"
 
 #ifdef USE_MATERIALX_NODEGRAPH
@@ -88,12 +87,11 @@ NodeItem GroupOutputNodeParser::compute()
 
 NodeItem GroupOutputNodeParser::compute_full()
 {
-  CLOG_INFO(LOG_MATERIALX_SHADER,
-            1,
-            "%s [%d] => %s",
-            node_->name,
-            node_->typeinfo->type_legacy,
-            NodeItem::type(to_type_).c_str());
+  CLOG_DEBUG(LOG_IO_MATERIALX,
+             "%s [%d] => %s",
+             node_->name,
+             node_->typeinfo->type_legacy,
+             NodeItem::type(to_type_).c_str());
 
 #ifdef USE_MATERIALX_NODEGRAPH
   /* Checking if output was already computed */
@@ -111,7 +109,7 @@ NodeItem GroupOutputNodeParser::compute_full()
 
 std::string GroupOutputNodeParser::out_name(const bNodeSocket *out_socket)
 {
-  return MaterialX::createValidName(std::string("out_") + out_socket->name);
+  return MaterialX::createValidName(std::string("out_") + out_socket->identifier);
 }
 
 NodeItem GroupInputNodeParser::compute()
@@ -136,8 +134,7 @@ NodeItem GroupInputNodeParser::compute()
 
 NodeItem GroupInputNodeParser::compute_full()
 {
-  CLOG_INFO(LOG_MATERIALX_SHADER,
-            1,
+  CLOG_INFO(LOG_IO_MATERIALX,
             "%s [%d] => %s",
             node_->name,
             node_->typeinfo->type_legacy,
@@ -159,7 +156,7 @@ NodeItem GroupInputNodeParser::compute_full()
 
 std::string GroupInputNodeParser::in_name() const
 {
-  return MaterialX::createValidName(std::string("in_") + socket_out_->name);
+  return MaterialX::createValidName(std::string("in_") + socket_out_->identifier);
 }
 
 }  // namespace blender::nodes::materialx

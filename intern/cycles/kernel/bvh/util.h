@@ -5,6 +5,7 @@
 #pragma once
 
 #include "kernel/globals.h"
+#include "kernel/integrator/state.h"
 #include "kernel/types.h"
 
 CCL_NAMESPACE_BEGIN
@@ -107,7 +108,7 @@ ccl_device_inline void sort_intersections_and_normals(ccl_private Intersection *
   bool swapped;
   do {
     swapped = false;
-    for (int j = 0; j < num_hits - 1; ++j) {
+    for (uint j = 0; j < num_hits - 1; ++j) {
       if (hits[j].t > hits[j + 1].t) {
         Intersection tmp_hit = hits[j];
         float3 tmp_Ng = Ng[j];
@@ -260,10 +261,6 @@ ccl_device_inline bool intersection_skip_self_local(const ccl_ray_data RaySelfPr
 ccl_device_inline uint64_t
 ray_get_shadow_set_membership(KernelGlobals kg, const ccl_ray_data RaySelfPrimitives &self)
 {
-  if (self.light != LAMP_NONE) {
-    return kernel_data_fetch(lights, self.light).shadow_set_membership;
-  }
-
   if (self.light_object != OBJECT_NONE) {
     return kernel_data_fetch(objects, self.light_object).shadow_set_membership;
   }
@@ -291,6 +288,25 @@ ccl_device_inline bool intersection_skip_shadow_link(KernelGlobals kg,
 #else
   return false;
 #endif
+}
+
+/* Check whether an intersection denoted by its object and primitive is to be skipped due to it
+ * being already recoded.
+ * The situation when primitive is already recoded happens when BVH spatial splits are used. */
+ccl_device_forceinline bool intersection_skip_shadow_already_recoded(IntegratorShadowState state,
+                                                                     const int object,
+                                                                     const int prim,
+                                                                     const int num_hits)
+{
+  const int num_recorded_hits = min(num_hits, int(INTEGRATOR_SHADOW_ISECT_SIZE));
+  for (int i = 0; i < num_recorded_hits; ++i) {
+    const int isect_object = INTEGRATOR_STATE_ARRAY(state, shadow_isect, i, object);
+    const int isect_prim = INTEGRATOR_STATE_ARRAY(state, shadow_isect, i, prim);
+    if (object == isect_object && prim == isect_prim) {
+      return true;
+    }
+  }
+  return false;
 }
 
 CCL_NAMESPACE_END

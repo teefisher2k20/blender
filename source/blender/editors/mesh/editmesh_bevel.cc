@@ -14,7 +14,7 @@
 
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "BLT_translation.hh"
 
@@ -33,6 +33,7 @@
 #include "WM_types.hh"
 
 #include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "ED_mesh.hh"
@@ -92,6 +93,9 @@ struct BevelData {
   float segments;   /* Segments as float so smooth mouse pan works in small increments */
 
   CurveProfile *custom_profile;
+
+  bool use_automerge;
+  double automerge_threshold;
 };
 
 enum {
@@ -129,12 +133,12 @@ static void edbm_bevel_update_status_text(bContext *C, wmOperator *op)
 
   char offset_str[NUM_STR_REP_LEN];
   if (RNA_enum_get(op->ptr, "offset_type") == BEVEL_AMT_PERCENT) {
-    SNPRINTF(offset_str, "%.1f%%", RNA_float_get(op->ptr, "offset_pct"));
+    SNPRINTF_UTF8(offset_str, "%.1f%%", RNA_float_get(op->ptr, "offset_pct"));
   }
   else {
     double offset_val = double(RNA_float_get(op->ptr, "offset"));
     BKE_unit_value_as_string_scaled(
-        offset_str, NUM_STR_REP_LEN, offset_val, 3, B_UNIT_LENGTH, sce->unit, true);
+        offset_str, NUM_STR_REP_LEN, offset_val, -3, B_UNIT_LENGTH, sce->unit, true);
   }
 
   PropertyRNA *prop;
@@ -207,19 +211,19 @@ static void edbm_bevel_update_status_text(bContext *C, wmOperator *op)
   std::string desc;
 
   desc = fmt::format("{} ({}) ", IFACE_("Affect"), affect_str);
-  status.opmodal(desc.c_str(), op->type, BEV_MODAL_AFFECT_CHANGE);
+  status.opmodal(desc, op->type, BEV_MODAL_AFFECT_CHANGE);
 
   desc = fmt::format("{} ({}) ", IFACE_("Outer"), omiter_str);
-  status.opmodal(desc.c_str(), op->type, BEV_MODAL_OUTER_MITER_CHANGE);
+  status.opmodal(desc, op->type, BEV_MODAL_OUTER_MITER_CHANGE);
 
   desc = fmt::format("{} ({}) ", IFACE_("Inner"), imiter_str);
-  status.opmodal(desc.c_str(), op->type, BEV_MODAL_INNER_MITER_CHANGE);
+  status.opmodal(desc, op->type, BEV_MODAL_INNER_MITER_CHANGE);
 
   desc = fmt::format("{} ({}) ", IFACE_("Profile Type"), profile_type_str);
-  status.opmodal(desc.c_str(), op->type, BEV_MODAL_PROFILE_TYPE_CHANGE);
+  status.opmodal(desc, op->type, BEV_MODAL_PROFILE_TYPE_CHANGE);
 
   desc = fmt::format("{} ({}) ", IFACE_("Intersection"), vmesh_str);
-  status.opmodal(desc.c_str(), op->type, BEV_MODAL_VERTEX_MESH_CHANGE);
+  status.opmodal(desc, op->type, BEV_MODAL_VERTEX_MESH_CHANGE);
 }
 
 static bool edbm_bevel_init(bContext *C, wmOperator *op, const bool is_modal)
@@ -240,6 +244,9 @@ static bool edbm_bevel_init(bContext *C, wmOperator *op, const bool is_modal)
 
   /* Put the Curve Profile from the toolsettings into the opdata struct */
   opdata->custom_profile = ts->custom_bevel_profile_preset;
+
+  opdata->use_automerge = scene->toolsettings->automerge & AUTO_MERGE;
+  opdata->automerge_threshold = scene->toolsettings->doublimit;
 
   {
     const Vector<Object *> objects = BKE_view_layer_array_from_objects_in_edit_mode_unique_data(
@@ -302,7 +309,7 @@ static bool edbm_bevel_calc(wmOperator *op)
 {
   BevelData *opdata = static_cast<BevelData *>(op->customdata);
   BMOperator bmop;
-  bool changed = false;
+  bool changed_multi = false;
 
   const float offset = get_bevel_offset(op);
   const int offset_type = RNA_enum_get(op->ptr, "offset_type");
@@ -369,21 +376,40 @@ static bool edbm_bevel_calc(wmOperator *op)
       EDBM_flag_disable_all(em, BM_ELEM_SELECT);
       BMO_slot_buffer_hflag_enable(
           em->bm, bmop.slots_out, "faces.out", BM_FACE, BM_ELEM_SELECT, true);
+      if (affect == BEVEL_AFFECT_VERTICES) {
+        BMO_slot_buffer_hflag_enable(
+            em->bm, bmop.slots_out, "verts.out", BM_VERT, BM_ELEM_SELECT, true);
+        BMO_slot_buffer_hflag_enable(
+            em->bm, bmop.slots_out, "edges.out", BM_EDGE, BM_ELEM_SELECT, true);
+
+        if ((em->bm->selectmode & SCE_SELECT_VERTEX) == 0) {
+          BM_mesh_select_mode_flush_ex(
+              em->bm, SCE_SELECT_VERTEX, BMSelectFlushFlag::RecalcLenEdge);
+        }
+      }
     }
+
+    bool changed = false;
+
+    if (opdata->use_automerge) {
+      changed |= EDBM_automerge_connected(
+          obedit, false, BM_ELEM_SELECT, opdata->automerge_threshold);
+    }
+
+    changed |= EDBM_op_finish(em, &bmop, op, true);
 
     /* no need to de-select existing geometry */
-    if (!EDBM_op_finish(em, &bmop, op, true)) {
-      continue;
+    if (changed) {
+      EDBMUpdate_Params params{};
+      params.calc_looptris = true;
+      params.calc_normals = true;
+      params.is_destructive = true;
+      EDBM_update(static_cast<Mesh *>(obedit->data), &params);
     }
 
-    EDBMUpdate_Params params{};
-    params.calc_looptris = true;
-    params.calc_normals = true;
-    params.is_destructive = true;
-    EDBM_update(static_cast<Mesh *>(obedit->data), &params);
-    changed = true;
+    changed_multi |= changed;
   }
-  return changed;
+  return changed_multi;
 }
 
 static void edbm_bevel_exit(bContext *C, wmOperator *op)
@@ -401,6 +427,7 @@ static void edbm_bevel_exit(bContext *C, wmOperator *op)
     if ((em->selectmode & SCE_SELECT_FACE) == 0) {
       EDBM_selectmode_flush(em);
     }
+    EDBM_uvselect_clear(em);
   }
 
   if (opdata->is_modal) {
@@ -439,7 +466,7 @@ static void edbm_bevel_cancel(bContext *C, wmOperator *op)
 }
 
 /* bevel! yay!! */
-static int edbm_bevel_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus edbm_bevel_exec(bContext *C, wmOperator *op)
 {
   if (!edbm_bevel_init(C, op, false)) {
     return OPERATOR_CANCELLED;
@@ -479,7 +506,7 @@ static void edbm_bevel_calc_initial_length(wmOperator *op, const wmEvent *event,
   opdata->initial_length[opdata->value_mode] = len;
 }
 
-static int edbm_bevel_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus edbm_bevel_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
   RegionView3D *rv3d = CTX_wm_region_view3d(C);
 
@@ -493,7 +520,9 @@ static int edbm_bevel_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 
   /* initialize mouse values */
   float center_3d[3];
-  if (!calculateTransformCenter(C, V3D_AROUND_CENTER_MEDIAN, center_3d, opdata->mcenter)) {
+  if (!blender::ed::transform::calculateTransformCenter(
+          C, V3D_AROUND_CENTER_MEDIAN, center_3d, opdata->mcenter))
+  {
     /* in this case the tool will likely do nothing,
      * ideally this will never happen and should be checked for above */
     opdata->mcenter[0] = opdata->mcenter[1] = 0;
@@ -650,7 +679,7 @@ wmKeyMap *bevel_modal_keymap(wmKeyConfig *keyconf)
   return keymap;
 }
 
-static int edbm_bevel_modal(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus edbm_bevel_modal(bContext *C, wmOperator *op, const wmEvent *event)
 {
   BevelData *opdata = static_cast<BevelData *>(op->customdata);
   const bool has_numinput = hasNumInput(&opdata->num_input[opdata->value_mode]);
@@ -886,80 +915,78 @@ static int edbm_bevel_modal(bContext *C, wmOperator *op, const wmEvent *event)
 
 static void edbm_bevel_ui(bContext *C, wmOperator *op)
 {
-  uiLayout *layout = op->layout;
-  uiLayout *col, *row;
+  blender::ui::Layout &layout = *op->layout;
 
   int profile_type = RNA_enum_get(op->ptr, "profile_type");
   int offset_type = RNA_enum_get(op->ptr, "offset_type");
   bool affect_type = RNA_enum_get(op->ptr, "affect");
 
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout.use_property_split_set(true);
+  layout.use_property_decorate_set(false);
 
-  row = uiLayoutRow(layout, false);
-  uiItemR(row, op->ptr, "affect", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
+  blender::ui::Layout *row = &layout.row(false);
+  row->prop(op->ptr, "affect", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 
-  uiItemS(layout);
+  layout.separator();
 
-  uiItemR(layout, op->ptr, "offset_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout.prop(op->ptr, "offset_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   if (offset_type == BEVEL_AMT_PERCENT) {
-    uiItemR(layout, op->ptr, "offset_pct", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    layout.prop(op->ptr, "offset_pct", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
   else {
-    uiItemR(layout, op->ptr, "offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    layout.prop(op->ptr, "offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 
-  uiItemR(layout, op->ptr, "segments", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout.prop(op->ptr, "segments", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   if (ELEM(profile_type, BEVEL_PROFILE_SUPERELLIPSE, BEVEL_PROFILE_CUSTOM)) {
-    uiItemR(layout,
-            op->ptr,
-            "profile",
-            UI_ITEM_R_SLIDER,
-            (profile_type == BEVEL_PROFILE_SUPERELLIPSE) ? IFACE_("Profile Shape") :
-                                                           IFACE_("Miter Profile Shape"),
-            ICON_NONE);
+    layout.prop(op->ptr,
+                "profile",
+                UI_ITEM_R_SLIDER,
+                (profile_type == BEVEL_PROFILE_SUPERELLIPSE) ? IFACE_("Profile Shape") :
+                                                               IFACE_("Miter Profile Shape"),
+                ICON_NONE);
   }
-  uiItemR(layout, op->ptr, "material", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout.prop(op->ptr, "material", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  col = uiLayoutColumn(layout, true);
-  uiItemR(col, op->ptr, "harden_normals", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, op->ptr, "clamp_overlap", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, op->ptr, "loop_slide", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  blender::ui::Layout *col = &layout.column(true);
+  col->prop(op->ptr, "harden_normals", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col->prop(op->ptr, "clamp_overlap", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col->prop(op->ptr, "loop_slide", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  col = uiLayoutColumnWithHeading(layout, true, IFACE_("Mark"));
-  uiLayoutSetActive(col, affect_type == BEVEL_AFFECT_EDGES);
-  uiItemR(col, op->ptr, "mark_seam", UI_ITEM_NONE, IFACE_("Seams"), ICON_NONE);
-  uiItemR(col, op->ptr, "mark_sharp", UI_ITEM_NONE, IFACE_("Sharp"), ICON_NONE);
+  col = &layout.column(true, IFACE_("Mark"));
+  col->active_set(affect_type == BEVEL_AFFECT_EDGES);
+  col->prop(op->ptr, "mark_seam", UI_ITEM_NONE, IFACE_("Seams"), ICON_NONE);
+  col->prop(op->ptr, "mark_sharp", UI_ITEM_NONE, IFACE_("Sharp"), ICON_NONE);
 
-  uiItemS(layout);
+  layout.separator();
 
-  col = uiLayoutColumn(layout, false);
-  uiLayoutSetActive(col, affect_type == BEVEL_AFFECT_EDGES);
-  uiItemR(col, op->ptr, "miter_outer", UI_ITEM_NONE, IFACE_("Miter Outer"), ICON_NONE);
-  uiItemR(col, op->ptr, "miter_inner", UI_ITEM_NONE, IFACE_("Inner"), ICON_NONE);
+  col = &layout.column(false);
+  col->active_set(affect_type == BEVEL_AFFECT_EDGES);
+  col->prop(op->ptr, "miter_outer", UI_ITEM_NONE, IFACE_("Miter Outer"), ICON_NONE);
+  col->prop(op->ptr, "miter_inner", UI_ITEM_NONE, IFACE_("Inner"), ICON_NONE);
   if (RNA_enum_get(op->ptr, "miter_inner") == BEVEL_MITER_ARC) {
-    uiItemR(col, op->ptr, "spread", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col->prop(op->ptr, "spread", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 
-  uiItemS(layout);
+  layout.separator();
 
-  col = uiLayoutColumn(layout, false);
-  uiLayoutSetActive(col, affect_type == BEVEL_AFFECT_EDGES);
-  uiItemR(col, op->ptr, "vmesh_method", UI_ITEM_NONE, IFACE_("Intersection Type"), ICON_NONE);
+  col = &layout.column(false);
+  col->active_set(affect_type == BEVEL_AFFECT_EDGES);
+  col->prop(op->ptr, "vmesh_method", UI_ITEM_NONE, IFACE_("Intersection Type"), ICON_NONE);
 
-  uiItemR(layout, op->ptr, "face_strength_mode", UI_ITEM_NONE, IFACE_("Face Strength"), ICON_NONE);
+  layout.prop(op->ptr, "face_strength_mode", UI_ITEM_NONE, IFACE_("Face Strength"), ICON_NONE);
 
-  uiItemS(layout);
+  layout.separator();
 
-  row = uiLayoutRow(layout, false);
-  uiItemR(row, op->ptr, "profile_type", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
+  row = &layout.row(false);
+  row->prop(op->ptr, "profile_type", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
   if (profile_type == BEVEL_PROFILE_CUSTOM) {
     /* Get an RNA pointer to ToolSettings to give to the curve profile template code. */
     Scene *scene = CTX_data_scene(C);
     PointerRNA toolsettings_ptr = RNA_pointer_create_discrete(
         &scene->id, &RNA_ToolSettings, scene->toolsettings);
-    uiTemplateCurveProfile(layout, &toolsettings_ptr, "custom_bevel_profile_preset");
+    uiTemplateCurveProfile(&layout, &toolsettings_ptr, "custom_bevel_profile_preset");
   }
 }
 
@@ -1023,7 +1050,7 @@ void MESH_OT_bevel(wmOperatorType *ot)
       {0, nullptr, 0, nullptr, nullptr},
   };
 
-  static EnumPropertyItem vmesh_method_items[] = {
+  static const EnumPropertyItem vmesh_method_items[] = {
       {BEVEL_VMESH_ADJ, "ADJ", 0, "Grid Fill", "Default patterned fill"},
       {BEVEL_VMESH_CUTOFF,
        "CUTOFF",
@@ -1044,7 +1071,7 @@ void MESH_OT_bevel(wmOperatorType *ot)
   ot->description = "Cut into selected items at an angle to create bevel or chamfer";
   ot->idname = "MESH_OT_bevel";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = edbm_bevel_exec;
   ot->invoke = edbm_bevel_invoke;
   ot->modal = edbm_bevel_modal;
@@ -1114,9 +1141,10 @@ void MESH_OT_bevel(wmOperatorType *ot)
   RNA_def_boolean(
       ot->srna, "loop_slide", true, "Loop Slide", "Prefer sliding along edges to even widths");
 
-  RNA_def_boolean(ot->srna, "mark_seam", false, "Mark Seams", "Mark Seams along beveled edges");
-
-  RNA_def_boolean(ot->srna, "mark_sharp", false, "Mark Sharp", "Mark beveled edges as sharp");
+  RNA_def_boolean(
+      ot->srna, "mark_seam", false, "Mark Seams", "Preserve seams along beveled edges");
+  RNA_def_boolean(
+      ot->srna, "mark_sharp", false, "Mark Sharp", "Preserve sharp edges along beveled edges");
 
   RNA_def_int(ot->srna,
               "material",

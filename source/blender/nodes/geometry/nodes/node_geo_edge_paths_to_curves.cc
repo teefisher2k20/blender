@@ -6,6 +6,7 @@
 
 #include "DNA_mesh_types.h"
 
+#include "GEO_foreach_geometry.hh"
 #include "GEO_mesh_to_curve.hh"
 
 #include "node_geometry_util.hh"
@@ -14,7 +15,9 @@ namespace blender::nodes::node_geo_edge_paths_to_curves_cc {
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Geometry>("Mesh").supported_type(GeometryComponent::Type::Mesh);
+  b.add_input<decl::Geometry>("Mesh")
+      .supported_type(GeometryComponent::Type::Mesh)
+      .description("Edges to convert to curves");
   b.add_input<decl::Bool>("Start Vertices").default_value(true).hide_value().field_on_all();
   b.add_input<decl::Int>("Next Vertex Index").default_value(-1).hide_value().field_on_all();
   b.add_output<decl::Geometry>("Curves").propagate_all();
@@ -70,10 +73,10 @@ static void node_geo_exec(GeoNodeExecParams params)
 {
   GeometrySet geometry_set = params.extract_input<GeometrySet>("Mesh");
 
-  geometry_set.modify_geometry_sets([&](GeometrySet &geometry_set) {
+  geometry::foreach_real_geometry(geometry_set, [&](GeometrySet &geometry_set) {
     const Mesh *mesh = geometry_set.get_mesh();
     if (mesh == nullptr) {
-      geometry_set.keep_only({GeometryComponent::Type::Instance});
+      geometry_set.keep_only({GeometryComponent::Type::Edit});
       return;
     }
 
@@ -86,13 +89,13 @@ static void node_geo_exec(GeoNodeExecParams params)
     IndexMask start_verts = evaluator.get_evaluated_as_mask(1);
 
     if (start_verts.is_empty()) {
-      geometry_set.keep_only({GeometryComponent::Type::Instance});
+      geometry_set.keep_only({GeometryComponent::Type::Edit});
       return;
     }
 
     geometry_set.replace_curves(edge_paths_to_curves_convert(
         *mesh, start_verts, next_vert, params.get_attribute_filter("Curves")));
-    geometry_set.keep_only({GeometryComponent::Type::Curve, GeometryComponent::Type::Instance});
+    geometry_set.keep_only({GeometryComponent::Type::Curve, GeometryComponent::Type::Edit});
   });
 
   params.set_output("Curves", std::move(geometry_set));
@@ -109,7 +112,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

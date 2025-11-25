@@ -8,28 +8,37 @@
 
 #pragma once
 
+#include "DNA_windowmanager_enums.h" /* Own enums. */
+
 #include "DNA_listBase.h"
 #include "DNA_screen_types.h" /* for #ScrAreaMap */
 #include "DNA_xr_types.h"     /* for #XrSessionSettings */
 
 #include "DNA_ID.h"
 
-#ifdef __cplusplus
-#  include <mutex>
-using std_mutex_type = std::mutex;
-#else
-#  define std_mutex_type void
-#endif
-
 /** Workaround to forward-declare C++ type in C header. */
 #ifdef __cplusplus
 namespace blender::bke {
-class WindowManagerRuntime;
-}
+struct WindowManagerRuntime;
+struct WindowRuntime;
+}  // namespace blender::bke
 using WindowManagerRuntimeHandle = blender::bke::WindowManagerRuntime;
+using WindowRuntimeHandle = blender::bke::WindowRuntime;
+
+namespace blender::ui {
+struct Layout;
+}  // namespace blender::ui
+using uiLayoutHandle = blender::ui::Layout;
+
 #else   // __cplusplus
 typedef struct WindowManagerRuntimeHandle WindowManagerRuntimeHandle;
+typedef struct WindowRuntimeHandle WindowRuntimeHandle;
+typedef struct uiLayoutHandle uiLayoutHandle;
 #endif  // __cplusplus
+
+#ifdef hyper /* MSVC defines. */
+#  undef hyper
+#endif
 
 /* Defined here: */
 
@@ -53,73 +62,10 @@ struct ReportList;
 struct Stereo3dFormat;
 struct bContext;
 struct bScreen;
-struct uiLayout;
 struct wmTimer;
 
 #define OP_MAX_TYPENAME 64
 #define KMAP_MAX_NAME 64
-
-/** Keep in sync with 'rna_enum_wm_report_items' in `wm_rna.c`. */
-typedef enum eReportType {
-  RPT_DEBUG = (1 << 0),
-  RPT_INFO = (1 << 1),
-  RPT_OPERATOR = (1 << 2),
-  RPT_PROPERTY = (1 << 3),
-  RPT_WARNING = (1 << 4),
-  RPT_ERROR = (1 << 5),
-  RPT_ERROR_INVALID_INPUT = (1 << 6),
-  RPT_ERROR_INVALID_CONTEXT = (1 << 7),
-  RPT_ERROR_OUT_OF_MEMORY = (1 << 8),
-} eReportType;
-ENUM_OPERATORS(eReportType, RPT_ERROR_OUT_OF_MEMORY)
-
-#define RPT_DEBUG_ALL (RPT_DEBUG)
-#define RPT_INFO_ALL (RPT_INFO)
-#define RPT_OPERATOR_ALL (RPT_OPERATOR)
-#define RPT_PROPERTY_ALL (RPT_PROPERTY)
-#define RPT_WARNING_ALL (RPT_WARNING)
-#define RPT_ERROR_ALL \
-  (RPT_ERROR | RPT_ERROR_INVALID_INPUT | RPT_ERROR_INVALID_CONTEXT | RPT_ERROR_OUT_OF_MEMORY)
-
-enum ReportListFlags {
-  RPT_PRINT = (1 << 0),
-  RPT_STORE = (1 << 1),
-  RPT_FREE = (1 << 2),
-  RPT_OP_HOLD = (1 << 3), /* don't move them into the operator global list (caller will use) */
-  /** Don't print (the owner of the #ReportList will handle printing to the `stdout`). */
-  RPT_PRINT_HANDLED_BY_OWNER = (1 << 4),
-};
-
-/* These two lines with # tell `makesdna` this struct can be excluded. */
-#
-#
-typedef struct Report {
-  struct Report *next, *prev;
-  /** eReportType. */
-  short type;
-  short flag;
-  /** `strlen(message)`, saves some time calculating the word wrap. */
-  int len;
-  const char *typestr;
-  const char *message;
-} Report;
-
-/**
- * \note Saved in the #wmWindowManager, don't remove.
- */
-typedef struct ReportList {
-  ListBase list;
-  /** #eReportType. */
-  int printlevel;
-  /** #eReportType. */
-  int storelevel;
-  int flag;
-  char _pad[4];
-  struct wmTimer *reporttimer;
-
-  /** Mutex for thread-safety, runtime only. */
-  std_mutex_type *lock;
-} ReportList;
 
 /* Timer custom-data to control reports display. */
 /* These two lines with # tell `makesdna` this struct can be excluded. */
@@ -144,17 +90,13 @@ typedef struct wmXrData {
 
 /** Window-manager is saved, tag WMAN. */
 typedef struct wmWindowManager {
+#ifdef __cplusplus
+  /** See #ID_Type comment for why this is here. */
+  static constexpr ID_Type id_type = ID_WM;
+#endif
+
   ID id;
 
-  /** Separate active from drawable. */
-  struct wmWindow *windrawable;
-  /**
-   * \note `CTX_wm_window(C)` is usually preferred.
-   * Avoid relying on this where possible as this may become NULL during when handling
-   * events that close or replace windows (opening a file for e.g.).
-   * While this happens rarely in practice, it can cause difficult to reproduce bugs.
-   */
-  struct wmWindow *winactive;
   ListBase windows;
 
   /** Set on file read. */
@@ -168,64 +110,16 @@ typedef struct wmWindowManager {
   /** Set after selection to notify outliner to sync. Stores type of selection */
   short outliner_sync_select_dirty;
 
-  /** Operator registry. */
-  ListBase operators;
-
-  /**
-   * Refresh/redraw #wmNotifier structs.
-   * \note Once in the queue, notifiers should be considered read-only.
-   * With the exception of clearing notifiers for data which has been removed,
-   * see: #NOTE_CATEGORY_TAG_CLEARED.
-   */
-  ListBase notifier_queue;
-  /**
-   * For duplicate detection.
-   * \note keep in sync with `notifier_queue` adding/removing elements must also update this set.
-   */
-  struct GSet *notifier_queue_set;
-
-  /** The current notifier in the `notifier_queue` being handled (clear instead of freeing). */
-  const struct wmNotifier *notifier_current;
-
   /** Available/pending extensions updates. */
   int extensions_updates;
   /** Number of blocked & installed extensions. */
   int extensions_blocked;
 
-  /** Threaded jobs manager. */
-  ListBase jobs;
-
-  /** Extra overlay cursors to draw, like circles. */
-  ListBase paintcursors;
-
-  /** Active dragged items. */
-  ListBase drags;
-
-  /**
-   * Known key configurations.
-   * This includes all the #wmKeyConfig members (`defaultconf`, `addonconf`, etc).
-   */
-  ListBase keyconfigs;
-
-  /** Default configuration. */
-  struct wmKeyConfig *defaultconf;
-  /** Addon configuration. */
-  struct wmKeyConfig *addonconf;
-  /** User configuration. */
-  struct wmKeyConfig *userconf;
-
-  /** Active timers. */
-  ListBase timers;
   /** Timer for auto save. */
   struct wmTimer *autosavetimer;
   /** Auto-save timer was up, but it wasn't possible to auto-save in the current mode. */
   char autosave_scheduled;
   char _pad2[7];
-
-  /** All undo history (runtime only). */
-  struct UndoStack *undo_stack;
-
-  struct wmMsgBus *message_bus;
 
   // #ifdef WITH_XR_OPENXR
   wmXrData xr;
@@ -234,7 +128,8 @@ typedef struct wmWindowManager {
   WindowManagerRuntimeHandle *runtime;
 } wmWindowManager;
 
-#define WM_KEYCONFIG_ARRAY_P(wm) &(wm)->defaultconf, &(wm)->addonconf, &(wm)->userconf
+#define WM_KEYCONFIG_ARRAY_P(wm) \
+  &(wm)->runtime->defaultconf, &(wm)->runtime->addonconf, &(wm)->runtime->userconf
 
 /** #wmWindowManager.extensions_updates */
 enum {
@@ -288,7 +183,7 @@ typedef struct wmWindow {
   /** Temporary when switching. */
   struct Scene *new_scene;
   /** Active view layer displayed in this window. */
-  char view_layer_name[64];
+  char view_layer_name[/*MAX_NAME*/ 64];
   /** The workspace may temporarily override the window's scene with scene pinning. This is the
    * "overridden" or "default" scene to restore when entering a workspace with no scene pinned. */
   struct Scene *unpinned_scene;
@@ -314,6 +209,10 @@ typedef struct wmWindow {
    * it causes the window size to be initialized to `wm_init_state.size`.
    * These default to the main screen size but can be overridden by the `--window-geometry`
    * command line argument.
+   *
+   * \warning Using these values directly can result in errors on macOS due to HiDPI displays
+   * influencing the window native pixel size. See #WM_window_native_pixel_size for a general use
+   * alternative.
    */
   short sizex, sizey;
   /** Normal, maximized, full-screen, #GHOST_TWindowState. */
@@ -328,8 +227,6 @@ typedef struct wmWindow {
   short modalcursor;
   /** Cursor grab mode #GHOST_TGrabCursorMode (run-time only) */
   short grabcursor;
-  /** Internal: tag this for extra mouse-move event,
-   * makes cursors/buttons active on UI switching. */
 
   /** Internal, lock pie creation from this event until released. */
   short pie_event_type_lock;
@@ -339,7 +236,6 @@ typedef struct wmWindow {
    */
   short pie_event_type_last;
 
-  char addmousemove;
   char tag_cursor_refresh;
 
   /* Track the state of the event queue,
@@ -355,8 +251,11 @@ typedef struct wmWindow {
    */
   char event_queue_check_drag_handled;
 
-  /** The last event type (that passed #WM_event_consecutive_gesture_test check). */
-  char event_queue_consecutive_gesture_type;
+  /**
+   * The last event type (that passed #WM_event_consecutive_gesture_test check).
+   * A #wmEventType is assigned to this value.
+   */
+  short event_queue_consecutive_gesture_type;
   /** The cursor location when `event_queue_consecutive_gesture_type` was set. */
   int event_queue_consecutive_gesture_xy[2];
   /** See #WM_event_consecutive_data_get and related API. Freed when consecutive events end. */
@@ -388,15 +287,12 @@ typedef struct wmWindow {
   struct wmEvent *event_last_handled;
 
   /**
-   * Input Method Editor data - complex character input (especially for Asian character input)
-   * Currently WIN32 and APPLE, runtime-only data.
+   * Internal: tag this for extra mouse-move event,
+   * makes cursors/buttons active on UI switching.
    */
-  const struct wmIMEData *ime_data;
-  char ime_data_is_composing;
+  char addmousemove;
   char _pad1[7];
 
-  /** All events #wmEvent (ghost level events were handled). */
-  ListBase event_queue;
   /** Window+screen handlers, handled last. */
   ListBase handlers;
   /** Priority handlers, handled first. */
@@ -418,8 +314,11 @@ typedef struct wmWindow {
    * The time when the key is pressed in milliseconds (see #GHOST_GetEventTime).
    * Used to detect double-click events.
    */
+  void *_pad2;
   uint64_t eventstate_prev_press_time_ms;
 
+  WindowRuntimeHandle *runtime;
+  void *_pad3;
 } wmWindow;
 
 #ifdef ime_data
@@ -435,7 +334,7 @@ typedef struct wmOperatorTypeMacro {
   struct wmOperatorTypeMacro *next, *prev;
 
   /* operator id */
-  char idname[64]; /* OP_MAX_TYPENAME */
+  char idname[/*OP_MAX_TYPENAME*/ 64];
   /* rna pointer to access properties, like keymap */
   /** Operator properties, assigned to ptr->data and can be written to a file. */
   struct IDProperty *properties;
@@ -463,27 +362,42 @@ typedef struct wmKeyMapItem {
   /* event */
   /** Event code itself (#EVT_LEFTCTRLKEY, #LEFTMOUSE etc). */
   short type;
-  /** Button state (#KM_ANY, #KM_PRESS, #KM_DBL_CLICK, #KM_CLICK_DRAG, #KM_NOTHING etc). */
+  /** Button state (#KM_ANY, #KM_PRESS, #KM_DBL_CLICK, #KM_PRESS_DRAG, #KM_NOTHING etc). */
   int8_t val;
   /**
-   * The 2D direction of the event to use when `val == KM_CLICK_DRAG`.
+   * The 2D direction of the event to use when `val == KM_PRESS_DRAG`.
    * Set to #KM_DIRECTION_N, #KM_DIRECTION_S & related values, #KM_NOTHING for any direction.
    */
   int8_t direction;
-  /** `oskey` also known as apple, windows-key or super. */
-  short shift, ctrl, alt, oskey;
+
+  /* Modifier keys:
+   * Valid values:
+   * - #KM_ANY
+   * - #KM_NOTHING
+   * - #KM_MOD_HELD (not #KM_PRESS even though the values match).
+   */
+
+  int8_t shift;
+  int8_t ctrl;
+  int8_t alt;
+  /** Also known as "Apple", "Windows-Key" or "Super. */
+  int8_t oskey;
+  /** See #KM_HYPER for details. */
+  int8_t hyper;
+
+  char _pad0[7];
+
   /** Raw-key modifier. */
   short keymodifier;
 
   /* flag: inactive, expanded */
-  short flag;
+  uint8_t flag;
 
   /* runtime */
   /** Keymap editor. */
-  short maptype;
+  uint8_t maptype;
   /** Unique identifier. Positive for kmi that override builtins, negative otherwise. */
   short id;
-  char _pad[2];
   /**
    * RNA pointer to access properties.
    *
@@ -625,7 +539,7 @@ typedef struct wmOperator {
 
   /* saved */
   /** Used to retrieve type pointer. */
-  char idname[64]; /* OP_MAX_TYPENAME */
+  char idname[/*OP_MAX_TYPENAME*/ 64];
   /** Saved, user-settable properties. */
   IDProperty *properties;
 
@@ -647,61 +561,7 @@ typedef struct wmOperator {
   /** Current running macro, not saved. */
   struct wmOperator *opm;
   /** Runtime for drawing. */
-  struct uiLayout *layout;
+  uiLayoutHandle *layout;
   short flag;
   char _pad[6];
 } wmOperator;
-
-/**
- * Operator type return flags: exec(), invoke() modal(), return values.
- */
-enum {
-  OPERATOR_RUNNING_MODAL = (1 << 0),
-  OPERATOR_CANCELLED = (1 << 1),
-  OPERATOR_FINISHED = (1 << 2),
-  /** Add this flag if the event should pass through. */
-  OPERATOR_PASS_THROUGH = (1 << 3),
-  /** In case operator got executed outside WM code (like via file-select). */
-  OPERATOR_HANDLED = (1 << 4),
-  /**
-   * Used for operators that act indirectly (eg. popup menu).
-   * \note this isn't great design (using operators to trigger UI) avoid where possible.
-   */
-  OPERATOR_INTERFACE = (1 << 5),
-};
-#define OPERATOR_FLAGS_ALL \
-  (OPERATOR_RUNNING_MODAL | OPERATOR_CANCELLED | OPERATOR_FINISHED | OPERATOR_PASS_THROUGH | \
-   OPERATOR_HANDLED | OPERATOR_INTERFACE | 0)
-
-/* sanity checks for debug mode only */
-#define OPERATOR_RETVAL_CHECK(ret) \
-  (void)ret, BLI_assert(ret != 0 && (ret & OPERATOR_FLAGS_ALL) == ret)
-
-/** #wmOperator.flag */
-enum {
-  /**
-   * Low level flag so exec() operators can tell if they were invoked, use with care.
-   * Typically this shouldn't make any difference, but it rare cases its needed (see smooth-view).
-   */
-  OP_IS_INVOKE = (1 << 0),
-  /** So we can detect if an operators exec() call is activated by adjusting the last action. */
-  OP_IS_REPEAT = (1 << 1),
-  /**
-   * So we can detect if an operators exec() call is activated from #SCREEN_OT_repeat_last.
-   *
-   * This difference can be important because previous settings may be used,
-   * even with #PROP_SKIP_SAVE the repeat last operator will use the previous settings.
-   * Unlike #OP_IS_REPEAT the selection (and context generally) may be different each time.
-   * See #60777 for an example of when this is needed.
-   */
-  OP_IS_REPEAT_LAST = (1 << 2),
-
-  /** When the cursor is grabbed */
-  OP_IS_MODAL_GRAB_CURSOR = (1 << 3),
-
-  /**
-   * Allow modal operators to have the region under the cursor for their context
-   * (the region-type is maintained to prevent errors).
-   */
-  OP_IS_MODAL_CURSOR_REGION = (1 << 4),
-};

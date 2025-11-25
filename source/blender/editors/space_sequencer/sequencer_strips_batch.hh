@@ -12,15 +12,17 @@
 #include "BLI_math_vector_types.hh"
 #include "GPU_shader_shared.hh"
 
-struct GPUShader;
-struct GPUUniformBuf;
+namespace blender::gpu {
+class Shader;
+class UniformBuf;
+}  // namespace blender::gpu
 struct View2D;
 
 namespace blender::gpu {
 class Batch;
 }
 
-namespace blender::ed::seq {
+namespace blender::ed::vse {
 
 /* Utility to draw VSE timeline strip widgets in batches, with a dedicated
  * shader. Internally, strip data for drawing is encoded into a uniform
@@ -30,9 +32,9 @@ namespace blender::ed::seq {
 class StripsDrawBatch {
   SeqContextDrawData context_;
   Array<SeqStripDrawData> strips_;
-  GPUUniformBuf *ubo_context_ = nullptr;
-  GPUUniformBuf *ubo_strips_ = nullptr;
-  GPUShader *shader_ = nullptr;
+  gpu::UniformBuf *ubo_context_ = nullptr;
+  gpu::UniformBuf *ubo_strips_ = nullptr;
+  gpu::Shader *shader_ = nullptr;
   gpu::Batch *batch_ = nullptr;
   int binding_context_ = 0;
   int binding_strips_ = 0;
@@ -61,20 +63,20 @@ class StripsDrawBatch {
 
   /* Same math as `UI_view2d_view_to_region_*` but avoiding divisions,
    * and without relying on View2D data type. */
-  inline float pos_to_pixel_space_x(float x) const
+  float pos_to_pixel_space_x(float x) const
   {
     return (view_mask_min_.x + (x - view_cur_min_.x) * view_cur_inv_size_.x) * view_mask_size_.x;
   }
-  inline float pos_to_pixel_space_y(float y) const
+  float pos_to_pixel_space_y(float y) const
   {
     return (view_mask_min_.y + (y - view_cur_min_.y) * view_cur_inv_size_.y) * view_mask_size_.y;
   }
-  inline float size_to_pixel_space_x(float x) const
+  float size_to_pixel_space_x(float x) const
   {
     return x * view_cur_inv_size_.x * view_mask_size_.x;
   }
 
-  GPUUniformBuf *get_ubo_context() const
+  gpu::UniformBuf *get_ubo_context() const
   {
     return ubo_context_;
   }
@@ -83,4 +85,4 @@ class StripsDrawBatch {
 uint color_pack(const uchar rgba[4]);
 float calc_strip_round_radius(float pixely);
 
-}  // namespace blender::ed::seq
+}  // namespace blender::ed::vse

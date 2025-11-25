@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "BLI_array.hh"
-#include "BLI_kdtree.h"
+#include "BLI_kdtree.hh"
 #include "BLI_map.hh"
 #include "BLI_task.hh"
 
@@ -13,7 +13,9 @@ namespace blender::nodes::node_geo_index_of_nearest_cc {
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Vector>("Position").implicit_field(implicit_field_inputs::position);
+  b.add_input<decl::Vector>("Position")
+      .implicit_field(NODE_DEFAULT_INPUT_POSITION_FIELD)
+      .structure_type(StructureType::Field);
   b.add_input<decl::Int>("Group ID").supports_field().hide_value();
 
   b.add_output<decl::Int>("Index").field_source_reference_all().description(
@@ -85,7 +87,7 @@ class IndexOfNearestFieldInput final : public bke::GeometryFieldInput {
       KDTree_3d *tree = build_kdtree(positions, IndexRange(domain_size));
       find_neighbors(*tree, positions, mask, result);
       BLI_kdtree_3d_free(tree);
-      return VArray<int>::ForContainer(std::move(result));
+      return VArray<int>::from_container(std::move(result));
     }
     const VArraySpan<int> group_ids_span(group_ids);
 
@@ -126,11 +128,10 @@ class IndexOfNearestFieldInput final : public bke::GeometryFieldInput {
       }
     });
 
-    return VArray<int>::ForContainer(std::move(result));
+    return VArray<int>::from_container(std::move(result));
   }
 
- public:
-  void for_each_field_input_recursive(FunctionRef<void(const FieldInput &)> fn) const
+  void for_each_field_input_recursive(FunctionRef<void(const FieldInput &)> fn) const override
   {
     positions_field_.node().for_each_field_input_recursive(fn);
     group_field_.node().for_each_field_input_recursive(fn);
@@ -175,7 +176,7 @@ class HasNeighborFieldInput final : public bke::GeometryFieldInput {
     }
     const int domain_size = context.attributes()->domain_size(context.domain());
     if (domain_size == 1) {
-      return VArray<bool>::ForSingle(false, mask.min_array_size());
+      return VArray<bool>::from_single(false, mask.min_array_size());
     }
 
     fn::FieldEvaluator evaluator{context, domain_size};
@@ -184,7 +185,7 @@ class HasNeighborFieldInput final : public bke::GeometryFieldInput {
     const VArray<int> group = evaluator.get_evaluated<int>(0);
 
     if (group.is_single()) {
-      return VArray<bool>::ForSingle(true, mask.min_array_size());
+      return VArray<bool>::from_single(true, mask.min_array_size());
     }
 
     Map<int, int> counts;
@@ -195,11 +196,10 @@ class HasNeighborFieldInput final : public bke::GeometryFieldInput {
     });
     Array<bool> result(mask.min_array_size());
     mask.foreach_index([&](const int i) { result[i] = counts.lookup(group_span[i]) > 1; });
-    return VArray<bool>::ForContainer(std::move(result));
+    return VArray<bool>::from_container(std::move(result));
   }
 
- public:
-  void for_each_field_input_recursive(FunctionRef<void(const FieldInput &)> fn) const
+  void for_each_field_input_recursive(FunctionRef<void(const FieldInput &)> fn) const override
   {
     group_field_.node().for_each_field_input_recursive(fn);
   }
@@ -253,7 +253,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

@@ -7,10 +7,12 @@
  * \ingroup bke
  */
 
+#include "BLI_enum_flags.hh"
 #include "BLI_path_utils.hh"
-#include "BLI_utildefines.h"
+
 #include "DNA_ID.h"
 #include "DNA_listBase.h"
+#include "DNA_userdef_types.h"
 
 struct Main;
 struct UndoStep;
@@ -79,8 +81,10 @@ struct UndoStep {
   bool skip;
   /** Some situations require the global state to be stored, edge cases when exiting modes. */
   bool use_memfile_step;
-  /** When this is true, undo/memfile read code is allowed to re-use old data-blocks for unchanged
-   * IDs, and existing depsgraphs. This has to be forbidden in some cases (like renamed IDs). */
+  /**
+   * When this is true, undo/memfile read code is allowed to re-use old data-blocks for unchanged
+   * IDs, and existing depsgraphs. This has to be forbidden in some cases (like renamed IDs).
+   */
   bool use_old_bmain_data;
   /** For use by undo systems that accumulate changes (mesh-sculpt & image-painting). */
   bool is_applied;
@@ -98,7 +102,7 @@ enum eUndoPushReturn {
   UNDO_PUSH_RET_SUCCESS = (1 << 0),
   UNDO_PUSH_RET_OVERRIDE_CHANGED = (1 << 1),
 };
-ENUM_OPERATORS(eUndoPushReturn, UNDO_PUSH_RET_OVERRIDE_CHANGED)
+ENUM_OPERATORS(eUndoPushReturn)
 
 using UndoTypeForEachIDRefFn = void (*)(void *user_data, UndoRefID *id_ref);
 
@@ -186,7 +190,7 @@ void BKE_undosys_stack_clear_active(UndoStack *ustack);
 /* name optional */
 bool BKE_undosys_stack_has_undo(const UndoStack *ustack, const char *name);
 void BKE_undosys_stack_init_from_main(UndoStack *ustack, Main *bmain);
-/* called after 'BKE_undosys_stack_init_from_main' */
+/* Called after #BKE_undosys_stack_init_from_main. */
 void BKE_undosys_stack_init_from_context(UndoStack *ustack, bContext *C);
 UndoStep *BKE_undosys_stack_active_with_type(UndoStack *ustack, const UndoType *ut);
 UndoStep *BKE_undosys_stack_init_or_active_with_type(UndoStack *ustack, const UndoType *ut);

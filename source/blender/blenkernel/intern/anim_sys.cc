@@ -20,6 +20,7 @@
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
 #include "BLI_math_vector_types.hh"
+#include "BLI_set.hh"
 #include "BLI_string.h"
 #include "BLI_string_utf8.h"
 #include "BLI_string_utils.hh"
@@ -42,6 +43,7 @@
 #include "BKE_context.hh"
 #include "BKE_fcurve.hh"
 #include "BKE_global.hh"
+#include "BKE_idprop.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_lib_query.hh"
 #include "BKE_main.hh"
@@ -67,7 +69,10 @@
 
 #include "CLG_log.h"
 
-static CLG_LogRef LOG = {"bke.anim_sys"};
+static CLG_LogRef LOG_ANIM_DRIVER = {"anim.driver"};
+static CLG_LogRef LOG_ANIM_FCURVE = {"anim.fcurve"};
+static CLG_LogRef LOG_ANIM_KEYINGSET = {"anim.keyingset"};
+static CLG_LogRef LOG_ANIM_NLA = {"anim.nla"};
 
 using namespace blender;
 
@@ -132,7 +137,7 @@ KeyingSet *BKE_keyingset_add(
   KeyingSet *ks;
 
   /* allocate new KeyingSet */
-  ks = static_cast<KeyingSet *>(MEM_callocN(sizeof(KeyingSet), "KeyingSet"));
+  ks = MEM_callocN<KeyingSet>("KeyingSet");
 
   STRNCPY_UTF8(ks->idname, (idname) ? idname : (name) ? name : DATA_("KeyingSet"));
   STRNCPY_UTF8(ks->name, (name) ? name : (idname) ? idname : DATA_("Keying Set"));
@@ -168,26 +173,26 @@ KS_Path *BKE_keyingset_add_path(KeyingSet *ks,
 
   /* sanity checks */
   if (ELEM(nullptr, ks, rna_path)) {
-    CLOG_ERROR(&LOG, "no Keying Set and/or RNA Path to add path with");
+    CLOG_ERROR(&LOG_ANIM_KEYINGSET, "no Keying Set and/or RNA Path to add path with");
     return nullptr;
   }
 
   /* ID is required for all types of KeyingSets */
   if (id == nullptr) {
-    CLOG_ERROR(&LOG, "No ID provided for Keying Set Path");
+    CLOG_ERROR(&LOG_ANIM_KEYINGSET, "No ID provided for Keying Set Path");
     return nullptr;
   }
 
   /* don't add if there is already a matching KS_Path in the KeyingSet */
   if (BKE_keyingset_find_path(ks, id, group_name, rna_path, array_index, groupmode)) {
     if (G.debug & G_DEBUG) {
-      CLOG_ERROR(&LOG, "destination already exists in Keying Set");
+      CLOG_ERROR(&LOG_ANIM_KEYINGSET, "destination already exists in Keying Set");
     }
     return nullptr;
   }
 
   /* allocate a new KeyingSet Path */
-  ksp = static_cast<KS_Path *>(MEM_callocN(sizeof(KS_Path), "KeyingSet Path"));
+  ksp = MEM_callocN<KS_Path>("KeyingSet Path");
 
   /* just store absolute info */
   ksp->id = id;
@@ -358,8 +363,8 @@ bool BKE_animsys_rna_path_resolve(
     /* XXX don't tag as failed yet though, as there are some legit situations (Action Constraint)
      * where some channels will not exist, but shouldn't lock up Action */
     if (G.debug & G_DEBUG) {
-      CLOG_WARN(&LOG,
-                "Animato: Invalid path. ID = '%s',  '%s[%d]'",
+      CLOG_WARN(&LOG_ANIM_FCURVE,
+                "Invalid path. ID = '%s',  '%s[%d]'",
                 (ptr->owner_id) ? (ptr->owner_id->name + 2) : "<No ID>",
                 path,
                 array_index);
@@ -374,8 +379,8 @@ bool BKE_animsys_rna_path_resolve(
   int array_len = RNA_property_array_length(&r_result->ptr, r_result->prop);
   if (array_len && array_index >= array_len) {
     if (G.debug & G_DEBUG) {
-      CLOG_WARN(&LOG,
-                "Animato: Invalid array index. ID = '%s',  '%s[%d]', array length is %d",
+      CLOG_WARN(&LOG_ANIM_FCURVE,
+                "Invalid array index. ID = '%s',  '%s[%d]', array length is %d",
                 (ptr->owner_id) ? (ptr->owner_id->name + 2) : "<No ID>",
                 path,
                 array_index,
@@ -452,7 +457,9 @@ bool BKE_animsys_read_from_rna_path(PathResolvedRNA *anim_rna, float *r_value)
   return true;
 }
 
-bool BKE_animsys_write_to_rna_path(PathResolvedRNA *anim_rna, const float value)
+bool BKE_animsys_write_to_rna_path(PathResolvedRNA *anim_rna,
+                                   const float value,
+                                   const bool force_write)
 {
   PropertyRNA *prop = anim_rna->prop;
   PointerRNA *ptr = &anim_rna->ptr;
@@ -461,13 +468,15 @@ bool BKE_animsys_write_to_rna_path(PathResolvedRNA *anim_rna, const float value)
   /* caller must ensure this is animatable */
   BLI_assert(RNA_property_animateable(ptr, prop) || ptr->owner_id == nullptr);
 
-  /* Check whether value is new. Otherwise we skip all the updates. */
-  float old_value;
-  if (!BKE_animsys_read_from_rna_path(anim_rna, &old_value)) {
-    return false;
-  }
-  if (old_value == value) {
-    return true;
+  if (!force_write) {
+    /* Check whether value is new. Otherwise we skip all the updates. */
+    float old_value;
+    if (!BKE_animsys_read_from_rna_path(anim_rna, &old_value)) {
+      return false;
+    }
+    if (old_value == value) {
+      return true;
+    }
   }
 
   switch (RNA_property_type(prop)) {
@@ -1123,7 +1132,7 @@ NlaEvalStrip *nlastrips_ctime_get_strip(ListBase *list,
   }
 
   /* add to list of strips we need to evaluate */
-  nes = static_cast<NlaEvalStrip *>(MEM_callocN(sizeof(NlaEvalStrip), "NlaEvalStrip"));
+  nes = MEM_callocN<NlaEvalStrip>("NlaEvalStrip");
 
   nes->strip = estrip;
   nes->strip_mode = side;
@@ -1173,24 +1182,6 @@ static void nlavalidmask_free(NlaValidMask *mask)
 
 /* ---------------------- */
 
-/* Hashing functions for NlaEvalChannelKey. */
-static uint nlaevalchan_keyhash(const void *ptr)
-{
-  const NlaEvalChannelKey *key = static_cast<const NlaEvalChannelKey *>(ptr);
-  uint hash = BLI_ghashutil_ptrhash(key->ptr.data);
-  return hash ^ BLI_ghashutil_ptrhash(key->prop);
-}
-
-static bool nlaevalchan_keycmp(const void *a, const void *b)
-{
-  const NlaEvalChannelKey *A = static_cast<const NlaEvalChannelKey *>(a);
-  const NlaEvalChannelKey *B = static_cast<const NlaEvalChannelKey *>(b);
-
-  return ((A->ptr.data != B->ptr.data) || (A->prop != B->prop));
-}
-
-/* ---------------------- */
-
 /* Allocate a new blending value snapshot for the channel. */
 static NlaEvalChannelSnapshot *nlaevalchan_snapshot_new(NlaEvalChannel *nec)
 {
@@ -1236,8 +1227,8 @@ static void nlaeval_snapshot_init(NlaEvalSnapshot *snapshot,
 {
   snapshot->base = base;
   snapshot->size = std::max(16, nlaeval->num_channels);
-  snapshot->channels = static_cast<NlaEvalChannelSnapshot **>(
-      MEM_callocN(sizeof(*snapshot->channels) * snapshot->size, "NlaEvalSnapshot::channels"));
+  snapshot->channels = MEM_calloc_arrayN<NlaEvalChannelSnapshot *>(snapshot->size,
+                                                                   "NlaEvalSnapshot::channels");
 }
 
 /* Retrieve the individual channel snapshot. */
@@ -1338,8 +1329,8 @@ static void nlaeval_init(NlaEvalData *nlaeval)
   memset(nlaeval, 0, sizeof(*nlaeval));
 
   nlaeval->path_hash = BLI_ghash_str_new("NlaEvalData::path_hash");
-  nlaeval->key_hash = BLI_ghash_new(
-      nlaevalchan_keyhash, nlaevalchan_keycmp, "NlaEvalData::key_hash");
+  nlaeval->key_hash = MEM_new<blender::Map<NlaEvalChannelKey, NlaEvalChannel *>>(
+      "NlaEvalData::key_hash");
 }
 
 static void nlaeval_free(NlaEvalData *nlaeval)
@@ -1357,7 +1348,7 @@ static void nlaeval_free(NlaEvalData *nlaeval)
 
   BLI_freelistN(&nlaeval->channels);
   BLI_ghash_free(nlaeval->path_hash, nullptr, nullptr);
-  BLI_ghash_free(nlaeval->key_hash, nullptr, nullptr);
+  MEM_delete(nlaeval->key_hash);
 }
 
 /* ---------------------- */
@@ -1376,14 +1367,14 @@ static int nlaevalchan_validate_index(const NlaEvalChannel *nec, int index)
 
 static bool nlaevalchan_validate_index_ex(const NlaEvalChannel *nec, const int array_index)
 {
-  /** Although array_index comes from fcurve, that doesn't necessarily mean the property has that
+  /* Although array_index comes from fcurve, that doesn't necessarily mean the property has that
    * many elements. */
   const int index = nlaevalchan_validate_index(nec, array_index);
 
   if (index < 0) {
     if (G.debug & G_DEBUG) {
       ID *id = nec->key.ptr.owner_id;
-      CLOG_WARN(&LOG,
+      CLOG_WARN(&LOG_ANIM_NLA,
                 "Animation: Invalid array index. ID = '%s',  '%s[%d]', array length is %d",
                 id ? (id->name + 2) : "<No ID>",
                 nec->rna_path,
@@ -1425,7 +1416,7 @@ static void nlaevalchan_get_default_values(NlaEvalChannel *nec, float *r_values)
 
     switch (RNA_property_type(prop)) {
       case PROP_BOOLEAN:
-        tmp_bool = static_cast<bool *>(MEM_malloc_arrayN(length, sizeof(*tmp_bool), __func__));
+        tmp_bool = MEM_malloc_arrayN<bool>(size_t(length), __func__);
         RNA_property_boolean_get_default_array(ptr, prop, tmp_bool);
         for (int i = 0; i < length; i++) {
           r_values[i] = float(tmp_bool[i]);
@@ -1433,7 +1424,7 @@ static void nlaevalchan_get_default_values(NlaEvalChannel *nec, float *r_values)
         MEM_freeN(tmp_bool);
         break;
       case PROP_INT:
-        tmp_int = static_cast<int *>(MEM_malloc_arrayN(length, sizeof(*tmp_int), __func__));
+        tmp_int = MEM_malloc_arrayN<int>(size_t(length), __func__);
         RNA_property_int_get_default_array(ptr, prop, tmp_int);
         for (int i = 0; i < length; i++) {
           r_values[i] = float(tmp_int[i]);
@@ -1499,50 +1490,39 @@ static NlaEvalChannel *nlaevalchan_verify_key(NlaEvalData *nlaeval,
                                               const char *path,
                                               NlaEvalChannelKey *key)
 {
-  /* Look it up in the key hash. */
-  NlaEvalChannel **p_key_nec;
-  NlaEvalChannelKey **p_key;
-  bool found_key = BLI_ghash_ensure_p_ex(
-      nlaeval->key_hash, key, (void ***)&p_key, (void ***)&p_key_nec);
+  return nlaeval->key_hash->lookup_or_add_cb(*key, [&]() {
+    /* Create the channel. */
+    bool is_array = RNA_property_array_check(key->prop);
+    int length = is_array ? RNA_property_array_length(&key->ptr, key->prop) : 1;
 
-  if (found_key) {
-    return *p_key_nec;
-  }
+    NlaEvalChannel *nec = static_cast<NlaEvalChannel *>(
+        MEM_callocN(sizeof(NlaEvalChannel) + sizeof(float) * length, "NlaEvalChannel"));
 
-  /* Create the channel. */
-  bool is_array = RNA_property_array_check(key->prop);
-  int length = is_array ? RNA_property_array_length(&key->ptr, key->prop) : 1;
+    /* Initialize the channel. */
+    nec->rna_path = path;
+    new (&nec->key) NlaEvalChannelKey(*key);
 
-  NlaEvalChannel *nec = static_cast<NlaEvalChannel *>(
-      MEM_callocN(sizeof(NlaEvalChannel) + sizeof(float) * length, "NlaEvalChannel"));
+    nec->owner = nlaeval;
+    nec->index = nlaeval->num_channels++;
+    nec->is_array = is_array;
 
-  /* Initialize the channel. */
-  nec->rna_path = path;
-  new (&nec->key) NlaEvalChannelKey(*key);
+    nec->mix_mode = nlaevalchan_detect_mix_mode(key, length);
 
-  nec->owner = nlaeval;
-  nec->index = nlaeval->num_channels++;
-  nec->is_array = is_array;
+    nlavalidmask_init(&nec->domain, length);
 
-  nec->mix_mode = nlaevalchan_detect_mix_mode(key, length);
+    nec->base_snapshot.channel = nec;
+    nec->base_snapshot.length = length;
+    nec->base_snapshot.is_base = true;
 
-  nlavalidmask_init(&nec->domain, length);
+    nlaevalchan_get_default_values(nec, nec->base_snapshot.values);
 
-  nec->base_snapshot.channel = nec;
-  nec->base_snapshot.length = length;
-  nec->base_snapshot.is_base = true;
+    /* Store channel in data structures. */
+    BLI_addtail(&nlaeval->channels, nec);
 
-  nlaevalchan_get_default_values(nec, nec->base_snapshot.values);
+    *nlaeval_snapshot_ensure_slot(&nlaeval->base_snapshot, nec) = &nec->base_snapshot;
 
-  /* Store channel in data structures. */
-  BLI_addtail(&nlaeval->channels, nec);
-
-  *nlaeval_snapshot_ensure_slot(&nlaeval->base_snapshot, nec) = &nec->base_snapshot;
-
-  *p_key_nec = nec;
-  *p_key = &nec->key;
-
-  return nec;
+    return nec;
+  });
 }
 
 /* Verify that an appropriate NlaEvalChannel for this path exists. */
@@ -1569,8 +1549,8 @@ static NlaEvalChannel *nlaevalchan_verify(PointerRNA *ptr, NlaEvalData *nlaeval,
   if (!RNA_path_resolve_property(ptr, path, &key.ptr, &key.prop)) {
     /* Report failure to resolve the path. */
     if (G.debug & G_DEBUG) {
-      CLOG_WARN(&LOG,
-                "Animato: Invalid path. ID = '%s',  '%s'",
+      CLOG_WARN(&LOG_ANIM_NLA,
+                "Invalid path. ID = '%s',  '%s'",
                 (ptr->owner_id) ? (ptr->owner_id->name + 2) : "<No ID>",
                 path);
     }
@@ -1877,15 +1857,15 @@ static bool nla_blend_get_inverted_strip_value(const int blendmode,
         return false;
       }
 
-      /** Math:
+      /* Math:
        *
-       *  blended_value = inf * (lower_value * strip_value) + (1 - inf) * lower_value
-       *  blended_value - (1 - inf) * lower_value = inf * (lower_value * strip_value)
-       *  (blended_value - (1 - inf) * lower_value) / (inf * lower_value) =  strip_value
-       *  (blended_value - lower_value + inf * lower_value) / (inf * lower_value) =  strip_value
-       *  ((blended_value - lower_value) / (inf * lower_value)) + 1 =  strip_value
+       * blended_value = inf * (lower_value * strip_value) + (1 - inf) * lower_value
+       * blended_value - (1 - inf) * lower_value = inf * (lower_value * strip_value)
+       * (blended_value - (1 - inf) * lower_value) / (inf * lower_value) =  strip_value
+       * (blended_value - lower_value + inf * lower_value) / (inf * lower_value) =  strip_value
+       * ((blended_value - lower_value) / (inf * lower_value)) + 1 =  strip_value
        *
-       *  strip_value = ((blended_value - lower_value) / (inf * lower_value)) + 1
+       * strip_value = ((blended_value - lower_value) / (inf * lower_value)) + 1
        */
       *r_strip_value = ((blended_value - lower_value) / (influence * lower_value)) + 1.0f;
       return true;
@@ -1896,13 +1876,13 @@ static bool nla_blend_get_inverted_strip_value(const int blendmode,
 
     default:
 
-      /** Math:
+      /* Math:
        *
-       *  blended_value = lower_value * (1.0f - inf) + (strip_value * inf)
-       *  blended_value - lower_value * (1.0f - inf) = (strip_value * inf)
-       *  (blended_value - lower_value * (1.0f - inf)) / inf = strip_value
+       * blended_value = lower_value * (1.0f - inf) + (strip_value * inf)
+       * blended_value - lower_value * (1.0f - inf) = (strip_value * inf)
+       * (blended_value - lower_value * (1.0f - inf)) / inf = strip_value
        *
-       *  strip_value = (blended_value - lower_value * (1.0f - inf)) / inf
+       * strip_value = (blended_value - lower_value * (1.0f - inf)) / inf
        */
       *r_strip_value = (blended_value - lower_value * (1.0f - influence)) / influence;
       return true;
@@ -2699,7 +2679,7 @@ static void nlastrip_evaluate_actionclip(const int evaluation_mode,
   }
 
   if (strip->act == nullptr) {
-    CLOG_ERROR(&LOG, "NLA-Strip Eval Error: Strip '%s' has no Action", strip->name);
+    CLOG_ERROR(&LOG_ANIM_NLA, "NLA-Strip Eval Error: Strip '%s' has no Action", strip->name);
     return;
   }
 
@@ -3129,13 +3109,17 @@ void nladata_flush_channels(PointerRNA *ptr,
 
 /* ---------------------- */
 
+using ActionAndSlot = std::pair<bAction *, animrig::slot_handle_t>;
+using ActionAndSlotSet = Set<ActionAndSlot>;
+
 static void nla_eval_domain_action(PointerRNA *ptr,
                                    NlaEvalData *channels,
                                    bAction *act,
                                    const animrig::slot_handle_t slot_handle,
-                                   GSet *touched_actions)
+                                   ActionAndSlotSet &touched_actions)
 {
-  if (!BLI_gset_add(touched_actions, act)) {
+  const ActionAndSlot action_and_slot(act, slot_handle);
+  if (!touched_actions.add(action_and_slot)) {
     return;
   }
 
@@ -3166,7 +3150,7 @@ static void nla_eval_domain_action(PointerRNA *ptr,
 static void nla_eval_domain_strips(PointerRNA *ptr,
                                    NlaEvalData *channels,
                                    ListBase *strips,
-                                   GSet *touched_actions)
+                                   ActionAndSlotSet &touched_actions)
 {
   LISTBASE_FOREACH (NlaStrip *, strip, strips) {
     /* Check strip's action. */
@@ -3186,7 +3170,7 @@ static void nla_eval_domain_strips(PointerRNA *ptr,
  */
 static void animsys_evaluate_nla_domain(PointerRNA *ptr, NlaEvalData *channels, AnimData *adt)
 {
-  GSet *touched_actions = BLI_gset_ptr_new(__func__);
+  ActionAndSlotSet touched_actions;
 
   /* Include domain of Action Track. */
   if ((adt->flag & ADT_NLA_EDIT_ON) == 0) {
@@ -3200,25 +3184,11 @@ static void animsys_evaluate_nla_domain(PointerRNA *ptr, NlaEvalData *channels, 
 
   /* NLA Data - Animation Data for Strips */
   LISTBASE_FOREACH (NlaTrack *, nlt, &adt->nla_tracks) {
-    /* solo and muting are mutually exclusive... */
-    if (adt->flag & ADT_NLA_SOLO_TRACK) {
-      /* skip if there is a solo track, but this isn't it */
-      if ((nlt->flag & NLATRACK_SOLO) == 0) {
-        continue;
-      }
-      /* else - mute doesn't matter */
+    if (!BKE_nlatrack_is_enabled(*adt, *nlt)) {
+      continue;
     }
-    else {
-      /* no solo tracks - skip track if muted */
-      if (nlt->flag & NLATRACK_MUTED) {
-        continue;
-      }
-    }
-
     nla_eval_domain_strips(ptr, channels, &nlt->strips, touched_actions);
   }
-
-  BLI_gset_free(touched_actions, nullptr);
 }
 
 /* ---------------------- */
@@ -3268,7 +3238,7 @@ static void animsys_create_action_track_strip(const AnimData *adt,
 {
   using namespace blender::animrig;
 
-  memset(r_action_strip, 0, sizeof(NlaStrip));
+  *r_action_strip = NlaStrip{};
 
   /* Set settings of dummy NLA strip from AnimData settings. */
   bAction *action = adt->action;
@@ -3325,21 +3295,7 @@ static bool is_nlatrack_evaluatable(const AnimData *adt, const NlaTrack *nlt)
     return false;
   }
 
-  /* Solo and muting are mutually exclusive. */
-  if (adt->flag & ADT_NLA_SOLO_TRACK) {
-    /* Skip if there is a solo track, but this isn't it. */
-    if ((nlt->flag & NLATRACK_SOLO) == 0) {
-      return false;
-    }
-  }
-  else {
-    /* Skip track if muted. */
-    if (nlt->flag & NLATRACK_MUTED) {
-      return false;
-    }
-  }
-
-  return true;
+  return BKE_nlatrack_is_enabled(*adt, *nlt);
 }
 
 /**
@@ -3689,8 +3645,8 @@ void nlasnapshot_blend_get_inverted_upper_snapshot(NlaEvalData *eval_data,
   LISTBASE_FOREACH (NlaEvalChannel *, nec, &eval_data->channels) {
     NlaEvalChannelSnapshot *blended_necs = nlaeval_snapshot_get(blended_snapshot, nec->index);
     if (blended_necs == nullptr) {
-      /** We assume the caller only wants a subset of channels to be inverted, those that exist
-       * within \a blended_snapshot. */
+      /* We assume the caller only wants a subset of channels to be inverted,
+       * those that exist within `blended_snapshot`. */
       continue;
     }
 
@@ -3762,7 +3718,7 @@ NlaKeyframingContext *BKE_animsys_get_nla_keyframing_context(
 
   if (ctx == nullptr) {
     /* Allocate and evaluate a new context. */
-    ctx = static_cast<NlaKeyframingContext *>(MEM_callocN(sizeof(*ctx), "NlaKeyframingContext"));
+    ctx = MEM_callocN<NlaKeyframingContext>("NlaKeyframingContext");
     ctx->adt = adt;
 
     nlaeval_init(&ctx->lower_eval_data);
@@ -4163,9 +4119,6 @@ void BKE_animsys_evaluate_all_animation(Main *main, Depsgraph *depsgraph, float 
 
   /* worlds */
   EVAL_ANIM_NODETREE_IDS(main->worlds.first, World, ADT_RECALC_ANIM);
-
-  /* scenes */
-  EVAL_ANIM_NODETREE_IDS(main->scenes.first, Scene, ADT_RECALC_ANIM);
 }
 
 /* ***************************************** */
@@ -4198,12 +4151,42 @@ void BKE_animsys_update_driver_array(ID *id)
     BLI_assert(!adt->driver_array);
 
     int num_drivers = BLI_listbase_count(&adt->drivers);
-    adt->driver_array = static_cast<FCurve **>(
-        MEM_mallocN(sizeof(FCurve *) * num_drivers, "adt->driver_array"));
+    adt->driver_array = MEM_malloc_arrayN<FCurve *>(size_t(num_drivers), "adt->driver_array");
 
     int driver_index = 0;
     LISTBASE_FOREACH (FCurve *, fcu, &adt->drivers) {
       adt->driver_array[driver_index++] = fcu;
+    }
+  }
+}
+
+void BKE_animsys_eval_driver_unshare(Depsgraph *depsgraph, ID *id_eval)
+{
+  BLI_assert(DEG_is_evaluated(id_eval));
+
+  AnimData *adt = BKE_animdata_from_id(id_eval);
+  PointerRNA id_ptr = RNA_id_pointer_create(id_eval);
+  const bool is_active_depsgraph = DEG_is_active(depsgraph);
+
+  LISTBASE_FOREACH (FCurve *, fcu, &adt->drivers) {
+    /* Resolve the driver RNA path. */
+    PathResolvedRNA anim_rna;
+    if (!BKE_animsys_rna_path_resolve(&id_ptr, fcu->rna_path, fcu->array_index, &anim_rna)) {
+      continue;
+    }
+
+    /* Write the current value back to RNA. */
+    float curval;
+    if (!BKE_animsys_read_from_rna_path(&anim_rna, &curval)) {
+      continue;
+    }
+    if (!BKE_animsys_write_to_rna_path(&anim_rna, curval, /*force_write=*/true)) {
+      continue;
+    }
+
+    if (is_active_depsgraph) {
+      /* Also un-share the original data, as the driver evaluation will write here too. */
+      animsys_write_orig_anim_rna(&id_ptr, fcu->rna_path, fcu->array_index, curval);
     }
   }
 }
@@ -4224,6 +4207,13 @@ void BKE_animsys_eval_driver(Depsgraph *depsgraph, ID *id, int driver_index, FCu
   }
   else {
     fcu = static_cast<FCurve *>(BLI_findlink(&adt->drivers, driver_index));
+  }
+
+  if (!fcu) {
+    /* Trying to evaluate a driver that does no longer exist. Potentially missing a call to
+     * DEG_relations_tag_update. */
+    BLI_assert_unreachable();
+    return;
   }
 
   DEG_debug_print_eval_subdata_index(
@@ -4277,9 +4267,41 @@ void BKE_animsys_eval_driver(Depsgraph *depsgraph, ID *id, int driver_index, FCu
 
       /* set error-flag if evaluation failed */
       if (ok == 0) {
-        CLOG_WARN(&LOG, "invalid driver - %s[%d]", fcu->rna_path, fcu->array_index);
+        CLOG_WARN(&LOG_ANIM_DRIVER, "Invalid driver - %s[%d]", fcu->rna_path, fcu->array_index);
         driver_orig->flag |= DRIVER_FLAG_INVALID;
       }
+    }
+  }
+}
+
+void BKE_time_markers_blend_write(BlendWriter *writer, ListBase /* TimeMarker */ &markers)
+{
+  LISTBASE_FOREACH (TimeMarker *, marker, &markers) {
+    BLO_write_struct(writer, TimeMarker, marker);
+
+    if (marker->prop != nullptr) {
+      IDP_BlendWrite(writer, marker->prop);
+    }
+  }
+}
+
+void BKE_time_markers_blend_read(BlendDataReader *reader, ListBase /* TimeMarker */ &markers)
+{
+  BLO_read_struct_list(reader, TimeMarker, &markers);
+  LISTBASE_FOREACH (TimeMarker *, marker, &markers) {
+    BLO_read_struct(reader, IDProperty, &marker->prop);
+    IDP_BlendDataRead(reader, &marker->prop);
+  }
+}
+
+void BKE_copy_time_markers(ListBase /* TimeMarker */ &markers_dst,
+                           const ListBase /* TimeMarker */ &markers_src,
+                           const int flag)
+{
+  BLI_duplicatelist(&markers_dst, &markers_src);
+  LISTBASE_FOREACH (TimeMarker *, marker, &markers_dst) {
+    if (marker->prop != nullptr) {
+      marker->prop = IDP_CopyProperty_ex(marker->prop, flag);
     }
   }
 }

@@ -149,7 +149,6 @@ OPERATOR_IGNORE = (
     "text.selection_set",
     "ui.*",
     "uv.rip",
-    "uv.rip_move",
     "uv.select",
     "uv.select_edge_ring",
     "uv.select_lasso",
@@ -423,8 +422,9 @@ def ctx_editmode_mesh():
 
 def ctx_editmode_mesh_extra():
     bpy.ops.object.vertex_group_add()
-    bpy.ops.object.shape_key_add(from_mix=False)
-    bpy.ops.object.shape_key_add(from_mix=True)
+    bpy.ops.object.shape_key_add(from_mix=False)  # Basis Key
+    shape_key = bpy.ops.object.shape_key_add(from_mix=True)
+    shape_key.value = 0.0
     bpy.ops.mesh.uv_texture_add()
     bpy.ops.mesh.vertex_color_add()
     bpy.ops.object.material_slot_add()

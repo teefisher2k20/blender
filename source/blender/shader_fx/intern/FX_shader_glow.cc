@@ -14,17 +14,18 @@
 #include "BLT_translation.hh"
 
 #include "BKE_context.hh"
+#include "BKE_idtype.hh"
 #include "BKE_modifier.hh"
 #include "BKE_screen.hh"
-#include "BKE_shader_fx.h"
+#include "BKE_shader_fx.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "RNA_access.hh"
 
-#include "FX_shader_types.h"
-#include "FX_ui_common.h"
+#include "FX_shader_types.hh"
+#include "FX_ui_common.hh"
 
 static void init_data(ShaderFxData *md)
 {
@@ -49,25 +50,25 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
 
   int mode = RNA_enum_get(ptr, "mode");
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiItemR(layout, ptr, "mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  uiItemR(layout, ptr, "threshold", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "threshold", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   if (mode == eShaderFxGlowMode_Color) {
-    uiItemR(layout, ptr, "select_color", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    layout->prop(ptr, "select_color", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 
-  uiItemR(layout, ptr, "glow_color", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "glow_color", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  uiItemS(layout);
+  layout->separator();
 
-  uiItemR(layout, ptr, "blend_mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(layout, ptr, "opacity", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(layout, ptr, "size", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(layout, ptr, "rotation", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(layout, ptr, "samples", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(layout, ptr, "use_glow_under", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "blend_mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "opacity", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "size", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "rotation", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "samples", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "use_glow_under", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   shaderfx_panel_end(layout, ptr);
 }
@@ -75,6 +76,14 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
 static void panel_register(ARegionType *region_type)
 {
   shaderfx_panel_register(region_type, eShaderFxType_Glow, panel_draw);
+}
+
+static void foreach_working_space_color(ShaderFxData *fx,
+                                        const IDTypeForeachColorFunctionCallback &fn)
+{
+  GlowShaderFxData *gpfx = (GlowShaderFxData *)fx;
+  fn.single(gpfx->glow_color);
+  fn.single(gpfx->select_color);
 }
 
 ShaderFxTypeInfo shaderfx_Type_Glow = {
@@ -92,5 +101,6 @@ ShaderFxTypeInfo shaderfx_Type_Glow = {
     /*update_depsgraph*/ nullptr,
     /*depends_on_time*/ nullptr,
     /*foreach_ID_link*/ nullptr,
+    /*foreach_working_space_color*/ foreach_working_space_color,
     /*panel_register*/ panel_register,
 };

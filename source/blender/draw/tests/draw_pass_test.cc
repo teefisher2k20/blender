@@ -4,7 +4,9 @@
 
 #include "testing/testing.h"
 
+#include "BLI_math_geom.h"
 #include "BLI_math_matrix.hh"
+#include "GPU_context.hh"
 
 #include "draw_cache.hh"
 #include "draw_manager.hh"
@@ -19,7 +21,7 @@ namespace blender::draw {
 static void test_draw_pass_all_commands()
 {
   Texture tex;
-  tex.ensure_2d(GPU_RGBA16, int2(1));
+  tex.ensure_2d(blender::gpu::TextureFormat::UNORM_16_16_16_16, int2(1));
 
   UniformBuffer<uint4> ubo;
   ubo.push_update();
@@ -30,7 +32,7 @@ static void test_draw_pass_all_commands()
   /* Won't be dereferenced. */
   gpu::VertBuf *vbo = (gpu::VertBuf *)1;
   gpu::IndexBuf *ibo = (gpu::IndexBuf *)1;
-  GPUFrameBuffer *fb = nullptr;
+  gpu::FrameBuffer *fb = nullptr;
 
   float4 color(1.0f, 1.0f, 1.0f, 0.0f);
   int3 dispatch_size(1);
@@ -40,7 +42,7 @@ static void test_draw_pass_all_commands()
   pass.state_set(DRW_STATE_WRITE_COLOR | DRW_STATE_WRITE_STENCIL);
   pass.clear_color_depth_stencil(float4(0.25f, 0.5f, 100.0f, -2000.0f), 0.5f, 0xF0);
   pass.state_stencil(0x80, 0x0F, 0x8F);
-  GPUShader *sh = GPU_shader_get_builtin_shader(GPU_SHADER_3D_IMAGE_COLOR);
+  gpu::Shader *sh = GPU_shader_get_builtin_shader(GPU_SHADER_3D_IMAGE_COLOR);
   const int color_location = GPU_shader_get_uniform(sh, "color");
   const int mvp_location = GPU_shader_get_uniform(sh, "ModelViewProjectionMatrix");
   pass.shader_set(sh);
@@ -124,8 +126,6 @@ static void test_draw_pass_all_commands()
   expected << "  .barrier(2)" << std::endl;
 
   EXPECT_EQ(result, expected.str());
-
-  DRW_shape_cache_free();
 }
 DRAW_TEST(draw_pass_all_commands)
 
@@ -181,7 +181,7 @@ static void test_draw_pass_simple_draw()
   pass.draw_procedural(GPU_PRIM_TRIS, 1, 10, 1, {1});
   pass.draw_procedural(GPU_PRIM_POINTS, 4, 20, 2, {2});
   pass.draw_procedural(GPU_PRIM_TRIS, 2, 30, 3, {3});
-  pass.draw_procedural(GPU_PRIM_POINTS, 5, 40, 4, ResourceHandle(4, true));
+  pass.draw_procedural(GPU_PRIM_POINTS, 5, 40, 4, ResourceIndex(4, true));
   pass.draw_procedural(GPU_PRIM_LINES, 1, 50, 5, {5});
   pass.draw_procedural(GPU_PRIM_POINTS, 6, 60, 6, {5});
   pass.draw_procedural(GPU_PRIM_TRIS, 3, 70, 7, {6});
@@ -204,8 +204,6 @@ static void test_draw_pass_simple_draw()
   expected << "    .draw(inst_len=3, vert_len=80, vert_first=8, res_id=8)" << std::endl;
 
   EXPECT_EQ(result, expected.str());
-
-  DRW_shape_cache_free();
 }
 DRAW_TEST(draw_pass_simple_draw)
 
@@ -218,7 +216,7 @@ static void test_draw_pass_multi_draw()
   pass.draw_procedural(GPU_PRIM_TRIS, 1, -1, -1, {1});
   pass.draw_procedural(GPU_PRIM_POINTS, 4, -1, -1, {2});
   pass.draw_procedural(GPU_PRIM_TRIS, 2, -1, -1, {3});
-  pass.draw_procedural(GPU_PRIM_POINTS, 5, -1, -1, ResourceHandle(4, true));
+  pass.draw_procedural(GPU_PRIM_POINTS, 5, -1, -1, ResourceIndex(4, true));
   pass.draw_procedural(GPU_PRIM_LINES, 1, -1, -1, {5});
   pass.draw_procedural(GPU_PRIM_POINTS, 6, -1, -1, {5});
   pass.draw_procedural(GPU_PRIM_TRIS, 3, -1, -1, {6});
@@ -247,8 +245,6 @@ static void test_draw_pass_multi_draw()
   expected << "      .proto(instance_len=1, resource_id=1, front_face)" << std::endl;
 
   EXPECT_EQ(result, expected.str());
-
-  DRW_shape_cache_free();
 }
 DRAW_TEST(draw_pass_multi_draw)
 
@@ -273,8 +269,6 @@ static void test_draw_pass_sortable()
   expected << "  .Sub5" << std::endl;
 
   EXPECT_EQ(result, expected.str());
-
-  DRW_shape_cache_free();
 }
 DRAW_TEST(draw_pass_sortable)
 
@@ -283,7 +277,7 @@ static void test_draw_resource_id_gen()
   GPU_render_begin();
   Texture color_attachment;
   Framebuffer framebuffer;
-  color_attachment.ensure_2d(GPU_RGBA32F, int2(1));
+  color_attachment.ensure_2d(blender::gpu::TextureFormat::SFLOAT_32_32_32_32, int2(1));
   framebuffer.ensure(GPU_ATTACHMENT_NONE, GPU_ATTACHMENT_TEXTURE(color_attachment));
   framebuffer.bind();
 
@@ -299,9 +293,9 @@ static void test_draw_resource_id_gen()
   float4x4 obmat_2 = math::from_scale<float4x4>(float3(0.5f));
 
   drw.begin_sync();
-  ResourceHandle handle1 = drw.resource_handle(obmat_1);
-  ResourceHandle handle2 = drw.resource_handle(obmat_1);
-  ResourceHandle handle3 = drw.resource_handle(obmat_2);
+  ResourceHandleRange handle1 = drw.resource_handle(obmat_1);
+  ResourceHandleRange handle2 = drw.resource_handle(obmat_1);
+  ResourceHandleRange handle3 = drw.resource_handle(obmat_2);
   drw.resource_handle(obmat_2, float3(2), float3(1));
   drw.end_sync();
 
@@ -359,8 +353,6 @@ static void test_draw_resource_id_gen()
   }
 
   GPU_render_end();
-
-  DRW_shape_cache_free();
   DRW_shaders_free();
 }
 DRAW_TEST(draw_resource_id_gen)
@@ -372,7 +364,7 @@ static void test_draw_visibility()
   GPU_render_begin();
   Texture color_attachment;
   Framebuffer framebuffer;
-  color_attachment.ensure_2d(GPU_RGBA32F, int2(1));
+  color_attachment.ensure_2d(blender::gpu::TextureFormat::SFLOAT_32_32_32_32, int2(1));
   framebuffer.ensure(GPU_ATTACHMENT_NONE, GPU_ATTACHMENT_TEXTURE(color_attachment));
   framebuffer.bind();
 
@@ -394,7 +386,7 @@ static void test_draw_visibility()
   drw.end_sync();
 
   Texture tex;
-  tex.ensure_2d(GPU_RGBA16F, int2(1));
+  tex.ensure_2d(blender::gpu::TextureFormat::SFLOAT_16_16_16_16, int2(1));
 
   PassMain pass = {"test.visibility"};
   pass.init();
@@ -413,8 +405,6 @@ static void test_draw_visibility()
   EXPECT_EQ(result.str(), "11111111111111111111111111111011");
 
   GPU_render_end();
-
-  DRW_shape_cache_free();
   DRW_shaders_free();
 }
 DRAW_TEST(draw_visibility)
@@ -515,6 +505,12 @@ static void test_draw_submit_only()
   float4x4 projmat = math::projection::orthographic(-1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f);
   float4x4 viewmat = float4x4::identity();
 
+  Texture color_attachment;
+  Framebuffer framebuffer;
+  color_attachment.ensure_2d(blender::gpu::TextureFormat::SFLOAT_32_32_32_32, int2(1));
+  framebuffer.ensure(GPU_ATTACHMENT_NONE, GPU_ATTACHMENT_TEXTURE(color_attachment));
+  framebuffer.bind();
+
   Manager manager;
   View view = {"Test"};
   View view_other = {"Test"};
@@ -526,9 +522,18 @@ static void test_draw_submit_only()
   manager.end_sync();
   view.sync(viewmat, projmat);
   view_other.sync(viewmat, projmat);
+
+  /* Add some draws to prevent empty pass optimization. */
+  gpu::Shader *sh = GPU_shader_get_builtin_shader(GPU_SHADER_3D_UNIFORM_COLOR);
   pass.init();
+  pass.shader_set(sh);
+  pass.draw_procedural(GPU_PRIM_TRIS, 1, 3);
   pass_main.init();
+  pass_main.shader_set(sh);
+  pass_main.draw_procedural(GPU_PRIM_TRIS, 1, 3);
   pass_manual.init();
+  pass_manual.shader_set(sh);
+  pass_manual.draw_procedural(GPU_PRIM_TRIS, 1, 3);
 
   /* Auto command and visibility computation. */
   manager.submit(pass);
@@ -617,7 +622,10 @@ static void test_draw_submit_only()
     manager.submit_only(pass_manual, view);
   }
   {
+    /* Add some draws to prevent empty pass optimization. */
     pass_manual.init();
+    pass_manual.shader_set(sh);
+    pass_manual.draw_procedural(GPU_PRIM_TRIS, 1, 3);
 
     /* Submit before command generation. */
     EXPECT_BLI_ASSERT(manager.submit_only(pass_manual, view),

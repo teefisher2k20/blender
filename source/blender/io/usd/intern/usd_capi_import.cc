@@ -5,7 +5,7 @@
 #include "IO_types.hh"
 #include "usd.hh"
 #include "usd_hook.hh"
-#include "usd_light_convert.hh"
+#include "usd_reader_domelight.hh"
 #include "usd_reader_geom.hh"
 #include "usd_reader_prim.hh"
 #include "usd_reader_stage.hh"
@@ -75,8 +75,7 @@ static bool gather_objects_paths(const pxr::UsdPrim &object, ListBase *object_pa
     gather_objects_paths(childPrim, object_paths);
   }
 
-  void *usd_path_void = MEM_callocN(sizeof(CacheObjectPath), "CacheObjectPath");
-  CacheObjectPath *usd_path = static_cast<CacheObjectPath *>(usd_path_void);
+  CacheObjectPath *usd_path = MEM_callocN<CacheObjectPath>("CacheObjectPath");
 
   STRNCPY(usd_path->path, object.GetPrimPath().GetString().c_str());
   BLI_addtail(object_paths, usd_path);
@@ -136,7 +135,7 @@ static void import_startjob(void *customdata, wmJobWorkerStatus *worker_status)
 
   data->params.worker_status = worker_status;
 
-  WM_set_locked_interface(data->wm, true);
+  WM_locked_interface_set(data->wm, true);
   G.is_break = false;
 
   if (data->params.create_collection) {
@@ -167,14 +166,11 @@ static void import_startjob(void *customdata, wmJobWorkerStatus *worker_status)
   *data->do_update = true;
   *data->progress = 0.1f;
 
-  std::string prim_path_mask(data->params.prim_path_mask);
   pxr::UsdStagePopulationMask pop_mask;
-  if (!prim_path_mask.empty()) {
-    for (const std::string &mask_token : pxr::TfStringTokenize(prim_path_mask, ",;")) {
-      pxr::SdfPath prim_path(mask_token);
-      if (!prim_path.IsEmpty()) {
-        pop_mask.Add(prim_path);
-      }
+  for (const std::string &mask_token : pxr::TfStringTokenize(data->params.prim_path_mask, ",;")) {
+    pxr::SdfPath prim_path(mask_token);
+    if (!prim_path.IsEmpty()) {
+      pop_mask.Add(prim_path);
     }
   }
 
@@ -221,6 +217,9 @@ static void import_startjob(void *customdata, wmJobWorkerStatus *worker_status)
       data->cache_file->is_sequence = data->params.is_sequence;
       data->cache_file->scale = scene_scale;
       STRNCPY(data->cache_file->filepath, data->filepath);
+      if (data->params.relative_path && !BLI_path_is_rel(data->cache_file->filepath)) {
+        BLI_path_rel(data->cache_file->filepath, BKE_main_blendfile_path_from_global());
+      }
     }
     return data->cache_file;
   };
@@ -237,10 +236,10 @@ static void import_startjob(void *customdata, wmJobWorkerStatus *worker_status)
   archive->collect_readers();
 
   if (data->params.import_lights && data->params.create_world_material &&
-      !archive->dome_lights().is_empty())
+      !archive->dome_light_readers().is_empty())
   {
-    dome_light_to_world_material(
-        data->params, data->scene, data->bmain, archive->dome_lights().first());
+    USDDomeLightReader *dome_light_reader = archive->dome_light_readers().first();
+    dome_light_reader->create_object(data->scene, data->bmain);
   }
 
   if (data->params.import_materials && data->params.import_all_materials) {
@@ -264,7 +263,7 @@ static void import_startjob(void *customdata, wmJobWorkerStatus *worker_status)
     if (!reader) {
       continue;
     }
-    reader->create_object(data->bmain, 0.0);
+    reader->create_object(data->bmain);
     if ((++i & 1023) == 0) {
       *data->do_update = true;
       *data->progress = 0.25f + 0.25f * (i / size);
@@ -315,7 +314,7 @@ static void import_endjob(void *customdata)
   /* Delete objects on cancellation. */
   if (data->was_canceled && data->archive) {
 
-    for (USDPrimReader *reader : data->archive->readers()) {
+    for (const USDPrimReader *reader : data->archive->readers()) {
 
       if (!reader) {
         continue;
@@ -342,7 +341,7 @@ static void import_endjob(void *customdata)
     data->archive->create_proto_collections(data->bmain, lc->collection);
 
     /* Add all objects to the collection. */
-    for (USDPrimReader *reader : data->archive->readers()) {
+    for (const USDPrimReader *reader : data->archive->readers()) {
       if (!reader) {
         continue;
       }
@@ -359,7 +358,7 @@ static void import_endjob(void *customdata)
 
     /* Sync and do the view layer operations. */
     BKE_view_layer_synced_ensure(scene, view_layer);
-    for (USDPrimReader *reader : data->archive->readers()) {
+    for (const USDPrimReader *reader : data->archive->readers()) {
       if (!reader) {
         continue;
       }
@@ -397,7 +396,7 @@ static void import_endjob(void *customdata)
     }
   }
 
-  WM_set_locked_interface(data->wm, false);
+  WM_locked_interface_set(data->wm, false);
 
   switch (data->error_code) {
     default:
@@ -410,8 +409,6 @@ static void import_endjob(void *customdata)
                  "Could not open USD archive for reading, see console for detail");
       break;
   }
-
-  MEM_SAFE_FREE(data->params.prim_path_mask);
 
   WM_main_add_notifier(NC_ID | NA_ADDED, nullptr);
   report_job_duration(data);
@@ -455,7 +452,7 @@ bool USD_import(const bContext *C,
     wmJob *wm_job = WM_jobs_get(CTX_wm_manager(C),
                                 CTX_wm_window(C),
                                 job->scene,
-                                "USD Import",
+                                "Importing USD...",
                                 WM_JOB_PROGRESS,
                                 WM_JOB_TYPE_USD_IMPORT);
 
@@ -520,7 +517,7 @@ void USD_read_geometry(CacheReader *reader,
     return;
   }
 
-  return usd_reader->read_geometry(geometry_set, params, r_err_str);
+  usd_reader->read_geometry(geometry_set, params, r_err_str);
 }
 
 bool USD_mesh_topology_changed(CacheReader *reader,
@@ -622,7 +619,7 @@ void USD_get_transform(CacheReader *reader, float r_mat_world[4][4], float time,
   if (!reader) {
     return;
   }
-  USDXformReader *usd_reader = reinterpret_cast<USDXformReader *>(reader);
+  const USDXformReader *usd_reader = reinterpret_cast<USDXformReader *>(reader);
 
   bool is_constant = false;
 

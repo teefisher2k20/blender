@@ -29,7 +29,6 @@ struct PointerRNA;
 struct StructRNA;
 struct uiBlock;
 struct uiBut;
-struct uiLayout;
 struct uiList;
 struct uiSearchItems;
 struct wmDrag;
@@ -37,6 +36,7 @@ struct wmEvent;
 namespace blender::ui {
 class AbstractView;
 class AbstractViewItem;
+struct Layout;
 }  // namespace blender::ui
 
 void UI_but_func_set(uiBut *but, std::function<void(bContext &)> func);
@@ -76,20 +76,27 @@ struct ContextPathItem {
   /* #BIFIconID */
   int icon;
   int icon_indicator_number;
+
+  std::function<void(bContext &)> handle_func;
 };
 
 void context_path_add_generic(Vector<ContextPathItem> &path,
                               StructRNA &rna_type,
                               void *ptr,
-                              const BIFIconID icon_override = ICON_NONE);
+                              const BIFIconID icon_override = ICON_NONE,
+                              std::function<void(bContext &)> handle_func = nullptr);
 
-void template_breadcrumbs(uiLayout &layout, Span<ContextPathItem> context_path);
+void template_breadcrumbs(Layout &layout, Span<ContextPathItem> context_path);
 
-void attribute_search_add_items(StringRefNull str,
+void attribute_search_add_items(StringRef str,
                                 bool can_create_attribute,
                                 Span<const nodes::geo_eval_log::GeometryAttributeInfo *> infos,
                                 uiSearchItems *items,
                                 bool is_first);
+void grease_pencil_layer_search_add_items(StringRef str,
+                                          Span<const std::string *> layer_names,
+                                          uiSearchItems &items,
+                                          bool is_first);
 
 bool asset_shelf_popover_invoke(bContext &C,
                                 blender::StringRef asset_shelf_idname,
@@ -254,9 +261,13 @@ using uiListItemGetNameFn =
     blender::FunctionRef<std::string(const PointerRNA &itemptr, int index)>;
 
 /**
- * Filter list items using \a item_filter_fn and sort the result. This respects the normal UI list
- * filter settings like alphabetical sorting (#UILST_FLT_SORT_ALPHA), and result inverting
- * (#UILST_FLT_EXCLUDE).
+ * Helper to apply custom filtering to UI lists not defined in Python. Custom filtering for
+ * Python UI lists has own code. This is also used as the default filtering if no
+ * #uiListType::filter_items callback is set.
+ *
+ * Filters list items using \a item_filter_fn and sorts the result. Also handles alphabetical
+ * sorting (#UILST_FLT_SORT_ALPHA), and result inverting (#UILST_FLT_EXCLUDE) if enabled, so the
+ * callback doesn't have to do this (unlike the filter function in Python).
  *
  * Call this from a #uiListType::filter_items callback with any #item_filter_fn. #uiListNameFilter
  * can be used to apply the default name based filtering.
@@ -284,3 +295,9 @@ blender::ui::AbstractTreeView *UI_block_add_view(
     uiBlock &block,
     blender::StringRef idname,
     std::unique_ptr<blender::ui::AbstractTreeView> tree_view);
+
+void UI_alert(bContext *C,
+              blender::StringRef title,
+              blender::StringRef message,
+              blender::ui::AlertIcon icon,
+              bool compact);

@@ -6,7 +6,6 @@
  * \ingroup bke
  */
 
-#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -36,6 +35,7 @@
 #include "BKE_global.hh"
 #include "BKE_idtype.hh"
 #include "BKE_lib_id.hh"
+#include "BKE_library.hh"
 #include "BKE_main.hh"
 #include "BKE_packedFile.hh"
 #include "BKE_vfont.hh"
@@ -43,13 +43,13 @@
 
 #include "BLO_read_write.hh"
 
-static CLG_LogRef LOG = {"bke.vfont"};
+static CLG_LogRef LOG = {"geom.vfont"};
 
 /* -------------------------------------------------------------------- */
 /** \name Prototypes
  * \{ */
 
-static PackedFile *packedfile_new_from_builtin(void);
+static PackedFile *packedfile_new_from_builtin();
 
 /** \} */
 
@@ -163,7 +163,7 @@ static void vfont_blend_read_data(BlendDataReader *reader, ID *id)
 }
 
 IDTypeInfo IDType_ID_VF = {
-    /*id_code*/ ID_VF,
+    /*id_code*/ VFont::id_type,
     /*id_filter*/ FILTER_ID_VF,
     /*dependencies_id_types*/ 0,
     /*main_listbase_index*/ INDEX_ID_VF,
@@ -181,6 +181,7 @@ IDTypeInfo IDType_ID_VF = {
     /*foreach_id*/ nullptr,
     /*foreach_cache*/ nullptr,
     /*foreach_path*/ vfont_foreach_path,
+    /*foreach_working_space_color*/ nullptr,
     /*owner_pointer_get*/ nullptr,
 
     /*blend_write*/ vfont_blend_write,
@@ -242,9 +243,10 @@ void BKE_vfont_data_free(VFont *vfont)
 {
   if (vfont->data) {
     if (vfont->data->characters) {
-      GHashIterator gh_iter;
-      GHASH_ITER (gh_iter, vfont->data->characters) {
-        VChar *che = static_cast<VChar *>(BLI_ghashIterator_getValue(&gh_iter));
+      for (VChar *che : vfont->data->characters->values()) {
+        if (che == nullptr) {
+          continue;
+        }
 
         while (che->nurbsbase.first) {
           Nurb *nu = static_cast<Nurb *>(che->nurbsbase.first);
@@ -257,7 +259,7 @@ void BKE_vfont_data_free(VFont *vfont)
         MEM_freeN(che);
       }
 
-      BLI_ghash_free(vfont->data->characters, nullptr, nullptr);
+      MEM_delete(vfont->data->characters);
     }
 
     MEM_freeN(vfont->data);
@@ -401,13 +403,12 @@ VFont *BKE_vfont_builtin_ensure()
 /** \name VFont Selection
  * \{ */
 
-int BKE_vfont_select_get(Object *ob, int *r_start, int *r_end)
+int BKE_vfont_select_get(const Curve *cu, int *r_start, int *r_end)
 {
-  Curve *cu = static_cast<Curve *>(ob->data);
   EditFont *ef = cu->editfont;
   int start, end, direction;
 
-  if ((ob->type != OB_FONT) || (ef == nullptr)) {
+  if (ef == nullptr || (cu->ob_type != OB_FONT)) {
     return 0;
   }
 
@@ -441,12 +442,11 @@ int BKE_vfont_select_get(Object *ob, int *r_start, int *r_end)
   return direction;
 }
 
-void BKE_vfont_select_clamp(Object *ob)
+void BKE_vfont_select_clamp(Curve *cu)
 {
-  Curve *cu = static_cast<Curve *>(ob->data);
   EditFont *ef = cu->editfont;
 
-  BLI_assert((ob->type == OB_FONT) && ef);
+  BLI_assert((cu->ob_type == OB_FONT) && ef);
 
   CLAMP_MAX(ef->pos, ef->len);
   CLAMP_MAX(ef->selstart, ef->len + 1);
@@ -482,12 +482,12 @@ void BKE_vfont_clipboard_set(const char32_t *text_buf, const CharInfo *info_buf,
   /* Clean previous buffers. */
   BKE_vfont_clipboard_free();
 
-  text = static_cast<char32_t *>(MEM_malloc_arrayN((len + 1), sizeof(*text), __func__));
+  text = MEM_malloc_arrayN<char32_t>((len + 1), __func__);
   if (text == nullptr) {
     return;
   }
 
-  info = static_cast<CharInfo *>(MEM_malloc_arrayN(len, sizeof(CharInfo), __func__));
+  info = MEM_malloc_arrayN<CharInfo>(len, __func__);
   if (info == nullptr) {
     MEM_freeN(text);
     return;

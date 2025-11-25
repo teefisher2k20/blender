@@ -2,7 +2,8 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BKE_mesh.hh"
+#include "DNA_mesh_types.h"
+
 #include "BKE_mesh_mapping.hh"
 
 #include "BLI_array_utils.hh"
@@ -14,8 +15,9 @@ namespace blender::nodes::node_geo_mesh_topology_corners_of_edge_cc {
 static void node_declare(NodeDeclarationBuilder &b)
 {
   b.add_input<decl::Int>("Edge Index")
-      .implicit_field(implicit_field_inputs::index)
-      .description("The edge to retrieve data from. Defaults to the edge from the context");
+      .implicit_field(NODE_DEFAULT_INPUT_INDEX_FIELD)
+      .description("The edge to retrieve data from. Defaults to the edge from the context")
+      .structure_type(StructureType::Field);
   b.add_input<decl::Float>("Weights").supports_field().hide_value().description(
       "Values that sort the corners attached to the edge");
   b.add_input<decl::Int>("Sort Index")
@@ -53,7 +55,7 @@ class CornersOfEdgeInput final : public bke::MeshFieldInput {
     Array<int> map_offsets;
     Array<int> map_indices;
     const Span<int> corner_edges = mesh.corner_edges();
-    const GroupedSpan<int> edge_to_loop_map = bke::mesh::build_edge_to_corner_map(
+    const GroupedSpan<int> edge_to_corner_map = bke::mesh::build_edge_to_corner_map(
         mesh.corner_edges(), mesh.edges_num, map_offsets, map_indices);
 
     const bke::MeshFieldContext context{mesh, domain};
@@ -86,7 +88,7 @@ class CornersOfEdgeInput final : public bke::MeshFieldInput {
           continue;
         }
 
-        const Span<int> corners = edge_to_loop_map[edge_i];
+        const Span<int> corners = edge_to_corner_map[edge_i];
         if (corners.is_empty()) {
           corner_of_edge[selection_i] = 0;
           continue;
@@ -117,7 +119,7 @@ class CornersOfEdgeInput final : public bke::MeshFieldInput {
       }
     });
 
-    return VArray<int>::ForContainer(std::move(corner_of_edge));
+    return VArray<int>::from_container(std::move(corner_of_edge));
   }
 
   void for_each_field_input_recursive(FunctionRef<void(const FieldInput &)> fn) const override
@@ -149,7 +151,7 @@ class CornersOfEdgeCountInput final : public bke::MeshFieldInput {
     }
     Array<int> counts(mesh.edges_num, 0);
     array_utils::count_indices(mesh.corner_edges(), counts);
-    return VArray<int>::ForContainer(std::move(counts));
+    return VArray<int>::from_container(std::move(counts));
   }
 
   uint64_t hash() const final
@@ -197,7 +199,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_INPUT;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

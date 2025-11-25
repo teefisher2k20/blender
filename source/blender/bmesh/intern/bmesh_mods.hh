@@ -53,9 +53,17 @@ bool BM_disk_dissolve(BMesh *bm, BMVert *v);
  * If the windings do not match the winding of the new face will follow
  * \a l_a's winding (i.e. \a l_b will be reversed before the join).
  *
+ * \param bm: The bmesh.
+ * \param l_a: First loop of an adjacent face pair that will be joined.
+ * \param l_b: Second loop of an adjacent face pair that will be joined.
+ * \param do_del: If true, remove the original faces, internal edges,
+ * and internal verts such that they are replaced by the new face.
+ * \param r_double: A pointer to a face that controls processing of doubled faces.
+ * See #BM_faces_join `r_double` argument for details.
+ *
  * \return The combined face or NULL on failure.
  */
-BMFace *BM_faces_join_pair(BMesh *bm, BMLoop *l_a, BMLoop *l_b, bool do_del);
+BMFace *BM_faces_join_pair(BMesh *bm, BMLoop *l_a, BMLoop *l_b, bool do_del, BMFace **r_double);
 
 /** see: bmesh_polygon_edgenet.hh for #BM_face_split_edgenet */
 
@@ -122,7 +130,7 @@ BMFace *BM_face_split_n(BMesh *bm,
  *
  * \param bm: The bmesh
  * \param e_kill: The edge to collapse
- * \param v_kill: The vertex  to collapse into the edge
+ * \param v_kill: The vertex to collapse into the edge
  * \param fac: The factor along the edge
  * \param join_faces: When true the faces around the vertex will be joined
  * otherwise collapse the vertex by merging the 2 edges this vert touches into one.
@@ -175,7 +183,7 @@ BMVert *BM_edge_collapse(
  * \param v: One of the vertices in \a e and defines the "from" end of the splitting operation,
  * the new vertex will be \a fac of the way from \a v to the other end.
  * \param r_e: The newly created edge.
- * \return  The new vertex.
+ * \return The new vertex.
  */
 BMVert *BM_edge_split(BMesh *bm, BMEdge *e, BMVert *v, BMEdge **r_e, float fac);
 

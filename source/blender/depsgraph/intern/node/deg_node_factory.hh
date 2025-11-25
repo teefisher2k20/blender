@@ -8,9 +8,8 @@
 
 #pragma once
 
-#include "MEM_guardedalloc.h"
+#include "BLI_string_ref.hh"
 
-#include "intern/depsgraph_type.hh"
 #include "intern/node/deg_node.hh"
 
 struct ID;
@@ -22,16 +21,16 @@ struct DepsNodeFactory {
 
   virtual int id_recalc_tag() const = 0;
 
-  virtual Node *create_node(const ID *id, const char *subdata, const char *name) const = 0;
+  virtual Node *create_node(const ID *id, const char *subdata, StringRef name) const = 0;
 };
 
 template<class ModeObjectType> struct DepsNodeFactoryImpl : public DepsNodeFactory {
-  virtual NodeType type() const override;
-  virtual const char *type_name() const override;
+  NodeType type() const override;
+  const char *type_name() const override;
 
-  virtual int id_recalc_tag() const override;
+  int id_recalc_tag() const override;
 
-  virtual Node *create_node(const ID *id, const char *subdata, const char *name) const override;
+  Node *create_node(const ID *id, const char *subdata, StringRef name) const override;
 };
 
 /* Register typeinfo */

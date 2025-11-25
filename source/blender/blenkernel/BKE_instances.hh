@@ -31,9 +31,9 @@
 #include "BLI_vector.hh"
 #include "BLI_virtual_array_fwd.hh"
 
-#include "DNA_customdata_types.h"
-
 #include "BKE_attribute_filter.hh"
+#include "BKE_attribute_storage.hh"
+#include "BKE_geometry_set.hh"
 
 struct Object;
 struct Collection;
@@ -120,18 +120,16 @@ class Instances {
 
   int instances_num_ = 0;
 
-  CustomData attributes_;
+  bke::AttributeStorage attributes_;
 
   /**
    * Caches how often each reference is used.
    */
   mutable SharedCache<Array<int>> reference_user_counts_;
 
-  /* These almost unique ids are generated based on the `id` attribute, which might not contain
-   * unique ids at all. They are *almost* unique, because under certain very unlikely
-   * circumstances, they are not unique. Code using these ids should not crash when they are not
-   * unique but can generally expect them to be unique. */
-  mutable SharedCache<Array<int>> almost_unique_ids_cache_;
+  /* These unique ids are generated based on the `id` attribute, which might not contain
+   * unique ids at all. */
+  mutable SharedCache<Array<int>> unique_ids_cache_;
 
  public:
   Instances();
@@ -169,6 +167,8 @@ class Instances {
   void add_instance(int instance_handle, const float4x4 &transform);
 
   Span<InstanceReference> references() const;
+  MutableSpan<InstanceReference> references_for_write();
+
   void remove_unused_references();
 
   /**
@@ -198,9 +198,10 @@ class Instances {
    */
   void remove(const IndexMask &mask, const AttributeFilter &attribute_filter);
   /**
-   * Get an id for every instance. These can be used for e.g. motion blur.
+   * Get an id for every instance. These can be used e.g. motion blur. This is based on the "id"
+   * attribute but makes sure that the ids are actually unique.
    */
-  Span<int> almost_unique_ids() const;
+  Span<int> unique_ids() const;
 
   /**
    * Get cached user counts for every reference.
@@ -210,8 +211,8 @@ class Instances {
   bke::AttributeAccessor attributes() const;
   bke::MutableAttributeAccessor attributes_for_write();
 
-  CustomData &custom_data_attributes();
-  const CustomData &custom_data_attributes() const;
+  bke::AttributeStorage &attribute_storage();
+  const bke::AttributeStorage &attribute_storage() const;
 
   void foreach_referenced_geometry(
       FunctionRef<void(const GeometrySet &geometry_set)> callback) const;
@@ -224,7 +225,7 @@ class Instances {
   void tag_reference_handles_changed()
   {
     reference_user_counts_.tag_dirty();
-    almost_unique_ids_cache_.tag_dirty();
+    unique_ids_cache_.tag_dirty();
   }
 };
 
@@ -237,7 +238,7 @@ const AttributeAccessorFunctions &instance_attribute_accessor_functions();
  * \{ */
 
 inline InstanceReference::InstanceReference(std::unique_ptr<GeometrySet> geometry_set)
-    : type_(Type::GeometrySet), data_(nullptr), geometry_set_(std::move(geometry_set))
+    : type_(Type::GeometrySet), geometry_set_(std::move(geometry_set))
 {
 }
 
@@ -306,12 +307,12 @@ inline const GeometrySet &InstanceReference::geometry_set() const
   return *geometry_set_;
 }
 
-inline CustomData &Instances::custom_data_attributes()
+inline AttributeStorage &Instances::attribute_storage()
 {
   return attributes_;
 }
 
-inline const CustomData &Instances::custom_data_attributes() const
+inline const AttributeStorage &Instances::attribute_storage() const
 {
   return attributes_;
 }

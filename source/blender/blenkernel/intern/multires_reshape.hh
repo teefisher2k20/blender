@@ -82,12 +82,12 @@ struct MultiresReshapeContext {
   GridPaintMask *grid_paint_masks;
 
   /* Indexed by face index, gives first grid index of the face. */
-  int *face_start_grid_index;
+  blender::Array<int> face_start_grid_index;
 
   /* Indexed by grid index, contains face index in the base mesh from which the grid has
    * been created (in other words, index of a face which contains loop corresponding to the grid
    * index). */
-  int *grid_to_face_index;
+  blender::Array<int> grid_to_face_index;
 
   /* Indexed by ptex face index, gives first grid index of the ptex face.
    *
@@ -96,14 +96,14 @@ struct MultiresReshapeContext {
    *
    * For quad base faces there is a single ptex face but 4 grids. So in this case there will be
    * 4 grids for the ptex, starting at a value stored in this mapping. */
-  int *ptex_start_grid_index;
+  blender::Array<int> ptex_start_grid_index;
 
   /* Indexed by base face index, returns first ptex face index corresponding
    * to that base face. */
-  int *face_ptex_offset;
+  blender::Span<int> face_ptex_offset;
 
   /* Vertex crease custom data layer, empty if none is present. */
-  blender::VArraySpan<float> cd_vertex_crease;
+  blender::VArraySpan<float> cd_vert_crease;
   /* Edge crease custom data layer, empty if none is present. */
   blender::VArraySpan<float> cd_edge_crease;
 };
@@ -130,12 +130,12 @@ struct PTexCoord {
  * This is where reshaped coordinates and mask values will be written to.
  */
 struct ReshapeGridElement {
-  float *displacement;
+  blender::float3 *displacement;
   float *mask;
 };
 
 struct ReshapeConstGridElement {
-  float displacement[3];
+  blender::float3 displacement;
   float mask;
 };
 
@@ -221,15 +221,15 @@ GridCoord multires_reshape_ptex_coord_to_grid(const MultiresReshapeContext *resh
                                               const PTexCoord *ptex_coord);
 
 /**
- * Calculate tangent matrix which converts displacement to a object vector.
+ * Calculate tangent matrix which converts displacement to an object vector.
  * Is calculated for the given surface derivatives at a given base face corner.
  */
 void multires_reshape_tangent_matrix_for_corner(const MultiresReshapeContext *reshape_context,
                                                 int face_index,
                                                 int corner,
-                                                const float dPdu[3],
-                                                const float dPdv[3],
-                                                float r_tangent_matrix[3][3]);
+                                                const blender::float3 &dPdu,
+                                                const blender::float3 &dPdv,
+                                                blender::float3x3 &r_tangent_matrix);
 
 /**
  * Get grid elements which are to be reshaped at a given or PTEX coordinate.
@@ -254,10 +254,11 @@ ReshapeConstGridElement multires_reshape_orig_grid_element_for_grid_coord(
  * Evaluate limit surface created from base mesh.
  * This is the limit surface which defines tangent space for MDisps.
  */
-void multires_reshape_evaluate_limit_at_grid(const MultiresReshapeContext *reshape_context,
-                                             const GridCoord *grid_coord,
-                                             float r_P[3],
-                                             float r_tangent_matrix[3][3]);
+void multires_reshape_evaluate_base_mesh_limit_at_grid(
+    const MultiresReshapeContext *reshape_context,
+    const GridCoord *grid_coord,
+    blender::float3 &r_P,
+    blender::float3x3 &r_tangent_matrix);
 
 /* --------------------------------------------------------------------
  * Custom data preparation.
@@ -269,21 +270,19 @@ void multires_reshape_evaluate_limit_at_grid(const MultiresReshapeContext *resha
 void multires_reshape_ensure_grids(Mesh *mesh, int level);
 
 /* --------------------------------------------------------------------
- * Functions specific to reshaping from a set of vertices in a object position.
+ * Functions specific to reshaping from a set of vertices in an object position.
  */
 
 /**
- * Set displacement grids values at a reshape level to a object coordinates of the given source.
+ * Set displacement grids values at a reshape level to an object coordinates of the given source.
  *
- * \returns truth if all coordinates were assigned.
+ * \returns true if all coordinates were assigned.
  *
  * False will be returned if the number of vertex coordinates did not match required number of
  * vertices at a reshape level.
  */
 bool multires_reshape_assign_final_coords_from_vertcos(
-    const MultiresReshapeContext *reshape_context,
-    const float (*vert_coords)[3],
-    int num_vert_coords);
+    const MultiresReshapeContext *reshape_context, blender::Span<blender::float3> positions);
 
 /* --------------------------------------------------------------------
  * Functions specific to reshaping from CCG.
@@ -296,7 +295,7 @@ bool multires_reshape_assign_final_coords_from_vertcos(
  *
  * \note Displacement grids to be at least at a reshape level.
  *
- * \return truth if all coordinates have been updated.
+ * \return true if all coordinates have been updated.
  */
 bool multires_reshape_assign_final_coords_from_ccg(const MultiresReshapeContext *reshape_context,
                                                    SubdivCCG *subdiv_ccg);
@@ -312,7 +311,7 @@ void multires_reshape_assign_final_coords_from_mdisps(
     const MultiresReshapeContext *reshape_context);
 
 /**
- * Reads from original #CD_MIDTSPS, writes to the current mesh #CD_MDISPS.
+ * Reads from original #CD_MIDSPS, writes to the current mesh #CD_MDISPS.
  */
 void multires_reshape_assign_final_elements_from_orig_mdisps(
     const MultiresReshapeContext *reshape_context);
@@ -338,7 +337,7 @@ void multires_reshape_smooth_object_grids_with_details(
  * Makes it so surface on top level looks smooth. Details are not preserved
  */
 void multires_reshape_smooth_object_grids(const MultiresReshapeContext *reshape_context,
-                                          enum MultiresSubdivideModeType mode);
+                                          MultiresSubdivideModeType mode);
 
 /* --------------------------------------------------------------------
  * Displacement, space conversion.

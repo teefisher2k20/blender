@@ -2,8 +2,6 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "DNA_gpencil_legacy_types.h"
-
 #include "BKE_brush.hh"
 #include "BKE_context.hh"
 #include "BKE_curves.hh"
@@ -35,11 +33,11 @@ void VertexBlurOperation::on_stroke_extended(const bContext &C,
   const Scene &scene = *CTX_data_scene(&C);
   Paint &paint = *BKE_paint_get_active_from_context(&C);
   const Brush &brush = *BKE_paint_brush(&paint);
-  const float radius = brush_radius(scene, brush, extension_sample.pressure);
+  const float radius = brush_radius(paint, brush, extension_sample.pressure);
   const float radius_squared = radius * radius;
 
-  const bool use_selection_masking = GPENCIL_ANY_VERTEX_MASK(
-      eGP_vertex_SelectMaskFlag(scene.toolsettings->gpencil_selectmode_vertex));
+  const bool use_selection_masking = ED_grease_pencil_any_vertex_mask_selection(
+      scene.toolsettings);
 
   this->foreach_editable_drawing(C, GrainSize(1), [&](const GreasePencilStrokeParams &params) {
     IndexMaskMemory memory;
@@ -48,9 +46,7 @@ void VertexBlurOperation::on_stroke_extended(const bContext &C,
     if (stroke_selection.is_empty()) {
       return false;
     }
-    const IndexMask point_selection = point_mask_for_stroke_operation(
-        params, use_selection_masking, memory);
-    const Array<float2> view_positions = calculate_view_positions(params, point_selection);
+    const Array<float2> view_positions = view_positions_from_curve_mask(params, stroke_selection);
     const OffsetIndices<int> points_by_curve = params.drawing.strokes().points_by_curve();
     MutableSpan<ColorGeometry4f> vertex_colors = params.drawing.vertex_colors_for_write();
     stroke_selection.foreach_index(GrainSize(1024), [&](const int64_t curve) {
@@ -76,7 +72,7 @@ void VertexBlurOperation::on_stroke_extended(const bContext &C,
 
       for (const int point : points) {
         const float influence = brush_point_influence(
-            scene, brush, view_positions[point], extension_sample, params.multi_frame_falloff);
+            paint, brush, view_positions[point], extension_sample, params.multi_frame_falloff);
         ColorGeometry4f &color = vertex_colors[point];
         if (color.a > 0.0f && influence > 0.0f) {
           color = math::interpolate(color, mix_color, influence);

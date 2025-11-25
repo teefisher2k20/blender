@@ -82,7 +82,7 @@ typedef struct bToolRef {
    * - This can be used to synchronize tools between areas (if necessary).
    * - If the tool doesn't exist, the exiting tool will left as is.
    * - There is no need for a "fallback" version of this variable
-   *   since activating the tool will also set it's fallback, if it's defined.
+   *   since activating the tool will also set its fallback, if it's defined.
    * - This is not stored in the run-time because it's possible (for example)
    *   for a request to sync to another area isn't handled if the area isn't visible.
    *   So store this in the file, so the pending change can be performed when the area is shown.
@@ -130,8 +130,7 @@ typedef struct WorkSpaceLayout {
   struct bScreen *screen;
   /* The name of this layout, we override the RNA name of the screen with this
    * (but not ID name itself) */
-  /** MAX_NAME. */
-  char name[64];
+  char name[/*MAX_NAME*/ 64];
 } WorkSpaceLayout;
 
 /** Optional tags, which features to use, aligned with #bAddon names by convention. */
@@ -142,6 +141,11 @@ typedef struct wmOwnerID {
 } wmOwnerID;
 
 typedef struct WorkSpace {
+#ifdef __cplusplus
+  /** See #ID_Type comment for why this is here. */
+  static constexpr ID_Type id_type = ID_WS;
+#endif
+
   ID id;
 
   /** WorkSpaceLayout. */
@@ -161,6 +165,9 @@ typedef struct WorkSpace {
   /** Optional, scene to switch to when enabling this workspace (NULL to disable). Cleared on
    * link/append. */
   struct Scene *pin_scene;
+
+  /* Scene that is used by the sequence editors in this workspace. */
+  struct Scene *sequencer_scene;
 
   char _pad[4];
 
@@ -244,4 +251,6 @@ typedef struct WorkSpaceInstanceHook {
 typedef enum eWorkSpaceFlags {
   WORKSPACE_USE_FILTER_BY_ORIGIN = (1 << 1),
   WORKSPACE_USE_PIN_SCENE = (1 << 2),
+  /* Used for syncing time between sequencer scene strips and the active scene. */
+  WORKSPACE_SYNC_SCENE_TIME = (1 << 3),
 } eWorkSpaceFlags;

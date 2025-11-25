@@ -4,7 +4,7 @@
 
 #include "BLI_math_vector.hh"
 
-#include "BLI_kdtree.h"
+#include "BLI_kdtree.hh"
 #include "BLI_length_parameterize.hh"
 #include "BLI_math_matrix.h"
 #include "BLI_math_matrix.hh"
@@ -149,7 +149,7 @@ static void calc_position_with_interpolation(CurvesGeometry &curves,
   const int added_curves_num = root_positions_cu.size();
 
   const OffsetIndices points_by_curve = curves.points_by_curve();
-  const Span<float2> uv_coords = curves.surface_uv_coords();
+  const Span<float2> uv_coords = *curves.surface_uv_coords();
 
   threading::parallel_for(IndexRange(added_curves_num), 256, [&](const IndexRange range) {
     for (const int added_curve_i : range) {
@@ -239,11 +239,8 @@ static void calc_radius_without_interpolation(CurvesGeometry &curves,
                                               const IndexRange new_points_range,
                                               const float radius)
 {
-  bke::MutableAttributeAccessor attributes = curves.attributes_for_write();
-  bke::SpanAttributeWriter radius_attr = attributes.lookup_or_add_for_write_span<float>(
-      "radius", bke::AttrDomain::Point);
-  radius_attr.span.slice(new_points_range).fill(radius);
-  radius_attr.finish();
+  curves.radius_for_write().slice(new_points_range).fill(radius);
+  curves.tag_radii_changed();
 }
 
 static void calc_radius_with_interpolation(CurvesGeometry &curves,

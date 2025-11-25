@@ -25,6 +25,7 @@
 #include "BKE_mesh_types.hh"
 
 #include "DNA_mesh_types.h"
+#include "DNA_scene_types.h"
 
 #include "../generic/py_capi_utils.hh"
 
@@ -33,14 +34,13 @@
 PyDoc_STRVAR(
     /* Wrap. */
     bpy_bm_new_doc,
-    ".. method:: new(use_operators=True)\n"
+    ".. method:: new(*, use_operators=True)\n"
     "\n"
     "   :arg use_operators: Support calling operators in :mod:`bmesh.ops` (uses some "
     "extra memory per vert/edge/face).\n"
     "   :type use_operators: bool\n"
     "   :return: Return a new, empty BMesh.\n"
     "   :rtype: :class:`bmesh.types.BMesh`\n");
-
 static PyObject *bpy_bm_new(PyObject * /*self*/, PyObject *args, PyObject *kw)
 {
   static const char *kwlist[] = {"use_operators", nullptr};
@@ -57,6 +57,7 @@ static PyObject *bpy_bm_new(PyObject * /*self*/, PyObject *args, PyObject *kw)
   BMeshCreateParams params{};
   params.use_toolflags = use_operators;
   bm = BM_mesh_create(&bm_mesh_allocsize_default, &params);
+  bm->selectmode = SCE_SELECT_VERTEX;
 
   return BPy_BMesh_CreatePyObject(bm, BPY_BMFLAG_NOP);
 }
@@ -96,7 +97,7 @@ void EDBM_update_extern(Mesh *mesh, const bool do_tessface, const bool is_destru
 PyDoc_STRVAR(
     /* Wrap. */
     bpy_bm_update_edit_mesh_doc,
-    ".. method:: update_edit_mesh(mesh, loop_triangles=True, destructive=True)\n"
+    ".. method:: update_edit_mesh(mesh, *, loop_triangles=True, destructive=True)\n"
     "\n"
     "   Update the mesh after changes to the BMesh in editmode,\n"
     "   optionally recalculating n-gon tessellation.\n"
@@ -146,9 +147,14 @@ static PyObject *bpy_bm_update_edit_mesh(PyObject * /*self*/, PyObject *args, Py
   Py_RETURN_NONE;
 }
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic push
-#  pragma GCC diagnostic ignored "-Wcast-function-type"
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
 #endif
 
 static PyMethodDef BPy_BM_methods[] = {
@@ -161,8 +167,12 @@ static PyMethodDef BPy_BM_methods[] = {
     {nullptr, nullptr, 0, nullptr},
 };
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic pop
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
 #endif
 
 PyDoc_STRVAR(

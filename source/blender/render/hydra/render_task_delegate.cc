@@ -14,7 +14,7 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "Eigen/Core"
+#include <Eigen/Core>
 
 #include "engine.hh"
 
@@ -30,12 +30,16 @@ RenderTaskDelegate::RenderTaskDelegate(pxr::HdRenderIndex *parent_index,
   task_params_.enableLighting = true;
   task_params_.alphaThreshold = 0.1f;
 
-  CLOG_INFO(LOG_HYDRA_RENDER, 1, "%s", task_id_.GetText());
+  /* Disable this so Metal and OpenGL match in Storm render tests, only
+   * the former seems to use multisample. */
+  task_params_.useAovMultiSample = false;
+
+  CLOG_DEBUG(LOG_HYDRA_RENDER, "%s", task_id_.GetText());
 }
 
 pxr::VtValue RenderTaskDelegate::Get(pxr::SdfPath const &id, pxr::TfToken const &key)
 {
-  CLOG_INFO(LOG_HYDRA_RENDER, 3, "%s, %s", id.GetText(), key.GetText());
+  CLOG_DEBUG(LOG_HYDRA_RENDER, "%s, %s", id.GetText(), key.GetText());
 
   if (key == pxr::HdTokens->params) {
     return pxr::VtValue(task_params_);
@@ -49,14 +53,14 @@ pxr::VtValue RenderTaskDelegate::Get(pxr::SdfPath const &id, pxr::TfToken const 
 
 pxr::TfTokenVector RenderTaskDelegate::GetTaskRenderTags(pxr::SdfPath const &id)
 {
-  CLOG_INFO(LOG_HYDRA_RENDER, 3, "%s", id.GetText());
+  CLOG_DEBUG(LOG_HYDRA_RENDER, "%s", id.GetText());
 
   return {pxr::HdRenderTagTokens->geometry};
 }
 
 pxr::HdRenderBufferDescriptor RenderTaskDelegate::GetRenderBufferDescriptor(pxr::SdfPath const &id)
 {
-  CLOG_INFO(LOG_HYDRA_RENDER, 3, "%s", id.GetText());
+  CLOG_DEBUG(LOG_HYDRA_RENDER, "%s", id.GetText());
 
   return buffer_descriptors_[id];
 }
@@ -136,7 +140,7 @@ void RenderTaskDelegate::add_aov(pxr::TfToken const &aov_key)
   task_params_.aovBindings.push_back(binding);
   render_index.GetChangeTracker().MarkTaskDirty(task_id_, pxr::HdChangeTracker::DirtyParams);
 
-  CLOG_INFO(LOG_HYDRA_RENDER, 1, "%s", aov_key.GetText());
+  CLOG_DEBUG(LOG_HYDRA_RENDER, "%s", aov_key.GetText());
 }
 
 void RenderTaskDelegate::read_aov(pxr::TfToken const &aov_key, void *data)
@@ -167,19 +171,10 @@ void RenderTaskDelegate::read_aov(pxr::TfToken const &aov_key, void *data)
   }
 }
 
-void RenderTaskDelegate::read_aov(pxr::TfToken const &aov_key, GPUTexture *texture)
+pxr::HdRenderBuffer *RenderTaskDelegate::get_aov_buffer(pxr::TfToken const &aov_key)
 {
-  pxr::HdRenderBuffer *buffer = (pxr::HdRenderBuffer *)GetRenderIndex().GetBprim(
-      pxr::HdPrimTypeTokens->renderBuffer, buffer_id(aov_key));
-  if (!buffer) {
-    return;
-  }
-  eGPUDataFormat format = buffer->GetFormat() == pxr::HdFormat::HdFormatFloat16Vec4 ?
-                              GPU_DATA_HALF_FLOAT :
-                              GPU_DATA_FLOAT;
-  void *buf_data = buffer->Map();
-  GPU_texture_update(texture, format, buf_data);
-  buffer->Unmap();
+  return (pxr::HdRenderBuffer *)GetRenderIndex().GetBprim(pxr::HdPrimTypeTokens->renderBuffer,
+                                                          buffer_id(aov_key));
 }
 
 void RenderTaskDelegate::bind() {}
@@ -225,14 +220,14 @@ void GPURenderTaskDelegate::set_viewport(pxr::GfVec4d const &viewport)
 
 void GPURenderTaskDelegate::add_aov(pxr::TfToken const &aov_key)
 {
-  eGPUTextureFormat format;
-  GPUTexture **tex;
+  blender::gpu::TextureFormat format;
+  blender::gpu::Texture **tex;
   if (aov_key == pxr::HdAovTokens->color) {
-    format = GPU_RGBA32F;
+    format = blender::gpu::TextureFormat::SFLOAT_32_32_32_32;
     tex = &tex_color_;
   }
   else if (aov_key == pxr::HdAovTokens->depth) {
-    format = GPU_DEPTH_COMPONENT32F;
+    format = blender::gpu::TextureFormat::SFLOAT_32_DEPTH;
     tex = &tex_depth_;
   }
   else {
@@ -252,12 +247,12 @@ void GPURenderTaskDelegate::add_aov(pxr::TfToken const &aov_key)
                                GPU_TEXTURE_USAGE_GENERAL,
                                nullptr);
 
-  CLOG_INFO(LOG_HYDRA_RENDER, 1, "%s", aov_key.GetText());
+  CLOG_DEBUG(LOG_HYDRA_RENDER, "%s", aov_key.GetText());
 }
 
 void GPURenderTaskDelegate::read_aov(pxr::TfToken const &aov_key, void *data)
 {
-  GPUTexture *tex = nullptr;
+  blender::gpu::Texture *tex = nullptr;
   int c;
   if (aov_key == pxr::HdAovTokens->color) {
     tex = tex_color_;
@@ -274,24 +269,6 @@ void GPURenderTaskDelegate::read_aov(pxr::TfToken const &aov_key, void *data)
   int w = GPU_texture_width(tex), h = GPU_texture_height(tex);
   void *tex_data = GPU_texture_read(tex, GPU_DATA_FLOAT, 0);
   memcpy(data, tex_data, sizeof(float) * w * h * c);
-  MEM_freeN(tex_data);
-}
-
-void GPURenderTaskDelegate::read_aov(pxr::TfToken const &aov_key, GPUTexture *texture)
-{
-  GPUTexture *tex = nullptr;
-  if (aov_key == pxr::HdAovTokens->color) {
-    tex = tex_color_;
-  }
-  else if (aov_key == pxr::HdAovTokens->depth) {
-    tex = tex_depth_;
-  }
-  if (!tex) {
-    return;
-  }
-
-  void *tex_data = GPU_texture_read(tex, GPU_DATA_FLOAT, 0);
-  GPU_texture_update(texture, GPU_DATA_FLOAT, tex_data);
   MEM_freeN(tex_data);
 }
 
@@ -313,7 +290,7 @@ void GPURenderTaskDelegate::bind()
     glGenVertexArrays(1, &VAO_);
     glBindVertexArray(VAO_);
   }
-  CLOG_INFO(LOG_HYDRA_RENDER, 3, "bind");
+  CLOG_DEBUG(LOG_HYDRA_RENDER, "bind");
 }
 
 void GPURenderTaskDelegate::unbind()
@@ -326,10 +303,10 @@ void GPURenderTaskDelegate::unbind()
     GPU_framebuffer_free(framebuffer_);
     framebuffer_ = nullptr;
   }
-  CLOG_INFO(LOG_HYDRA_RENDER, 3, "unbind");
+  CLOG_DEBUG(LOG_HYDRA_RENDER, "unbind");
 }
 
-GPUTexture *GPURenderTaskDelegate::aov_texture(pxr::TfToken const &aov_key)
+blender::gpu::Texture *GPURenderTaskDelegate::get_aov_texture(pxr::TfToken const &aov_key)
 {
   if (aov_key == pxr::HdAovTokens->color) {
     return tex_color_;

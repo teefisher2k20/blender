@@ -4,7 +4,6 @@
 
 #include "BLI_index_range.hh"
 #include "BLI_math_color.h"
-#include "BLI_math_vector.hh"
 #include "BLI_math_vector_types.hh"
 #include "BLI_task.hh"
 
@@ -14,6 +13,7 @@
 #include "IMB_imbuf.hh"
 
 #include "GPU_shader.hh"
+#include "GPU_state.hh"
 #include "GPU_texture.hh"
 
 #include "BKE_node.hh"
@@ -28,9 +28,9 @@ namespace blender::compositor {
 
 static void compute_preview_cpu(Context &context,
                                 const Result &input_result,
-                                bNodePreview *preview)
+                                bke::bNodePreview *preview)
 {
-  const int2 input_size = input_result.domain().size;
+  const int2 input_size = input_result.domain().data_size;
   const int2 preview_size = int2(preview->ibuf->x, preview->ibuf->y);
 
   ColormanageProcessor *color_processor = IMB_colormanagement_display_processor_new(
@@ -57,11 +57,11 @@ static void compute_preview_cpu(Context &context,
 
 static void compute_preview_gpu(Context &context,
                                 const Result &input_result,
-                                bNodePreview *preview)
+                                bke::bNodePreview *preview)
 {
   const int2 preview_size = int2(preview->ibuf->x, preview->ibuf->y);
 
-  GPUShader *shader = context.get_shader("compositor_compute_preview");
+  gpu::Shader *shader = context.get_shader("compositor_compute_preview");
   GPU_shader_bind(shader);
 
   if (input_result.type() == ResultType::Float) {
@@ -116,9 +116,7 @@ static int2 compute_preview_size(int2 size)
   if (size.x > size.y) {
     return int2(greater_dimension_size, int(greater_dimension_size * (float(size.y) / size.x)));
   }
-  else {
-    return int2(int(greater_dimension_size * (float(size.x) / size.y)), greater_dimension_size);
-  }
+  return int2(int(greater_dimension_size * (float(size.x) / size.y)), greater_dimension_size);
 }
 
 void compute_preview(Context &context, const DNode &node, const Result &input_result)
@@ -126,14 +124,11 @@ void compute_preview(Context &context, const DNode &node, const Result &input_re
   /* Initialize node tree previews if not already initialized. */
   bNodeTree *root_tree = const_cast<bNodeTree *>(
       &node.context()->derived_tree().root_context().btree());
-  if (!root_tree->previews) {
-    root_tree->previews = bke::node_instance_hash_new("node previews");
-  }
 
-  const int2 preview_size = compute_preview_size(input_result.domain().size);
+  const int2 preview_size = compute_preview_size(input_result.domain().data_size);
 
-  bNodePreview *preview = bke::node_preview_verify(
-      root_tree->previews, node.instance_key(), preview_size.x, preview_size.y, true);
+  bke::bNodePreview *preview = bke::node_preview_verify(
+      root_tree->runtime->previews, node.instance_key(), preview_size.x, preview_size.y, true);
 
   if (context.use_gpu()) {
     compute_preview_gpu(context, input_result, preview);

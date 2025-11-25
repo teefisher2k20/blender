@@ -23,7 +23,7 @@ class USDCurvesWriter final : public USDAbstractWriter {
   ~USDCurvesWriter() final = default;
 
  protected:
-  virtual void do_write(HierarchyContext &context) override;
+  void do_write(HierarchyContext &context) override;
   void assign_materials(const HierarchyContext &context, const pxr::UsdGeomCurves &usd_curves);
 
  private:
@@ -36,13 +36,14 @@ class USDCurvesWriter final : public USDAbstractWriter {
                              pxr::VtArray<pxr::GfVec3f> &verts,
                              pxr::VtIntArray &control_point_counts,
                              pxr::VtArray<float> &widths,
-                             const pxr::UsdTimeCode timecode,
+                             const pxr::UsdTimeCode time,
                              const pxr::TfToken interpolation);
 
   void set_writer_attributes_for_nurbs(const pxr::UsdGeomNurbsCurves &usd_nurbs_curves,
-                                       const pxr::VtArray<double> &knots,
-                                       const pxr::VtArray<int> &orders,
-                                       const pxr::UsdTimeCode timecode);
+                                       pxr::VtArray<double> &knots,
+                                       pxr::VtArray<double> &weights,
+                                       pxr::VtArray<int> &orders,
+                                       const pxr::UsdTimeCode time);
 
   void write_generic_data(const bke::CurvesGeometry &curves,
                           const bke::AttributeIter &attr,

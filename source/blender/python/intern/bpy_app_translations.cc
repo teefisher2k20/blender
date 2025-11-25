@@ -11,8 +11,11 @@
  */
 
 #include <Python.h>
+
 /* XXX Why bloody hell isn't that included in Python.h???? */
 #include <structmember.h>
+
+#include "../generic/python_compat.hh" /* IWYU pragma: keep. */
 
 #include "BLI_utildefines.h"
 
@@ -27,8 +30,14 @@
 #include "RNA_types.hh"
 
 #ifdef WITH_INTERNATIONAL
-#  include "BLI_ghash.h"
-#  include "BLI_string.h"
+
+#  include "BLI_map.hh"
+#  include "BLI_string_ref.hh"
+#  include "BLI_string_utf8.h"
+
+using blender::StringRef;
+using blender::StringRefNull;
+
 #endif
 
 /* ------------------------------------------------------------------- */
@@ -56,56 +65,47 @@ static BlenderAppTranslations *_translations = nullptr;
 /** \} */
 
 /* ------------------------------------------------------------------- */
-/** \name Helpers for GHash
+/** \name Helpers for hash
  * \{ */
 
 #ifdef WITH_INTERNATIONAL
 
-struct GHashKey {
-  const char *msgctxt;
-  const char *msgid;
+struct MessageKeyRef {
+  StringRef context;
+  StringRef str;
+
+  uint64_t hash() const
+  {
+    BLI_assert(this->context == BLT_I18NCONTEXT_DEFAULT_BPYRNA ||
+               !BLT_is_default_context(this->context));
+    return blender::get_default_hash(this->context, this->str);
+  }
 };
 
-static GHashKey *_ghashutil_keyalloc(const void *msgctxt, const void *msgid)
-{
-  GHashKey *key = static_cast<GHashKey *>(MEM_mallocN(sizeof(GHashKey), "Py i18n GHashKey"));
-  key->msgctxt = BLI_strdup(static_cast<const char *>(
-      BLT_is_default_context(static_cast<const char *>(msgctxt)) ? BLT_I18NCONTEXT_DEFAULT_BPYRNA :
-                                                                   msgctxt));
-  key->msgid = BLI_strdup(static_cast<const char *>(msgid));
-  return key;
-}
+struct MessageKey {
+  std::string context;
+  std::string str;
 
-static uint _ghashutil_keyhash(const void *ptr)
-{
-  const GHashKey *key = static_cast<const GHashKey *>(ptr);
-  const uint hash = BLI_ghashutil_strhash(key->msgctxt);
-  return hash ^ BLI_ghashutil_strhash(key->msgid);
-}
-
-static bool _ghashutil_keycmp(const void *a, const void *b)
-{
-  const GHashKey *A = static_cast<const GHashKey *>(a);
-  const GHashKey *B = static_cast<const GHashKey *>(b);
-
-  /* NOTE: comparing msgid first, most of the time it will be enough! */
-  if (BLI_ghashutil_strcmp(A->msgid, B->msgid) == false) {
-    return BLI_ghashutil_strcmp(A->msgctxt, B->msgctxt);
+  uint64_t hash() const
+  {
+    return blender::get_default_hash(this->context, this->str);
   }
-  return true; /* true means they are not equal! */
-}
 
-static void _ghashutil_keyfree(void *ptr)
+  static uint64_t hash_as(const MessageKeyRef &key)
+  {
+    return key.hash();
+  }
+};
+
+inline bool operator==(const MessageKey &a, const MessageKey &b)
 {
-  const GHashKey *key = static_cast<const GHashKey *>(ptr);
-
-  /* We assume both msgctxt and msgid were BLI_strdup'ed! */
-  MEM_freeN((void *)key->msgctxt);
-  MEM_freeN((void *)key->msgid);
-  MEM_freeN((void *)key);
+  return a.context == b.context && a.str == b.str;
 }
 
-#  define _ghashutil_valfree MEM_freeN
+inline bool operator==(const MessageKeyRef &a, const MessageKey &b)
+{
+  return a.context == b.context && a.str == b.str;
+}
 
 /** \} */
 
@@ -115,19 +115,20 @@ static void _ghashutil_keyfree(void *ptr)
 
 /**
  * We cache all messages available for a given locale
- * from all Python dictionaries into a single #GHash.
+ * from all Python dictionaries into a single #Map.
  * Changing of locale is not so common, while looking for a message translation is,
- * so let's try to optimize the later as much as we can!
+ * so let's try to optimize the latter as much as we can!
  * Note changing of locale, as well as (un)registering a message dict, invalidate that cache.
  */
-static GHash *_translations_cache = nullptr;
+static std::unique_ptr<blender::Map<MessageKey, std::string>> &get_translations_cache()
+{
+  static std::unique_ptr<blender::Map<MessageKey, std::string>> translations;
+  return translations;
+}
 
 static void _clear_translations_cache()
 {
-  if (_translations_cache) {
-    BLI_ghash_free(_translations_cache, _ghashutil_keyfree, _ghashutil_valfree);
-  }
-  _translations_cache = nullptr;
+  get_translations_cache().reset();
 }
 
 static void _build_translations_cache(PyObject *py_messages, const char *locale)
@@ -141,9 +142,9 @@ static void _build_translations_cache(PyObject *py_messages, const char *locale)
   BLT_lang_locale_explode(
       locale, &language, nullptr, nullptr, &language_country, &language_variant);
 
-  /* Clear the cached ghash if needed, and create a new one. */
+  /* Clear the cached #blender::Map if needed, and create a new one. */
   _clear_translations_cache();
-  _translations_cache = BLI_ghash_new(_ghashutil_keyhash, _ghashutil_keycmp, __func__);
+  get_translations_cache() = std::make_unique<blender::Map<MessageKey, std::string>>();
 
   /* Iterate over all Python dictionaries. */
   while (PyDict_Next(py_messages, &pos, &uuid, &uuid_dict)) {
@@ -187,7 +188,7 @@ static void _build_translations_cache(PyObject *py_messages, const char *locale)
         continue;
       }
 
-      /* Iterate over all translations of the found language dict, and populate our ghash cache. */
+      /* Iterate over all translations of the found language dict and populate our cache. */
       while (PyDict_Next(lang_dict, &ppos, &pykey, &trans)) {
         const char *msgctxt = nullptr, *msgid = nullptr;
         bool invalid_key = false;
@@ -238,11 +239,13 @@ static void _build_translations_cache(PyObject *py_messages, const char *locale)
         }
 
         /* Do not overwrite existing keys! */
-        if (BPY_app_translations_py_pgettext(msgctxt, msgid) == msgid) {
-          GHashKey *key = _ghashutil_keyalloc(msgctxt, msgid);
+        if (!BPY_app_translations_py_pgettext(msgctxt, msgid).has_value()) {
+          MessageKey key;
+          key.context = BLT_is_default_context(msgctxt) ? BLT_I18NCONTEXT_DEFAULT_BPYRNA : msgctxt;
+          key.str = msgid;
           Py_ssize_t trans_str_len;
           const char *trans_str = PyUnicode_AsUTF8AndSize(trans, &trans_str_len);
-          BLI_ghash_insert(_translations_cache, key, BLI_strdupn(trans_str, trans_str_len));
+          get_translations_cache()->add(key, std::string(trans_str, trans_str_len));
         }
       }
     }
@@ -254,41 +257,42 @@ static void _build_translations_cache(PyObject *py_messages, const char *locale)
   MEM_SAFE_FREE(language_variant);
 }
 
-const char *BPY_app_translations_py_pgettext(const char *msgctxt, const char *msgid)
+std::optional<StringRefNull> BPY_app_translations_py_pgettext(const StringRef msgctxt,
+                                                              const StringRef msgid)
 {
 #  define STATIC_LOCALE_SIZE 32 /* Should be more than enough! */
 
-  GHashKey key;
   static char locale[STATIC_LOCALE_SIZE] = "";
   const char *tmp;
 
   /* Just in case, should never happen! */
   if (!_translations) {
-    return msgid;
+    return std::nullopt;
   }
 
   tmp = BLT_lang_get();
-  if (!STREQ(tmp, locale) || !_translations_cache) {
-    PyGILState_STATE _py_state;
+  if (!STREQ(tmp, locale) || !get_translations_cache()) {
+    /* This function may be called from C (i.e. outside of python interpreter 'context'). */
+    PyGILState_STATE _py_state = PyGILState_Ensure();
 
-    STRNCPY(locale, tmp);
+    STRNCPY_UTF8(locale, tmp);
 
     /* Locale changed or cache does not exist, refresh the whole cache! */
-    /* This func may be called from C (i.e. outside of python interpreter 'context'). */
-    _py_state = PyGILState_Ensure();
-
     _build_translations_cache(_translations->py_messages, locale);
 
     PyGILState_Release(_py_state);
   }
 
   /* And now, simply create the key (context, messageid) and find it in the cached dict! */
-  key.msgctxt = BLT_is_default_context(msgctxt) ? BLT_I18NCONTEXT_DEFAULT_BPYRNA : msgctxt;
-  key.msgid = msgid;
+  MessageKeyRef key;
+  key.context = BLT_is_default_context(msgctxt) ? BLT_I18NCONTEXT_DEFAULT_BPYRNA : msgctxt;
+  key.str = msgid;
 
-  tmp = static_cast<const char *>(BLI_ghash_lookup(_translations_cache, &key));
-
-  return tmp ? tmp : msgid;
+  const std::string *result = get_translations_cache()->lookup_ptr_as(key);
+  if (!result) {
+    return std::nullopt;
+  }
+  return *result;
 
 #  undef STATIC_LOCALE_SIZE
 }
@@ -336,7 +340,7 @@ static PyObject *app_translations_py_messages_register(BlenderAppTranslations *s
         PyExc_ValueError,
         "bpy.app.translations.register: translations message cache already contains some data for "
         "addon '%s'",
-        (const char *)PyUnicode_AsUTF8(module_name));
+        PyUnicode_AsUTF8(module_name));
     return nullptr;
   }
 
@@ -387,7 +391,7 @@ static PyObject *app_translations_py_messages_unregister(BlenderAppTranslations 
 
   if (PyDict_Contains(self->py_messages, module_name)) {
     PyDict_DelItem(self->py_messages, module_name);
-    /* Clear cached messages ghash! */
+    /* Clear cached messages map. */
     _clear_translations_cache();
   }
 #else
@@ -470,11 +474,10 @@ PyDoc_STRVAR(
     "   Never use a (new) context starting with \"" BLT_I18NCONTEXT_DEFAULT_BPYRNA
     "\", it would be internally\n"
     "   assimilated as the default one!\n");
-
 PyDoc_STRVAR(
     /* Wrap. */
     app_translations_contexts_C_to_py_doc,
-    "A readonly dict mapping contexts' C-identifiers to their py-identifiers.");
+    "A readonly dict mapping contexts' C-identifiers to their py-identifiers.\n");
 
 static PyMemberDef app_translations_members[] = {
     {"contexts",
@@ -526,7 +529,7 @@ static PyObject *app_translations_locales_get(PyObject * /*self*/, void * /*user
   if (items) {
     for (it = items; it->identifier; it++) {
       if (it->value) {
-        PyTuple_SET_ITEM(ret, pos++, PyUnicode_FromString(it->description));
+        PyTuple_SET_ITEM(ret, pos++, PyUnicode_FromString(it->identifier));
       }
     }
   }
@@ -612,21 +615,23 @@ static PyObject *app_translations_pgettext(BlenderAppTranslations * /*self*/,
   return _py_pgettext(args, kw, BLT_pgettext);
 }
 
-PyDoc_STRVAR(app_translations_pgettext_n_doc,
-             ".. method:: pgettext_n(msgid, msgctxt=None)\n"
-             "\n"
-             "   Extract the given msgid to translation files. This is a no-op function that will "
-             "only mark the string to extract, but not perform the actual translation.\n"
-             "\n"
-             "   .. note::\n"
-             "      See :func:`pgettext` notes.\n"
-             "\n"
-             "   :arg msgid: The string to extract.\n"
-             "   :type msgid: str\n"
-             "   :arg msgctxt: The translation context (defaults to BLT_I18NCONTEXT_DEFAULT).\n"
-             "   :type msgctxt: str | None\n"
-             "   :return: The original string.\n"
-             "\n");
+PyDoc_STRVAR(
+    /* Wrap. */
+    app_translations_pgettext_n_doc,
+    ".. method:: pgettext_n(msgid, msgctxt=None)\n"
+    "\n"
+    "   Extract the given msgid to translation files. This is a no-op function that will "
+    "only mark the string to extract, but not perform the actual translation.\n"
+    "\n"
+    "   .. note::\n"
+    "      See :func:`pgettext` notes.\n"
+    "\n"
+    "   :arg msgid: The string to extract.\n"
+    "   :type msgid: str\n"
+    "   :arg msgctxt: The translation context (defaults to BLT_I18NCONTEXT_DEFAULT).\n"
+    "   :type msgctxt: str | None\n"
+    "   :return: The original string.\n"
+    "\n");
 static PyObject *app_translations_pgettext_n(BlenderAppTranslations * /*self*/,
                                              PyObject *args,
                                              PyObject *kw)
@@ -786,9 +791,14 @@ static PyObject *app_translations_locale_explode(BlenderAppTranslations * /*self
   return ret_tuple;
 }
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic push
-#  pragma GCC diagnostic ignored "-Wcast-function-type"
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
 #endif
 
 static PyMethodDef app_translations_methods[] = {
@@ -832,13 +842,21 @@ static PyMethodDef app_translations_methods[] = {
     {nullptr},
 };
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic pop
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
 #endif
 
-static PyObject *app_translations_new(PyTypeObject *type, PyObject * /*args*/, PyObject * /*kw*/)
+static PyObject *app_translations_new(PyTypeObject *type, PyObject *args, PyObject *kw)
 {
   // printf("%s (%p)\n", __func__, _translations);
+
+  /* Only called internally on startup, no need for exceptions. */
+  BLI_assert(PyTuple_GET_SIZE(args) == 0 && kw == nullptr);
+  UNUSED_VARS_NDEBUG(args, kw);
 
   if (!_translations) {
     _translations = (BlenderAppTranslations *)type->tp_alloc(type, 0);
@@ -864,8 +882,10 @@ static PyObject *app_translations_new(PyTypeObject *type, PyObject * /*args*/, P
   return (PyObject *)_translations;
 }
 
-static void app_translations_free(BlenderAppTranslations *self)
+static void app_translations_free(void *self_v)
 {
+  BlenderAppTranslations *self = static_cast<BlenderAppTranslations *>(self_v);
+
   Py_DECREF(self->contexts);
   Py_DECREF(self->contexts_C_to_py);
   Py_DECREF(self->py_messages);
@@ -885,7 +905,7 @@ PyDoc_STRVAR(
     "\n");
 static PyTypeObject BlenderAppTranslationsType = {
     /*ob_base*/ PyVarObject_HEAD_INIT(nullptr, 0)
-    /*tp_name*/ "bpy.app._translations_type",
+    /*tp_name*/ "bpy_app_translations",
     /*tp_basicsize*/ sizeof(BlenderAppTranslations),
     /*tp_itemsize*/ 0,
     /*tp_dealloc*/ nullptr,
@@ -921,8 +941,8 @@ static PyTypeObject BlenderAppTranslationsType = {
     /*tp_dictoffset*/ 0,
     /*tp_init*/ nullptr,
     /*tp_alloc*/ nullptr,
-    /*tp_new*/ (newfunc)app_translations_new,
-    /*tp_free*/ (freefunc)app_translations_free,
+    /*tp_new*/ app_translations_new,
+    /*tp_free*/ app_translations_free,
     /*tp_is_gc*/ nullptr,
     /*tp_bases*/ nullptr,
     /*tp_mro*/ nullptr,
@@ -966,7 +986,7 @@ PyObject *BPY_app_translations_struct()
   /* prevent user from creating new instances */
   BlenderAppTranslationsType.tp_new = nullptr;
   /* Without this we can't do `set(sys.modules)` #29635. */
-  BlenderAppTranslationsType.tp_hash = (hashfunc)_Py_HashPointer;
+  BlenderAppTranslationsType.tp_hash = (hashfunc)Py_HashPointer;
 
   return ret;
 }

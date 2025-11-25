@@ -45,7 +45,6 @@ class KeyingScreen : public CachedResource {
  public:
   Result result;
 
- public:
   KeyingScreen(Context &context,
                MovieClip *movie_clip,
                MovieTrackingObject *movie_tracking_object,
@@ -70,6 +69,9 @@ class KeyingScreen : public CachedResource {
 class KeyingScreenContainer : CachedResourceContainer {
  private:
   Map<std::string, Map<KeyingScreenKey, std::unique_ptr<KeyingScreen>>> map_;
+
+  /* A map that stores the update counts of the keying screens at the moment they were cached. */
+  Map<std::string, uint64_t> update_counts_;
 
  public:
   void reset() override;

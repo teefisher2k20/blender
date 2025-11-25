@@ -9,7 +9,6 @@
  * Uses the `BLO_library_temp_xxx()` API internally.
  */
 
-#include <new>
 #include <string>
 
 #include "AS_asset_representation.hh"
@@ -21,6 +20,8 @@
 #include "BLO_readfile.hh"
 
 #include "MEM_guardedalloc.h"
+
+#include "DNA_ID.h"
 
 #include "ED_asset_temp_id_consumer.hh"
 

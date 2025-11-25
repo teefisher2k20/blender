@@ -15,7 +15,6 @@
 
 #  include "BLI_array.hh"
 #  include "BLI_assert.h"
-#  include "BLI_delaunay_2d.hh"
 #  include "BLI_hash.hh"
 #  include "BLI_kdopbvh.hh"
 #  include "BLI_map.hh"
@@ -2432,7 +2431,7 @@ static void extract_zero_volume_cell_tris(Vector<Face *> &r_tris,
  * The cells in \a cinfo must have cells-to-be-retained with in_output_volume set.
  * We keep only triangles between those in the output volume and those not in.
  * We flip the normals of any triangle that has an in_output_volume cell above
- * and a  not-in_output_volume cell below.
+ * and a not-in_output_volume cell below.
  * For all stacks of exact duplicate co-planar triangles, we want to
  * include either one version of the triangle or none, depending on
  * whether the in_output_volume in_output_volumes on either side of the stack are
@@ -3146,11 +3145,11 @@ static bool dissolve_leaves_valid_bmesh(FaceMergeState *fms,
 }
 
 /**
- * mf_left and mf_right should share a #MergeEdge me, having index me_index.
- * We change mf_left to remove edge me and insert the appropriate edges of
- * mf_right in between the start and end vertices of that edge.
- * We change the left face of the spliced-in edges to be mf_left's index.
- * We mark the merge_to property of mf_right, which is now in essence deleted.
+ * `mf_left` and `mf_right` should share a #MergeEdge `me`, having index `me_index`.
+ * We change `mf_left` to remove edge `me` and insert the appropriate edges of
+ * `mf_right` in between the start and end vertices of that edge.
+ * We change the left face of the spliced-in edges to be `mf_left`'s index.
+ * We mark the `merge_to` property of `mf_right`, which is now in essence deleted.
  */
 static void splice_faces(
     FaceMergeState *fms, MergeEdge &me, int me_index, MergeFace &mf_left, MergeFace &mf_right)

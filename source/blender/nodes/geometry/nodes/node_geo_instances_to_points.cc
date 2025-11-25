@@ -15,9 +15,11 @@ namespace blender::nodes::node_geo_instances_to_points_cc {
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Geometry>("Instances").only_instances();
+  b.add_input<decl::Geometry>("Instances")
+      .only_instances()
+      .description("Instances to convert to points");
   b.add_input<decl::Bool>("Selection").default_value(true).hide_value().field_on_all();
-  b.add_input<decl::Vector>("Position").implicit_field_on_all(implicit_field_inputs::position);
+  b.add_input<decl::Vector>("Position").implicit_field_on_all(NODE_DEFAULT_INPUT_POSITION_FIELD);
   b.add_input<decl::Float>("Radius")
       .default_value(0.05f)
       .min(0.0f)
@@ -58,19 +60,20 @@ static void convert_instances_to_points(GeometrySet &geometry_set,
   point_radii.finish();
 
   const bke::AttributeAccessor src_attributes = instances.attributes();
-  Map<StringRef, AttributeDomainAndType> attributes_to_propagate;
+  bke::GeometrySet::GatheredAttributes attributes_to_propagate;
   geometry_set.gather_attributes_for_propagation({GeometryComponent::Type::Instance},
                                                  GeometryComponent::Type::PointCloud,
                                                  false,
                                                  attribute_filter,
                                                  attributes_to_propagate);
-  /* These two attributes are added by the implicit inputs above. */
-  attributes_to_propagate.remove("position");
-  attributes_to_propagate.remove("radius");
 
-  for (const auto item : attributes_to_propagate.items()) {
-    const StringRef id = item.key;
-    const eCustomDataType type = item.value.data_type;
+  for (const int i : attributes_to_propagate.names.index_range()) {
+    /* These two attributes are added by the implicit inputs above. */
+    if (ELEM(attributes_to_propagate.names[i], "position", "radius")) {
+      continue;
+    }
+    const StringRef id = attributes_to_propagate.names[i];
+    const bke::AttrType type = attributes_to_propagate.kinds[i].data_type;
 
     const GAttributeReader src = src_attributes.lookup(id);
     if (selection.size() == instances.instances_num() && src.sharing_info && src.varray.is_span())
@@ -119,7 +122,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

@@ -26,7 +26,7 @@
 
 #include "DEG_depsgraph_query.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "BLT_translation.hh"
@@ -94,7 +94,10 @@ static void write_stroke_transforms(bke::greasepencil::Drawing &drawing,
   bke::SpanAttributeWriter<float> u_scales = attributes.lookup_or_add_for_write_span<float>(
       "u_scale",
       bke::AttrDomain::Curve,
-      bke::AttributeInitVArray(VArray<float>::ForSingle(1.0f, curves.curves_num())));
+      bke::AttributeInitVArray(VArray<float>::from_single(1.0f, curves.curves_num())));
+  if (!u_translations || !rotations || !u_scales) {
+    return;
+  }
 
   curves.ensure_evaluated_lengths();
 
@@ -307,37 +310,37 @@ static void panel_draw(const bContext *C, Panel *panel)
   const auto mode = GreasePencilTextureModifierMode(tmd.mode);
   uiLayout *col;
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiItemR(layout, ptr, "mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   if (ELEM(mode, MOD_GREASE_PENCIL_TEXTURE_STROKE, MOD_GREASE_PENCIL_TEXTURE_STROKE_AND_FILL)) {
-    col = uiLayoutColumn(layout, false);
-    uiItemR(col, ptr, "fit_method", UI_ITEM_NONE, IFACE_("Stroke Fit Method"), ICON_NONE);
-    uiItemR(col, ptr, "uv_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "alignment_rotation", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "uv_scale", UI_ITEM_NONE, IFACE_("Scale"), ICON_NONE);
+    col = &layout->column(false);
+    col->prop(ptr, "fit_method", UI_ITEM_NONE, IFACE_("Stroke Fit Method"), ICON_NONE);
+    col->prop(ptr, "uv_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col->prop(ptr, "alignment_rotation", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col->prop(ptr, "uv_scale", UI_ITEM_NONE, IFACE_("Scale"), ICON_NONE);
   }
 
   if (mode == MOD_GREASE_PENCIL_TEXTURE_STROKE_AND_FILL) {
-    uiItemS(layout);
+    layout->separator();
   }
 
   if (ELEM(mode, MOD_GREASE_PENCIL_TEXTURE_FILL, MOD_GREASE_PENCIL_TEXTURE_STROKE_AND_FILL)) {
-    col = uiLayoutColumn(layout, false);
-    uiItemR(col, ptr, "fill_rotation", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "fill_offset", UI_ITEM_NONE, IFACE_("Offset"), ICON_NONE);
-    uiItemR(col, ptr, "fill_scale", UI_ITEM_NONE, IFACE_("Scale"), ICON_NONE);
+    col = &layout->column(false);
+    col->prop(ptr, "fill_rotation", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col->prop(ptr, "fill_offset", UI_ITEM_NONE, IFACE_("Offset"), ICON_NONE);
+    col->prop(ptr, "fill_scale", UI_ITEM_NONE, IFACE_("Scale"), ICON_NONE);
   }
 
-  if (uiLayout *influence_panel = uiLayoutPanelProp(
-          C, layout, ptr, "open_influence_panel", IFACE_("Influence")))
+  if (uiLayout *influence_panel = layout->panel_prop(
+          C, ptr, "open_influence_panel", IFACE_("Influence")))
   {
     modifier::greasepencil::draw_layer_filter_settings(C, influence_panel, ptr);
     modifier::greasepencil::draw_material_filter_settings(C, influence_panel, ptr);
   }
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void panel_register(ARegionType *region_type)

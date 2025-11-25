@@ -4,7 +4,7 @@
 
 #include "BLI_array_utils.hh"
 
-#include "BKE_mesh.hh"
+#include "DNA_mesh_types.h"
 
 #include "node_geometry_util.hh"
 
@@ -38,7 +38,7 @@ class VertexCountFieldInput final : public bke::MeshFieldInput {
     }
     Array<int> counts(mesh.verts_num, 0);
     array_utils::count_indices(mesh.edges().cast<int>(), counts);
-    return VArray<int>::ForContainer(std::move(counts));
+    return VArray<int>::from_container(std::move(counts));
   }
 
   uint64_t hash() const override
@@ -74,7 +74,7 @@ class VertexFaceCountFieldInput final : public bke::MeshFieldInput {
     }
     Array<int> counts(mesh.verts_num, 0);
     array_utils::count_indices(mesh.corner_verts(), counts);
-    return VArray<int>::ForContainer(std::move(counts));
+    return VArray<int>::from_container(std::move(counts));
   }
 
   uint64_t hash() const override
@@ -114,7 +114,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_INPUT;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

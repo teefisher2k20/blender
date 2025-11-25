@@ -10,7 +10,7 @@ from random import seed
 import bpy
 
 sys.path.append(os.path.dirname(os.path.realpath(__file__)))
-from modules.mesh_test import RunTest, ModifierSpec, SpecMeshTest
+from modules.mesh_test import RunTest, ModifierSpec, MultiModifierSpec, SpecMeshTest, OperatorSpecObjectMode
 
 seed(0)
 
@@ -21,7 +21,7 @@ def cube_mask_first_modifier_list():
         ModifierSpec('solidify', 'SOLIDIFY', {}),
         ModifierSpec('triangulate', 'TRIANGULATE', {}),
         ModifierSpec('bevel', 'BEVEL', {'width': 0.1, 'limit_method': 'NONE'}),
-        ModifierSpec('boolean', 'BOOLEAN', {'object': bpy.data.objects["testCubeMaskFirst_boolean"], 'solver': 'FAST'}),
+        ModifierSpec('boolean', 'BOOLEAN', {'object': bpy.data.objects["testCubeMaskFirst_boolean"], 'solver': 'FLOAT'}),
         ModifierSpec('edge split', 'EDGE_SPLIT', {}),
         ModifierSpec('build', 'BUILD', {'frame_start': 1, 'frame_duration': 1}, 2),
         ModifierSpec('multires', 'MULTIRES', {}),
@@ -42,7 +42,7 @@ def cube_random_modifier_list():
         ModifierSpec('array', 'ARRAY', {}),
         ModifierSpec('bevel', 'BEVEL', {'width': 0.1, 'limit_method': 'NONE'}),
         ModifierSpec('multires', 'MULTIRES', {}),
-        ModifierSpec('boolean', 'BOOLEAN', {'object': bpy.data.objects["testCubeRandom_boolean"], 'solver': 'FAST'}),
+        ModifierSpec('boolean', 'BOOLEAN', {'object': bpy.data.objects["testCubeRandom_boolean"], 'solver': 'FLOAT'}),
         ModifierSpec('solidify', 'SOLIDIFY', {}),
         ModifierSpec('build', 'BUILD', {'frame_start': 1, 'frame_duration': 1}, 2),
         ModifierSpec('triangulate', 'TRIANGULATE', {}),
@@ -151,8 +151,12 @@ def main():
 
         SpecMeshTest("CylinderMask", "testCylinderMask", "expectedCylinderMask",
                      [ModifierSpec('mask', 'MASK', {'vertex_group': "mask_vertex_group"})]),
-        SpecMeshTest("ConeMultiRes", "testConeMultiRes", "expectedConeMultiRes",
-                     [ModifierSpec('multires', 'MULTIRES', {})]),
+        SpecMeshTest("CubeMultires", "testCubeMultires", "expectedCubeMultires",
+                     [
+                         ModifierSpec('multires', 'MULTIRES', {}),
+                         OperatorSpecObjectMode('multires_subdivide', {'modifier': 'multires'}),
+                         OperatorSpecObjectMode('modifier_apply', {'modifier': 'multires'})
+                     ], apply_modifier=False),
 
         # 24
         SpecMeshTest("CubeScrew", "testCubeScrew", "expectedCubeScrew",
@@ -319,12 +323,81 @@ def main():
         SpecMeshTest("CurveCurve", "testObjBezierCurveCurve", "expObjBezierCurveCurve",
                      [ModifierSpec('curve_Curve', 'CURVE', {'object': bpy.data.objects['NurbsCurve']})]),
 
+        #############################################
+        # Armature Deform Modifier Settings
+        #############################################
+        # 70
+        SpecMeshTest("ArmatureDefault", "testMonkeyArmatureDefault", "expectedMonkeyArmatureDefault",
+                     [ModifierSpec('armature', 'ARMATURE',
+                                   {'object': bpy.data.objects['testArmatureDefault'],
+                                    'use_vertex_groups': True})]),
+        SpecMeshTest("ArmatureEnvelope", "testMonkeyArmatureEnvelope", "expectedMonkeyArmatureEnvelope",
+                     [ModifierSpec('armature', 'ARMATURE',
+                                   {'object': bpy.data.objects['testArmatureEnvelope'],
+                                    'use_vertex_groups': False,
+                                    'use_bone_envelopes': True})]),
+        SpecMeshTest("ArmatureVGroupEnvelope", "testMonkeyArmatureVGroupEnvelope", "expectedMonkeyArmatureVGroupEnvelope",
+                     [ModifierSpec('armature', 'ARMATURE',
+                                   {'object': bpy.data.objects['testArmatureVGroupEnvelope'],
+                                    'use_vertex_groups': True,
+                                    'use_bone_envelopes': True})]),
+        SpecMeshTest("ArmaturePreserveVolume", "testMonkeyArmaturePreserveVolume", "expectedMonkeyArmaturePreserveVolume",
+                     [ModifierSpec('armature', 'ARMATURE',
+                                   {'object': bpy.data.objects['testArmaturePreserveVolume'],
+                                    'use_vertex_groups': True,
+                                    'use_deform_preserve_volume': True})]),
+        SpecMeshTest("ArmatureMasked", "testMonkeyArmatureMasked", "expectedMonkeyArmatureMasked",
+                     [ModifierSpec('armature', 'ARMATURE',
+                                   {'object': bpy.data.objects['testArmatureMasked'],
+                                    'use_vertex_groups': True,
+                                    'vertex_group': "Mask"})]),
+        SpecMeshTest("ArmatureMaskedInverse", "testMonkeyArmatureMaskedInverse", "expectedMonkeyArmatureMaskedInverse",
+                     [ModifierSpec('armature', 'ARMATURE',
+                                   {'object': bpy.data.objects['testArmatureMaskedInverse'],
+                                    'use_vertex_groups': True,
+                                    'vertex_group': "Mask",
+                                    'invert_vertex_group': True})]),
+        SpecMeshTest("ArmatureMultiModifier", "testMonkeyArmatureMultiModifier", "expectedMonkeyArmatureMultiModifier",
+                     [MultiModifierSpec(
+                         [ModifierSpec('armature1', 'ARMATURE',
+                                       {'object': bpy.data.objects['testArmatureMultiModifier1'],
+                                        'use_vertex_groups': True}),
+                          ModifierSpec('armature2', 'ARMATURE',
+                                       {'object': bpy.data.objects['testArmatureMultiModifier2'],
+                                        'use_vertex_groups': True,
+                                        'use_multi_modifier': True})])]),
+        SpecMeshTest("ArmatureMultiModifierMasked", "testMonkeyArmatureMultiModifierMasked", "expectedMonkeyArmatureMultiModifierMasked",
+                     [MultiModifierSpec(
+                         [ModifierSpec('armature1', 'ARMATURE',
+                                       {'object': bpy.data.objects['testArmatureMultiModifierMasked1'],
+                                        'use_vertex_groups': True,
+                                        'vertex_group': "Mask"}),
+                          ModifierSpec('armature2', 'ARMATURE',
+                                       {'object': bpy.data.objects['testArmatureMultiModifierMasked2'],
+                                        'use_vertex_groups': True,
+                                        'vertex_group': "Mask",
+                                        'use_multi_modifier': True})])]),
+        SpecMeshTest("ArmatureLatticeEnvelope", "testLatticeArmatureEnvelope", "expectedLatticeArmatureEnvelope",
+                     [ModifierSpec('armature', 'ARMATURE',
+                                   {'object': bpy.data.objects['testArmatureLatticeEnvelope'],
+                                    'use_vertex_groups': False,
+                                    'use_bone_envelopes': True})]),
+        SpecMeshTest("ArmatureLatticeVGroup", "testLatticeArmatureVGroup", "expectedLatticeArmatureVGroup",
+                     [ModifierSpec('armature', 'ARMATURE',
+                                   {'object': bpy.data.objects['testArmatureLatticeVGroup'],
+                                    'use_vertex_groups': True,
+                                    'use_bone_envelopes': False})]),
+        SpecMeshTest("ArmatureLatticeNoVGroup", "testLatticeArmatureNoVGroup", "expectedLatticeArmatureNoVGroup",
+                     [ModifierSpec('armature', 'ARMATURE',
+                                   {'object': bpy.data.objects['testArmatureLatticeNoVGroup'],
+                                    'use_vertex_groups': True,
+                                    'use_bone_envelopes': False})]),
     ]
 
     boolean_basename = "CubeBooleanDiffBMeshObject"
     tests.append(SpecMeshTest("BooleandDiffBMeshObject", "test" + boolean_basename, "expected" + boolean_basename,
                               [ModifierSpec("boolean", 'BOOLEAN',
-                                            {"solver": 'FAST', "operation": 'DIFFERENCE', "operand_type": 'OBJECT',
+                                            {"solver": 'FLOAT', "operation": 'DIFFERENCE', "operand_type": 'OBJECT',
                                              "object": bpy.data.objects["test" + boolean_basename + "Operand"]})]))
     boolean_basename = "CubeBooleanDiffBMeshCollection"
     tests.append(SpecMeshTest("BooleandDiffBMeshCollection",
@@ -332,7 +405,7 @@ def main():
                               "expected" + boolean_basename,
                               [ModifierSpec("boolean",
                                             'BOOLEAN',
-                                            {"solver": 'FAST',
+                                            {"solver": 'FLOAT',
                                              "operation": 'DIFFERENCE',
                                              "operand_type": 'COLLECTION',
                                              "collection": bpy.data.collections["test" + boolean_basename + "Operands"]})]))
@@ -342,12 +415,10 @@ def main():
     command = list(sys.argv)
     for i, cmd in enumerate(command):
         if cmd == "--run-all-tests":
-            modifiers_test.apply_modifiers = True
             modifiers_test.do_compare = True
             modifiers_test.run_all_tests()
             break
         elif cmd == "--run-test":
-            modifiers_test.apply_modifiers = False
             modifiers_test.do_compare = False
             name = command[i + 1]
             modifiers_test.run_test(name)

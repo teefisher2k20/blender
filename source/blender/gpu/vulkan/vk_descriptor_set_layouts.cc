@@ -40,11 +40,11 @@ VkDescriptorSetLayout VKDescriptorSetLayouts::get_or_create(const VKDescriptorSe
   }
 
   update_layout_bindings(info);
+  const VKDevice &device = VKBackend::get().device;
 
   vk_descriptor_set_layout_create_info_.bindingCount = vk_descriptor_set_layout_bindings_.size();
   vk_descriptor_set_layout_create_info_.pBindings = vk_descriptor_set_layout_bindings_.data();
 
-  const VKDevice &device = VKBackend::get().device;
   VkDescriptorSetLayout vk_descriptor_set_layout = VK_NULL_HANDLE;
   vkCreateDescriptorSetLayout(device.vk_handle(),
                               &vk_descriptor_set_layout_create_info_,

@@ -10,10 +10,11 @@
 #include "DNA_collection_types.h"
 #include "DNA_object_types.h"
 
-#include "BKE_customdata.hh"
 #include "BKE_geometry_set.hh"
 #include "BKE_geometry_set_instances.hh"
 #include "BKE_instances.hh"
+
+#include "attribute_storage_access.hh"
 
 namespace blender::bke {
 
@@ -145,34 +146,27 @@ uint64_t InstanceReference::hash() const
   return get_default_hash(geometry_hash, type_, data_);
 }
 
-Instances::Instances()
-{
-  CustomData_reset(&attributes_);
-}
+Instances::Instances() = default;
 
 Instances::Instances(Instances &&other)
     : references_(std::move(other.references_)),
       instances_num_(other.instances_num_),
-      attributes_(other.attributes_),
+      attributes_(std::move(other.attributes_)),
       reference_user_counts_(std::move(other.reference_user_counts_)),
-      almost_unique_ids_cache_(std::move(other.almost_unique_ids_cache_))
+      unique_ids_cache_(std::move(other.unique_ids_cache_))
 {
-  CustomData_reset(&other.attributes_);
 }
 
 Instances::Instances(const Instances &other)
     : references_(other.references_),
       instances_num_(other.instances_num_),
+      attributes_(other.attributes_),
       reference_user_counts_(other.reference_user_counts_),
-      almost_unique_ids_cache_(other.almost_unique_ids_cache_)
+      unique_ids_cache_(other.unique_ids_cache_)
 {
-  CustomData_init_from(&other.attributes_, &attributes_, CD_MASK_ALL, other.instances_num_);
 }
 
-Instances::~Instances()
-{
-  CustomData_free(&attributes_, instances_num_);
-}
+Instances::~Instances() = default;
 
 Instances &Instances::operator=(const Instances &other)
 {
@@ -196,17 +190,23 @@ Instances &Instances::operator=(Instances &&other)
 
 void Instances::resize(int capacity)
 {
-  CustomData_realloc(&attributes_, instances_num_, capacity, CD_SET_DEFAULT);
+  const int old_size = this->instances_num();
+  attributes_.resize(AttrDomain::Instance, capacity);
   instances_num_ = capacity;
+  if (capacity > old_size) {
+    fill_attribute_range_default(this->attributes_for_write(),
+                                 AttrDomain::Instance,
+                                 {},
+                                 IndexRange::from_begin_end(old_size, capacity));
+  }
 }
 
 void Instances::add_instance(const int instance_handle, const float4x4 &transform)
 {
   BLI_assert(instance_handle >= 0);
   BLI_assert(instance_handle < references_.size());
-  const int old_size = instances_num_;
   instances_num_++;
-  CustomData_realloc(&attributes_, old_size, instances_num_);
+  attributes_.resize(AttrDomain::Instance, instances_num_);
   this->reference_handles_for_write().last() = instance_handle;
   this->transforms_for_write().last() = transform;
   this->tag_reference_handles_changed();
@@ -214,38 +214,28 @@ void Instances::add_instance(const int instance_handle, const float4x4 &transfor
 
 Span<int> Instances::reference_handles() const
 {
-  return {static_cast<const int *>(
-              CustomData_get_layer_named(&attributes_, CD_PROP_INT32, ".reference_index")),
-          instances_num_};
+  return get_span_attribute<int>(
+             attributes_, AttrDomain::Instance, ".reference_index", instances_num_)
+      .value_or(Span<int>());
 }
 
 MutableSpan<int> Instances::reference_handles_for_write()
 {
-  int *data = static_cast<int *>(CustomData_get_layer_named_for_write(
-      &attributes_, CD_PROP_INT32, ".reference_index", instances_num_));
-  if (!data) {
-    data = static_cast<int *>(CustomData_add_layer_named(
-        &attributes_, CD_PROP_INT32, CD_SET_DEFAULT, instances_num_, ".reference_index"));
-  }
-  return {data, instances_num_};
+  return get_mutable_attribute<int>(
+      attributes_, AttrDomain::Instance, ".reference_index", instances_num_);
 }
 
 Span<float4x4> Instances::transforms() const
 {
-  return {static_cast<const float4x4 *>(
-              CustomData_get_layer_named(&attributes_, CD_PROP_FLOAT4X4, "instance_transform")),
-          instances_num_};
+  return get_span_attribute<float4x4>(
+             attributes_, AttrDomain::Instance, "instance_transform", instances_num_)
+      .value_or(Span<float4x4>());
 }
 
 MutableSpan<float4x4> Instances::transforms_for_write()
 {
-  float4x4 *data = static_cast<float4x4 *>(CustomData_get_layer_named_for_write(
-      &attributes_, CD_PROP_FLOAT4X4, "instance_transform", instances_num_));
-  if (!data) {
-    data = static_cast<float4x4 *>(CustomData_add_layer_named(
-        &attributes_, CD_PROP_FLOAT4X4, CD_SET_DEFAULT, instances_num_, "instance_transform"));
-  }
-  return {data, instances_num_};
+  return get_mutable_attribute<float4x4>(
+      attributes_, AttrDomain::Instance, "instance_transform", instances_num_);
 }
 
 GeometrySet &Instances::geometry_set_from_reference(const int reference_index)
@@ -283,6 +273,11 @@ int Instances::add_new_reference(const InstanceReference &reference)
 }
 
 Span<InstanceReference> Instances::references() const
+{
+  return references_;
+}
+
+MutableSpan<InstanceReference> Instances::references_for_write()
 {
   return references_;
 }
@@ -332,7 +327,7 @@ void Instances::remove_unused_references()
   const Span<int> reference_handles = this->reference_handles();
 
   Array<bool> usage_by_handle(tot_references_before, false);
-  std::mutex mutex;
+  Mutex mutex;
 
   /* Loop over all instances to see which references are used. */
   threading::parallel_for(IndexRange(tot_instances), 1000, [&](IndexRange range) {
@@ -427,7 +422,7 @@ void Instances::ensure_owns_direct_data()
 
 void Instances::count_memory(MemoryCounter &memory) const
 {
-  CustomData_count_memory(attributes_, instances_num_, memory);
+  attributes_.count_memory(memory);
   for (const InstanceReference &reference : references_) {
     reference.count_memory(memory);
   }
@@ -473,10 +468,15 @@ static Array<int> generate_unique_instance_ids(Span<int> original_ids)
         break;
       }
       if (iteration == max_iteration) {
-        /* It seems to be very unlikely that we ever run into this case (assuming there are less
-         * than 2^30 instances). However, if that happens, it's better to use an id that is not
-         * unique than to be stuck in an infinite loop. */
-        unique_ids[instance_index] = original_id;
+        /* The likelihood of running into this case is very low even if there is a huge number of
+         * instances. For correctness, it's still good to systematically find an unused id instead
+         * of purely relying on randomness. */
+        for (const int generated_id : IndexRange(INT32_MAX)) {
+          if (used_unique_ids.add(generated_id)) {
+            unique_ids[instance_index] = generated_id;
+            break;
+          }
+        }
         break;
       }
     }
@@ -502,22 +502,18 @@ Span<int> Instances::reference_user_counts() const
   return reference_user_counts_.data();
 }
 
-Span<int> Instances::almost_unique_ids() const
+Span<int> Instances::unique_ids() const
 {
-  almost_unique_ids_cache_.ensure([&](Array<int> &r_data) {
-    bke::AttributeReader<int> instance_ids_attribute = this->attributes().lookup<int>("id");
-    if (instance_ids_attribute) {
-      Span<int> instance_ids = instance_ids_attribute.varray.get_internal_span();
-      if (r_data.size() != instance_ids.size()) {
-        r_data = generate_unique_instance_ids(instance_ids);
-      }
-    }
-    else {
+  unique_ids_cache_.ensure([&](Array<int> &r_data) {
+    const VArraySpan<int> instance_ids = *this->attributes().lookup<int>("id");
+    if (instance_ids.is_empty()) {
       r_data.reinitialize(instances_num_);
       array_utils::fill_index_range(r_data.as_mutable_span());
+      return;
     }
+    r_data = generate_unique_instance_ids(instance_ids);
   });
-  return almost_unique_ids_cache_.data();
+  return unique_ids_cache_.data();
 }
 
 static float3 get_transform_position(const float4x4 &transform)
@@ -532,14 +528,15 @@ static void set_transform_position(float4x4 &transform, const float3 position)
 
 VArray<float3> instance_position_varray(const Instances &instances)
 {
-  return VArray<float3>::ForDerivedSpan<float4x4, get_transform_position>(instances.transforms());
+  return VArray<float3>::from_derived_span<float4x4, get_transform_position>(
+      instances.transforms());
 }
 
 VMutableArray<float3> instance_position_varray_for_write(Instances &instances)
 {
   MutableSpan<float4x4> transforms = instances.transforms_for_write();
   return VMutableArray<float3>::
-      ForDerivedSpan<float4x4, get_transform_position, set_transform_position>(transforms);
+      from_derived_span<float4x4, get_transform_position, set_transform_position>(transforms);
 }
 
 }  // namespace blender::bke

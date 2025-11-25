@@ -7,13 +7,17 @@
 #include "DNA_curves_types.h"
 #include "DNA_grease_pencil_types.h"
 #include "DNA_mesh_types.h"
-#include "DNA_modifier_types.h"
 #include "DNA_pointcloud_types.h"
 
 #include "DEG_depsgraph_query.hh"
 
 #include "BKE_curves.hh"
-#include "BKE_type_conversions.hh"
+#include "BKE_library.hh"
+#include "BKE_main.hh"
+#include "BKE_node_runtime.hh"
+
+#include "BLI_path_utils.hh"
+#include "BLI_string.h"
 
 #include "BLT_translation.hh"
 
@@ -51,7 +55,7 @@ void GeoNodeExecParams::used_named_attribute(const StringRef attribute_name,
 void GeoNodeExecParams::check_input_geometry_set(StringRef identifier,
                                                  const GeometrySet &geometry_set) const
 {
-  const SocketDeclaration &decl = *node_.input_by_identifier(identifier).runtime->declaration;
+  const SocketDeclaration &decl = *node_.input_by_identifier(identifier)->runtime->declaration;
   const decl::Geometry *geo_decl = dynamic_cast<const decl::Geometry *>(&decl);
   if (geo_decl == nullptr) {
     return;
@@ -168,8 +172,7 @@ void GeoNodeExecParams::set_default_remaining_outputs()
   set_default_remaining_node_outputs(params_, node_);
 }
 
-void GeoNodeExecParams::check_input_access(StringRef identifier,
-                                           const CPPType *requested_type) const
+void GeoNodeExecParams::check_input_access(StringRef identifier) const
 {
   const bNodeSocket *found_socket = nullptr;
   for (const bNodeSocket *socket : node_.input_sockets()) {
@@ -195,17 +198,9 @@ void GeoNodeExecParams::check_input_access(StringRef identifier,
               << "' is disabled.\n";
     BLI_assert_unreachable();
   }
-  else if (requested_type != nullptr && (found_socket->flag & SOCK_MULTI_INPUT) == 0) {
-    const CPPType &expected_type = *found_socket->typeinfo->geometry_nodes_cpp_type;
-    if (*requested_type != expected_type) {
-      std::cout << "The requested type '" << requested_type->name() << "' is incorrect. Expected '"
-                << expected_type.name() << "'.\n";
-      BLI_assert_unreachable();
-    }
-  }
 }
 
-void GeoNodeExecParams::check_output_access(StringRef identifier, const CPPType &value_type) const
+void GeoNodeExecParams::check_output_access(StringRef identifier) const
 {
   const bNodeSocket *found_socket = nullptr;
   for (const bNodeSocket *socket : node_.output_sockets()) {
@@ -235,14 +230,6 @@ void GeoNodeExecParams::check_output_access(StringRef identifier, const CPPType 
     std::cout << "The identifier '" << identifier << "' has been set already.\n";
     BLI_assert_unreachable();
   }
-  else {
-    const CPPType &expected_type = *found_socket->typeinfo->geometry_nodes_cpp_type;
-    if (value_type != expected_type) {
-      std::cout << "The value type '" << value_type.name() << "' is incorrect. Expected '"
-                << expected_type.name() << "'.\n";
-      BLI_assert_unreachable();
-    }
-  }
 }
 
 AttributeFilter::Result NodeAttributeFilter::filter(const StringRef attribute_name) const
@@ -257,6 +244,26 @@ AttributeFilter::Result NodeAttributeFilter::filter(const StringRef attribute_na
     return AttributeFilter::Result::Process;
   }
   return AttributeFilter::Result::AllowSkip;
+}
+
+std::optional<std::string> GeoNodeExecParams::ensure_absolute_path(const StringRefNull path) const
+{
+  if (path.is_empty()) {
+    return std::nullopt;
+  }
+  if (!BLI_path_is_rel(path.c_str())) {
+    return path;
+  }
+  const Main &bmain = *this->bmain();
+  const bNodeTree &tree = node_.owner_tree();
+  const char *base_path = ID_BLEND_PATH(&bmain, &tree.id);
+  if (!base_path || base_path[0] == '\0') {
+    return std::nullopt;
+  }
+  char absolute_path[FILE_MAX];
+  STRNCPY(absolute_path, path.c_str());
+  BLI_path_abs(absolute_path, base_path);
+  return absolute_path;
 }
 
 }  // namespace blender::nodes

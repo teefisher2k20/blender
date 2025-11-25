@@ -25,7 +25,7 @@
 
 #include "CLG_log.h"
 
-static CLG_LogRef LOG = {"bke.addon"};
+static CLG_LogRef LOG = {"addon"};
 
 /* -------------------------------------------------------------------- */
 /** \name Add-on New/Free
@@ -33,7 +33,7 @@ static CLG_LogRef LOG = {"bke.addon"};
 
 bAddon *BKE_addon_new()
 {
-  bAddon *addon = static_cast<bAddon *>(MEM_callocN(sizeof(bAddon), "bAddon"));
+  bAddon *addon = MEM_callocN<bAddon>("bAddon");
   return addon;
 }
 

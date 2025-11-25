@@ -25,6 +25,7 @@ struct ListBase;
 struct MaskLayer;
 struct Object;
 struct Scene;
+struct Strip;
 struct bAction;
 struct bActionGroup;
 struct bAnimContext;
@@ -87,10 +88,14 @@ enum eActKeyBlock_Hold {
   ACTKEYBLOCK_FLAG_STATIC_HOLD = (1 << 1),
   /** Key block represents any kind of hold. */
   ACTKEYBLOCK_FLAG_ANY_HOLD = (1 << 2),
-  /** The curve segment uses non-bezier interpolation. */
-  ACTKEYBLOCK_FLAG_NON_BEZIER = (1 << 3),
   /** The block is grease pencil. */
   ACTKEYBLOCK_FLAG_GPENCIL = (1 << 4),
+  /** The curve segment uses linear interpolation. */
+  ACTKEYBLOCK_FLAG_IPO_LINEAR = (1 << 5),
+  /** The curve segment uses constant interpolation. */
+  ACTKEYBLOCK_FLAG_IPO_CONSTANT = (1 << 6),
+  /** The curve segment uses easing or dynamic interpolation. */
+  ACTKEYBLOCK_FLAG_IPO_OTHER = (1 << 7),
 };
 
 /* *********************** Keyframe Drawing ****************************** */
@@ -138,6 +143,7 @@ void ED_keylist_prepare_for_direct_access(AnimKeylist *keylist);
 const ActKeyColumn *ED_keylist_find_exact(const AnimKeylist *keylist, float cfra);
 const ActKeyColumn *ED_keylist_find_next(const AnimKeylist *keylist, float cfra);
 const ActKeyColumn *ED_keylist_find_prev(const AnimKeylist *keylist, float cfra);
+const ActKeyColumn *ED_keylist_find_closest(const AnimKeylist *keylist, float cfra);
 const ActKeyColumn *ED_keylist_find_any_between(const AnimKeylist *keylist,
                                                 const blender::Bounds<float> frame_range);
 bool ED_keylist_is_empty(const AnimKeylist *keylist);
@@ -180,14 +186,27 @@ void action_group_to_keylist(AnimData *adt,
                              int saction_flag,
                              blender::float2 range);
 /* Action */
-void action_to_keylist(
-    AnimData *adt, bAction *act, AnimKeylist *keylist, int saction_flag, blender::float2 range);
-void action_slot_to_keylist(AnimData *adt,
-                            blender::animrig::Action &action,
-                            blender::animrig::slot_handle_t slot_handle,
-                            AnimKeylist *keylist,
-                            int saction_flag,
-                            blender::float2 range);
+
+/**
+ * Generate a full list of the keys in `dna_action` that are within the frame
+ * range `range`.
+ *
+ * For layered actions, this is limited to the keys that are for the slot
+ * assigned to `adt`.
+ *
+ * Note: this should only be used in places that need or want the *full* list of
+ * keys, without any filtering by e.g. channel selection/visibility, etc. For
+ * use cases that need such filtering, use `action_slot_summary_to_keylist()`
+ * instead.
+ *
+ * \see action_slot_summary_to_keylist()
+ */
+void action_to_keylist(AnimData *adt,
+                       bAction *dna_action,
+                       AnimKeylist *keylist,
+                       int saction_flag,
+                       blender::float2 range);
+
 /* Object */
 void ob_to_keylist(
     bDopeSheet *ads, Object *ob, AnimKeylist *keylist, int saction_flag, blender::float2 range);
@@ -205,12 +224,48 @@ void summary_to_keylist(bAnimContext *ac,
                         int saction_flag,
                         blender::float2 range);
 
+/**
+ * Generate a summary channel keylist for the specified slot, merging it into
+ * `keylist`.
+ *
+ * This filters the keys to be consistent with the visible channels in the
+ * editor indicated by `ac`
+ *
+ * \param animated_id: the particular animated ID that the slot summary is being
+ * generated for. This is needed for filtering channels based on bone selection,
+ * etc. NOTE: despite being passed as a pointer, this should never be null. It's
+ * currently passed as a pointer to be defensive because I (Nathan) am not 100%
+ * confident at the time of writing (PR #134922) that the callers of this
+ * actually guarantee a non-null pointer (they should, but bugs). This way we
+ * can assert internally to catch if that ever happens.
+ *
+ * \param action: the action containing the slot to generate the summary for.
+ *
+ * \param slot_handle: the handle of the slot to generate the summary for.
+ *
+ * \param keylist: the keylist that the generated summary will be merged into.
+ *
+ * \param saction_flag: needed for the `SACTION_SHOW_EXTREMES` flag, to
+ * determine whether to compute and store the data needed to determine which
+ * keys are "extremes" (local maxima/minima).
+ *
+ * \param range: only keys within this time range will be included in the
+ * summary.
+ */
+void action_slot_summary_to_keylist(bAnimContext *ac,
+                                    ID *animated_id,
+                                    blender::animrig::Action &action,
+                                    blender::animrig::slot_handle_t slot_handle,
+                                    AnimKeylist *keylist,
+                                    int /* eSAction_Flag */ saction_flag,
+                                    blender::float2 range);
+
 /* Grease Pencil datablock summary (Legacy) */
 void gpencil_to_keylist(bDopeSheet *ads, bGPdata *gpd, AnimKeylist *keylist, bool active);
 
 /* Grease Pencil Cels. */
 void grease_pencil_cels_to_keylist(AnimData *adt,
-                                   const GreasePencilLayer *layer,
+                                   const GreasePencilLayer *gpl,
                                    AnimKeylist *keylist,
                                    int saction_flag);
 
@@ -230,6 +285,9 @@ void gpl_to_keylist(bDopeSheet *ads, bGPDlayer *gpl, AnimKeylist *keylist);
 
 /* Mask */
 void mask_to_keylist(bDopeSheet *ads, MaskLayer *masklay, AnimKeylist *keylist);
+
+/* Sequencer strip data. */
+void sequencer_strip_to_keylist(const Strip &strip, AnimKeylist &keylist, Scene &scene);
 
 /* ActKeyColumn API ---------------- */
 

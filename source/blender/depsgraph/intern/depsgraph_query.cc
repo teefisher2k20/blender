@@ -8,16 +8,13 @@
  * Implementation of Querying API
  */
 
-#include "MEM_guardedalloc.h"
-
 #include <cstring> /* XXX: `memcpy`. */
 
 #include "BLI_listbase.h"
-#include "BLI_utildefines.h"
 
 #include "BKE_action.hh" /* XXX: BKE_pose_channel_find_name */
-#include "BKE_customdata.hh"
 #include "BKE_idtype.hh"
+#include "BKE_lib_id.hh"
 #include "BKE_main.hh"
 
 #include "DNA_object_types.h"
@@ -171,7 +168,7 @@ void DEG_get_customdata_mask_for_object(const Depsgraph *graph,
   }
 
   const deg::Depsgraph *deg_graph = reinterpret_cast<const deg::Depsgraph *>(graph);
-  const deg::IDNode *id_node = deg_graph->find_id_node(DEG_get_original_id(&ob->id));
+  const deg::IDNode *id_node = deg_graph->find_id_node(DEG_get_original(&ob->id));
   if (id_node == nullptr) {
     /* TODO(sergey): Does it mean we need to check set scene? */
     return;
@@ -210,17 +207,14 @@ ViewLayer *DEG_get_evaluated_view_layer(const Depsgraph *graph)
   return view_layer_cow;
 }
 
-Object *DEG_get_evaluated_object(const Depsgraph *depsgraph, Object *object)
-{
-  if (object == nullptr) {
-    return nullptr;
-  }
-  return (Object *)DEG_get_evaluated_id(depsgraph, &object->id);
-}
-
 ID *DEG_get_evaluated_id(const Depsgraph *depsgraph, ID *id)
 {
   return deg::get_evaluated_id(reinterpret_cast<const deg::Depsgraph *>(depsgraph), id);
+}
+
+const ID *DEG_get_evaluated_id(const Depsgraph *depsgraph, const ID *id)
+{
+  return DEG_get_evaluated_id(depsgraph, const_cast<ID *>(id));
 }
 
 void DEG_get_evaluated_rna_pointer(const Depsgraph *depsgraph,
@@ -278,19 +272,19 @@ void DEG_get_evaluated_rna_pointer(const Depsgraph *depsgraph,
   }
 }
 
-Object *DEG_get_original_object(Object *object)
+ID *DEG_get_original_id(ID *id)
 {
-  return (Object *)DEG_get_original_id(&object->id);
+  return deg::get_original_id(id);
 }
 
-ID *DEG_get_original_id(ID *id)
+const ID *DEG_get_original_id(const ID *id)
 {
   return deg::get_original_id(id);
 }
 
 Depsgraph *DEG_get_depsgraph_by_id(const ID &id)
 {
-  return id.runtime.depsgraph;
+  return id.runtime->depsgraph;
 }
 
 bool DEG_is_original_id(const ID *id)
@@ -317,19 +311,9 @@ bool DEG_is_original_id(const ID *id)
   return true;
 }
 
-bool DEG_is_original_object(const Object *object)
-{
-  return DEG_is_original_id(&object->id);
-}
-
 bool DEG_is_evaluated_id(const ID *id)
 {
   return !DEG_is_original_id(id);
-}
-
-bool DEG_is_evaluated_object(const Object *object)
-{
-  return !DEG_is_original_object(object);
 }
 
 bool DEG_is_fully_evaluated(const Depsgraph *depsgraph)
@@ -414,4 +398,13 @@ bool DEG_collection_geometry_is_evaluated(const Collection &collection)
 {
   return !operation_needs_update(
       collection.id, deg::NodeType::GEOMETRY, deg::OperationCode::GEOMETRY_EVAL_DONE);
+}
+
+std::optional<double> DEG_get_last_evaluation_time(const Depsgraph *depsgraph)
+{
+  if (!DEG_is_fully_evaluated(depsgraph)) {
+    return std::nullopt;
+  }
+  const deg::Depsgraph &deg_graph = *reinterpret_cast<const deg::Depsgraph *>(depsgraph);
+  return deg_graph.debug.total_evaluation_time();
 }

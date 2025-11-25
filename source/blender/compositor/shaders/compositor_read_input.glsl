@@ -2,11 +2,15 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "infos/compositor_read_input_infos.hh"
+
+COMPUTE_SHADER_CREATE_INFO(compositor_read_input_float4)
+
 #include "gpu_shader_compositor_texture_utilities.glsl"
 
 void main()
 {
-  ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
-  vec4 input_color = texture_load(input_tx, texel + lower_bound);
+  int2 texel = int2(gl_GlobalInvocationID.xy);
+  float4 input_color = texture_load(input_tx, texel + lower_bound);
   imageStore(output_img, texel, READ_EXPRESSION(input_color));
 }

@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bli
+ */
+
 #pragma once
 
 #include <array>
@@ -199,6 +203,8 @@ class IndexMask : private IndexMaskData {
   /** Construct a mask from the true indices. */
   static IndexMask from_bools(Span<bool> bools, IndexMaskMemory &memory);
   static IndexMask from_bools(const VArray<bool> &bools, IndexMaskMemory &memory);
+  static IndexMask from_bools_inverse(Span<bool> bools, IndexMaskMemory &memory);
+  static IndexMask from_bools_inverse(const VArray<bool> &bools, IndexMaskMemory &memory);
   /** Construct a mask from the true indices, but limited by the indices in #universe. */
   static IndexMask from_bools(const IndexMask &universe,
                               Span<bool> bools,
@@ -209,6 +215,9 @@ class IndexMask : private IndexMaskData {
   static IndexMask from_bools(const IndexMask &universe,
                               const VArray<bool> &bools,
                               IndexMaskMemory &memory);
+  static IndexMask from_bools_inverse(const IndexMask &universe,
+                                      const VArray<bool> &bools,
+                                      IndexMaskMemory &memory);
   /** Construct a mask from the ranges referenced by the offset indices. */
   template<typename T>
   static IndexMask from_ranges(OffsetIndices<T> offsets,
@@ -338,8 +347,8 @@ class IndexMask : private IndexMaskData {
   int64_t operator[](const RawMaskIterator &it) const;
 
   /**
-   * Get a new mask that contains a consecutive subset of this mask. Takes O(log n) time and but
-   * can reuse the memory from the source mask.
+   * Get a new mask that contains a consecutive subset of this mask. Takes O(log n) time
+   * but can reuse the memory from the source mask.
    */
   IndexMask slice(IndexRange range) const;
   IndexMask slice(int64_t start, int64_t size) const;
@@ -588,7 +597,7 @@ int64_t consolidate_index_mask_segments(MutableSpan<IndexMaskSegment> segments,
                                         IndexMaskMemory &memory);
 
 /**
- * Adds index mask segments to the the vector for the given range. Ranges shorter than
+ * Adds index mask segments to the vector for the given range. Ranges shorter than
  * #max_segment_size fit into a single segment. Larger ranges are split into multiple segments.
  */
 template<int64_t N>
@@ -842,8 +851,7 @@ template<typename T, typename Fn>
 #if (defined(__GNUC__) && !defined(__clang__))
 [[gnu::optimize("O3")]]
 #endif
-inline void
-optimized_foreach_index(const IndexMaskSegment segment, const Fn fn)
+inline void optimized_foreach_index(const IndexMaskSegment segment, const Fn fn)
 {
   BLI_assert(segment.last() < std::numeric_limits<T>::max());
   if (unique_sorted_indices::non_empty_is_range(segment.base_span())) {
@@ -864,10 +872,9 @@ template<typename T, typename Fn>
 #if (defined(__GNUC__) && !defined(__clang__))
 [[gnu::optimize("O3")]]
 #endif
-inline void
-optimized_foreach_index_with_pos(const IndexMaskSegment segment,
-                                 const int64_t segment_pos,
-                                 const Fn fn)
+inline void optimized_foreach_index_with_pos(const IndexMaskSegment segment,
+                                             const int64_t segment_pos,
+                                             const Fn fn)
 {
   BLI_assert(segment.last() < std::numeric_limits<T>::max());
   BLI_assert(segment.size() + segment_pos < std::numeric_limits<T>::max());
@@ -1107,6 +1114,26 @@ inline void index_range_to_mask_segments(const IndexRange range,
         IndexMaskSegment(range.first() + i, Span(static_indices_array).take_front(size)));
   }
 }
+
+/**
+ * Return a mask of random points or curves.
+ *
+ * \param mask: (optional) The elements that should be used in the resulting mask.
+ * \param universe_size: The size of the mask.
+ * \param random_seed: The seed for the \a RandomNumberGenerator.
+ * \param probability: Determines how likely a point/curve will be chosen.
+ * If set to 0.0, nothing will be in the mask, if set to 1.0 everything will be in the mask.
+ */
+IndexMask random_mask(const IndexMask &mask,
+                      const int64_t universe_size,
+                      const uint32_t random_seed,
+                      const float probability,
+                      IndexMaskMemory &memory);
+
+IndexMask random_mask(const int64_t universe_size,
+                      const uint32_t random_seed,
+                      const float probability,
+                      IndexMaskMemory &memory);
 
 }  // namespace blender::index_mask
 

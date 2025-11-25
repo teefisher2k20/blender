@@ -6,7 +6,7 @@
 
 #include "BLI_string.h"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "BKE_node_runtime.hh"
@@ -51,7 +51,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_shader_buts_scatter(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "phase", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
+  layout->prop(ptr, "phase", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
 }
 
 static void node_shader_init_scatter(bNodeTree * /*ntree*/, bNode *node)
@@ -65,17 +65,18 @@ static void node_shader_update_scatter(bNodeTree *ntree, bNode *node)
 
   LISTBASE_FOREACH (bNodeSocket *, sock, &node->inputs) {
     if (STR_ELEM(sock->name, "IOR", "Backscatter")) {
-      bke::node_set_socket_availability(ntree, sock, phase_function == SHD_PHASE_FOURNIER_FORAND);
+      bke::node_set_socket_availability(
+          *ntree, *sock, phase_function == SHD_PHASE_FOURNIER_FORAND);
     }
     else if (STR_ELEM(sock->name, "Anisotropy")) {
       bke::node_set_socket_availability(
-          ntree, sock, ELEM(phase_function, SHD_PHASE_HENYEY_GREENSTEIN, SHD_PHASE_DRAINE));
+          *ntree, *sock, ELEM(phase_function, SHD_PHASE_HENYEY_GREENSTEIN, SHD_PHASE_DRAINE));
     }
     else if (STR_ELEM(sock->name, "Alpha")) {
-      bke::node_set_socket_availability(ntree, sock, phase_function == SHD_PHASE_DRAINE);
+      bke::node_set_socket_availability(*ntree, *sock, phase_function == SHD_PHASE_DRAINE);
     }
     else if (STR_ELEM(sock->name, "Diameter")) {
-      bke::node_set_socket_availability(ntree, sock, phase_function == SHD_PHASE_MIE);
+      bke::node_set_socket_availability(*ntree, *sock, phase_function == SHD_PHASE_MIE);
     }
   }
 }
@@ -115,10 +116,10 @@ void register_node_type_sh_volume_scatter()
   ntype.declare = file_ns::node_declare;
   ntype.add_ui_poll = object_shader_nodes_poll;
   ntype.draw_buttons = file_ns::node_shader_buts_scatter;
-  blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Middle);
+  blender::bke::node_type_size_preset(ntype, blender::bke::eNodeSizePreset::Middle);
   ntype.initfunc = file_ns::node_shader_init_scatter;
   ntype.gpu_fn = file_ns::node_shader_gpu_volume_scatter;
   ntype.updatefunc = file_ns::node_shader_update_scatter;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

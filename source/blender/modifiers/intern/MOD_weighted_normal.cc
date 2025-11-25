@@ -9,8 +9,6 @@
 #include "MEM_guardedalloc.h"
 
 #include "BLI_array_utils.hh"
-#include "BLI_bitmap.h"
-#include "BLI_linklist.h"
 #include "BLI_math_vector.h"
 
 #include "BLT_translation.hh"
@@ -18,8 +16,6 @@
 #include "DNA_defaults.h"
 #include "DNA_mesh_types.h"
 #include "DNA_meshdata_types.h"
-#include "DNA_object_types.h"
-#include "DNA_scene_types.h"
 #include "DNA_screen_types.h"
 
 #include "BKE_attribute.hh"
@@ -27,10 +23,9 @@
 #include "BKE_deform.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_mesh.hh"
-#include "BKE_mesh_mapping.hh"
 #include "BKE_screen.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "RNA_access.hh"
@@ -75,18 +70,18 @@ struct WeightedNormalData {
 
   blender::Span<blender::float3> vert_positions;
   blender::Span<blender::float3> vert_normals;
-  blender::Span<blender::int2> edges;
   blender::MutableSpan<bool> sharp_edges;
 
   blender::Span<int> corner_verts;
   blender::Span<int> corner_edges;
+  blender::GroupedSpan<int> vert_to_face_map;
   blender::Span<int> loop_to_face;
   blender::MutableSpan<blender::short2> clnors;
 
   blender::OffsetIndices<int> faces;
   blender::Span<blender::float3> face_normals;
   blender::VArraySpan<bool> sharp_faces;
-  const int *face_strength;
+  blender::VArray<int> face_strength;
 
   const MDeformVert *dvert;
   int defgrp_index;
@@ -111,8 +106,6 @@ static bool check_item_face_strength(WeightedNormalData *wn_data,
                                      WeightedNormalDataAggregateItem *item_data,
                                      const int face_index)
 {
-  BLI_assert(wn_data->face_strength != nullptr);
-
   const int mp_strength = wn_data->face_strength[face_index];
 
   if (mp_strength > item_data->curr_strength) {
@@ -189,7 +182,6 @@ static void apply_weights_vertex_normal(WeightedNormalModifierData *wnmd,
   const int verts_num = wn_data->verts_num;
 
   const blender::Span<blender::float3> positions = wn_data->vert_positions;
-  const blender::Span<int2> edges = wn_data->edges;
   const blender::OffsetIndices faces = wn_data->faces;
   const blender::Span<int> corner_verts = wn_data->corner_verts;
   const blender::Span<int> corner_edges = wn_data->corner_edges;
@@ -198,7 +190,7 @@ static void apply_weights_vertex_normal(WeightedNormalModifierData *wnmd,
   const blender::Span<int> loop_to_face = wn_data->loop_to_face;
 
   const blender::Span<blender::float3> face_normals = wn_data->face_normals;
-  const int *face_strength = wn_data->face_strength;
+  const VArray<int> face_strength = wn_data->face_strength;
 
   const MDeformVert *dvert = wn_data->dvert;
 
@@ -209,7 +201,7 @@ static void apply_weights_vertex_normal(WeightedNormalModifierData *wnmd,
 
   const bool keep_sharp = (wnmd->flag & MOD_WEIGHTEDNORMAL_KEEP_SHARP) != 0;
   const bool use_face_influence = (wnmd->flag & MOD_WEIGHTEDNORMAL_FACE_INFLUENCE) != 0 &&
-                                  face_strength != nullptr;
+                                  bool(face_strength);
   const bool has_vgroup = dvert != nullptr;
 
   blender::Array<blender::float3> corner_normals;
@@ -220,12 +212,10 @@ static void apply_weights_vertex_normal(WeightedNormalModifierData *wnmd,
      * we do not actually care about computed corner_normals for now... */
     corner_normals.reinitialize(corner_verts.size());
     bke::mesh::normals_calc_corners(positions,
-                                    edges,
                                     faces,
                                     corner_verts,
                                     corner_edges,
-                                    loop_to_face,
-                                    wn_data->vert_normals,
+                                    wn_data->vert_to_face_map,
                                     wn_data->face_normals,
                                     wn_data->sharp_edges,
                                     wn_data->sharp_faces,
@@ -305,10 +295,10 @@ static void apply_weights_vertex_normal(WeightedNormalModifierData *wnmd,
     }
 
     blender::bke::mesh::normals_corner_custom_set(positions,
-                                                  edges,
                                                   faces,
                                                   corner_verts,
                                                   corner_edges,
+                                                  wn_data->vert_to_face_map,
                                                   wn_data->vert_normals,
                                                   face_normals,
                                                   wn_data->sharp_faces,
@@ -334,10 +324,10 @@ static void apply_weights_vertex_normal(WeightedNormalModifierData *wnmd,
       }
 
       blender::bke::mesh::normals_corner_custom_set_from_verts(positions,
-                                                               edges,
                                                                faces,
                                                                corner_verts,
                                                                corner_edges,
+                                                               wn_data->vert_to_face_map,
                                                                wn_data->vert_normals,
                                                                face_normals,
                                                                wn_data->sharp_faces,
@@ -348,12 +338,10 @@ static void apply_weights_vertex_normal(WeightedNormalModifierData *wnmd,
     else {
       corner_normals.reinitialize(corner_verts.size());
       blender::bke::mesh::normals_calc_corners(positions,
-                                               edges,
                                                faces,
                                                corner_verts,
                                                corner_edges,
-                                               loop_to_face,
-                                               wn_data->vert_normals,
+                                               wn_data->vert_to_face_map,
                                                face_normals,
                                                wn_data->sharp_edges,
                                                wn_data->sharp_faces,
@@ -368,10 +356,10 @@ static void apply_weights_vertex_normal(WeightedNormalModifierData *wnmd,
         }
       }
       blender::bke::mesh::normals_corner_custom_set(positions,
-                                                    edges,
                                                     faces,
                                                     corner_verts,
                                                     corner_edges,
+                                                    wn_data->vert_to_face_map,
                                                     wn_data->vert_normals,
                                                     face_normals,
                                                     wn_data->sharp_faces,
@@ -388,8 +376,7 @@ static void wn_face_area(WeightedNormalModifierData *wnmd, WeightedNormalData *w
   const blender::OffsetIndices faces = wn_data->faces;
   const blender::Span<int> corner_verts = wn_data->corner_verts;
 
-  ModePair *face_area = static_cast<ModePair *>(
-      MEM_malloc_arrayN(faces.size(), sizeof(*face_area), __func__));
+  ModePair *face_area = MEM_malloc_arrayN<ModePair>(size_t(faces.size()), __func__);
 
   ModePair *f_area = face_area;
   for (const int i : faces.index_range()) {
@@ -409,13 +396,11 @@ static void wn_corner_angle(WeightedNormalModifierData *wnmd, WeightedNormalData
   const blender::OffsetIndices faces = wn_data->faces;
   const blender::Span<int> corner_verts = wn_data->corner_verts;
 
-  ModePair *corner_angle = static_cast<ModePair *>(
-      MEM_malloc_arrayN(corner_verts.size(), sizeof(*corner_angle), __func__));
+  ModePair *corner_angle = MEM_malloc_arrayN<ModePair>(size_t(corner_verts.size()), __func__);
 
   for (const int i : faces.index_range()) {
     const blender::IndexRange face = faces[i];
-    float *index_angle = static_cast<float *>(
-        MEM_malloc_arrayN(face.size(), sizeof(*index_angle), __func__));
+    float *index_angle = MEM_malloc_arrayN<float>(size_t(face.size()), __func__);
     blender::bke::mesh::face_angles_calc(
         positions, corner_verts.slice(face), {index_angle, face.size()});
 
@@ -442,15 +427,13 @@ static void wn_face_with_angle(WeightedNormalModifierData *wnmd, WeightedNormalD
   const blender::OffsetIndices faces = wn_data->faces;
   const blender::Span<int> corner_verts = wn_data->corner_verts;
 
-  ModePair *combined = static_cast<ModePair *>(
-      MEM_malloc_arrayN(corner_verts.size(), sizeof(*combined), __func__));
+  ModePair *combined = MEM_malloc_arrayN<ModePair>(size_t(corner_verts.size()), __func__);
 
   for (const int i : faces.index_range()) {
     const blender::IndexRange face = faces[i];
     const blender::Span<int> face_verts = corner_verts.slice(face);
     const float face_area = blender::bke::mesh::face_area_calc(positions, face_verts);
-    float *index_angle = static_cast<float *>(
-        MEM_malloc_arrayN(size_t(face.size()), sizeof(*index_angle), __func__));
+    float *index_angle = MEM_malloc_arrayN<float>(size_t(face.size()), __func__);
     blender::bke::mesh::face_angles_calc(positions, face_verts, {index_angle, face.size()});
 
     ModePair *cmbnd = &combined[face.start()];
@@ -480,7 +463,6 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
 
   const int verts_num = result->verts_num;
   const blender::Span<blender::float3> positions = mesh->vert_positions();
-  const blender::Span<int2> edges = mesh->edges();
   const OffsetIndices faces = result->faces();
   const blender::Span<int> corner_verts = mesh->corner_verts();
   const blender::Span<int> corner_edges = mesh->corner_edges();
@@ -522,19 +504,19 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
 
   wn_data.vert_positions = positions;
   wn_data.vert_normals = result->vert_normals();
-  wn_data.edges = edges;
   wn_data.sharp_edges = sharp_edges.span;
 
   wn_data.corner_verts = corner_verts;
   wn_data.corner_edges = corner_edges;
+  wn_data.vert_to_face_map = result->vert_to_face_map();
   wn_data.loop_to_face = loop_to_face_map;
   wn_data.clnors = clnors.span;
 
   wn_data.faces = faces;
-  wn_data.face_normals = mesh->face_normals();
+  wn_data.face_normals = mesh->face_normals_true();
   wn_data.sharp_faces = *attributes.lookup<bool>("sharp_face", bke::AttrDomain::Face);
-  wn_data.face_strength = static_cast<const int *>(CustomData_get_layer_named(
-      &result->face_data, CD_PROP_INT32, MOD_WEIGHTEDNORMALS_FACEWEIGHT_CDLAYER_ID));
+  wn_data.face_strength = *attributes.lookup<int>(MOD_WEIGHTEDNORMALS_FACEWEIGHT_CDLAYER_ID,
+                                                  bke::AttrDomain::Face);
 
   wn_data.dvert = dvert;
   wn_data.defgrp_index = defgrp_index;
@@ -595,20 +577,20 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   PointerRNA ob_ptr;
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, &ob_ptr);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiItemR(layout, ptr, "mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  uiItemR(layout, ptr, "weight", UI_ITEM_NONE, IFACE_("Weight"), ICON_NONE);
-  uiItemR(layout, ptr, "thresh", UI_ITEM_NONE, IFACE_("Threshold"), ICON_NONE);
+  layout->prop(ptr, "weight", UI_ITEM_NONE, IFACE_("Weight"), ICON_NONE);
+  layout->prop(ptr, "thresh", UI_ITEM_NONE, IFACE_("Threshold"), ICON_NONE);
 
-  col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "keep_sharp", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "use_face_influence", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col = &layout->column(false);
+  col->prop(ptr, "keep_sharp", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col->prop(ptr, "use_face_influence", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   modifier_vgroup_ui(layout, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", std::nullopt);
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void panel_register(ARegionType *region_type)
@@ -650,4 +632,5 @@ ModifierTypeInfo modifierType_WeightedNormal = {
     /*blend_write*/ nullptr,
     /*blend_read*/ nullptr,
     /*foreach_cache*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
 };

@@ -8,6 +8,8 @@
  * Helper functions for area/region API.
  */
 
+#include <limits>
+
 #include "BKE_screen.hh"
 
 #include "BLI_rect.h"
@@ -48,7 +50,7 @@ int ED_region_generic_tools_region_snap_size(const ARegion *region, int size, in
         (2.0f * column) + margin,
         (2.7f * column) + margin,
     };
-    int best_diff = INT_MAX;
+    int best_diff = std::numeric_limits<int>::max();
     int best_size = size;
     /* Only snap if less than last snap unit. */
     if (size <= snap_units[ARRAY_SIZE(snap_units) - 1]) {
@@ -62,6 +64,21 @@ int ED_region_generic_tools_region_snap_size(const ARegion *region, int size, in
       }
     }
     return best_size;
+  }
+  return size;
+}
+
+int ED_region_generic_panel_region_snap_size(const ARegion *region, int size, int axis)
+{
+  if (axis == 0) {
+    if (!UI_panel_category_is_visible(region)) {
+      return size;
+    }
+
+    /* Using Y axis avoids slight feedback loop when adjusting X. */
+    const float aspect = BLI_rctf_size_y(&region->v2d.cur) /
+                         (BLI_rcti_size_y(&region->v2d.mask) + 1);
+    return int(UI_PANEL_CATEGORY_MIN_WIDTH / aspect);
   }
   return size;
 }

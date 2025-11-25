@@ -18,7 +18,10 @@
 void gpu_shader_create_info_init();
 void gpu_shader_create_info_exit();
 
-bool gpu_shader_create_info_compile(const char *name_starts_with_filter);
+bool gpu_shader_create_info_compile_all(const char *name_starts_with_filter);
 
-/** Runtime create infos are not registered in the dictionary and cannot be searched. */
+/**
+ * Runtime created shader information is not registered in the dictionary
+ * and cannot be searched.
+ */
 const GPUShaderCreateInfo *gpu_shader_create_info_get(const char *info_name);

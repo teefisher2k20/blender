@@ -38,7 +38,7 @@ namespace blender::io::obj {
 OBJMesh::OBJMesh(Depsgraph *depsgraph, const OBJExportParams &export_params, Object *mesh_object)
 {
   /* We need to copy the object because it may be in temporary space. */
-  Object *obj_eval = DEG_get_evaluated_object(depsgraph, mesh_object);
+  Object *obj_eval = DEG_get_evaluated(depsgraph, mesh_object);
   object_name_ = obj_eval->id.name + 2;
   export_mesh_ = nullptr;
 
@@ -58,7 +58,7 @@ OBJMesh::OBJMesh(Depsgraph *depsgraph, const OBJExportParams &export_params, Obj
     /* Curves and NURBS surfaces need a new mesh when they're
      * exported in the form of vertices and edges.
      */
-    this->set_mesh(BKE_mesh_new_from_object(depsgraph, obj_eval, true, true));
+    this->set_mesh(BKE_mesh_new_from_object(depsgraph, obj_eval, true, true, true));
   }
   if (export_params.export_triangulated_mesh && obj_eval->type == OB_MESH) {
     this->triangulate_mesh_eval();
@@ -69,8 +69,11 @@ OBJMesh::OBJMesh(Depsgraph *depsgraph, const OBJExportParams &export_params, Obj
     this->materials[i] = BKE_object_material_get_eval(obj_eval, i + 1);
   }
 
-  set_world_axes_transform(
-      *obj_eval, export_params.forward_axis, export_params.up_axis, export_params.global_scale);
+  set_world_axes_transform(*obj_eval,
+                           export_params.forward_axis,
+                           export_params.up_axis,
+                           export_params.global_scale,
+                           export_params.apply_transform);
 }
 
 /**
@@ -146,13 +149,15 @@ void OBJMesh::triangulate_mesh_eval()
 void OBJMesh::set_world_axes_transform(const Object &obj_eval,
                                        const eIOAxis forward,
                                        const eIOAxis up,
-                                       const float global_scale)
+                                       const float global_scale,
+                                       const bool apply_transform)
 {
   float3x3 axes_transform;
   /* +Y-forward and +Z-up are the default Blender axis settings. */
   mat3_from_axis_conversion(forward, up, IO_AXIS_Y, IO_AXIS_Z, axes_transform.ptr());
 
-  const float4x4 &object_to_world = obj_eval.object_to_world();
+  const float4x4 &object_to_world = apply_transform ? obj_eval.object_to_world() :
+                                                      float4x4::identity();
   const float3x3 transform = axes_transform * float3x3(object_to_world);
 
   world_and_axes_transform_ = float4x4(transform);
@@ -206,13 +211,25 @@ void OBJMesh::calc_smooth_groups(const bool use_bitflags)
   const bke::AttributeAccessor attributes = export_mesh_->attributes();
   const VArraySpan sharp_edges = *attributes.lookup<bool>("sharp_edge", bke::AttrDomain::Edge);
   const VArraySpan sharp_faces = *attributes.lookup<bool>("sharp_face", bke::AttrDomain::Face);
-  face_smooth_groups_ = BKE_mesh_calc_smoothgroups(mesh_edges_.size(),
-                                                   mesh_faces_,
-                                                   export_mesh_->corner_edges(),
-                                                   sharp_edges,
-                                                   sharp_faces,
-                                                   &tot_smooth_groups_,
-                                                   use_bitflags);
+  if (use_bitflags) {
+    face_smooth_groups_ = BKE_mesh_calc_smoothgroups_bitflags(mesh_edges_.size(),
+                                                              export_mesh_->verts_num,
+                                                              mesh_faces_,
+                                                              export_mesh_->corner_edges(),
+                                                              export_mesh_->corner_verts(),
+                                                              sharp_edges,
+                                                              sharp_faces,
+                                                              true,
+                                                              &tot_smooth_groups_);
+  }
+  else {
+    face_smooth_groups_ = BKE_mesh_calc_smoothgroups(mesh_edges_.size(),
+                                                     mesh_faces_,
+                                                     export_mesh_->corner_edges(),
+                                                     sharp_edges,
+                                                     sharp_faces,
+                                                     &tot_smooth_groups_);
+  }
 }
 
 void OBJMesh::calc_face_order()
@@ -255,8 +272,7 @@ StringRef OBJMesh::get_object_mesh_name() const
 
 void OBJMesh::store_uv_coords_and_indices()
 {
-  const StringRef active_uv_name = CustomData_get_active_layer_name(&export_mesh_->corner_data,
-                                                                    CD_PROP_FLOAT2);
+  const StringRef active_uv_name = export_mesh_->active_uv_map_name();
   if (active_uv_name.is_empty()) {
     uv_coords_.clear();
     return;

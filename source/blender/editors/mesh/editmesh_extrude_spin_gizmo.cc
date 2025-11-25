@@ -107,8 +107,7 @@ static void gizmo_mesh_spin_init_setup(const bContext * /*C*/, wmGizmoGroup *gzg
   const float scale_base = INIT_SCALE_BASE;
   const float scale_button = INIT_SCALE_BUTTON;
 
-  GizmoGroupData_SpinInit *ggd = static_cast<GizmoGroupData_SpinInit *>(
-      MEM_callocN(sizeof(*ggd), __func__));
+  GizmoGroupData_SpinInit *ggd = MEM_callocN<GizmoGroupData_SpinInit>(__func__);
   gzgroup->customdata = ggd;
   const wmGizmoType *gzt_dial = WM_gizmotype_find("GIZMO_GT_dial_3d", true);
   const wmGizmoType *gzt_button = WM_gizmotype_find("GIZMO_GT_button_2d", true);
@@ -324,7 +323,7 @@ static void gizmo_mesh_spin_init_refresh(const bContext *C, wmGizmoGroup *gzgrou
     }
   }
 
-  ED_transform_calc_orientation_from_type(C, ggd->data.orient_mat);
+  blender::ed::transform::calc_orientation_from_type(C, ggd->data.orient_mat);
   for (int i = 0; i < 3; i++) {
     const int axis_ortho = (i + ORTHO_AXIS_OFFSET) % 3;
     const float *axis_ortho_vec = ggd->data.orient_mat[axis_ortho];
@@ -540,8 +539,8 @@ static void gizmo_spin_exec(GizmoGroupData_SpinRedo *ggd)
   }
 
   wmOperator *op = ggd->data.op;
-  if (op == WM_operator_last_redo((bContext *)ggd->data.context)) {
-    ED_undo_operator_repeat((bContext *)ggd->data.context, op);
+  if (op == WM_operator_last_redo(ggd->data.context)) {
+    ED_undo_operator_repeat(ggd->data.context, op);
   }
 }
 
@@ -814,8 +813,7 @@ static void gizmo_mesh_spin_redo_setup(const bContext *C, wmGizmoGroup *gzgroup)
     return;
   }
 
-  GizmoGroupData_SpinRedo *ggd = static_cast<GizmoGroupData_SpinRedo *>(
-      MEM_callocN(sizeof(*ggd), __func__));
+  GizmoGroupData_SpinRedo *ggd = MEM_callocN<GizmoGroupData_SpinRedo>(__func__);
   gzgroup->customdata = ggd;
 
   const wmGizmoType *gzt_arrow = WM_gizmotype_find("GIZMO_GT_arrow_3d", true);
@@ -906,7 +904,12 @@ static void gizmo_mesh_spin_redo_setup(const bContext *C, wmGizmoGroup *gzgroup)
     ARegion *region = CTX_wm_region(C);
     wmGizmoMap *gzmap = region->runtime->gizmo_map;
     wmGizmoGroup *gzgroup_init = WM_gizmomap_group_find(gzmap, "MESH_GGT_spin");
-    if (gzgroup_init) {
+    /* NOTE(@ideasman42): the intention here is to initialize one gizmo from another.
+     * This works when activating the tool but can fail when switching tools & space types,
+     * In this case setting an identity matrix is used when changing contexts.
+     * Having a spin start in one region, then continuing to adjust this in another region
+     * with the orientation matrix properly set would be good to support though. See: #140339. */
+    if (gzgroup_init && gzgroup_init->customdata) {
       GizmoGroupData_SpinInit *ggd_init = static_cast<GizmoGroupData_SpinInit *>(
           gzgroup_init->customdata);
       copy_m3_m3(ggd->data.orient_mat, ggd_init->data.orient_mat);
@@ -1019,7 +1022,7 @@ static void gizmo_mesh_spin_redo_draw_prepare(const bContext * /*C*/, wmGizmoGro
 {
   GizmoGroupData_SpinRedo *ggd = static_cast<GizmoGroupData_SpinRedo *>(gzgroup->customdata);
   if (ggd->data.op->next) {
-    ggd->data.op = WM_operator_last_redo((bContext *)ggd->data.context);
+    ggd->data.op = WM_operator_last_redo(ggd->data.context);
   }
 
   /* Not essential, just avoids feedback loop where matrices

@@ -233,10 +233,32 @@ class PREFERENCES_OT_keyconfig_import(Operator):
         default=True,
     )
 
-    def execute(self, _context):
+    # When importing keymap files with the same name with built-in presets (like
+    # "Blender" or "Industry Compatible"), we need to rename the imported ones
+    # so those entries can be properly removed (built-in ones can't be removed).
+    # See #118035.
+    @classmethod
+    def _preset_prevent_name_collision(cls, config_name):
         import os
-        from os.path import basename
+        from bpy.utils import is_path_builtin
+        path = bpy.utils.user_resource(
+            'SCRIPTS',
+            path=os.path.join("presets", "keyconfig"),
+            create=True,
+        )
+
+        config_name_final = config_name
+        config_name_noext, config_name_ext = os.path.splitext(config_name)
+        preset_path = bpy.utils.preset_find(config_name_noext, "keyconfig", ext=".py")
+
+        if preset_path is not None and is_path_builtin(preset_path):
+            config_name_final = "{:s} (User){:s}".format(config_name_noext, config_name_ext)
+
+        return os.path.join(path, config_name_final)
+
+    def execute(self, _context):
         import shutil
+        from os.path import basename
 
         if not self.filepath:
             self.report({'ERROR'}, "Filepath not set")
@@ -244,12 +266,7 @@ class PREFERENCES_OT_keyconfig_import(Operator):
 
         config_name = basename(self.filepath)
 
-        path = bpy.utils.user_resource(
-            'SCRIPTS',
-            path=os.path.join("presets", "keyconfig"),
-            create=True,
-        )
-        path = os.path.join(path, config_name)
+        path = self._preset_prevent_name_collision(config_name)
 
         try:
             if self.keep_original:
@@ -381,6 +398,7 @@ class PREFERENCES_OT_keyitem_restore(Operator):
 
         if (not kmi.is_user_defined) and kmi.is_user_modified:
             km.restore_item_to_default(kmi)
+            context.preferences.is_dirty = True
 
         return {'FINISHED'}
 
@@ -496,11 +514,11 @@ class PREFERENCES_OT_addon_enable(Operator):
                 self.report(
                     {'WARNING'},
                     rpt_(
-                        "This script was written Blender "
+                        "This script was written for Blender "
                         "version {:d}.{:d}.{:d} and might not "
                         "function (correctly), "
                         "though it is enabled"
-                    ).format(info_ver)
+                    ).format(*info_ver)
                 )
             result = {'FINISHED'}
         else:
@@ -543,7 +561,6 @@ class PREFERENCES_OT_addon_disable(Operator):
             _wm_wait_cursor(True)
 
         module_name = self.module
-        is_extension = addon_utils.check_extension(module_name)
         addon_utils.disable(module_name, default_set=True, handle_error=err_cb)
 
         if err_str:
@@ -946,7 +963,10 @@ class PREFERENCES_OT_addon_show(Operator):
             context.preferences.view.show_addons_enabled_only = False
             context.window_manager.addon_filter = 'All'
             context.window_manager.addon_search = bl_info["name"]
-            bpy.ops.screen.userpref_show('INVOKE_DEFAULT')
+
+            # No need to show the editor if it is already visible in the main window.
+            if 'PREFERENCES' not in (area.type for area in context.screen.areas):
+                bpy.ops.screen.userpref_show('INVOKE_DEFAULT')
 
         return {'FINISHED'}
 
@@ -1129,6 +1149,7 @@ class PREFERENCES_OT_studiolight_new(Operator):
     filename: StringProperty(
         name="Name",
         default="StudioLight",
+        subtype='FILE_NAME',
     )
 
     ask_override = False

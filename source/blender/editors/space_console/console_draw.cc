@@ -8,11 +8,12 @@
 
 #include <cstring>
 
-#include "BLI_blenlib.h"
-#include "BLI_utildefines.h"
+#include "BLI_listbase.h"
+#include "BLI_string_utf8.h"
 
 #include "DNA_screen_types.h"
 #include "DNA_space_types.h"
+#include "DNA_userdef_types.h"
 
 #include "MEM_guardedalloc.h"
 
@@ -63,7 +64,7 @@ void console_scrollback_prompt_begin(SpaceConsole *sc, ConsoleLine *cl_dummy)
   cl_dummy->type = CONSOLE_LINE_INPUT;
   cl_dummy->len = prompt_len + cl->len;
   cl_dummy->len_alloc = cl_dummy->len + 1;
-  cl_dummy->line = static_cast<char *>(MEM_mallocN(cl_dummy->len_alloc, "cl_dummy"));
+  cl_dummy->line = MEM_malloc_arrayN<char>(cl_dummy->len_alloc, "cl_dummy");
   memcpy(cl_dummy->line, sc->prompt, prompt_len);
   memcpy(cl_dummy->line + prompt_len, cl->line, cl->len + 1);
   BLI_addtail(&sc->scrollback, cl_dummy);
@@ -152,7 +153,7 @@ static void console_textview_draw_cursor(TextViewContext *tvc, int cwidth, int c
 
   /* cursor */
   GPUVertFormat *format = immVertexFormat();
-  uint pos = GPU_vertformat_attr_add(format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+  uint pos = GPU_vertformat_attr_add(format, "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
   immUniformThemeColor(TH_CONSOLE_CURSOR);
 
@@ -246,9 +247,9 @@ int console_textview_height(SpaceConsole *sc, const ARegion *region)
 
 int console_char_pick(SpaceConsole *sc, const ARegion *region, const int mval[2])
 {
-  int r_mval_pick_offset = 0;
+  int mval_pick_offset = 0;
   void *mval_pick_item = nullptr;
 
-  console_textview_main__internal(sc, region, false, mval, &mval_pick_item, &r_mval_pick_offset);
-  return r_mval_pick_offset;
+  console_textview_main__internal(sc, region, false, mval, &mval_pick_item, &mval_pick_offset);
+  return mval_pick_offset;
 }

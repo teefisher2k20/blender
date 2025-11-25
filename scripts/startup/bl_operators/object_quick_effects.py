@@ -27,6 +27,7 @@ def object_ensure_material(obj, mat_name):
             break
     if mat is None:
         mat = bpy.data.materials.new(mat_name)
+        mat.node_tree.nodes.clear()
         if mat_slot:
             mat_slot.material = mat
         else:
@@ -90,6 +91,8 @@ class QuickFur(ObjectModeOperator, Operator):
 
     def execute(self, context):
         import os
+        from collections import namedtuple
+
         mesh_objects = [obj for obj in context.selected_objects if obj.type == 'MESH']
         if not mesh_objects:
             self.report({'ERROR'}, "Select at least one mesh object")
@@ -102,31 +105,41 @@ class QuickFur(ObjectModeOperator, Operator):
         elif self.density == 'HIGH':
             count = 100000
 
-        node_groups_to_append = {"Generate Hair Curves", "Set Hair Curve Profile", "Interpolate Hair Curves"}
-        if self.use_noise:
-            node_groups_to_append.add("Hair Curves Noise")
-        if self.use_frizz:
-            node_groups_to_append.add("Frizz Hair Curves")
-        assets_directory = os.path.join(
+        asset_library_filepath = os.path.join(
             bpy.utils.system_resource('DATAFILES'),
             "assets",
-            "geometry_nodes",
+            "nodes",
             "procedural_hair_node_assets.blend",
-            "NodeTree",
         )
-        for name in node_groups_to_append:
-            bpy.ops.wm.append(
-                directory=assets_directory,
-                filename=name,
-                use_recursive=True,
-                clear_asset_data=True,
-                do_reuse_local_id=True,
-            )
-        generate_group = bpy.data.node_groups["Generate Hair Curves"]
-        interpolate_group = bpy.data.node_groups["Interpolate Hair Curves"]
-        radius_group = bpy.data.node_groups["Set Hair Curve Profile"]
-        noise_group = bpy.data.node_groups["Hair Curves Noise"] if self.use_noise else None
-        frizz_group = bpy.data.node_groups["Frizz Hair Curves"] if self.use_frizz else None
+
+        # Create a named tuple that stores attributes for the node-group names.
+        attr_name_pairs = [
+            ("generate", "Generate Hair Curves"),
+            ("interpolate", "Interpolate Hair Curves"),
+            ("radius", "Set Hair Curve Profile"),
+
+        ]
+        if self.use_noise:
+            attr_name_pairs.append(("noise", "Hair Curves Noise"))
+        if self.use_frizz:
+            attr_name_pairs.append(("frizz", "Frizz Hair Curves"))
+
+        NodeGroupData = namedtuple("NodeGroupData", tuple(v for v, _ in attr_name_pairs))
+
+        with bpy.data.libraries.load(
+                asset_library_filepath,
+                link=True,
+                pack=True,
+                set_fake=False,
+        ) as (data_src, data_dst):
+            # The values are assumed to exist, no inspection of the source is needed.
+            del data_src
+            data_dst.node_groups.extend([name for _, name in attr_name_pairs])
+
+        # For convenient name lookups.
+        node_groups_name_map = {id.name: id for id in data_dst.node_groups}
+        node_groups = NodeGroupData(*(node_groups_name_map[name] for _, name in attr_name_pairs))
+        del node_groups_name_map
 
         material = bpy.data.materials.new(data_("Fur Material"))
 
@@ -156,7 +169,7 @@ class QuickFur(ObjectModeOperator, Operator):
                 density = count / area
 
             generate_modifier = curves_object.modifiers.new(name=data_("Generate"), type='NODES')
-            generate_modifier.node_group = generate_group
+            generate_modifier.node_group = node_groups.generate
             generate_modifier["Input_2"] = mesh_object
             generate_modifier["Input_18_attribute_name"] = curves.surface_uv_map
             generate_modifier["Input_12"] = True
@@ -165,11 +178,11 @@ class QuickFur(ObjectModeOperator, Operator):
             generate_modifier["Input_15"] = density * 0.01
 
             radius_modifier = curves_object.modifiers.new(name=data_("Set Hair Curve Profile"), type='NODES')
-            radius_modifier.node_group = radius_group
+            radius_modifier.node_group = node_groups.radius
             radius_modifier["Input_3"] = self.radius
 
             interpolate_modifier = curves_object.modifiers.new(name=data_("Interpolate Hair Curves"), type='NODES')
-            interpolate_modifier.node_group = interpolate_group
+            interpolate_modifier.node_group = node_groups.interpolate
             interpolate_modifier["Input_2"] = mesh_object
             interpolate_modifier["Input_18_attribute_name"] = curves.surface_uv_map
             interpolate_modifier["Input_12"] = True
@@ -177,13 +190,13 @@ class QuickFur(ObjectModeOperator, Operator):
             interpolate_modifier["Input_17"] = self.view_percentage
             interpolate_modifier["Input_24"] = True
 
-            if noise_group:
+            if self.use_noise:
                 noise_modifier = curves_object.modifiers.new(name=data_("Hair Curves Noise"), type='NODES')
-                noise_modifier.node_group = noise_group
+                noise_modifier.node_group = node_groups.noise
 
-            if frizz_group:
+            if self.use_frizz:
                 frizz_modifier = curves_object.modifiers.new(name=data_("Frizz Hair Curves"), type='NODES')
-                frizz_modifier.node_group = frizz_group
+                frizz_modifier.node_group = node_groups.frizz
 
             if self.apply_hair_guides:
                 with context.temp_override(object=curves_object):
@@ -303,30 +316,27 @@ class QuickExplode(ObjectModeOperator, Operator):
             settings.normal_factor = self.velocity
             settings.render_type = 'NONE'
 
-            explode = obj.modifiers.new(name="Explode", type='EXPLODE')
+            explode = obj.modifiers.new(name=data_("Explode"), type='EXPLODE')
             explode.use_edge_cut = True
 
             if self.fade:
                 explode.show_dead = False
-                uv = obj.data.uv_layers.new(name="Explode fade")
+                uv = obj.data.uv_layers.new(name=data_("Explode fade"))
                 explode.particle_uv = uv.name
 
-                mat = object_ensure_material(obj, "Explode Fade")
+                mat = object_ensure_material(obj, data_("Explode Fade"))
                 mat.surface_render_method = 'DITHERED'
-                if not mat.use_nodes:
-                    mat.use_nodes = True
 
                 nodes = mat.node_tree.nodes
-                for node in nodes:
-                    if node.type == 'OUTPUT_MATERIAL':
-                        node_out_mat = node
-                        break
-
-                node_surface = node_out_mat.inputs["Surface"].links[0].from_node
+                node_out_mat = nodes.new("ShaderNodeOutputMaterial")
+                node_surface = nodes.new("ShaderNodeBsdfPrincipled")
+                nodes.active = node_out_mat
 
                 node_x = node_surface.location[0]
                 node_y = node_surface.location[1] - 400
                 offset_x = 200
+
+                node_out_mat.location[0] = node_x + node_surface.width + offset_x
 
                 node_mix = nodes.new('ShaderNodeMixShader')
                 node_mix.location = (node_x - offset_x, node_y)
@@ -465,7 +475,7 @@ class QuickSmoke(ObjectModeOperator, Operator):
             obj.modifiers[-1].flow_settings.flow_behavior = 'INFLOW'
 
             # use some surface distance for smoke emission
-            obj.modifiers[-1].flow_settings.surface_distance = 1.5
+            obj.modifiers[-1].flow_settings.surface_distance = 1.0
 
             if not self.show_flows:
                 obj.display_type = 'WIRE'
@@ -476,7 +486,7 @@ class QuickSmoke(ObjectModeOperator, Operator):
         # add the smoke domain object
         bpy.ops.mesh.primitive_cube_add()
         obj = context.active_object
-        obj.name = "Smoke Domain"
+        obj.name = data_("Smoke Domain")
 
         # give the smoke some room above the flows
         obj.location = 0.5 * (max_co + min_co) + Vector((0.0, 0.0, 1.0))
@@ -499,11 +509,8 @@ class QuickSmoke(ObjectModeOperator, Operator):
         # Cycles and EEVEE.
         bpy.ops.object.material_slot_add()
 
-        mat = bpy.data.materials.new("Smoke Domain Material")
+        mat = bpy.data.materials.new(data_("Smoke Domain Material"))
         obj.material_slots[0].material = mat
-
-        # Make sure we use nodes
-        mat.use_nodes = True
 
         # Set node variables and clear the default nodes
         tree = mat.node_tree
@@ -592,7 +599,7 @@ class QuickLiquid(Operator):
         # add the liquid domain object
         bpy.ops.mesh.primitive_cube_add(align='WORLD')
         obj = context.active_object
-        obj.name = "Liquid Domain"
+        obj.name = data_("Liquid Domain")
 
         # give the liquid some room above the flows
         obj.location = 0.5 * (max_co + min_co) + Vector((0.0, 0.0, -1.0))
@@ -634,11 +641,8 @@ class QuickLiquid(Operator):
         # create a ray-transparent material for the domain
         bpy.ops.object.material_slot_add()
 
-        mat = bpy.data.materials.new("Liquid Domain Material")
+        mat = bpy.data.materials.new(data_("Liquid Domain Material"))
         obj.material_slots[0].material = mat
-
-        # Make sure we use nodes
-        mat.use_nodes = True
 
         # Set node variables and clear the default nodes
         tree = mat.node_tree

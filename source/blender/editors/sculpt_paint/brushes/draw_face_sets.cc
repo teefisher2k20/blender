@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "editors/sculpt_paint/brushes/types.hh"
+#include "editors/sculpt_paint/brushes/brushes.hh"
 #include "editors/sculpt_paint/mesh_brush_common.hh"
 #include "editors/sculpt_paint/sculpt_automask.hh"
 
@@ -20,9 +20,11 @@
 #include "editors/sculpt_paint/sculpt_intern.hh"
 #include "editors/sculpt_paint/sculpt_undo.hh"
 
+#include "ED_sculpt.hh"
+
 #include "bmesh.hh"
 
-namespace blender::ed::sculpt_paint {
+namespace blender::ed::sculpt_paint::brushes {
 inline namespace draw_face_sets_cc {
 
 constexpr float FACE_SET_BRUSH_MIN_FADE = 0.05f;
@@ -430,6 +432,17 @@ void do_draw_face_sets_brush(const Depsgraph &depsgraph,
 {
   const Brush &brush = *BKE_paint_brush_for_read(&sd.paint);
 
+  if (object.sculpt->cache->paint_face_set == SCULPT_FACE_SET_NONE) {
+    if (object.sculpt->cache->invert) {
+      /* When inverting the brush, pick the paint face mask ID from the mesh. */
+      object.sculpt->cache->paint_face_set = face_set::active_face_set_get(object);
+    }
+    else {
+      /* By default, create a new Face Sets. */
+      object.sculpt->cache->paint_face_set = face_set::find_next_available_id(object);
+    }
+  }
+
   switch (bke::object::pbvh_get(object)->type()) {
     case bke::pbvh::Type::Mesh:
       do_draw_face_sets_brush_mesh(depsgraph, object, brush, node_mask);
@@ -442,4 +455,4 @@ void do_draw_face_sets_brush(const Depsgraph &depsgraph,
       break;
   }
 }
-}  // namespace blender::ed::sculpt_paint
+}  // namespace blender::ed::sculpt_paint::brushes

@@ -8,12 +8,6 @@
 
 #include "ANIM_nla.hh"
 
-#include "BKE_anim_data.hh"
-#include "BKE_lib_id.hh"
-#include "BKE_nla.hh"
-
-#include "BLI_string_utf8.h"
-
 namespace blender::animrig::nla {
 
 bool assign_action(NlaStrip &strip, Action &action, ID &animated_id)
@@ -37,7 +31,7 @@ bool assign_action(NlaStrip &strip, Action &action, ID &animated_id)
    * example, `OBSlot`. The second strip assignment would not see a 'virgin' slot, and thus not
    * auto-select `OBSlot`. This behavior makes sense when assigning Actions in the Action editor
    * (it shouldn't automatically pick the first slot of matching ID type), but for the NLA I
-   * (Sybren) feel that it could be a bit more 'enthousiastic' in auto-picking a slot.
+   * (Sybren) feel that it could be a bit more 'enthusiastic' in auto-picking a slot.
    */
   if (strip.action_slot_handle == Slot::unassigned && action.slots().size() == 1) {
     Slot *first_slot = action.slot(0);

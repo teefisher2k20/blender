@@ -18,13 +18,16 @@
 
 #include "ED_screen.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_types.hh"
 
 #include "transform.hh"
 #include "transform_convert.hh"
 #include "transform_snap.hh"
 
 #include "transform_mode.hh"
+
+namespace blender::ed::transform {
+
 /* -------------------------------------------------------------------- */
 /** \name Transform (Normal Rotation)
  * \{ */
@@ -65,13 +68,31 @@ static void applyNormalRotation(TransInfo *t)
 {
   char str[UI_MAX_DRAW_STR];
 
-  float axis_final[3];
-  /* Use the negative axis to match the default Z axis of the view matrix. */
-  negate_v3_v3(axis_final, t->spacemtx[t->orient_axis]);
+  float3 axis_final;
+  transform_mode_rotation_axis_get(t, axis_final);
 
-  if ((t->con.mode & CON_APPLY) && t->con.applyRot) {
-    t->con.applyRot(t, nullptr, nullptr, axis_final, nullptr);
+  float angle;
+  if (applyNumInput(&t->num, &angle)) {
+    /* Pass. */
   }
+  else {
+    angle = t->values[0] + t->values_modal_offset[0];
+    if (!(t->flag & T_INPUT_IS_VALUES_FINAL) &&
+        transform_mode_is_axis_pointing_to_screen(t, axis_final))
+    {
+      /* Flip rotation direction if axis is pointing to screen. */
+      angle = -angle;
+    }
+    transform_snap_mixed_apply(t, &angle);
+    if (!(transform_snap_is_active(t) && validSnap(t))) {
+      transform_snap_increment(t, &angle);
+    }
+  }
+
+  float mat[3][3];
+  axis_angle_normalized_to_mat3(mat, axis_final, angle);
+
+  t->values_final[0] = angle;
 
   FOREACH_TRANS_DATA_CONTAINER (t, tc) {
     BMEditMesh *em = BKE_editmesh_from_object(tc->obedit);
@@ -81,20 +102,7 @@ static void applyNormalRotation(TransInfo *t)
         tc->custom.mode.data);
     BMLoopNorEditData *lnor_ed = lnors_ed_arr->lnor_editdata;
 
-    float axis[3];
-    float mat[3][3];
-    float angle = t->values[0] + t->values_modal_offset[0];
-    copy_v3_v3(axis, axis_final);
-
-    transform_snap_increment(t, &angle);
-
-    transform_snap_mixed_apply(t, &angle);
-
-    applyNumInput(&t->num, &angle);
-
     headerRotation(t, str, sizeof(str), angle);
-
-    axis_angle_normalized_to_mat3(mat, axis, angle);
 
     for (int i = 0; i < lnors_ed_arr->totloop; i++, lnor_ed++) {
       mul_v3_m3v3(lnor_ed->nloc, mat, lnor_ed->niloc);
@@ -102,8 +110,6 @@ static void applyNormalRotation(TransInfo *t)
       BKE_lnor_space_custom_normal_to_data(
           bm->lnor_spacearr->lspacearr[lnor_ed->loop_index], lnor_ed->nloc, lnor_ed->clnors_data);
     }
-
-    t->values_final[0] = angle;
   }
 
   recalc_data(t);
@@ -121,7 +127,7 @@ static void initNormalRotation(TransInfo *t, wmOperator * /*op*/)
   t->num.idx_max = 0;
   initSnapAngleIncrements(t);
 
-  copy_v3_fl(t->num.val_inc, t->snap[1]);
+  copy_v3_fl(t->num.val_inc, t->increment[0] * t->increment_precision);
   t->num.unit_sys = t->scene->unit.system;
   t->num.unit_use_radians = (t->scene->unit.system_rotation == USER_UNIT_ROT_RADIANS);
   t->num.unit_type[0] = B_UNIT_ROTATION;
@@ -150,3 +156,5 @@ TransModeInfo TransMode_rotatenormal = {
     /*snap_apply_fn*/ nullptr,
     /*draw_fn*/ nullptr,
 };
+
+}  // namespace blender::ed::transform

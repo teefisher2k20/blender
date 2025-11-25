@@ -2,8 +2,9 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "DNA_mesh_types.h"
+
 #include "BKE_material.hh"
-#include "BKE_mesh.h"
 #include "BKE_volume_grid.hh"
 #include "BKE_volume_to_mesh.hh"
 
@@ -15,7 +16,7 @@ namespace blender::nodes::node_geo_grid_to_mesh_cc {
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Float>("Grid").hide_value();
+  b.add_input<decl::Float>("Grid").hide_value().structure_type(StructureType::Grid);
   b.add_input<decl::Float>("Threshold")
       .default_value(0.1f)
       .description("Values larger than the threshold are inside the generated mesh");
@@ -54,8 +55,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
-  ntype.gather_link_search_ops = search_link_ops_for_volume_grid_node;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

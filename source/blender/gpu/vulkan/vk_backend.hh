@@ -31,7 +31,6 @@ class VKBackend : public GPUBackend {
 #endif
 
  public:
-  VKShaderCompiler shader_compiler;
   /* Global instance to device handles. */
   VKDevice device;
 
@@ -54,6 +53,7 @@ class VKBackend : public GPUBackend {
    */
   static bool is_supported();
 
+  void init_resources() override;
   void delete_resources() override;
 
   void samplers_update() override;

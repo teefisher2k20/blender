@@ -40,8 +40,8 @@ static uint16_t vbo_bind(const ShaderInterface *interface,
     const GPUVertAttr *a = &format->attrs[a_idx];
 
     if (format->deinterleaved) {
-      offset += ((a_idx == 0) ? 0 : format->attrs[a_idx - 1].size) * v_len;
-      stride = a->size;
+      offset += ((a_idx == 0) ? 0 : format->attrs[a_idx - 1].type.size()) * v_len;
+      stride = a->type.size();
     }
     else {
       offset = a->offset;
@@ -49,7 +49,7 @@ static uint16_t vbo_bind(const ShaderInterface *interface,
 
     /* This is in fact an offset in memory. */
     const GLvoid *pointer = (const GLubyte *)intptr_t(offset + v_first * stride);
-    const GLenum type = to_gl(static_cast<GPUVertCompType>(a->comp_type));
+    const GLenum type = to_gl(a->type.comp_type());
 
     for (uint n_idx = 0; n_idx < a->name_len; n_idx++) {
       const char *name = GPU_vertformat_attr_name_get(format, a, n_idx);
@@ -61,32 +61,18 @@ static uint16_t vbo_bind(const ShaderInterface *interface,
 
       enabled_attrib |= (1 << input->location);
 
-      if (ELEM(a->comp_len, 16, 12, 8)) {
-        BLI_assert(a->fetch_mode == GPU_FETCH_FLOAT);
-        BLI_assert(a->comp_type == GPU_COMP_F32);
-        for (int i = 0; i < a->comp_len / 4; i++) {
-          glEnableVertexAttribArray(input->location + i);
-          glVertexAttribDivisor(input->location + i, divisor);
-          glVertexAttribPointer(
-              input->location + i, 4, type, GL_FALSE, stride, (const GLubyte *)pointer + i * 16);
-        }
-      }
-      else {
-        glEnableVertexAttribArray(input->location);
-        glVertexAttribDivisor(input->location, divisor);
+      glEnableVertexAttribArray(input->location);
+      glVertexAttribDivisor(input->location, divisor);
 
-        switch (a->fetch_mode) {
-          case GPU_FETCH_FLOAT:
-          case GPU_FETCH_INT_TO_FLOAT:
-            glVertexAttribPointer(input->location, a->comp_len, type, GL_FALSE, stride, pointer);
-            break;
-          case GPU_FETCH_INT_TO_FLOAT_UNIT:
-            glVertexAttribPointer(input->location, a->comp_len, type, GL_TRUE, stride, pointer);
-            break;
-          case GPU_FETCH_INT:
-            glVertexAttribIPointer(input->location, a->comp_len, type, stride, pointer);
-            break;
-        }
+      switch (a->type.fetch_mode()) {
+        case GPU_FETCH_FLOAT:
+        case GPU_FETCH_INT_TO_FLOAT_UNIT:
+          glVertexAttribPointer(
+              input->location, a->type.comp_len(), type, GL_TRUE, stride, pointer);
+          break;
+        case GPU_FETCH_INT:
+          glVertexAttribIPointer(input->location, a->type.comp_len(), type, stride, pointer);
+          break;
       }
     }
   }
@@ -95,8 +81,7 @@ static uint16_t vbo_bind(const ShaderInterface *interface,
 
 void GLVertArray::update_bindings(const GLuint vao,
                                   const Batch *batch_, /* Should be GLBatch. */
-                                  const ShaderInterface *interface,
-                                  const int base_instance)
+                                  const ShaderInterface *interface)
 {
   const GLBatch *batch = static_cast<const GLBatch *>(batch_);
   uint16_t attr_mask = interface->enabled_attr_mask_;
@@ -109,32 +94,6 @@ void GLVertArray::update_bindings(const GLuint vao,
     if (vbo) {
       vbo->bind();
       attr_mask &= ~vbo_bind(interface, &vbo->format, 0, vbo->vertex_len, false);
-    }
-  }
-
-  for (int v = GPU_BATCH_INST_VBO_MAX_LEN - 1; v > -1; v--) {
-    GLVertBuf *vbo = batch->inst_(v);
-    if (vbo) {
-      vbo->bind();
-      attr_mask &= ~vbo_bind(interface, &vbo->format, base_instance, vbo->vertex_len, true);
-    }
-  }
-
-  if (batch->resource_id_buf) {
-    const ShaderInput *input = interface->attr_get("drw_ResourceID");
-    int component_len = 1;
-    if (input == nullptr) {
-      /* Uses Custom IDs */
-      input = interface->attr_get("vertex_in_drw_ResourceID");
-      component_len = 2;
-    }
-    if (input) {
-      dynamic_cast<GLStorageBuf *>(unwrap(batch->resource_id_buf))->bind_as(GL_ARRAY_BUFFER);
-      glEnableVertexAttribArray(input->location);
-      glVertexAttribDivisor(input->location, 1);
-      glVertexAttribIPointer(
-          input->location, component_len, to_gl(GPU_COMP_I32), 0, (GLvoid *)nullptr);
-      attr_mask &= ~(1 << input->location);
     }
   }
 

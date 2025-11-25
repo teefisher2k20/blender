@@ -4,31 +4,59 @@
 
 #include "node_geometry_util.hh"
 
-#include "BKE_lib_id.hh"
-#include "BKE_mesh.hh"
+#include "DNA_mesh_types.h"
+#include "DNA_volume_types.h"
 
+#include "BKE_lib_id.hh"
+
+#include "GEO_foreach_geometry.hh"
 #include "GEO_mesh_to_volume.hh"
 
 #include "NOD_rna_define.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 namespace blender::nodes::node_geo_mesh_to_volume_cc {
 
 NODE_STORAGE_FUNCS(NodeGeometryMeshToVolume)
 
+static EnumPropertyItem resolution_mode_items[] = {
+    {MESH_TO_VOLUME_RESOLUTION_MODE_VOXEL_AMOUNT,
+     "VOXEL_AMOUNT",
+     0,
+     CTX_N_(BLT_I18NCONTEXT_COUNTABLE, "Amount"),
+     N_("Desired number of voxels along one axis")},
+    {MESH_TO_VOLUME_RESOLUTION_MODE_VOXEL_SIZE,
+     "VOXEL_SIZE",
+     0,
+     CTX_N_(BLT_I18NCONTEXT_COUNTABLE, "Size"),
+     N_("Desired voxel side length")},
+    {0, nullptr, 0, nullptr, nullptr},
+};
+
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Geometry>("Mesh").supported_type(GeometryComponent::Type::Mesh);
+  b.add_input<decl::Geometry>("Mesh")
+      .supported_type(GeometryComponent::Type::Mesh)
+      .description("Mesh to convert the inner volume to a fog volume geometry");
   b.add_input<decl::Float>("Density").default_value(1.0f).min(0.01f).max(FLT_MAX);
-  auto &voxel_size = b.add_input<decl::Float>("Voxel Size")
-                         .default_value(0.3f)
-                         .min(0.01f)
-                         .max(FLT_MAX)
-                         .subtype(PROP_DISTANCE);
-  auto &voxel_amount =
-      b.add_input<decl::Float>("Voxel Amount").default_value(64.0f).min(0.0f).max(FLT_MAX);
+  b.add_input<decl::Menu>("Resolution Mode")
+      .static_items(resolution_mode_items)
+      .optional_label()
+      .description("How the voxel size is specified")
+      .translation_context(BLT_I18NCONTEXT_COUNTABLE);
+  b.add_input<decl::Float>("Voxel Size")
+      .default_value(0.3f)
+      .min(0.01f)
+      .max(FLT_MAX)
+      .subtype(PROP_DISTANCE)
+      .usage_by_single_menu(MESH_TO_VOLUME_RESOLUTION_MODE_VOXEL_SIZE);
+  b.add_input<decl::Float>("Voxel Amount")
+      .default_value(64.0f)
+      .min(0.0f)
+      .max(FLT_MAX)
+      .usage_by_single_menu(MESH_TO_VOLUME_RESOLUTION_MODE_VOXEL_AMOUNT);
   b.add_input<decl::Float>("Interior Band Width")
       .default_value(0.2f)
       .min(0.0001f)
@@ -36,41 +64,24 @@ static void node_declare(NodeDeclarationBuilder &b)
       .subtype(PROP_DISTANCE)
       .description("Width of the gradient inside of the mesh");
   b.add_output<decl::Geometry>("Volume").translation_context(BLT_I18NCONTEXT_ID_ID);
-
-  const bNode *node = b.node_or_null();
-  if (node != nullptr) {
-    const NodeGeometryMeshToVolume &data = node_storage(*node);
-    voxel_size.available(data.resolution_mode == MESH_TO_VOLUME_RESOLUTION_MODE_VOXEL_SIZE);
-    voxel_amount.available(data.resolution_mode == MESH_TO_VOLUME_RESOLUTION_MODE_VOXEL_AMOUNT);
-  }
-}
-
-static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
-{
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
-  uiItemR(layout, ptr, "resolution_mode", UI_ITEM_NONE, IFACE_("Resolution"), ICON_NONE);
 }
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
 {
-  NodeGeometryMeshToVolume *data = MEM_cnew<NodeGeometryMeshToVolume>(__func__);
-  data->resolution_mode = MESH_TO_VOLUME_RESOLUTION_MODE_VOXEL_AMOUNT;
-  node->storage = data;
+  /* Still used for forward compatibility. */
+  node->storage = MEM_callocN<NodeGeometryMeshToVolume>(__func__);
 }
 
 #ifdef WITH_OPENVDB
 
 static Volume *create_volume_from_mesh(const Mesh &mesh, GeoNodeExecParams &params)
 {
-  const NodeGeometryMeshToVolume &storage =
-      *(const NodeGeometryMeshToVolume *)params.node().storage;
-
   const float density = params.get_input<float>("Density");
   const float interior_band_width = params.get_input<float>("Interior Band Width");
+  const auto mode = params.get_input<MeshToVolumeModifierResolutionMode>("Resolution Mode");
 
   geometry::MeshToVolumeResolution resolution;
-  resolution.mode = (MeshToVolumeModifierResolutionMode)storage.resolution_mode;
+  resolution.mode = mode;
   if (resolution.mode == MESH_TO_VOLUME_RESOLUTION_MODE_VOXEL_AMOUNT) {
     resolution.settings.voxel_amount = params.get_input<float>("Voxel Amount");
     if (resolution.settings.voxel_amount <= 0.0f) {
@@ -97,7 +108,7 @@ static Volume *create_volume_from_mesh(const Mesh &mesh, GeoNodeExecParams &para
       0.0f,
       mesh_to_volume_space_transform);
 
-  Volume *volume = reinterpret_cast<Volume *>(BKE_id_new_nomain(ID_VO, nullptr));
+  Volume *volume = BKE_id_new_nomain<Volume>(nullptr);
 
   /* Convert mesh to grid and add to volume. */
   geometry::fog_volume_grid_add_from_mesh(volume,
@@ -119,11 +130,11 @@ static void node_geo_exec(GeoNodeExecParams params)
 {
 #ifdef WITH_OPENVDB
   GeometrySet geometry_set(params.extract_input<GeometrySet>("Mesh"));
-  geometry_set.modify_geometry_sets([&](GeometrySet &geometry_set) {
+  geometry::foreach_real_geometry(geometry_set, [&](GeometrySet &geometry_set) {
     if (geometry_set.has_mesh()) {
       Volume *volume = create_volume_from_mesh(*geometry_set.get_mesh(), params);
       geometry_set.replace_volume(volume);
-      geometry_set.keep_only_during_modify({GeometryComponent::Type::Volume});
+      geometry_set.keep_only({GeometryComponent::Type::Volume, GeometryComponent::Type::Edit});
     }
   });
   params.set_output("Volume", std::move(geometry_set));
@@ -131,31 +142,6 @@ static void node_geo_exec(GeoNodeExecParams params)
   node_geo_exec_with_missing_openvdb(params);
   return;
 #endif
-}
-
-static void node_rna(StructRNA *srna)
-{
-  static EnumPropertyItem resolution_mode_items[] = {
-      {MESH_TO_VOLUME_RESOLUTION_MODE_VOXEL_AMOUNT,
-       "VOXEL_AMOUNT",
-       0,
-       "Amount",
-       "Desired number of voxels along one axis"},
-      {MESH_TO_VOLUME_RESOLUTION_MODE_VOXEL_SIZE,
-       "VOXEL_SIZE",
-       0,
-       "Size",
-       "Desired voxel side length"},
-      {0, nullptr, 0, nullptr, nullptr},
-  };
-
-  RNA_def_node_enum(srna,
-                    "resolution_mode",
-                    "Resolution Mode",
-                    "How the voxel size is specified",
-                    resolution_mode_items,
-                    NOD_storage_enum_accessors(resolution_mode),
-                    MESH_TO_VOLUME_RESOLUTION_MODE_VOXEL_AMOUNT);
 }
 
 static void node_register()
@@ -168,15 +154,12 @@ static void node_register()
   ntype.enum_name_legacy = "MESH_TO_VOLUME";
   ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.declare = node_declare;
-  bke::node_type_size(&ntype, 200, 120, 700);
+  bke::node_type_size(ntype, 200, 120, 700);
   ntype.initfunc = node_init;
   ntype.geometry_node_execute = node_geo_exec;
-  ntype.draw_buttons = node_layout;
   blender::bke::node_type_storage(
-      &ntype, "NodeGeometryMeshToVolume", node_free_standard_storage, node_copy_standard_storage);
-  blender::bke::node_register_type(&ntype);
-
-  node_rna(ntype.rna_ext.srna);
+      ntype, "NodeGeometryMeshToVolume", node_free_standard_storage, node_copy_standard_storage);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

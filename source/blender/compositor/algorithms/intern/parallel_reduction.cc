@@ -15,7 +15,9 @@
 
 #include "GPU_compute.hh"
 #include "GPU_shader.hh"
+#include "GPU_state.hh"
 #include "GPU_texture.hh"
+#include "GPU_texture_pool.hh"
 
 #include "COM_context.hh"
 #include "COM_result.hh"
@@ -33,20 +35,20 @@ namespace blender::compositor {
  * to be derived from the compositor_parallel_reduction.glsl shader, see that file for more
  * information. Also see the compositor_parallel_reduction_info.hh file for example shader
  * definitions. */
-static float *parallel_reduction_dispatch(Context &context,
-                                          GPUTexture *texture,
-                                          GPUShader *shader,
-                                          eGPUTextureFormat format)
+static float *parallel_reduction_dispatch(blender::gpu::Texture *texture,
+                                          gpu::Shader *shader,
+                                          blender::gpu::TextureFormat format)
 {
   GPU_shader_uniform_1b(shader, "is_initial_reduction", true);
 
-  GPUTexture *texture_to_reduce = texture;
+  blender::gpu::Texture *texture_to_reduce = texture;
   int2 size_to_reduce = int2(GPU_texture_width(texture), GPU_texture_height(texture));
 
   /* Dispatch the reduction shader until the texture reduces to a single pixel. */
   while (size_to_reduce != int2(1)) {
     const int2 reduced_size = math::divide_ceil(size_to_reduce, int2(16));
-    GPUTexture *reduced_texture = context.texture_pool().acquire(reduced_size, format);
+    blender::gpu::Texture *reduced_texture = gpu::TexturePool::get().acquire_texture(
+        reduced_size.x, reduced_size.y, format, GPU_TEXTURE_USAGE_GENERAL);
 
     GPU_memory_barrier(GPU_BARRIER_TEXTURE_FETCH);
     const int texture_image_unit = GPU_shader_get_sampler_binding(shader, "input_tx");
@@ -63,7 +65,7 @@ static float *parallel_reduction_dispatch(Context &context,
     /* Release the input texture only if it is not the source texture, since the source texture is
      * not acquired or owned by the function. */
     if (texture_to_reduce != texture) {
-      context.texture_pool().release(texture_to_reduce);
+      gpu::TexturePool::get().release_texture(texture_to_reduce);
     }
 
     texture_to_reduce = reduced_texture;
@@ -78,7 +80,7 @@ static float *parallel_reduction_dispatch(Context &context,
   /* Release the final texture only if it is not the source texture, since the source texture is
    * not acquired or owned by the function. */
   if (texture_to_reduce != texture) {
-    context.texture_pool().release(texture_to_reduce);
+    gpu::TexturePool::get().release_texture(texture_to_reduce);
   }
 
   return pixel;
@@ -116,14 +118,11 @@ static Value parallel_reduce(const int2 range,
 
 static float sum_red_gpu(Context &context, const Result &result)
 {
-  GPUShader *shader = context.get_shader("compositor_sum_red", ResultPrecision::Full);
+  gpu::Shader *shader = context.get_shader("compositor_sum_red", ResultPrecision::Full);
   GPU_shader_bind(shader);
 
   float *reduced_value = parallel_reduction_dispatch(
-      context,
-      result,
-      shader,
-      Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
+      result, shader, Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
   const float sum = *reduced_value;
   MEM_freeN(reduced_value);
   GPU_shader_unbind();
@@ -134,10 +133,10 @@ static float sum_red_gpu(Context &context, const Result &result)
 static float sum_red_cpu(const Result &result)
 {
   return float(parallel_reduce(
-      result.domain().size,
+      result.domain().data_size,
       0.0,
       [&](const int2 texel, double &accumulated_value) {
-        accumulated_value += result.load_pixel<float4>(texel).x;
+        accumulated_value += result.load_pixel<Color>(texel).r;
       },
       [&](const double &a, const double &b) { return a + b; }));
 }
@@ -153,14 +152,11 @@ float sum_red(Context &context, const Result &result)
 
 static float sum_green_gpu(Context &context, const Result &result)
 {
-  GPUShader *shader = context.get_shader("compositor_sum_green", ResultPrecision::Full);
+  gpu::Shader *shader = context.get_shader("compositor_sum_green", ResultPrecision::Full);
   GPU_shader_bind(shader);
 
   float *reduced_value = parallel_reduction_dispatch(
-      context,
-      result,
-      shader,
-      Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
+      result, shader, Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
   const float sum = *reduced_value;
   MEM_freeN(reduced_value);
   GPU_shader_unbind();
@@ -171,10 +167,10 @@ static float sum_green_gpu(Context &context, const Result &result)
 static float sum_green_cpu(const Result &result)
 {
   return float(parallel_reduce(
-      result.domain().size,
+      result.domain().data_size,
       0.0,
       [&](const int2 texel, double &accumulated_value) {
-        accumulated_value += result.load_pixel<float4>(texel).y;
+        accumulated_value += result.load_pixel<Color>(texel).g;
       },
       [&](const double &a, const double &b) { return a + b; }));
 }
@@ -190,14 +186,11 @@ float sum_green(Context &context, const Result &result)
 
 static float sum_blue_gpu(Context &context, const Result &result)
 {
-  GPUShader *shader = context.get_shader("compositor_sum_blue", ResultPrecision::Full);
+  gpu::Shader *shader = context.get_shader("compositor_sum_blue", ResultPrecision::Full);
   GPU_shader_bind(shader);
 
   float *reduced_value = parallel_reduction_dispatch(
-      context,
-      result,
-      shader,
-      Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
+      result, shader, Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
   const float sum = *reduced_value;
   MEM_freeN(reduced_value);
   GPU_shader_unbind();
@@ -208,10 +201,10 @@ static float sum_blue_gpu(Context &context, const Result &result)
 static float sum_blue_cpu(const Result &result)
 {
   return float(parallel_reduce(
-      result.domain().size,
+      result.domain().data_size,
       0.0,
       [&](const int2 texel, double &accumulated_value) {
-        accumulated_value += result.load_pixel<float4>(texel).z;
+        accumulated_value += result.load_pixel<Color>(texel).b;
       },
       [&](const double &a, const double &b) { return a + b; }));
 }
@@ -229,16 +222,13 @@ static float sum_luminance_gpu(Context &context,
                                const Result &result,
                                const float3 &luminance_coefficients)
 {
-  GPUShader *shader = context.get_shader("compositor_sum_luminance", ResultPrecision::Full);
+  gpu::Shader *shader = context.get_shader("compositor_sum_luminance", ResultPrecision::Full);
   GPU_shader_bind(shader);
 
   GPU_shader_uniform_3fv(shader, "luminance_coefficients", luminance_coefficients);
 
   float *reduced_value = parallel_reduction_dispatch(
-      context,
-      result,
-      shader,
-      Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
+      result, shader, Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
   const float sum = *reduced_value;
   MEM_freeN(reduced_value);
   GPU_shader_unbind();
@@ -249,10 +239,10 @@ static float sum_luminance_gpu(Context &context,
 static float sum_luminance_cpu(const Result &result, const float3 &luminance_coefficients)
 {
   return float(parallel_reduce(
-      result.domain().size,
+      result.domain().data_size,
       0.0,
       [&](const int2 texel, double &accumulated_value) {
-        accumulated_value += math::dot(result.load_pixel<float4>(texel).xyz(),
+        accumulated_value += math::dot(float4(result.load_pixel<Color>(texel)).xyz(),
                                        luminance_coefficients);
       },
       [&](const double &a, const double &b) { return a + b; }));
@@ -271,16 +261,13 @@ static float sum_log_luminance_gpu(Context &context,
                                    const Result &result,
                                    const float3 &luminance_coefficients)
 {
-  GPUShader *shader = context.get_shader("compositor_sum_log_luminance", ResultPrecision::Full);
+  gpu::Shader *shader = context.get_shader("compositor_sum_log_luminance", ResultPrecision::Full);
   GPU_shader_bind(shader);
 
   GPU_shader_uniform_3fv(shader, "luminance_coefficients", luminance_coefficients);
 
   float *reduced_value = parallel_reduction_dispatch(
-      context,
-      result,
-      shader,
-      Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
+      result, shader, Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
   const float sum = *reduced_value;
   MEM_freeN(reduced_value);
   GPU_shader_unbind();
@@ -291,10 +278,10 @@ static float sum_log_luminance_gpu(Context &context,
 static float sum_log_luminance_cpu(const Result &result, const float3 &luminance_coefficients)
 {
   return float(parallel_reduce(
-      result.domain().size,
+      result.domain().data_size,
       0.0,
       [&](const int2 texel, double &accumulated_value) {
-        const float luminance = math::dot(result.load_pixel<float4>(texel).xyz(),
+        const float luminance = math::dot(float4(result.load_pixel<Color>(texel)).xyz(),
                                           luminance_coefficients);
         accumulated_value += std::log(math::max(luminance, 1e-5f));
       },
@@ -314,14 +301,11 @@ float sum_log_luminance(Context &context,
 
 static float4 sum_color_gpu(Context &context, const Result &result)
 {
-  GPUShader *shader = context.get_shader("compositor_sum_color", ResultPrecision::Full);
+  gpu::Shader *shader = context.get_shader("compositor_sum_color", ResultPrecision::Full);
   GPU_shader_bind(shader);
 
   float *reduced_value = parallel_reduction_dispatch(
-      context,
-      result,
-      shader,
-      Result::gpu_texture_format(ResultType::Color, ResultPrecision::Full));
+      result, shader, Result::gpu_texture_format(ResultType::Color, ResultPrecision::Full));
   const float4 sum = float4(reduced_value);
   MEM_freeN(reduced_value);
   GPU_shader_unbind();
@@ -332,10 +316,10 @@ static float4 sum_color_gpu(Context &context, const Result &result)
 static float4 sum_color_cpu(const Result &result)
 {
   return float4(parallel_reduce(
-      result.domain().size,
+      result.domain().data_size,
       double4(0.0),
       [&](const int2 texel, double4 &accumulated_value) {
-        accumulated_value += double4(result.load_pixel<float4>(texel));
+        accumulated_value += double4(float4(result.load_pixel<Color>(texel)));
       },
       [&](const double4 &a, const double4 &b) { return a + b; }));
 }
@@ -357,17 +341,14 @@ static float sum_red_squared_difference_gpu(Context &context,
                                             const Result &result,
                                             const float subtrahend)
 {
-  GPUShader *shader = context.get_shader("compositor_sum_red_squared_difference",
-                                         ResultPrecision::Full);
+  gpu::Shader *shader = context.get_shader("compositor_sum_red_squared_difference",
+                                           ResultPrecision::Full);
   GPU_shader_bind(shader);
 
   GPU_shader_uniform_1f(shader, "subtrahend", subtrahend);
 
   float *reduced_value = parallel_reduction_dispatch(
-      context,
-      result,
-      shader,
-      Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
+      result, shader, Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
   const float sum = *reduced_value;
   MEM_freeN(reduced_value);
   GPU_shader_unbind();
@@ -378,10 +359,10 @@ static float sum_red_squared_difference_gpu(Context &context,
 static float sum_red_squared_difference_cpu(const Result &result, const float subtrahend)
 {
   return float(parallel_reduce(
-      result.domain().size,
+      result.domain().data_size,
       0.0,
       [&](const int2 texel, double &accumulated_value) {
-        accumulated_value += math::square(result.load_pixel<float4>(texel).x - subtrahend);
+        accumulated_value += math::square(result.load_pixel<Color>(texel).r - subtrahend);
       },
       [&](const double &a, const double &b) { return a + b; }));
 }
@@ -399,17 +380,14 @@ static float sum_green_squared_difference_gpu(Context &context,
                                               const Result &result,
                                               const float subtrahend)
 {
-  GPUShader *shader = context.get_shader("compositor_sum_green_squared_difference",
-                                         ResultPrecision::Full);
+  gpu::Shader *shader = context.get_shader("compositor_sum_green_squared_difference",
+                                           ResultPrecision::Full);
   GPU_shader_bind(shader);
 
   GPU_shader_uniform_1f(shader, "subtrahend", subtrahend);
 
   float *reduced_value = parallel_reduction_dispatch(
-      context,
-      result,
-      shader,
-      Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
+      result, shader, Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
   const float sum = *reduced_value;
   MEM_freeN(reduced_value);
   GPU_shader_unbind();
@@ -420,10 +398,10 @@ static float sum_green_squared_difference_gpu(Context &context,
 static float sum_green_squared_difference_cpu(const Result &result, const float subtrahend)
 {
   return float(parallel_reduce(
-      result.domain().size,
+      result.domain().data_size,
       0.0,
       [&](const int2 texel, double &accumulated_value) {
-        accumulated_value += math::square(result.load_pixel<float4>(texel).y - subtrahend);
+        accumulated_value += math::square(result.load_pixel<Color>(texel).g - subtrahend);
       },
       [&](const double &a, const double &b) { return a + b; }));
 }
@@ -441,17 +419,14 @@ static float sum_blue_squared_difference_gpu(Context &context,
                                              const Result &result,
                                              const float subtrahend)
 {
-  GPUShader *shader = context.get_shader("compositor_sum_blue_squared_difference",
-                                         ResultPrecision::Full);
+  gpu::Shader *shader = context.get_shader("compositor_sum_blue_squared_difference",
+                                           ResultPrecision::Full);
   GPU_shader_bind(shader);
 
   GPU_shader_uniform_1f(shader, "subtrahend", subtrahend);
 
   float *reduced_value = parallel_reduction_dispatch(
-      context,
-      result,
-      shader,
-      Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
+      result, shader, Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
   const float sum = *reduced_value;
   MEM_freeN(reduced_value);
   GPU_shader_unbind();
@@ -462,10 +437,10 @@ static float sum_blue_squared_difference_gpu(Context &context,
 static float sum_blue_squared_difference_cpu(const Result &result, const float subtrahend)
 {
   return float(parallel_reduce(
-      result.domain().size,
+      result.domain().data_size,
       0.0,
       [&](const int2 texel, double &accumulated_value) {
-        accumulated_value += math::square(result.load_pixel<float4>(texel).z - subtrahend);
+        accumulated_value += math::square(result.load_pixel<Color>(texel).b - subtrahend);
       },
       [&](const double &a, const double &b) { return a + b; }));
 }
@@ -484,18 +459,15 @@ static float sum_luminance_squared_difference_gpu(Context &context,
                                                   const float3 &luminance_coefficients,
                                                   const float subtrahend)
 {
-  GPUShader *shader = context.get_shader("compositor_sum_luminance_squared_difference",
-                                         ResultPrecision::Full);
+  gpu::Shader *shader = context.get_shader("compositor_sum_luminance_squared_difference",
+                                           ResultPrecision::Full);
   GPU_shader_bind(shader);
 
   GPU_shader_uniform_3fv(shader, "luminance_coefficients", luminance_coefficients);
   GPU_shader_uniform_1f(shader, "subtrahend", subtrahend);
 
   float *reduced_value = parallel_reduction_dispatch(
-      context,
-      result,
-      shader,
-      Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
+      result, shader, Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
   const float sum = *reduced_value;
   MEM_freeN(reduced_value);
   GPU_shader_unbind();
@@ -508,10 +480,10 @@ static float sum_luminance_squared_difference_cpu(const Result &result,
                                                   const float subtrahend)
 {
   return float(parallel_reduce(
-      result.domain().size,
+      result.domain().data_size,
       0.0,
       [&](const int2 texel, double &accumulated_value) {
-        const float luminance = math::dot(result.load_pixel<float4>(texel).xyz(),
+        const float luminance = math::dot(float4(result.load_pixel<Color>(texel)).xyz(),
                                           luminance_coefficients);
         accumulated_value += math::square(luminance - subtrahend);
       },
@@ -539,16 +511,13 @@ static float maximum_luminance_gpu(Context &context,
                                    const Result &result,
                                    const float3 &luminance_coefficients)
 {
-  GPUShader *shader = context.get_shader("compositor_maximum_luminance", ResultPrecision::Full);
+  gpu::Shader *shader = context.get_shader("compositor_maximum_luminance", ResultPrecision::Full);
   GPU_shader_bind(shader);
 
   GPU_shader_uniform_3fv(shader, "luminance_coefficients", luminance_coefficients);
 
   float *reduced_value = parallel_reduction_dispatch(
-      context,
-      result,
-      shader,
-      Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
+      result, shader, Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
   const float maximum = *reduced_value;
   MEM_freeN(reduced_value);
   GPU_shader_unbind();
@@ -559,10 +528,10 @@ static float maximum_luminance_gpu(Context &context,
 static float maximum_luminance_cpu(const Result &result, const float3 &luminance_coefficients)
 {
   return float(parallel_reduce(
-      result.domain().size,
+      result.domain().data_size,
       std::numeric_limits<float>::lowest(),
       [&](const int2 texel, float &accumulated_value) {
-        const float luminance = math::dot(result.load_pixel<float4>(texel).xyz(),
+        const float luminance = math::dot(float4(result.load_pixel<Color>(texel)).xyz(),
                                           luminance_coefficients);
         accumulated_value = math::max(accumulated_value, luminance);
       },
@@ -582,14 +551,11 @@ float maximum_luminance(Context &context,
 
 static float maximum_float_gpu(Context &context, const Result &result)
 {
-  GPUShader *shader = context.get_shader("compositor_maximum_float", ResultPrecision::Full);
+  gpu::Shader *shader = context.get_shader("compositor_maximum_float", ResultPrecision::Full);
   GPU_shader_bind(shader);
 
   float *reduced_value = parallel_reduction_dispatch(
-      context,
-      result,
-      shader,
-      Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
+      result, shader, Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
   const float maximum = *reduced_value;
   MEM_freeN(reduced_value);
   GPU_shader_unbind();
@@ -600,7 +566,7 @@ static float maximum_float_gpu(Context &context, const Result &result)
 static float maximum_float_cpu(const Result &result)
 {
   return float(parallel_reduce(
-      result.domain().size,
+      result.domain().data_size,
       std::numeric_limits<float>::lowest(),
       [&](const int2 texel, float &accumulated_value) {
         accumulated_value = math::max(accumulated_value, result.load_pixel<float>(texel));
@@ -617,23 +583,54 @@ float maximum_float(Context &context, const Result &result)
   return maximum_float_cpu(result);
 }
 
+static float2 maximum_float2_gpu(Context &context, const Result &result)
+{
+  gpu::Shader *shader = context.get_shader("compositor_maximum_float2", ResultPrecision::Full);
+  GPU_shader_bind(shader);
+
+  float *reduced_value = parallel_reduction_dispatch(
+      result, shader, Result::gpu_texture_format(ResultType::Float2, ResultPrecision::Full));
+  const float2 maximum = reduced_value;
+  MEM_freeN(reduced_value);
+  GPU_shader_unbind();
+
+  return maximum;
+}
+
+static float2 maximum_float2_cpu(const Result &result)
+{
+  return parallel_reduce(
+      result.domain().data_size,
+      float2(std::numeric_limits<float>::lowest()),
+      [&](const int2 texel, float2 &accumulated_value) {
+        accumulated_value = math::max(accumulated_value, result.load_pixel<float2>(texel));
+      },
+      [&](const float2 &a, const float2 &b) { return math::max(a, b); });
+}
+
+float2 maximum_float2(Context &context, const Result &result)
+{
+  if (context.use_gpu()) {
+    return maximum_float2_gpu(context, result);
+  }
+
+  return maximum_float2_cpu(result);
+}
+
 static float maximum_float_in_range_gpu(Context &context,
                                         const Result &result,
                                         const float lower_bound,
                                         const float upper_bound)
 {
-  GPUShader *shader = context.get_shader("compositor_maximum_float_in_range",
-                                         ResultPrecision::Full);
+  gpu::Shader *shader = context.get_shader("compositor_maximum_float_in_range",
+                                           ResultPrecision::Full);
   GPU_shader_bind(shader);
 
   GPU_shader_uniform_1f(shader, "lower_bound", lower_bound);
   GPU_shader_uniform_1f(shader, "upper_bound", upper_bound);
 
   float *reduced_value = parallel_reduction_dispatch(
-      context,
-      result,
-      shader,
-      Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
+      result, shader, Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
   const float maximum = *reduced_value;
   MEM_freeN(reduced_value);
   GPU_shader_unbind();
@@ -646,7 +643,7 @@ static float maximum_float_in_range_cpu(const Result &result,
                                         const float upper_bound)
 {
   return float(parallel_reduce(
-      result.domain().size,
+      result.domain().data_size,
       lower_bound,
       [&](const int2 texel, float &accumulated_value) {
         const float value = result.load_pixel<float>(texel);
@@ -677,16 +674,13 @@ static float minimum_luminance_gpu(Context &context,
                                    const Result &result,
                                    const float3 &luminance_coefficients)
 {
-  GPUShader *shader = context.get_shader("compositor_minimum_luminance", ResultPrecision::Full);
+  gpu::Shader *shader = context.get_shader("compositor_minimum_luminance", ResultPrecision::Full);
   GPU_shader_bind(shader);
 
   GPU_shader_uniform_3fv(shader, "luminance_coefficients", luminance_coefficients);
 
   float *reduced_value = parallel_reduction_dispatch(
-      context,
-      result,
-      shader,
-      Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
+      result, shader, Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
   const float minimum = *reduced_value;
   MEM_freeN(reduced_value);
   GPU_shader_unbind();
@@ -697,10 +691,10 @@ static float minimum_luminance_gpu(Context &context,
 static float minimum_luminance_cpu(const Result &result, const float3 &luminance_coefficients)
 {
   return float(parallel_reduce(
-      result.domain().size,
+      result.domain().data_size,
       std::numeric_limits<float>::max(),
       [&](const int2 texel, float &accumulated_value) {
-        const float luminance = math::dot(result.load_pixel<float4>(texel).xyz(),
+        const float luminance = math::dot(float4(result.load_pixel<Color>(texel)).xyz(),
                                           luminance_coefficients);
         accumulated_value = math::min(accumulated_value, luminance);
       },
@@ -720,14 +714,11 @@ float minimum_luminance(Context &context,
 
 static float minimum_float_gpu(Context &context, const Result &result)
 {
-  GPUShader *shader = context.get_shader("compositor_minimum_float", ResultPrecision::Full);
+  gpu::Shader *shader = context.get_shader("compositor_minimum_float", ResultPrecision::Full);
   GPU_shader_bind(shader);
 
   float *reduced_value = parallel_reduction_dispatch(
-      context,
-      result,
-      shader,
-      Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
+      result, shader, Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
   const float minimum = *reduced_value;
   MEM_freeN(reduced_value);
   GPU_shader_unbind();
@@ -738,7 +729,7 @@ static float minimum_float_gpu(Context &context, const Result &result)
 static float minimum_float_cpu(const Result &result)
 {
   return float(parallel_reduce(
-      result.domain().size,
+      result.domain().data_size,
       std::numeric_limits<float>::max(),
       [&](const int2 texel, float &accumulated_value) {
         accumulated_value = math::min(accumulated_value, result.load_pixel<float>(texel));
@@ -760,18 +751,15 @@ static float minimum_float_in_range_gpu(Context &context,
                                         const float lower_bound,
                                         const float upper_bound)
 {
-  GPUShader *shader = context.get_shader("compositor_minimum_float_in_range",
-                                         ResultPrecision::Full);
+  gpu::Shader *shader = context.get_shader("compositor_minimum_float_in_range",
+                                           ResultPrecision::Full);
   GPU_shader_bind(shader);
 
   GPU_shader_uniform_1f(shader, "lower_bound", lower_bound);
   GPU_shader_uniform_1f(shader, "upper_bound", upper_bound);
 
   float *reduced_value = parallel_reduction_dispatch(
-      context,
-      result,
-      shader,
-      Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
+      result, shader, Result::gpu_texture_format(ResultType::Float, ResultPrecision::Full));
   const float minimum = *reduced_value;
   MEM_freeN(reduced_value);
   GPU_shader_unbind();
@@ -784,7 +772,7 @@ static float minimum_float_in_range_cpu(const Result &result,
                                         const float upper_bound)
 {
   return parallel_reduce(
-      result.domain().size,
+      result.domain().data_size,
       upper_bound,
       [&](const int2 texel, float &accumulated_value) {
         const float value = result.load_pixel<float>(texel);

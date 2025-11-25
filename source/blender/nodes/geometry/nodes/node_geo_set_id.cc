@@ -8,10 +8,12 @@ namespace blender::nodes::node_geo_set_id_cc {
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Geometry>("Geometry");
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
+  b.add_input<decl::Geometry>("Geometry").description("Geometry to update the ID attribute on");
+  b.add_output<decl::Geometry>("Geometry").propagate_all().align_with_previous();
   b.add_input<decl::Bool>("Selection").default_value(true).hide_value().field_on_all();
-  b.add_input<decl::Int>("ID").implicit_field_on_all(implicit_field_inputs::index);
-  b.add_output<decl::Geometry>("Geometry").propagate_all();
+  b.add_input<decl::Int>("ID").implicit_field_on_all(NODE_DEFAULT_INPUT_INDEX_FIELD);
 }
 
 static void set_id_in_component(GeometryComponent &component,
@@ -28,28 +30,8 @@ static void set_id_in_component(GeometryComponent &component,
   MutableAttributeAccessor attributes = *component.attributes_for_write();
 
   const bke::GeometryFieldContext field_context{component, domain};
-  fn::FieldEvaluator evaluator{field_context, domain_size};
-  evaluator.set_selection(selection_field);
-
-  /* Since adding the ID attribute can change the result of the field evaluation (the random value
-   * node uses the index if the ID is unavailable), make sure that it isn't added before evaluating
-   * the field. However, as an optimization, use a faster code path when it already exists. */
-  if (attributes.contains("id")) {
-    AttributeWriter<int> id_attribute = attributes.lookup_or_add_for_write<int>("id", domain);
-    evaluator.add_with_destination(id_field, id_attribute.varray);
-    evaluator.evaluate();
-    id_attribute.finish();
-  }
-  else {
-    evaluator.add(id_field);
-    evaluator.evaluate();
-    const IndexMask selection = evaluator.get_evaluated_selection_as_mask();
-    const VArray<int> result_ids = evaluator.get_evaluated<int>(0);
-    SpanAttributeWriter<int> id_attribute = attributes.lookup_or_add_for_write_span<int>("id",
-                                                                                         domain);
-    result_ids.materialize(selection, id_attribute.span);
-    id_attribute.finish();
-  }
+  bke::try_capture_field_on_geometry(
+      attributes, field_context, "id", domain, selection_field, id_field);
 }
 
 static void node_geo_exec(GeoNodeExecParams params)
@@ -83,7 +65,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

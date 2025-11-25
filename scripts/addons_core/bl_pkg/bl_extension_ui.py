@@ -22,6 +22,11 @@ from bpy.types import (
     Panel,
 )
 
+from bpy.app.translations import (
+    pgettext_n as n_,
+    contexts as i18n_contexts,
+)
+
 from bl_ui.space_userpref import (
     USERPREF_PT_addons,
     USERPREF_PT_extensions,
@@ -143,7 +148,7 @@ def pkg_manifest_zip_all_items(pkg_manifest_local, pkg_manifest_remote):
 
 # While this is not a strict definition (internally they're just add-ons from different places),
 # for the purposes of the UI it makes sense to differentiate add-ons this way because these add-on
-# characteristics are mutually exclusive (there is no such thing as a user-core-extension for e.g.).
+# characteristics are mutually exclusive (there is no such thing as a user-core-extension for example).
 
 # Add-On Types:
 
@@ -163,10 +168,10 @@ ADDON_TYPE_LEGACY_USER = 2
 ADDON_TYPE_LEGACY_OTHER = 3
 
 addon_type_name = (
-    "Extension",  # `ADDON_TYPE_EXTENSION`.
-    "Core",  # `ADDON_TYPE_LEGACY_CORE`.
-    "Legacy (User)",  # `ADDON_TYPE_LEGACY_USER`.
-    "Legacy (Other)",  # `ADDON_TYPE_LEGACY_OTHER`.
+    n_("Extension", i18n_contexts.editor_preferences),  # `ADDON_TYPE_EXTENSION`.
+    n_("Core", i18n_contexts.editor_preferences),  # `ADDON_TYPE_LEGACY_CORE`.
+    n_("Legacy (User)", i18n_contexts.editor_preferences),  # `ADDON_TYPE_LEGACY_USER`.
+    n_("Legacy (Other)", i18n_contexts.editor_preferences),  # `ADDON_TYPE_LEGACY_OTHER`.
 )
 
 addon_type_icon = (
@@ -223,11 +228,8 @@ def addon_draw_item_expanded(
         item_warnings,  # `list[str]`
         item_doc_url,  # `str`
         item_tracker_url,  # `str`
+        show_developer_ui,  # `bool`
 ):
-    from bpy.app.translations import (
-        contexts as i18n_contexts,
-    )
-
     split = layout.split(factor=0.8)
     col_a = split.column()
     col_b = split.column()
@@ -275,7 +277,7 @@ def addon_draw_item_expanded(
 
     if USE_SHOW_ADDON_TYPE_AS_TEXT:
         col_a.label(text="Type")
-        col_b.label(text=addon_type_name[addon_type])
+        col_b.label(text=addon_type_name[addon_type], text_ctxt=i18n_contexts.editor_preferences)
     if item_maintainer:
         col_a.label(text="Maintainer")
         col_b.label(text=item_maintainer, translate=False)
@@ -295,7 +297,18 @@ def addon_draw_item_expanded(
 
     if addon_type != ADDON_TYPE_LEGACY_CORE:
         col_a.label(text="File")
-        col_b.label(text=mod.__file__, translate=False)
+        row = col_b.row()
+        row.label(text=mod.__file__, translate=False)
+
+        # Add a button to quickly open the add-on's folder for accessing its files and assets.
+        #
+        # Only show this with a developer UI since extensions should be
+        # usable without direct file-system access / manipulation.
+        # If non-technical users need this for some task then we could consider alternative solutions,
+        # see: #128474 discussion for details.
+        if show_developer_ui:
+            import os
+            row.operator("wm.path_open", text="", icon='FILE_FOLDER').filepath = os.path.dirname(mod.__file__)
 
 
 # NOTE: this can be removed once upgrading from 4.1 is no longer relevant.
@@ -435,6 +448,7 @@ def addons_panel_draw_items(
         addon_extension_block_map,  # `dict[str, PkgBlock_Normalized]`
 
         show_development,  # `bool`
+        show_developer_ui,  # `bool`
 ):  # `-> set[str]`
     # NOTE: this duplicates logic from `USERPREF_PT_addons` eventually this logic should be used instead.
     # Don't de-duplicate the logic as this is a temporary state - as long as extensions remains experimental.
@@ -519,7 +533,7 @@ def addons_panel_draw_items(
             del value
 
             if show_expanded:
-                item_maintainer = value.split("<", 1)[0].rstrip() if (value := bl_info["author"]) else ""
+                item_maintainer = value if (value := bl_info["author"]) else ""
                 item_version = ".".join(str(x) for x in value) if (value := bl_info["version"]) else ""
                 item_doc_url = bl_info["doc_url"]
                 item_tracker_url = bl_info.get("tracker_url")
@@ -592,6 +606,7 @@ def addons_panel_draw_items(
                 item_doc_url=item_doc_url,
                 # pylint: disable-next=used-before-assignment
                 item_tracker_url=item_tracker_url,
+                show_developer_ui=show_developer_ui,
             )
 
             if is_enabled:
@@ -603,6 +618,8 @@ def addons_panel_draw_items(
 
 def addons_panel_draw_error_duplicates(layout):
     import addon_utils
+    import os
+
     box = layout.box()
     row = box.row()
     row.label(text="Multiple add-ons with the same name found!")
@@ -612,8 +629,14 @@ def addons_panel_draw_error_duplicates(layout):
         box.separator()
         sub_col = box.column(align=True)
         sub_col.label(text=addon_name + ":")
-        sub_col.label(text="    " + addon_file)
-        sub_col.label(text="    " + addon_path)
+
+        sub_row = sub_col.row()
+        sub_row.label(text="    " + addon_file)
+        sub_row.operator("wm.path_open", text="", icon='FILE_FOLDER').filepath = os.path.dirname(addon_file)
+
+        sub_row = sub_col.row()
+        sub_row.label(text="    " + addon_path)
+        sub_row.operator("wm.path_open", text="", icon='FILE_FOLDER').filepath = os.path.dirname(addon_path)
 
 
 def addons_panel_draw_error_generic(layout, lines):
@@ -633,6 +656,7 @@ def addons_panel_draw_impl(
         enabled_only,  # `bool`
         *,
         show_development,  # `bool`
+        show_developer_ui,  # `bool`
 ):
     """
     Show all the items... we may want to paginate at some point.
@@ -722,6 +746,7 @@ def addons_panel_draw_impl(
         addon_extension_manifest_map=addon_extension_manifest_map,
         addon_extension_block_map=addon_extension_block_map,
         show_development=show_development,
+        show_developer_ui=show_developer_ui,
     )
 
     # Append missing scripts.
@@ -788,7 +813,7 @@ def addons_panel_draw(panel, context):
     del split, row_a, row_b, rowsub
 
     # Create a set of tags marked False to simplify exclusion & avoid it altogether when all tags are enabled.
-    addon_tags_exclude = {k for (k, v) in wm.get("addon_tags", {}).items() if v is False}
+    addon_tags_exclude = tags_exclude_get(wm, "addon_tags")
 
     addons_panel_draw_impl(
         panel,
@@ -797,6 +822,7 @@ def addons_panel_draw(panel, context):
         addon_tags_exclude,
         view.show_addons_enabled_only,
         show_development=prefs.experimental.use_extensions_debug,
+        show_developer_ui=prefs.view.show_developer_ui,
     )
 
 
@@ -897,7 +923,7 @@ class ExtensionUI_FilterParams:
             active_theme_info = None  # Unused.
 
         # Create a set of tags marked False to simplify exclusion & avoid it altogether when all tags are enabled.
-        extension_tags_exclude = {k for (k, v) in wm.get("extension_tags", {}).items() if v is False}
+        extension_tags_exclude = tags_exclude_get(wm, "extension_tags")
 
         return ExtensionUI_FilterParams(
             search_casefold=wm.extension_search.casefold(),
@@ -1195,14 +1221,18 @@ def extensions_panel_draw_online_extensions_request_impl(
     row = box.row(align=True)
     row.alignment = 'LEFT'
     row.label(text="While offline, use \"Install from Disk\" instead.")
-    # TODO: the URL must be updated before release,
-    # this could be constructed using a function to account for Blender version & locale.
     row.operator(
         "wm.url_open",
         text="",
         icon='URL',
         emboss=False,
-    ).url = "https://docs.blender.org/manual/en/dev/editors/preferences/extensions.html#install"
+    ).url = (
+        "https://docs.blender.org/manual/"
+        "{:s}/{:d}.{:d}/editors/preferences/extensions.html#installing-extensions"
+    ).format(
+        bpy.utils.manual_language_code(),
+        *bpy.app.version[:2],
+    )
 
     row = box.row()
     props = row.operator("wm.context_set_boolean", text="Continue Offline", icon='X')
@@ -1259,6 +1289,7 @@ def extension_draw_item(
         repo_item,  # `RepoItem`
         operation_in_progress,  # `bool`
         extensions_warnings,  # `dict[str, list[str]]`
+        show_developer_ui,  # `bool`
 ):
     item = item_local or item_remote
     is_installed = item_local is not None
@@ -1429,7 +1460,12 @@ def extension_draw_item(
 
         if is_installed:
             col_a.label(text="Path")
-            col_b.label(text=os.path.join(repo_item.directory, pkg_id), translate=False)
+            row = col_b.row()
+            dirpath = os.path.join(repo_item.directory, pkg_id)
+            row.label(text=dirpath, translate=False)
+
+            if show_developer_ui:
+                row.operator("wm.path_open", text="", icon='FILE_FOLDER').filepath = dirpath
 
 
 def extensions_panel_draw_impl(
@@ -1511,7 +1547,7 @@ def extensions_panel_draw_impl(
     # Exceptions to this rule:
     # - *version*: when outdated, it's useful to show both versions as the user may wish to upgrade.
     #   Otherwise it's typically not useful to attempt to make the user aware of other minor discrepancies.
-    #   (changes to the description or maintainer for e.g.).
+    #   (changes to the description or maintainer for example).
     #
     # - *website*: the host of the remote repository may wish to override the website with a landing page for
     #   each extension, this page can show information managed by the organization hosting repository,
@@ -1710,6 +1746,7 @@ def extensions_panel_draw_impl(
                 repo_item=params.repos_all[ext_ui.repo_index],
                 operation_in_progress=operation_in_progress,
                 extensions_warnings=extensions_warnings,
+                show_developer_ui=prefs.view.show_developer_ui,
             )
 
     # Finally show any errors in a single panel which can be dismissed.
@@ -1961,7 +1998,7 @@ def extensions_panel_draw(panel, context):
     # When an update is in progress disallow any destructive operations.
     # While a non-blocking update is nice, users should *never* be performing
     # destructive operations with an outdated repository. There are a couple of reasons for this.
-    # - Pressing "Install" on an extension may either fail (the version may be old for e.g.).
+    # - Pressing "Install" on an extension may either fail (the version may be old for example).
     # - Pressing any buttons immediately before the UI refreshes risks the user installing or operating
     #   on the wrong extension, one which they may not trust!
     # Prevent these kinds of accidents by disabling parts of the extension UI while synchronize is in progress.
@@ -2083,7 +2120,14 @@ def extensions_repo_active_draw(self, _context):
     if (repo := repo_active_or_none()) is not None:
         layout.context_pointer_set("extension_repo", repo)
 
-    layout.operator("extensions.repo_sync_all", text="", icon='FILE_REFRESH').use_active_only = True
+    if repo is not None and repo.use_remote_url:
+        layout.operator("extensions.repo_sync_all", text="", icon='FILE_REFRESH').use_active_only = True
+    else:
+        # NOTE: this could be exposed for remote repositories, as it's possible users manipulate
+        # extensions on the file-system, then want to see the result of those changes locally.
+        # At the moment this can only be done by refreshing all local repositories from the top-level menu.
+        # Since it's a fairly obscure use case, leave this as-is.
+        layout.operator("extensions.repo_refresh_all", text="", icon='FILE_REFRESH').use_active_only = True
 
     layout.separator()
 
@@ -2166,9 +2210,9 @@ def tags_current(wm, tags_attr):
     active_theme_info = None
 
     # Currently only add-ons can make use of enabled by type (usefully) for tags.
-    if filter_by_type == "add-on":
+    if filter_by_type in {"", "add-on"}:
         addons_enabled = {addon.module for addon in prefs.addons}
-    elif filter_by_type == "theme":
+    if filter_by_type in {"", "theme"}:
         active_theme_info = pkg_repo_and_id_from_theme_path(repos_all, prefs.themes[0].filepath)
 
     params = ExtensionUI_FilterParams(
@@ -2225,26 +2269,14 @@ def tags_current(wm, tags_attr):
 
 
 def tags_clear(wm, tags_attr):
-    import idprop
-    tags_idprop = wm.get(tags_attr)
-    if tags_idprop is None:
-        pass
-    elif isinstance(tags_idprop, idprop.types.IDPropertyGroup):
-        tags_idprop.clear()
-    else:
-        wm[tags_attr] = {}
+    tags_collection = getattr(wm, tags_attr)
+    tags_collection.clear()
 
 
 def tags_refresh(wm, tags_attr, *, default_value):
-    import idprop
-    tags_idprop = wm.get(tags_attr)
-    if isinstance(tags_idprop, idprop.types.IDPropertyGroup):
-        pass
-    else:
-        wm[tags_attr] = {}
-        tags_idprop = wm[tags_attr]
+    tags_collection = getattr(wm, tags_attr)
 
-    tags_curr = set(tags_idprop.keys())
+    tags_curr = set(tags_collection.keys())
 
     # Calculate tags.
     tags_next = tags_current(wm, tags_attr)
@@ -2252,17 +2284,25 @@ def tags_refresh(wm, tags_attr, *, default_value):
     tags_to_add = tags_next - tags_curr
     tags_to_rem = tags_curr - tags_next
 
-    for tag in tags_to_rem:
-        del tags_idprop[tag]
+    if tags_to_rem:
+        # Remove last indices first.
+        for i in reversed([i for i, item in enumerate(tags_collection) if item.name in tags_to_rem]):
+            tags_collection.remove(i)
+
     for tag in tags_to_add:
-        tags_idprop[tag] = default_value
+        item = tags_collection.add()
+        item.name = tag
+        item.show_tag = default_value
 
     return list(sorted(tags_next))
 
 
+def tags_exclude_get(wm, tags_attr):
+    tags_collection = getattr(wm, tags_attr)
+    return {item.name for item in tags_collection if item.show_tag is False}
+
+
 def tags_panel_draw(layout, context, tags_attr):
-    from bpy.utils import escape_identifier
-    from bpy.app.translations import contexts as i18n_contexts
     wm = context.window_manager
 
     split = layout.split(factor=0.5)
@@ -2292,13 +2332,13 @@ def tags_panel_draw(layout, context, tags_attr):
         tags_len_half = (len(tags_sorted) + 1) // 2
         split = layout.split(factor=0.5)
         col = split.column()
-        tags_prop = getattr(wm, tags_attr)
+        tags_collection_map = dict(getattr(wm, tags_attr).items())
         for i, t in enumerate(sorted(tags_sorted)):
             if i == tags_len_half:
                 col = split.column()
             col.prop(
-                tags_prop,
-                "[\"{:s}\"]".format(escape_identifier(t)),
+                tags_collection_map[t],
+                "show_tag",
                 text=t,
                 text_ctxt=i18n_contexts.editor_preferences,
             )

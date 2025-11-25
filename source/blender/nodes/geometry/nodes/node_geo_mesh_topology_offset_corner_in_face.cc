@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BKE_mesh.hh"
+#include "DNA_mesh_types.h"
 
 #include "node_geometry_util.hh"
 
@@ -11,8 +11,9 @@ namespace blender::nodes::node_geo_mesh_topology_offset_corner_in_face_cc {
 static void node_declare(NodeDeclarationBuilder &b)
 {
   b.add_input<decl::Int>("Corner Index")
-      .implicit_field(implicit_field_inputs::index)
-      .description("The corner to retrieve data from. Defaults to the corner from the context");
+      .implicit_field(NODE_DEFAULT_INPUT_INDEX_FIELD)
+      .description("The corner to retrieve data from. Defaults to the corner from the context")
+      .structure_type(StructureType::Field);
   b.add_input<decl::Int>("Offset").supports_field().description(
       "The number of corners to move around the face before finding the result, "
       "circling around the start of the face if necessary");
@@ -53,18 +54,19 @@ class OffsetCornerInFaceFieldInput final : public bke::MeshFieldInput {
 
     Array<int> offset_corners(mask.min_array_size());
     mask.foreach_index_optimized<int>(GrainSize(2048), [&](const int selection_i) {
-      const int corner_i = corner_indices[selection_i];
+      const int corner = corner_indices[selection_i];
       const int offset = offsets[selection_i];
-      if (!corner_range.contains(corner_i)) {
+      if (!corner_to_face.index_range().contains(corner)) {
         offset_corners[selection_i] = 0;
         return;
       }
-
-      const IndexRange face = faces[corner_to_face[corner_i]];
-      offset_corners[selection_i] = apply_offset_in_cyclic_range(face, corner_i, offset);
+      const IndexRange face = faces[corner_to_face[corner]];
+      const int corner_index_in_face = corner - face.start();
+      offset_corners[selection_i] = face.start() + math::mod_periodic<int>(
+                                                       corner_index_in_face + offset, face.size());
     });
 
-    return VArray<int>::ForContainer(std::move(offset_corners));
+    return VArray<int>::from_container(std::move(offset_corners));
   }
 
   void for_each_field_input_recursive(FunctionRef<void(const FieldInput &)> fn) const override
@@ -113,7 +115,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_INPUT;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

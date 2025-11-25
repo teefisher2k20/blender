@@ -8,21 +8,18 @@
  * Methods for constructing depsgraph.
  */
 
-#include "MEM_guardedalloc.h"
-
 #include "BLI_listbase.h"
 #include "BLI_utildefines.h"
 
-#include "BLI_time.h"
-#include "BLI_time_utildefines.h"
-
 #include "DNA_cachefile_types.h"
+#include "DNA_camera_types.h"
 #include "DNA_collection_types.h"
 #include "DNA_node_types.h"
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 
 #include "BKE_collection.hh"
+#include "BKE_global.hh"
 #include "BKE_main.hh"
 #include "BKE_scene.hh"
 
@@ -84,6 +81,15 @@ void DEG_add_scene_relation(DepsNodeHandle *node_handle,
   deg_node_handle->builder->add_node_handle_relation(comp_key, deg_node_handle, description);
 }
 
+static void add_camera_parameters_relation(DepsNodeHandle *node_handle,
+                                           Camera *camera,
+                                           const char *description)
+{
+  deg::DepsNodeHandle *deg_node_handle = get_node_handle(node_handle);
+  deg::ComponentKey parameters_key(&camera->id, deg::NodeType::PARAMETERS);
+  deg_node_handle->builder->add_node_handle_relation(parameters_key, deg_node_handle, description);
+}
+
 void DEG_add_scene_camera_relation(DepsNodeHandle *node_handle,
                                    Scene *scene,
                                    eDepsObjectComponentType component,
@@ -91,6 +97,10 @@ void DEG_add_scene_camera_relation(DepsNodeHandle *node_handle,
 {
   if (scene->camera != nullptr) {
     DEG_add_object_relation(node_handle, scene->camera, component, description);
+    if (scene->camera->type == OB_CAMERA) {
+      add_camera_parameters_relation(
+          node_handle, reinterpret_cast<Camera *>(scene->camera->data), description);
+    }
   }
 
   /* Like DepsgraphNodeBuilder::build_scene_camera(), we also need to account for other cameras
@@ -98,6 +108,10 @@ void DEG_add_scene_camera_relation(DepsNodeHandle *node_handle,
   LISTBASE_FOREACH (TimeMarker *, marker, &scene->markers) {
     if (!ELEM(marker->camera, nullptr, scene->camera)) {
       DEG_add_object_relation(node_handle, marker->camera, component, description);
+      if (marker->camera->type == OB_CAMERA) {
+        add_camera_parameters_relation(
+            node_handle, reinterpret_cast<Camera *>(marker->camera->data), description);
+      }
     }
   }
 }

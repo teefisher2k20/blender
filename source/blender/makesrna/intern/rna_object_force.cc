@@ -10,14 +10,8 @@
 
 #include "BLT_translation.hh"
 
-#include "DNA_cloth_types.h"
-#include "DNA_dynamicpaint_types.h"
-#include "DNA_fluid_types.h"
 #include "DNA_object_force_types.h"
-#include "DNA_object_types.h"
-#include "DNA_particle_types.h"
 #include "DNA_pointcache_types.h"
-#include "DNA_rigidbody_types.h"
 #include "DNA_scene_types.h"
 
 #include "RNA_define.hh"
@@ -106,7 +100,12 @@ static const EnumPropertyItem empty_vortex_shape_items[] = {
 
 #  include "MEM_guardedalloc.h"
 
+#  include "DNA_cloth_types.h"
+#  include "DNA_dynamicpaint_types.h"
+#  include "DNA_fluid_types.h"
 #  include "DNA_modifier_types.h"
+#  include "DNA_particle_types.h"
+#  include "DNA_rigidbody_types.h"
 #  include "DNA_texture_types.h"
 
 #  include "BKE_collection.hh"
@@ -119,7 +118,7 @@ static const EnumPropertyItem empty_vortex_shape_items[] = {
 
 #  include "ED_object.hh"
 
-static bool rna_Cache_get_valid_owner_ID(PointerRNA *ptr, Object **ob, Scene **scene)
+static bool rna_Cache_get_valid_owner_ID(const PointerRNA *ptr, Object **ob, Scene **scene)
 {
   switch (GS(ptr->owner_id->name)) {
     case ID_OB:
@@ -140,10 +139,27 @@ static bool rna_Cache_get_valid_owner_ID(PointerRNA *ptr, Object **ob, Scene **s
 
 static std::optional<std::string> rna_PointCache_path(const PointerRNA *ptr)
 {
-  ModifierData *md;
-  Object *ob = (Object *)ptr->owner_id;
   PointCache *cache = static_cast<PointCache *>(ptr->data);
 
+  Object *ob = nullptr;
+  Scene *scene = nullptr;
+
+  if (!rna_Cache_get_valid_owner_ID(ptr, &ob, &scene)) {
+    return std::nullopt;
+  }
+
+  /* Scene rigid body. */
+  if (scene != nullptr && scene->rigidbody_world->shared != nullptr) {
+    if (scene->rigidbody_world->shared->pointcache == cache) {
+      return "rigidbody_world.point_cache";
+    }
+  }
+
+  if (!ob) {
+    return std::nullopt;
+  }
+
+  ModifierData *md;
   for (md = static_cast<ModifierData *>(ob->modifiers.first); md; md = md->next) {
     const ModifierTypeInfo *mti = BKE_modifier_get_info(ModifierType(md->type));
 
@@ -199,6 +215,7 @@ static std::optional<std::string> rna_PointCache_path(const PointerRNA *ptr)
       }
     }
   }
+
   return std::nullopt;
 }
 
@@ -344,7 +361,7 @@ static void rna_Cache_list_begin(CollectionPropertyIterator *iter, PointerRNA *p
   lb.first = cache;
   lb.last = nullptr; /* not used by listbase_begin */
 
-  rna_iterator_listbase_begin(iter, &lb, nullptr);
+  rna_iterator_listbase_begin(iter, ptr, &lb, nullptr);
 }
 static void rna_Cache_active_point_cache_index_range(
     PointerRNA *ptr, int *min, int *max, int * /*softmin*/, int * /*softmax*/)
@@ -958,13 +975,6 @@ static void rna_def_pointcache_common(StructRNA *srna)
 {
   PropertyRNA *prop;
 
-  static const EnumPropertyItem point_cache_compress_items[] = {
-      {PTCACHE_COMPRESS_NO, "NO", 0, "None", "No compression"},
-      {PTCACHE_COMPRESS_LZO, "LIGHT", 0, "Lite", "Fast but not so effective compression"},
-      {PTCACHE_COMPRESS_LZMA, "HEAVY", 0, "Heavy", "Effective but slow compression"},
-      {0, nullptr, 0, nullptr, nullptr},
-  };
-
   RNA_def_struct_path_func(srna, "rna_PointCache_path");
 
   RNA_define_lib_overridable(true);
@@ -992,10 +1002,6 @@ static void rna_def_pointcache_common(StructRNA *srna)
   RNA_def_property_range(prop, -1, 100);
   RNA_def_property_ui_text(prop, "Cache Index", "Index number of cache files");
   RNA_def_property_update(prop, NC_OBJECT, "rna_Cache_idname_change");
-
-  prop = RNA_def_property(srna, "compression", PROP_ENUM, PROP_NONE);
-  RNA_def_property_enum_items(prop, point_cache_compress_items);
-  RNA_def_property_ui_text(prop, "Cache Compression", "Compression method to be used");
 
   /* flags */
   prop = RNA_def_property(srna, "is_baked", PROP_BOOLEAN, PROP_NONE);
@@ -1034,6 +1040,7 @@ static void rna_def_pointcache_common(StructRNA *srna)
 
   prop = RNA_def_property(srna, "filepath", PROP_STRING, PROP_DIRPATH);
   RNA_def_property_string_sdna(prop, nullptr, "path");
+  RNA_def_property_flag(prop, PROP_PATH_SUPPORTS_BLEND_RELATIVE);
   RNA_def_property_ui_text(prop, "File Path", "Cache file path");
   RNA_def_property_update(prop, NC_OBJECT, "rna_Cache_idname_change");
 

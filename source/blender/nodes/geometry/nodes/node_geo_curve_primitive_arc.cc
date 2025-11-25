@@ -2,8 +2,6 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include <numeric>
-
 #include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
@@ -12,7 +10,7 @@
 
 #include "NOD_rna_define.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "node_geometry_util.hh"
@@ -120,12 +118,12 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 }
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
 {
-  NodeGeometryCurvePrimitiveArc *data = MEM_cnew<NodeGeometryCurvePrimitiveArc>(__func__);
+  NodeGeometryCurvePrimitiveArc *data = MEM_callocN<NodeGeometryCurvePrimitiveArc>(__func__);
 
   data->mode = GEO_NODE_CURVE_PRIMITIVE_ARC_TYPE_RADIUS;
   node->storage = data;
@@ -310,8 +308,8 @@ static void node_geo_exec(GeoNodeExecParams params)
 
   switch (mode) {
     case GEO_NODE_CURVE_PRIMITIVE_ARC_TYPE_POINTS: {
-      float3 r_center, r_normal;
-      float r_radius;
+      float3 center, normal;
+      float radius;
       Curves *curves = create_arc_curve_from_points(
           std::max(params.extract_input<int>("Resolution"), 2),
           params.extract_input<float3>("Start"),
@@ -320,13 +318,13 @@ static void node_geo_exec(GeoNodeExecParams params)
           params.extract_input<float>("Offset Angle"),
           params.extract_input<bool>("Connect Center"),
           params.extract_input<bool>("Invert Arc"),
-          r_center,
-          r_normal,
-          r_radius);
+          center,
+          normal,
+          radius);
       params.set_output("Curve", GeometrySet::from_curves(curves));
-      params.set_output("Center", r_center);
-      params.set_output("Normal", r_normal);
-      params.set_output("Radius", r_radius);
+      params.set_output("Center", center);
+      params.set_output("Normal", normal);
+      params.set_output("Radius", radius);
       break;
     }
     case GEO_NODE_CURVE_PRIMITIVE_ARC_TYPE_RADIUS: {
@@ -378,14 +376,14 @@ static void node_register()
   ntype.enum_name_legacy = "CURVE_PRIMITIVE_ARC";
   ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.initfunc = node_init;
-  blender::bke::node_type_storage(&ntype,
+  blender::bke::node_type_storage(ntype,
                                   "NodeGeometryCurvePrimitiveArc",
                                   node_free_standard_storage,
                                   node_copy_standard_storage);
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.draw_buttons = node_layout;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

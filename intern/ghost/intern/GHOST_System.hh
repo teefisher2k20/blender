@@ -19,7 +19,6 @@
 #  include "GHOST_EventPrinter.hh"
 #endif  // WITH_GHOST_DEBUG
 
-class GHOST_DisplayManager;
 class GHOST_Event;
 class GHOST_TimerManager;
 class GHOST_Window;
@@ -47,122 +46,49 @@ class GHOST_System : public GHOST_ISystem {
    * Destructor.
    * Protected default constructor to force use of static dispose member.
    */
-  virtual ~GHOST_System();
+  ~GHOST_System() override;
 
  public:
   /***************************************************************************************
    * Time(r) functionality
    ***************************************************************************************/
 
-  /**
-   * Installs a timer.
-   *
-   * \note On most operating systems, messages need to be processed in order
-   * for the timer callbacks to be invoked.
-   *
-   * \param delay: The time to wait for the first call to the #timerProc (in milliseconds).
-   * \param interval: The interval between calls to the #timerProc.
-   * \param timerProc: The callback invoked when the interval expires.
-   * \param userData: Placeholder for user data.
-   * \return A timer task (0 if timer task installation failed).
-   */
+  /** \copydoc #GHOST_ISystem::installTimer */
   GHOST_ITimerTask *installTimer(uint64_t delay,
                                  uint64_t interval,
-                                 GHOST_TimerProcPtr timerProc,
-                                 GHOST_TUserDataPtr userData = nullptr);
-
-  /**
-   * Removes a timer.
-   * \param timerTask: Timer task to be removed.
-   * \return Indication of success.
-   */
-  GHOST_TSuccess removeTimer(GHOST_ITimerTask *timerTask);
+                                 GHOST_TimerProcPtr timer_proc,
+                                 GHOST_TUserDataPtr user_data = nullptr) override;
+  /** \copydoc #GHOST_ISystem::removeTimer */
+  GHOST_TSuccess removeTimer(GHOST_ITimerTask *timerTask) override;
 
   /***************************************************************************************
    * Display/window management functionality
    ***************************************************************************************/
 
-  /**
-   * Dispose a window.
-   * \param window: Pointer to the window to be disposed.
-   * \return Indication of success.
-   */
-  GHOST_TSuccess disposeWindow(GHOST_IWindow *window);
+  /** \copydoc #GHOST_ISystem::disposeWindow */
+  GHOST_TSuccess disposeWindow(GHOST_IWindow *window) override;
 
-  /**
-   * Create a new off-screen context.
-   * Never explicitly delete the context, use #disposeContext() instead.
-   * \return The new context (or 0 if creation failed).
-   */
-  virtual GHOST_IContext *createOffscreenContext(GHOST_GPUSettings gpuSettings) = 0;
+  /** \copydoc #GHOST_ISystem::createOffscreenContext */
+  GHOST_IContext *createOffscreenContext(GHOST_GPUSettings gpu_settings) override = 0;
 
-  /**
-   * Returns whether a window is valid.
-   * \param window: Pointer to the window to be checked.
-   * \return Indication of validity.
-   */
-  bool validWindow(GHOST_IWindow *window);
+  /** \copydoc #GHOST_ISystem::validWindow */
+  bool validWindow(GHOST_IWindow *window) override;
 
-  /**
-   * Begins full screen mode.
-   * \param setting: The new setting of the display.
-   * \param window: Window displayed in full screen.
-   * \param stereoVisual: Stereo visual for quad buffered stereo.
-   * This window is invalid after full screen has been ended.
-   * \return Indication of success.
-   */
-  GHOST_TSuccess beginFullScreen(const GHOST_DisplaySetting &setting,
-                                 GHOST_IWindow **window,
-                                 const bool stereoVisual);
+  /** \copydoc #GHOST_ISystem::useNativePixel */
+  bool useNativePixel() override;
+  bool native_pixel_;
 
-  /**
-   * Updates the resolution while in full-screen mode.
-   * \param setting: The new setting of the display.
-   * \param window: Window displayed in full screen.
-   *
-   * \return Indication of success.
-   */
-  GHOST_TSuccess updateFullScreen(const GHOST_DisplaySetting &setting, GHOST_IWindow **window);
+  /** \copydoc #GHOST_ISystem::useWindowFocus */
+  void useWindowFocus(const bool use_focus) override;
 
-  /**
-   * Ends full screen mode.
-   * \return Indication of success.
-   */
-  GHOST_TSuccess endFullScreen();
+  bool window_focus_;
 
-  /**
-   * Returns current full screen mode status.
-   * \return The current status.
-   */
-  bool getFullScreen();
+  /** \copydoc #GHOST_ISystem::setAutoFocus */
+  void setAutoFocus(const bool auto_focus) override;
+  bool auto_focus_;
 
-  /**
-   * Native pixel size support (MacBook 'retina').
-   * \return The pixel size in float.
-   */
-  bool useNativePixel();
-  bool m_nativePixel;
-
-  /**
-   * Focus window after opening, or put them in the background.
-   */
-  void useWindowFocus(const bool use_focus);
-
-  bool m_windowFocus;
-
-  /**
-   * Focus and raise windows on mouse hover.
-   */
-  void setAutoFocus(const bool auto_focus);
-  bool m_autoFocus;
-
-  /**
-   * Get the Window under the cursor.
-   * \param x: The x-coordinate of the cursor.
-   * \param y: The y-coordinate of the cursor.
-   * \return The window under the cursor or nullptr if none.
-   */
-  GHOST_IWindow *getWindowUnderCursor(int32_t x, int32_t y);
+  /** \copydoc #GHOST_ISystem::getWindowUnderCursor */
+  GHOST_IWindow *getWindowUnderCursor(int32_t x, int32_t y) override;
 
   /***************************************************************************************
    * Event management functionality
@@ -171,28 +97,17 @@ class GHOST_System : public GHOST_ISystem {
   /**
    * Inherited from GHOST_ISystem but left pure virtual
    *
+   * <pre>
    * virtual bool processEvents(bool waitForEvent) = 0;
+   * </pre>
    */
 
-  /**
-   * Dispatches all the events on the stack.
-   * The event stack will be empty afterwards.
-   */
-  void dispatchEvents();
-
-  /**
-   * Adds the given event consumer to our list.
-   * \param consumer: The event consumer to add.
-   * \return Indication of success.
-   */
-  GHOST_TSuccess addEventConsumer(GHOST_IEventConsumer *consumer);
-
-  /**
-   * Remove the given event consumer to our list.
-   * \param consumer: The event consumer to remove.
-   * \return Indication of success.
-   */
-  GHOST_TSuccess removeEventConsumer(GHOST_IEventConsumer *consumer);
+  /** \copydoc #GHOST_ISystem::dispatchEvents */
+  void dispatchEvents() override;
+  /** \copydoc #GHOST_ISystem::addEventConsumer */
+  GHOST_TSuccess addEventConsumer(GHOST_IEventConsumer *consumer) override;
+  /** \copydoc #GHOST_ISystem::removeEventConsumer */
+  GHOST_TSuccess removeEventConsumer(GHOST_IEventConsumer *consumer) override;
 
   /***************************************************************************************
    * Cursor management functionality
@@ -202,10 +117,17 @@ class GHOST_System : public GHOST_ISystem {
    * that converts from screen-coordinates to client coordinates.
    * Implementations may override. */
 
+  /** \copydoc #GHOST_ISystem::getCursorPositionClientRelative */
   GHOST_TSuccess getCursorPositionClientRelative(const GHOST_IWindow *window,
                                                  int32_t &x,
-                                                 int32_t &y) const;
-  GHOST_TSuccess setCursorPositionClientRelative(GHOST_IWindow *window, int32_t x, int32_t y);
+                                                 int32_t &y) const override;
+  /** \copydoc #GHOST_ISystem::setCursorPositionClientRelative */
+  GHOST_TSuccess setCursorPositionClientRelative(GHOST_IWindow *window,
+                                                 int32_t x,
+                                                 int32_t y) override;
+
+  /** \copydoc #GHOST_ISystem::getCursorPreferredLogicalSize */
+  uint32_t getCursorPreferredLogicalSize() const override;
 
   /**
    * Inherited from GHOST_ISystem but left pure virtual
@@ -219,53 +141,56 @@ class GHOST_System : public GHOST_ISystem {
    * Access to mouse button and keyboard states.
    ***************************************************************************************/
 
-  /**
-   * Returns the state of a modifier key (outside the message queue).
-   * \param mask: The modifier key state to retrieve.
-   * \param isDown: The state of a modifier key (true == pressed).
-   * \return Indication of success.
-   */
-  GHOST_TSuccess getModifierKeyState(GHOST_TModifierKey mask, bool &isDown) const;
+  /** \copydoc #GHOST_ISystem::getModifierKeyState */
+  GHOST_TSuccess getModifierKeyState(GHOST_TModifierKey mask, bool &is_down) const override;
 
-  /**
-   * Returns the state of a mouse button (outside the message queue).
-   * \param mask: The button state to retrieve.
-   * \param isDown: Button state.
-   * \return Indication of success.
-   */
-  GHOST_TSuccess getButtonState(GHOST_TButton mask, bool &isDown) const;
+  /** \copydoc #GHOST_ISystem::getButtonState */
+  GHOST_TSuccess getButtonState(GHOST_TButton mask, bool &is_down) const override;
 
-  /**
-   * Enable multi-touch gestures if supported.
-   * \param use: Enable or disable.
-   */
-  void setMultitouchGestures(const bool use);
+  /** \copydoc #GHOST_ISystem::setMultitouchGestures */
+  void setMultitouchGestures(const bool use) override;
 
-  /**
-   * Set which tablet API to use. Only affects Windows, other platforms have a single API.
-   * \param api: Enum indicating which API to use.
-   */
-  virtual void setTabletAPI(GHOST_TTabletAPI api);
+  /** \copydoc #GHOST_ISystem::setTabletAPI */
+  void setTabletAPI(GHOST_TTabletAPI api) override;
   GHOST_TTabletAPI getTabletAPI();
 
-  /**
-   * Get the color of the pixel at the current mouse cursor location
-   * \param r_color: returned sRGB float colors
-   * \return Success value (true == successful and supported by platform)
-   */
-  GHOST_TSuccess getPixelAtCursor(float r_color[3]) const;
+  /** \copydoc #GHOST_ISystem::getPixelAtCursor */
+  GHOST_TSuccess getPixelAtCursor(float r_color[3]) const override;
 
 #ifdef WITH_INPUT_NDOF
   /***************************************************************************************
    * Access to 3D mouse.
    ***************************************************************************************/
 
-  /**
-   * Sets 3D mouse dead-zone
-   * \param deadzone: Dead-zone of the 3D mouse (both for rotation and pan) relative to full range.
-   */
-  void setNDOFDeadZone(float deadzone);
+  /** \copydoc #GHOST_ISystem::setNDOFDeadZone */
+  void setNDOFDeadZone(float deadzone) override;
 #endif
+
+  /***************************************************************************************
+   * Access to the Clipboard
+   ***************************************************************************************/
+
+  /** \copydoc #GHOST_ISystem::getClipboard */
+  char *getClipboard(bool selection) const override = 0;
+  /** \copydoc #GHOST_ISystem::putClipboard */
+  void putClipboard(const char *buffer, bool selection) const override = 0;
+  /** \copydoc #GHOST_ISystem::hasClipboardImage */
+  GHOST_TSuccess hasClipboardImage() const override;
+  /** \copydoc #GHOST_ISystem::getClipboardImage */
+  uint *getClipboardImage(int *r_width, int *r_height) const override;
+  /** \copydoc #GHOST_ISystem::putClipboardImage */
+  GHOST_TSuccess putClipboardImage(uint *rgba, int width, int height) const override;
+
+  /** \copydoc #GHOST_ISystem::showMessageBox */
+  GHOST_TSuccess showMessageBox(const char * /*title*/,
+                                const char * /*message*/,
+                                const char * /*help_label*/,
+                                const char * /*continue_label*/,
+                                const char * /*link*/,
+                                GHOST_DialogOptions /*dialog_options*/) const override
+  {
+    return GHOST_kFailure;
+  };
 
   /***************************************************************************************
    * Other (internal) functionality.
@@ -315,149 +240,68 @@ class GHOST_System : public GHOST_ISystem {
    */
   virtual GHOST_TSuccess getButtons(GHOST_Buttons &buttons) const = 0;
 
-  /**
-   * Returns the selection buffer
-   * \param selection: Only used on X11.
-   * \return Returns the clipboard data
-   */
-  virtual char *getClipboard(bool selection) const = 0;
-
-  /**
-   * Put data to the Clipboard
-   * \param buffer: The buffer to copy to the clipboard.
-   * \param selection: The clipboard to copy too only used on X11.
-   */
-  virtual void putClipboard(const char *buffer, bool selection) const = 0;
-
-  /**
-   * Returns GHOST_kSuccess if the clipboard contains an image.
-   */
-  GHOST_TSuccess hasClipboardImage() const;
-
-  /**
-   * Get image data from the Clipboard
-   * \param r_width: the returned image width in pixels.
-   * \param r_height: the returned image height in pixels.
-   * \return pointer uint array in RGBA byte order. Caller must free.
-   */
-  uint *getClipboardImage(int *r_width, int *r_height) const;
-
-  /**
-   * Put image data to the Clipboard
-   * \param rgba: uint array in RGBA byte order.
-   * \param width: the image width in pixels.
-   * \param height: the image height in pixels.
-   */
-  GHOST_TSuccess putClipboardImage(uint *rgba, int width, int height) const;
-
-  /**
-   * Show a system message box
-   * \param title: The title of the message box.
-   * \param message: The message to display.
-   * \param help_label: Help button label.
-   * \param continue_label: Continue button label.
-   * \param link: An optional hyperlink.
-   * \param dialog_options: Options  how to display the message.
-   */
-  virtual GHOST_TSuccess showMessageBox(const char * /*title*/,
-                                        const char * /*message*/,
-                                        const char * /*help_label*/,
-                                        const char * /*continue_label*/,
-                                        const char * /*link*/,
-                                        GHOST_DialogOptions /*dialog_options*/) const
-  {
-    return GHOST_kFailure;
-  };
-
   /***************************************************************************************
    * Debugging
    ***************************************************************************************/
 
-  /**
-   * Specify whether debug messages are to be shown.
-   * \param debug: Flag for systems to debug.
-   */
-  virtual void initDebug(GHOST_Debug debug);
+  /** \copydoc #GHOST_ISystem::initDebug */
+  void initDebug(GHOST_Debug debug) override;
 
-  /**
-   * Check whether debug messages are to be shown.
-   */
-  virtual bool isDebugEnabled();
+  /** \copydoc #GHOST_ISystem::isDebugEnabled */
+  bool isDebugEnabled() override;
 
  protected:
-  /**
-   * Initialize the system.
-   * \return Indication of success.
-   */
-  virtual GHOST_TSuccess init();
-
-  /**
-   * Shut the system down.
-   * \return Indication of success.
-   */
-  virtual GHOST_TSuccess exit();
-
-  /**
-   * Creates a full-screen window.
-   * \param window: The window created.
-   * \return Indication of success.
-   */
-  GHOST_TSuccess createFullScreenWindow(GHOST_Window **window,
-                                        const GHOST_DisplaySetting &settings,
-                                        const bool stereoVisual);
-
-  /** The display manager (platform dependent). */
-  GHOST_DisplayManager *m_displayManager;
+  /** \copydoc #GHOST_ISystem::init */
+  GHOST_TSuccess init() override;
+  /** \copydoc #GHOST_ISystem::exit */
+  GHOST_TSuccess exit() override;
 
   /** The timer manager. */
-  GHOST_TimerManager *m_timerManager;
+  GHOST_TimerManager *timer_manager_;
 
   /** The window manager. */
-  GHOST_WindowManager *m_windowManager;
+  GHOST_WindowManager *window_manager_;
 
   /** The event manager. */
-  GHOST_EventManager *m_eventManager;
+  GHOST_EventManager *event_manager_;
 
 #ifdef WITH_INPUT_NDOF
   /** The N-degree of freedom device manager */
-  GHOST_NDOFManager *m_ndofManager;
+  GHOST_NDOFManager *ndof_manager_;
 #endif
 
-  /** Prints all the events. */
 #ifdef WITH_GHOST_DEBUG
-  GHOST_EventPrinter *m_eventPrinter;
+  /** Prints all the events. */
+  GHOST_EventPrinter *event_printer_;
 #endif  // WITH_GHOST_DEBUG
 
-  /** Settings of the display before the display went full-screen. */
-  GHOST_DisplaySetting m_preFullScreenSetting;
-
-  /* Use multi-touch gestures? */
-  bool m_multitouchGestures;
+  /** Use multi-touch gestures. */
+  bool multitouch_gestures_;
 
   /** Which tablet API to use. */
-  GHOST_TTabletAPI m_tabletAPI;
+  GHOST_TTabletAPI tablet_api_;
 
-  bool m_is_debug_enabled;
+  bool is_debug_enabled_;
 };
 
 inline GHOST_TimerManager *GHOST_System::getTimerManager() const
 {
-  return m_timerManager;
+  return timer_manager_;
 }
 
 inline GHOST_EventManager *GHOST_System::getEventManager() const
 {
-  return m_eventManager;
+  return event_manager_;
 }
 
 inline GHOST_WindowManager *GHOST_System::getWindowManager() const
 {
-  return m_windowManager;
+  return window_manager_;
 }
 
 #ifdef WITH_INPUT_NDOF
 inline GHOST_NDOFManager *GHOST_System::getNDOFManager() const
 {
-  return m_ndofManager;
+  return ndof_manager_;
 }
 #endif

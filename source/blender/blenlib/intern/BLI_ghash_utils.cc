@@ -17,7 +17,7 @@
 #include "BLI_hash_mm2a.hh"
 #include "BLI_utildefines.h"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 /* -------------------------------------------------------------------- */
 /** \name Generic Key Hash & Comparison Functions
@@ -125,7 +125,7 @@ uint BLI_ghashutil_strhash_n(const char *key, size_t n)
   uint h = 5381;
 
   for (p = (const signed char *)key; n-- && *p != '\0'; p++) {
-    h = uint((h << 5) + h) + uint(*p);
+    h = ((h << 5) + h) + uint(*p);
   }
 
   return h;
@@ -136,7 +136,7 @@ uint BLI_ghashutil_strhash_p(const void *ptr)
   uint h = 5381;
 
   for (p = static_cast<const signed char *>(ptr); *p != '\0'; p++) {
-    h = uint((h << 5) + h) + uint(*p);
+    h = ((h << 5) + h) + uint(*p);
   }
 
   return h;
@@ -154,7 +154,7 @@ bool BLI_ghashutil_strcmp(const void *a, const void *b)
 
 GHashPair *BLI_ghashutil_pairalloc(const void *first, const void *second)
 {
-  GHashPair *pair = static_cast<GHashPair *>(MEM_mallocN(sizeof(GHashPair), "GHashPair"));
+  GHashPair *pair = MEM_mallocN<GHashPair>("GHashPair");
   pair->first = first;
   pair->second = second;
   return pair;
@@ -177,7 +177,7 @@ bool BLI_ghashutil_paircmp(const void *a, const void *b)
 
 void BLI_ghashutil_pairfree(void *ptr)
 {
-  MEM_freeN(ptr);
+  MEM_freeN(static_cast<const GHashPair *>(ptr));
 }
 
 /** \} */

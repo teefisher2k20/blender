@@ -16,6 +16,7 @@
 
 #include "BKE_colortools.hh"
 
+#include "DNA_color_types.h"
 #include "IMB_colormanagement.hh"
 
 #include "DNA_vec_types.h"
@@ -24,8 +25,8 @@
 #include "GPU_framebuffer.hh"
 #include "GPU_immediate.hh"
 #include "GPU_matrix.hh"
+#include "GPU_state.hh"
 #include "GPU_texture.hh"
-#include "GPU_uniform_buffer.hh"
 #include "GPU_viewport.hh"
 
 #include "DRW_engine.hh"
@@ -60,18 +61,24 @@ struct GPUViewport {
   /* Viewport Resources. */
   DRWData *draw_data;
   /** Color buffers, one for each stereo view. Only one if not stereo viewport. */
-  GPUTexture *color_render_tx[2];
-  GPUTexture *color_overlay_tx[2];
+  blender::gpu::Texture *color_render_tx[2];
+  blender::gpu::Texture *color_overlay_tx[2];
   /** Depth buffer. Can be shared with GPUOffscreen. */
-  GPUTexture *depth_tx;
+  blender::gpu::Texture *depth_tx;
   /** Compositing framebuffer for stereo viewport. */
-  GPUFrameBuffer *stereo_comp_fb;
-  /** Overlay framebuffer for drawing outside of DRW module. */
-  GPUFrameBuffer *overlay_fb;
+  blender::gpu::FrameBuffer *stereo_comp_fb;
+  /** Color render and overlay frame-buffers for drawing outside of DRW module.
+   * The render framebuffer is expected to be in the linear space and viewport will perform color
+   * management on it to bring it to the display space.
+   * The overlay frame-buffer is expected to be in the display space and viewport does not do any
+   * color management on it. */
+  blender::gpu::FrameBuffer *render_fb;
+  blender::gpu::FrameBuffer *overlay_fb;
 
   /* Color management. */
   ColorManagedViewSettings view_settings;
   ColorManagedDisplaySettings display_settings;
+  bool use_hdr_display;
   CurveMapping *orig_curve_mapping;
   float dither;
   /* TODO(@fclem): the UV-image display use the viewport but do not set any view transform for the
@@ -99,8 +106,7 @@ bool GPU_viewport_do_update(GPUViewport *viewport)
 
 GPUViewport *GPU_viewport_create()
 {
-  GPUViewport *viewport = static_cast<GPUViewport *>(
-      MEM_callocN(sizeof(GPUViewport), "GPUViewport"));
+  GPUViewport *viewport = MEM_callocN<GPUViewport>("GPUViewport");
   viewport->do_color_management = false;
   viewport->size[0] = viewport->size[1] = -1;
   viewport->active_view = 0;
@@ -129,28 +135,40 @@ static void gpu_viewport_textures_create(GPUViewport *viewport)
 
     /* NOTE: dtxl_color texture requires write support as it may be written to by the viewport
      * compositor. */
-    viewport->color_render_tx[0] = GPU_texture_create_2d("dtxl_color",
-                                                         UNPACK2(size),
-                                                         1,
-                                                         GPU_RGBA16F,
-                                                         usage | GPU_TEXTURE_USAGE_SHADER_WRITE,
-                                                         nullptr);
+    viewport->color_render_tx[0] = GPU_texture_create_2d(
+        "dtxl_color",
+        UNPACK2(size),
+        1,
+        blender::gpu::TextureFormat::SFLOAT_16_16_16_16,
+        usage | GPU_TEXTURE_USAGE_SHADER_WRITE,
+        nullptr);
     viewport->color_overlay_tx[0] = GPU_texture_create_2d(
-        "dtxl_color_overlay", UNPACK2(size), 1, GPU_SRGB8_A8, usage, nullptr);
+        "dtxl_color_overlay",
+        UNPACK2(size),
+        1,
+        blender::gpu::TextureFormat::SRGBA_8_8_8_8,
+        usage,
+        nullptr);
 
     GPU_texture_clear(viewport->color_render_tx[0], GPU_DATA_FLOAT, empty_pixel);
     GPU_texture_clear(viewport->color_overlay_tx[0], GPU_DATA_FLOAT, empty_pixel);
   }
 
   if ((viewport->flag & GPU_VIEWPORT_STEREO) != 0 && viewport->color_render_tx[1] == nullptr) {
-    viewport->color_render_tx[1] = GPU_texture_create_2d("dtxl_color_stereo",
-                                                         UNPACK2(size),
-                                                         1,
-                                                         GPU_RGBA16F,
-                                                         usage | GPU_TEXTURE_USAGE_SHADER_WRITE,
-                                                         nullptr);
+    viewport->color_render_tx[1] = GPU_texture_create_2d(
+        "dtxl_color_stereo",
+        UNPACK2(size),
+        1,
+        blender::gpu::TextureFormat::SFLOAT_16_16_16_16,
+        usage | GPU_TEXTURE_USAGE_SHADER_WRITE,
+        nullptr);
     viewport->color_overlay_tx[1] = GPU_texture_create_2d(
-        "dtxl_color_overlay_stereo", UNPACK2(size), 1, GPU_SRGB8_A8, usage, nullptr);
+        "dtxl_color_overlay_stereo",
+        UNPACK2(size),
+        1,
+        blender::gpu::TextureFormat::SRGBA_8_8_8_8,
+        usage,
+        nullptr);
 
     GPU_texture_clear(viewport->color_render_tx[1], GPU_DATA_FLOAT, empty_pixel);
     GPU_texture_clear(viewport->color_overlay_tx[1], GPU_DATA_FLOAT, empty_pixel);
@@ -163,12 +181,12 @@ static void gpu_viewport_textures_create(GPUViewport *viewport)
     viewport->depth_tx = GPU_texture_create_2d("dtxl_depth",
                                                UNPACK2(size),
                                                1,
-                                               GPU_DEPTH24_STENCIL8,
+                                               blender::gpu::TextureFormat::SFLOAT_32_DEPTH_UINT_8,
                                                usage | GPU_TEXTURE_USAGE_HOST_READ |
                                                    GPU_TEXTURE_USAGE_FORMAT_VIEW,
                                                nullptr);
     const int depth_clear = 0;
-    GPU_texture_clear(viewport->depth_tx, GPU_DATA_UINT_24_8, &depth_clear);
+    GPU_texture_clear(viewport->depth_tx, GPU_DATA_UINT_24_8_DEPRECATED, &depth_clear);
   }
 
   if (!viewport->depth_tx || !viewport->color_render_tx[0] || !viewport->color_overlay_tx[0]) {
@@ -179,6 +197,7 @@ static void gpu_viewport_textures_create(GPUViewport *viewport)
 static void gpu_viewport_textures_free(GPUViewport *viewport)
 {
   GPU_FRAMEBUFFER_FREE_SAFE(viewport->stereo_comp_fb);
+  GPU_FRAMEBUFFER_FREE_SAFE(viewport->render_fb);
   GPU_FRAMEBUFFER_FREE_SAFE(viewport->overlay_fb);
 
   for (int i = 0; i < 2; i++) {
@@ -209,8 +228,8 @@ void GPU_viewport_bind(GPUViewport *viewport, int view, const rcti *rect)
 
 void GPU_viewport_bind_from_offscreen(GPUViewport *viewport, GPUOffScreen *ofs, bool is_xr_surface)
 {
-  GPUTexture *color, *depth;
-  GPUFrameBuffer *fb;
+  blender::gpu::Texture *color, *depth;
+  blender::gpu::FrameBuffer *fb;
   viewport->size[0] = GPU_offscreen_width(ofs);
   viewport->size[1] = GPU_offscreen_height(ofs);
 
@@ -231,7 +250,7 @@ void GPU_viewport_bind_from_offscreen(GPUViewport *viewport, GPUOffScreen *ofs, 
 }
 
 void GPU_viewport_colorspace_set(GPUViewport *viewport,
-                                 ColorManagedViewSettings *view_settings,
+                                 const ColorManagedViewSettings *view_settings,
                                  const ColorManagedDisplaySettings *display_settings,
                                  float dither)
 {
@@ -257,24 +276,18 @@ void GPU_viewport_colorspace_set(GPUViewport *viewport,
     BKE_color_managed_view_settings_free(&viewport->view_settings);
   }
   /* Don't copy the curve mapping already. */
-  CurveMapping *tmp_curve_mapping = view_settings->curve_mapping;
-  CurveMapping *tmp_curve_mapping_vp = viewport->view_settings.curve_mapping;
-  view_settings->curve_mapping = nullptr;
-  viewport->view_settings.curve_mapping = nullptr;
-
-  BKE_color_managed_view_settings_copy(&viewport->view_settings, view_settings);
-  /* Restore. */
-  view_settings->curve_mapping = tmp_curve_mapping;
-  viewport->view_settings.curve_mapping = tmp_curve_mapping_vp;
+  BKE_color_managed_view_settings_copy_keep_curve_mapping(&viewport->view_settings, view_settings);
   /* Only copy curve-mapping if needed. Avoid unneeded OCIO cache miss. */
-  if (tmp_curve_mapping && viewport->view_settings.curve_mapping == nullptr) {
+  if (view_settings->curve_mapping && viewport->view_settings.curve_mapping == nullptr) {
     BKE_color_managed_view_settings_free(&viewport->view_settings);
-    viewport->view_settings.curve_mapping = BKE_curvemapping_copy(tmp_curve_mapping);
+    viewport->view_settings.curve_mapping = BKE_curvemapping_copy(view_settings->curve_mapping);
   }
 
   BKE_color_managed_display_settings_copy(&viewport->display_settings, display_settings);
   viewport->dither = dither;
   viewport->do_color_management = true;
+  viewport->use_hdr_display = IMB_colormanagement_display_is_hdr(
+      &viewport->display_settings, viewport->view_settings.view_transform);
 }
 
 void GPU_viewport_stereo_composite(GPUViewport *viewport, Stereo3dFormat *stereo_format)
@@ -296,7 +309,7 @@ void GPU_viewport_stereo_composite(GPUViewport *viewport, Stereo3dFormat *stereo
       });
 
   GPUVertFormat *vert_format = immVertexFormat();
-  uint pos = GPU_vertformat_attr_add(vert_format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+  uint pos = GPU_vertformat_attr_add(vert_format, "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   GPU_framebuffer_bind(viewport->stereo_comp_fb);
   GPU_matrix_push();
   GPU_matrix_push_projection();
@@ -357,9 +370,9 @@ static const GPUVertFormat &gpu_viewport_batch_format()
   if (g_viewport.format.attr_len == 0) {
     GPUVertFormat *format = &g_viewport.format;
     g_viewport.attr_id.pos = GPU_vertformat_attr_add(
-        format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+        format, "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
     g_viewport.attr_id.tex_coord = GPU_vertformat_attr_add(
-        format, "texCoord", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+        format, "texCoord", blender::gpu::VertAttrType::SFLOAT_32_32);
   }
   return g_viewport.format;
 }
@@ -434,12 +447,10 @@ static void gpu_viewport_draw_colormanaged(GPUViewport *viewport,
                                            bool display_colorspace,
                                            bool do_overlay_merge)
 {
-  GPUTexture *color = viewport->color_render_tx[view];
-  GPUTexture *color_overlay = viewport->color_overlay_tx[view];
+  blender::gpu::Texture *color = viewport->color_render_tx[view];
+  blender::gpu::Texture *color_overlay = viewport->color_overlay_tx[view];
 
   bool use_ocio = false;
-  bool use_hdr = GPU_hdr_support() &&
-                 ((viewport->view_settings.flag & COLORMANAGE_VIEW_USE_HDR) != 0);
 
   if (viewport->do_color_management && display_colorspace) {
     /* During the binding process the last used VertexFormat is tested and can assert as it is not
@@ -466,7 +477,7 @@ static void gpu_viewport_draw_colormanaged(GPUViewport *viewport,
     GPU_batch_program_set_builtin(batch, GPU_SHADER_2D_IMAGE_OVERLAYS_MERGE);
     GPU_batch_uniform_1i(batch, "overlay", do_overlay_merge);
     GPU_batch_uniform_1i(batch, "display_transform", display_colorspace);
-    GPU_batch_uniform_1i(batch, "use_hdr", use_hdr);
+    GPU_batch_uniform_1i(batch, "use_hdr_display", viewport->use_hdr_display);
   }
 
   GPU_texture_bind(color, 0);
@@ -486,7 +497,7 @@ void GPU_viewport_draw_to_screen_ex(GPUViewport *viewport,
                                     bool display_colorspace,
                                     bool do_overlay_merge)
 {
-  GPUTexture *color = viewport->color_render_tx[view];
+  blender::gpu::Texture *color = viewport->color_render_tx[view];
 
   if (color == nullptr) {
     return;
@@ -585,22 +596,33 @@ bool GPU_viewport_is_stereo_get(GPUViewport *viewport)
   return (viewport->flag & GPU_VIEWPORT_STEREO) != 0;
 }
 
-GPUTexture *GPU_viewport_color_texture(GPUViewport *viewport, int view)
+blender::gpu::Texture *GPU_viewport_color_texture(GPUViewport *viewport, int view)
 {
   return viewport->color_render_tx[view];
 }
 
-GPUTexture *GPU_viewport_overlay_texture(GPUViewport *viewport, int view)
+blender::gpu::Texture *GPU_viewport_overlay_texture(GPUViewport *viewport, int view)
 {
   return viewport->color_overlay_tx[view];
 }
 
-GPUTexture *GPU_viewport_depth_texture(GPUViewport *viewport)
+blender::gpu::Texture *GPU_viewport_depth_texture(GPUViewport *viewport)
 {
   return viewport->depth_tx;
 }
 
-GPUFrameBuffer *GPU_viewport_framebuffer_overlay_get(GPUViewport *viewport)
+blender::gpu::FrameBuffer *GPU_viewport_framebuffer_render_get(GPUViewport *viewport)
+{
+  GPU_framebuffer_ensure_config(
+      &viewport->render_fb,
+      {
+          GPU_ATTACHMENT_TEXTURE(viewport->depth_tx),
+          GPU_ATTACHMENT_TEXTURE(viewport->color_render_tx[viewport->active_view]),
+      });
+  return viewport->render_fb;
+}
+
+blender::gpu::FrameBuffer *GPU_viewport_framebuffer_overlay_get(GPUViewport *viewport)
 {
   GPU_framebuffer_ensure_config(
       &viewport->overlay_fb,

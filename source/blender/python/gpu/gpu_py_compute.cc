@@ -15,7 +15,7 @@
 #include "GPU_compute.hh"
 #include "GPU_state.hh"
 
-#include "../generic/python_compat.hh"
+#include "../generic/python_compat.hh" /* IWYU pragma: keep. */
 
 #include "gpu_py.hh"
 #include "gpu_py_compute.hh" /* own include */
@@ -95,7 +95,7 @@ static PyObject *pygpu_compute_dispatch(PyObject * /*self*/, PyObject *args, PyO
       return nullptr;
     }
 
-    GPUShader *shader = py_shader->shader;
+    blender::gpu::Shader *shader = py_shader->shader;
     GPU_compute_dispatch(shader, groups_x_len, groups_y_len, groups_z_len);
     GPU_memory_barrier(GPU_BARRIER_TEXTURE_FETCH | GPU_BARRIER_SHADER_IMAGE_ACCESS);
   }
@@ -106,6 +106,16 @@ static PyObject *pygpu_compute_dispatch(PyObject * /*self*/, PyObject *args, PyO
 /** \name Module
  * \{ */
 
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
+#endif
+
 static PyMethodDef pygpu_compute__tp_methods[] = {
     {"dispatch",
      (PyCFunction)pygpu_compute_dispatch,
@@ -114,14 +124,18 @@ static PyMethodDef pygpu_compute__tp_methods[] = {
     {nullptr, nullptr, 0, nullptr},
 };
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic pop
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
 #endif
 
 PyDoc_STRVAR(
     /* Wrap. */
     pygpu_compute__tp_doc,
-    "This module provides access to the global GPU compute functions");
+    "This module provides access to the global GPU compute functions.");
 static PyModuleDef pygpu_compute_module_def = {
     /*m_base*/ PyModuleDef_HEAD_INIT,
     /*m_name*/ "gpu.compute",

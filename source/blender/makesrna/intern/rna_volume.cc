@@ -8,7 +8,6 @@
 
 #include <cstdlib>
 
-#include "RNA_access.hh"
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
 
@@ -17,9 +16,8 @@
 #include "DNA_scene_types.h"
 #include "DNA_volume_types.h"
 
-#include "BKE_volume.hh"
+#include "BKE_volume_enums.hh"
 
-#include "BLI_math_base.h"
 #include "BLI_string_utf8_symbols.h"
 
 #include "BLT_translation.hh"
@@ -31,7 +29,7 @@ const EnumPropertyItem rna_enum_volume_grid_data_type_items[] = {
     {VOLUME_GRID_INT, "INT", 0, "Integer", "32-bit integer"},
     {VOLUME_GRID_INT64, "INT64", 0, "Integer 64-bit", "64-bit integer"},
     {VOLUME_GRID_MASK, "MASK", 0, "Mask", "No data, boolean mask of active voxels"},
-    {VOLUME_GRID_VECTOR_FLOAT, "VECTOR_FLOAT", 0, "Float Vector", "3D float vector"},
+    {VOLUME_GRID_VECTOR_FLOAT, "VECTOR_FLOAT", 0, "Vector", "3D float vector"},
     {VOLUME_GRID_VECTOR_DOUBLE, "VECTOR_DOUBLE", 0, "Double Vector", "3D double vector"},
     {VOLUME_GRID_VECTOR_INT, "VECTOR_INT", 0, "Integer Vector", "3D integer vector"},
     {VOLUME_GRID_POINTS,
@@ -52,6 +50,10 @@ const EnumPropertyItem rna_enum_volume_grid_data_type_items[] = {
 struct DummyVolumeGridData;
 
 #ifdef RNA_RUNTIME
+
+#  include "BLI_math_base.h"
+
+#  include "BKE_volume.hh"
 
 #  include "DEG_depsgraph.hh"
 #  include "DEG_depsgraph_build.hh"
@@ -95,7 +97,7 @@ static void rna_Volume_velocity_grid_set(PointerRNA *ptr, const char *value)
 {
   Volume *volume = (Volume *)ptr->data;
   if (!BKE_volume_set_velocity_grid_by_name(volume, value)) {
-    WM_reportf(RPT_ERROR, "Could not find grid with name %s", value);
+    WM_global_reportf(RPT_ERROR, "Could not find grid with name %s", value);
   }
   WM_main_add_notifier(NC_GEOM | ND_DATA, volume);
 }
@@ -177,7 +179,7 @@ static PointerRNA rna_Volume_grids_get(CollectionPropertyIterator *iter)
   Volume *volume = static_cast<Volume *>(iter->internal.count.ptr);
   const blender::bke::VolumeGridData *grid = BKE_volume_grid_get(volume,
                                                                  iter->internal.count.item);
-  return rna_pointer_inherit_refine(&iter->parent, &RNA_VolumeGrid, (void *)grid);
+  return RNA_pointer_create_with_parent(iter->parent, &RNA_VolumeGrid, (void *)grid);
 }
 
 static int rna_Volume_grids_length(PointerRNA *ptr)
@@ -353,6 +355,7 @@ static void rna_def_volume_grids(BlenderRNA *brna, PropertyRNA *cprop)
                            "and volume parameters");
 
   prop = RNA_def_property(srna, "frame_filepath", PROP_STRING, PROP_FILEPATH);
+  RNA_def_property_flag(prop, PROP_PATH_SUPPORTS_BLEND_RELATIVE);
   RNA_def_property_clear_flag(prop, PROP_EDITABLE);
   RNA_def_property_string_funcs(prop,
                                 "rna_VolumeGrids_frame_filepath_get",
@@ -504,8 +507,8 @@ static void rna_def_volume_render(BlenderRNA *brna)
   RNA_def_struct_path_func(srna, "rna_VolumeRender_path");
 
   static const EnumPropertyItem precision_items[] = {
-      {VOLUME_PRECISION_FULL, "FULL", 0, "Full", "Full float (Use 32 bit for all data)"},
-      {VOLUME_PRECISION_HALF, "HALF", 0, "Half", "Half float (Use 16 bit for all data)"},
+      {VOLUME_PRECISION_FULL, "FULL", 0, "Full", "Use 32-bit floating-point numbers for all data"},
+      {VOLUME_PRECISION_HALF, "HALF", 0, "Half", "Use 16-bit floating-point numbers for all data"},
       {VOLUME_PRECISION_VARIABLE, "VARIABLE", 0, "Variable", "Use variable bit quantization"},
       {0, nullptr, 0, nullptr, nullptr},
   };
@@ -571,6 +574,7 @@ static void rna_def_volume(BlenderRNA *brna)
 
   /* File */
   prop = RNA_def_property(srna, "filepath", PROP_STRING, PROP_FILEPATH);
+  RNA_def_property_flag(prop, PROP_PATH_SUPPORTS_BLEND_RELATIVE);
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
   RNA_def_property_ui_text(prop, "File Path", "Volume file used by this Volume data-block");
   RNA_def_property_update(prop, 0, "rna_Volume_update_filepath");
@@ -624,7 +628,7 @@ static void rna_def_volume(BlenderRNA *brna)
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
   RNA_def_property_enum_items(prop, sequence_mode_items);
   RNA_def_property_ui_text(prop, "Sequence Mode", "Sequence playback mode");
-  RNA_def_property_translation_context(prop, BLT_I18NCONTEXT_ID_SEQUENCE);
+  RNA_def_property_translation_context(prop, BLT_I18NCONTEXT_ID_VOLUME);
   RNA_def_property_update(prop, 0, "rna_Volume_update_filepath");
 
   /* Grids */

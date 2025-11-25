@@ -8,7 +8,7 @@
 
 #include "node_shader_util.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 namespace blender::nodes::node_shader_mapping_cc {
@@ -43,7 +43,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_shader_buts_mapping(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "vector_type", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "vector_type", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
 }
 
 static const char *gpu_shader_get_name(int mode)
@@ -76,9 +76,9 @@ static int gpu_shader_mapping(GPUMaterial *mat,
 
 static void node_shader_update_mapping(bNodeTree *ntree, bNode *node)
 {
-  bNodeSocket *sock = bke::node_find_socket(node, SOCK_IN, "Location");
+  bNodeSocket *sock = bke::node_find_socket(*node, SOCK_IN, "Location");
   bke::node_set_socket_availability(
-      ntree, sock, ELEM(node->custom1, NODE_MAPPING_TYPE_POINT, NODE_MAPPING_TYPE_TEXTURE));
+      *ntree, *sock, ELEM(node->custom1, NODE_MAPPING_TYPE_POINT, NODE_MAPPING_TYPE_TEXTURE));
 }
 
 NODE_SHADER_MATERIALX_BEGIN
@@ -132,5 +132,5 @@ void register_node_type_sh_mapping()
   ntype.updatefunc = file_ns::node_shader_update_mapping;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

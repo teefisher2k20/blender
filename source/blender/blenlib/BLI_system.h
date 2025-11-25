@@ -6,16 +6,15 @@
 
 #include <stdio.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /** \file
  * \ingroup bli
  */
 
 int BLI_cpu_support_sse2(void);
 int BLI_cpu_support_sse42(void);
+/**
+ * Write a backtrace into a file for systems which support it.
+ */
 void BLI_system_backtrace_with_os_info(FILE *fp, const void *os_info);
 void BLI_system_backtrace(FILE *fp);
 
@@ -30,9 +29,9 @@ char *BLI_cpu_brand_string(void);
  * purposes, and not for reachability over a network.
  *
  * \param buffer: Character buffer to write the hostname into.
- * \param bufsize: Size of the character buffer, including trailing '\0'.
+ * \param buffer_maxncpy: Size of the character buffer, including trailing '\0'.
  */
-void BLI_hostname_get(char *buffer, size_t bufsize);
+void BLI_hostname_get(char *buffer, size_t buffer_maxncpy);
 
 /** Get maximum addressable memory in megabytes. */
 size_t BLI_system_memory_max_in_megabytes(void);
@@ -44,15 +43,20 @@ int BLI_system_memory_max_in_megabytes_int(void);
 #  define BLI_SYSTEM_PID_H <process.h>
 
 /**
- * \note Use `void *` for `exception` since we really do not want to drag Windows.h
+ * \note Use `void *` for `os_info` since we really do not want to drag Windows.h
  * in to get the proper `typedef`.
  */
-void BLI_windows_handle_exception(void *exception);
+void BLI_windows_exception_print_message(const void *os_info);
+
+/**
+ * Displays a crash report dialog with options to open the crash log, restart the application, and
+ * report a bug. This is based on the `showMessageBox` function in `GHOST_SystemWin32.cc`.
+ */
+void BLI_windows_exception_show_dialog(const char *filepath_crashlog,
+                                       const char *filepath_relaunch,
+                                       const char *gpu_name,
+                                       const char *build_version);
 
 #else
 #  define BLI_SYSTEM_PID_H <unistd.h>
-#endif
-
-#ifdef __cplusplus
-}
 #endif

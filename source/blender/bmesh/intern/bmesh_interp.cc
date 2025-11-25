@@ -20,12 +20,16 @@
 #include "BLI_memarena.h"
 #include "BLI_task.h"
 
+#include "BKE_attribute.h"
 #include "BKE_attribute.hh"
+#include "BKE_attribute_legacy_convert.hh"
 #include "BKE_customdata.hh"
 #include "BKE_multires.hh"
 
 #include "bmesh.hh"
 #include "intern/bmesh_private.hh"
+
+using blender::StringRef;
 
 /* edge and vertex share, currently there's no need to have different logic */
 static void bm_data_interp_from_elem(CustomData *data_layer,
@@ -60,7 +64,7 @@ static void bm_data_interp_from_elem(CustomData *data_layer,
       src[1] = ele_src_2->head.data;
       w[0] = 1.0f - fac;
       w[1] = fac;
-      CustomData_bmesh_interp(data_layer, src, w, nullptr, 2, ele_dst->head.data);
+      CustomData_bmesh_interp(data_layer, src, w, 2, ele_dst->head.data);
     }
   }
 }
@@ -129,7 +133,7 @@ void BM_data_interp_face_vert_edge(BMesh *bm,
     src[0] = l_v1->head.data;
     src[1] = l_v2->head.data;
 
-    CustomData_bmesh_interp(&bm->ldata, src, w, nullptr, 2, l_v->head.data);
+    CustomData_bmesh_interp(&bm->ldata, src, w, 2, l_v->head.data);
   } while ((l_iter = l_iter->radial_next) != e->l);
 }
 
@@ -153,9 +157,9 @@ void BM_face_interp_from_face_ex(BMesh *bm,
   do {
     mul_v2_m3v3(co, axis_mat, l_iter->v->co);
     interp_weights_poly_v2(w, cos_2d, f_src->len, co);
-    CustomData_bmesh_interp(&bm->ldata, blocks_l, w, nullptr, f_src->len, l_iter->head.data);
+    CustomData_bmesh_interp(&bm->ldata, blocks_l, w, f_src->len, l_iter->head.data);
     if (do_vertex) {
-      CustomData_bmesh_interp(&bm->vdata, blocks_v, w, nullptr, f_src->len, l_iter->v->head.data);
+      CustomData_bmesh_interp(&bm->vdata, blocks_v, w, f_src->len, l_iter->v->head.data);
     }
   } while ((l_iter = l_iter->next) != l_first);
 }
@@ -169,7 +173,7 @@ void BM_face_interp_from_face(BMesh *bm, BMFace *f_dst, const BMFace *f_src, con
   const void **blocks_v = do_vertex ?
                               static_cast<const void **>(BLI_array_alloca(blocks_v, f_src->len)) :
                               nullptr;
-  float(*cos_2d)[2] = static_cast<float(*)[2]>(BLI_array_alloca(cos_2d, f_src->len));
+  float (*cos_2d)[2] = static_cast<float (*)[2]>(BLI_array_alloca(cos_2d, f_src->len));
   float axis_mat[3][3]; /* use normal to transform into 2d xy coords */
   int i;
 
@@ -282,7 +286,7 @@ static bool quad_co(const float v1[3],
 
 static void mdisp_axis_from_quad(const float v1[3],
                                  const float v2[3],
-                                 float[3] /*v3[3]*/,
+                                 float /*v3*/[3],
                                  const float v4[3],
                                  float r_axis_x[3],
                                  float r_axis_y[3])
@@ -492,7 +496,7 @@ void BM_loop_interp_multires_ex(BMesh * /*bm*/,
     md_dst->totdisp = md_src->totdisp;
     md_dst->level = md_src->level;
     if (md_dst->totdisp) {
-      md_dst->disps = static_cast<float(*)[3]>(
+      md_dst->disps = static_cast<float (*)[3]>(
           MEM_callocN(sizeof(float[3]) * md_dst->totdisp, __func__));
     }
     else {
@@ -687,7 +691,7 @@ void BM_loop_interp_from_face(
                              static_cast<const void **>(BLI_array_alloca(vblocks, f_src->len)) :
                              nullptr;
   const void **blocks = static_cast<const void **>(BLI_array_alloca(blocks, f_src->len));
-  float(*cos_2d)[2] = static_cast<float(*)[2]>(BLI_array_alloca(cos_2d, f_src->len));
+  float (*cos_2d)[2] = static_cast<float (*)[2]>(BLI_array_alloca(cos_2d, f_src->len));
   float *w = static_cast<float *>(BLI_array_alloca(w, f_src->len));
   float axis_mat[3][3]; /* use normal to transform into 2d xy coords */
   float co[2];
@@ -723,9 +727,9 @@ void BM_loop_interp_from_face(
 
   /* interpolate */
   interp_weights_poly_v2(w, cos_2d, f_src->len, co);
-  CustomData_bmesh_interp(&bm->ldata, blocks, w, nullptr, f_src->len, l_dst->head.data);
+  CustomData_bmesh_interp(&bm->ldata, blocks, w, f_src->len, l_dst->head.data);
   if (do_vertex) {
-    CustomData_bmesh_interp(&bm->vdata, vblocks, w, nullptr, f_src->len, l_dst->v->head.data);
+    CustomData_bmesh_interp(&bm->vdata, vblocks, w, f_src->len, l_dst->v->head.data);
   }
 
   if (do_multires) {
@@ -738,7 +742,7 @@ void BM_vert_interp_from_face(BMesh *bm, BMVert *v_dst, const BMFace *f_src)
   BMLoop *l_iter;
   BMLoop *l_first;
   const void **blocks = static_cast<const void **>(BLI_array_alloca(blocks, f_src->len));
-  float(*cos_2d)[2] = static_cast<float(*)[2]>(BLI_array_alloca(cos_2d, f_src->len));
+  float (*cos_2d)[2] = static_cast<float (*)[2]>(BLI_array_alloca(cos_2d, f_src->len));
   float *w = static_cast<float *>(BLI_array_alloca(w, f_src->len));
   float axis_mat[3][3]; /* use normal to transform into 2d xy coords */
   float co[2];
@@ -758,7 +762,7 @@ void BM_vert_interp_from_face(BMesh *bm, BMVert *v_dst, const BMFace *f_src)
 
   /* interpolate */
   interp_weights_poly_v2(w, cos_2d, f_src->len, co);
-  CustomData_bmesh_interp(&bm->vdata, blocks, w, nullptr, f_src->len, v_dst->head.data);
+  CustomData_bmesh_interp(&bm->vdata, blocks, w, f_src->len, v_dst->head.data);
 }
 
 static void update_data_blocks(BMesh *bm, CustomData *olddata, CustomData *data)
@@ -850,7 +854,7 @@ void BM_data_layer_add(BMesh *bm, CustomData *data, int type)
   }
 }
 
-void BM_data_layer_add_named(BMesh *bm, CustomData *data, int type, const char *name)
+void BM_data_layer_add_named(BMesh *bm, CustomData *data, int type, const StringRef name)
 {
   CustomData olddata = *data;
   olddata.layers = (olddata.layers) ?
@@ -867,14 +871,14 @@ void BM_data_layer_add_named(BMesh *bm, CustomData *data, int type, const char *
   }
 }
 
-void BM_data_layer_ensure_named(BMesh *bm, CustomData *data, int type, const char *name)
+void BM_data_layer_ensure_named(BMesh *bm, CustomData *data, int type, const StringRef name)
 {
   if (CustomData_get_named_layer_index(data, eCustomDataType(type), name) == -1) {
     BM_data_layer_add_named(bm, data, type, name);
   }
 }
 
-void BM_uv_map_ensure_select_and_pin_attrs(BMesh *bm)
+void BM_uv_map_attr_pin_ensure_for_all_layers(BMesh *bm)
 {
   const int nr_uv_layers = CustomData_number_of_layers(&bm->ldata, CD_PROP_FLOAT2);
   for (int l = 0; l < nr_uv_layers; l++) {
@@ -885,41 +889,22 @@ void BM_uv_map_ensure_select_and_pin_attrs(BMesh *bm)
         bm,
         &bm->ldata,
         CD_PROP_BOOL,
-        BKE_uv_map_vert_select_name_get(CustomData_get_layer_name(&bm->ldata, CD_PROP_FLOAT2, l),
-                                        name));
-    BM_data_layer_ensure_named(
-        bm,
-        &bm->ldata,
-        CD_PROP_BOOL,
-        BKE_uv_map_edge_select_name_get(CustomData_get_layer_name(&bm->ldata, CD_PROP_FLOAT2, l),
-                                        name));
-    BM_data_layer_ensure_named(
-        bm,
-        &bm->ldata,
-        CD_PROP_BOOL,
         BKE_uv_map_pin_name_get(CustomData_get_layer_name(&bm->ldata, CD_PROP_FLOAT2, l), name));
   }
 }
 
-void BM_uv_map_ensure_vert_select_attr(BMesh *bm, const char *uv_map_name)
-{
-  char name[MAX_CUSTOMDATA_LAYER_NAME];
-  BM_data_layer_ensure_named(
-      bm, &bm->ldata, CD_PROP_BOOL, BKE_uv_map_vert_select_name_get(uv_map_name, name));
-}
-
-void BM_uv_map_ensure_edge_select_attr(BMesh *bm, const char *uv_map_name)
-{
-  char name[MAX_CUSTOMDATA_LAYER_NAME];
-  BM_data_layer_ensure_named(
-      bm, &bm->ldata, CD_PROP_BOOL, BKE_uv_map_edge_select_name_get(uv_map_name, name));
-}
-
-void BM_uv_map_ensure_pin_attr(BMesh *bm, const char *uv_map_name)
+void BM_uv_map_attr_pin_ensure_named(BMesh *bm, const StringRef uv_map_name)
 {
   char name[MAX_CUSTOMDATA_LAYER_NAME];
   BM_data_layer_ensure_named(
       bm, &bm->ldata, CD_PROP_BOOL, BKE_uv_map_pin_name_get(uv_map_name, name));
+}
+
+bool BM_uv_map_attr_pin_exists(const BMesh *bm, const StringRef uv_map_name)
+{
+  char name[MAX_CUSTOMDATA_LAYER_NAME];
+  return (CustomData_get_named_layer_index(
+              &bm->ldata, CD_PROP_BOOL, BKE_uv_map_pin_name_get(uv_map_name, name)) != -1);
 }
 
 void BM_data_layer_free(BMesh *bm, CustomData *data, int type)
@@ -931,7 +916,7 @@ void BM_data_layer_free(BMesh *bm, CustomData *data, int type)
   /* The pool is now owned by `olddata` and must not be shared. */
   data->pool = nullptr;
 
-  const bool had_layer = CustomData_free_layer_active(data, eCustomDataType(type), 0);
+  const bool had_layer = CustomData_free_layer_active(data, eCustomDataType(type));
   /* Assert because its expensive to realloc - better not do if layer isn't present. */
   BLI_assert(had_layer != false);
   UNUSED_VARS_NDEBUG(had_layer);
@@ -942,7 +927,7 @@ void BM_data_layer_free(BMesh *bm, CustomData *data, int type)
   }
 }
 
-bool BM_data_layer_free_named(BMesh *bm, CustomData *data, const char *name)
+bool BM_data_layer_free_named(BMesh *bm, CustomData *data, StringRef name)
 {
   CustomData olddata = *data;
   olddata.layers = (olddata.layers) ?
@@ -951,7 +936,7 @@ bool BM_data_layer_free_named(BMesh *bm, CustomData *data, const char *name)
   /* The pool is now owned by `olddata` and must not be shared. */
   data->pool = nullptr;
 
-  const bool had_layer = CustomData_free_layer_named(data, name, 0);
+  const bool had_layer = CustomData_free_layer_named(data, name);
 
   if (had_layer) {
     update_data_blocks(bm, &olddata, data);
@@ -978,10 +963,7 @@ void BM_data_layer_free_n(BMesh *bm, CustomData *data, int type, int n)
   data->pool = nullptr;
 
   const bool had_layer = CustomData_free_layer(
-      data,
-      eCustomDataType(type),
-      0,
-      CustomData_get_layer_index_n(data, eCustomDataType(type), n));
+      data, eCustomDataType(type), CustomData_get_layer_index_n(data, eCustomDataType(type), n));
   /* Assert because its expensive to realloc - better not do if layer isn't present. */
   BLI_assert(had_layer != false);
   UNUSED_VARS_NDEBUG(had_layer);
@@ -1052,6 +1034,48 @@ void BM_elem_float_data_set(CustomData *cd, void *element, int type, const float
   if (f) {
     *f = val;
   }
+}
+
+BMDataLayerLookup BM_data_layer_lookup(const BMesh &bm, const blender::StringRef name)
+{
+  using namespace blender;
+  for (const CustomDataLayer &layer : Span(bm.vdata.layers, bm.vdata.totlayer)) {
+    if (const std::optional<bke::AttrType> type = bke::custom_data_type_to_attr_type(
+            eCustomDataType(layer.type)))
+    {
+      if (layer.name == name) {
+        return {layer.offset, bke::AttrDomain::Point, *type, &layer};
+      }
+    }
+  }
+  for (const CustomDataLayer &layer : Span(bm.edata.layers, bm.edata.totlayer)) {
+    if (const std::optional<bke::AttrType> type = bke::custom_data_type_to_attr_type(
+            eCustomDataType(layer.type)))
+    {
+      if (layer.name == name) {
+        return {layer.offset, bke::AttrDomain::Edge, *type, &layer};
+      }
+    }
+  }
+  for (const CustomDataLayer &layer : Span(bm.pdata.layers, bm.pdata.totlayer)) {
+    if (const std::optional<bke::AttrType> type = bke::custom_data_type_to_attr_type(
+            eCustomDataType(layer.type)))
+    {
+      if (layer.name == name) {
+        return {layer.offset, bke::AttrDomain::Face, *type, &layer};
+      }
+    }
+  }
+  for (const CustomDataLayer &layer : Span(bm.ldata.layers, bm.ldata.totlayer)) {
+    if (const std::optional<bke::AttrType> type = bke::custom_data_type_to_attr_type(
+            eCustomDataType(layer.type)))
+    {
+      if (layer.name == name) {
+        return {layer.offset, bke::AttrDomain::Corner, *type, &layer};
+      }
+    }
+  }
+  return {};
 }
 
 /* -------------------------------------------------------------------- */
@@ -1231,7 +1255,7 @@ static void bm_vert_loop_groups_data_layer_merge__single(BMesh *bm,
   data_weights = lf->data_weights;
 
   CustomData_bmesh_interp_n(
-      &bm->ldata, (const void **)lf->data, data_weights, nullptr, lf->data_len, data_tmp, layer_n);
+      &bm->ldata, (const void **)lf->data, data_weights, lf->data_len, data_tmp, layer_n);
 
   for (i = 0; i < lf->data_len; i++) {
     CustomData_copy_elements(eCustomDataType(type), data_tmp, lf->data[i], 1);
@@ -1265,7 +1289,7 @@ static void bm_vert_loop_groups_data_layer_merge_weights__single(
   }
 
   CustomData_bmesh_interp_n(
-      &bm->ldata, (const void **)lf->data, data_weights, nullptr, lf->data_len, data_tmp, layer_n);
+      &bm->ldata, (const void **)lf->data, data_weights, lf->data_len, data_tmp, layer_n);
 
   for (i = 0; i < lf->data_len; i++) {
     CustomData_copy_elements(eCustomDataType(type), data_tmp, lf->data[i], 1);

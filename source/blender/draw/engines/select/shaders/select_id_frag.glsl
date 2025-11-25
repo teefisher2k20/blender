@@ -2,7 +2,9 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "infos/select_id_infos.hh"
+
 void main()
 {
-  fragColor = floatBitsToUint(intBitsToFloat(select_id));
+  frag_color = floatBitsToUint(intBitsToFloat(select_id));
 }

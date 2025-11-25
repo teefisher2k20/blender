@@ -9,12 +9,13 @@
 #pragma once
 
 #include <memory>
-#include <mutex>
+#include <optional>
 
 #include "AS_asset_catalog.hh"
 
 #include "DNA_asset_types.h"
 
+#include "BLI_mutex.hh"
 #include "BLI_set.hh"
 #include "BLI_string_ref.hh"
 #include "BLI_vector.hh"
@@ -40,7 +41,7 @@ class AssetRepresentation;
 class AssetLibrary {
   eAssetLibraryType library_type_;
   /**
-   * The name this asset library will be displayed in the UI as. Will also be used as a weak way
+   * The name this asset library will be displayed as in the UI. Will also be used as a weak way
    * to identify an asset library (e.g. by #AssetWeakReference).
    */
   std::string name_;
@@ -81,7 +82,7 @@ class AssetLibrary {
    * within the catalog service may still happen without the mutex being locked. They should be
    * protected separately. */
   std::unique_ptr<AssetCatalogService> catalog_service_;
-  std::mutex catalog_service_mutex_;
+  Mutex catalog_service_mutex_;
 
   std::optional<eAssetImportMethod> import_method_;
   /** Assets owned by this library may be imported with a different method than set in
@@ -100,7 +101,6 @@ class AssetLibrary {
   friend class AssetLibraryService;
   friend class AssetRepresentation;
 
- public:
   /**
    * \param name: The name this asset library will be displayed in the UI as. Will also be used as
    *              a weak way to identify an asset library (e.g. by #AssetWeakReference). Make sure
@@ -121,7 +121,14 @@ class AssetLibrary {
    */
   static void foreach_loaded(FunctionRef<void(AssetLibrary &)> fn, bool include_all_library);
 
-  void load_catalogs();
+  /**
+   * Get the #AssetLibraryReference referencing this library. This can fail for custom libraries,
+   * which have too look up their #bUserAssetLibrary. It will not return a value for values that
+   * were loaded directly through a path.
+   */
+  virtual std::optional<AssetLibraryReference> library_reference() const = 0;
+
+  void load_or_reload_catalogs();
 
   AssetCatalogService &catalog_service() const;
 
@@ -143,7 +150,7 @@ class AssetLibrary {
                                                         int id_type,
                                                         std::unique_ptr<AssetMetaData> metadata);
   /** See #AssetLibrary::add_external_asset(). */
-  std::weak_ptr<AssetRepresentation> add_local_id_asset(StringRef relative_asset_path, ID &id);
+  std::weak_ptr<AssetRepresentation> add_local_id_asset(ID &id);
   /**
    * Remove an asset from the library that was added using #add_external_asset() or
    * #add_local_id_asset(). Can usually be expected to be constant time complexity (worst case may
@@ -190,6 +197,7 @@ class AssetLibrary {
 Vector<AssetLibraryReference> all_valid_asset_library_refs();
 
 AssetLibraryReference all_library_reference();
+AssetLibraryReference current_file_library_reference();
 void all_library_reload_catalogs_if_dirty();
 
 }  // namespace blender::asset_system
@@ -260,8 +268,8 @@ void AS_asset_libraries_exit();
  *
  * To get the in-memory-only "current file" asset library, pass an empty path.
  */
-blender::asset_system::AssetLibrary *AS_asset_library_load(const char *name,
-                                                           const char *library_dirpath);
+blender::asset_system::AssetLibrary *AS_asset_library_load_from_directory(
+    const char *name, const char *library_dirpath);
 
 /** Return whether any loaded AssetLibrary has unsaved changes to its catalogs. */
 bool AS_asset_library_has_any_unsaved_catalogs();
@@ -291,7 +299,19 @@ void AS_asset_library_remap_ids(const blender::bke::id::IDRemapper &mappings);
  * \param r_name: Returns the ID name on success. Optional (passing null is allowed).
  */
 void AS_asset_full_path_explode_from_weak_ref(const AssetWeakReference *asset_reference,
-                                              char r_path_buffer[1090 /* FILE_MAX_LIBEXTRA */],
+                                              char r_path_buffer[/*FILE_MAX_LIBEXTRA*/ 1282],
                                               char **r_dir,
                                               char **r_group,
                                               char **r_name);
+
+/**
+ * Updates the default import method for asset libraries based on
+ * #U.experimental.no_data_block_packing.
+ */
+void AS_asset_library_import_method_ensure_valid(Main &bmain);
+/**
+ * This is not done as part of #AS_asset_library_import_method_ensure_valid because it changes
+ * run-time data only and does not need to happen during versioning (also it appears to break tests
+ * when run during versioning).
+ */
+void AS_asset_library_essential_import_method_update();

@@ -14,6 +14,7 @@
 #include "BKE_global.hh"
 #include "BKE_node_runtime.hh"
 #include "BKE_node_tree_update.hh"
+#include "BKE_node_tree_zones.hh"
 
 #include "MEM_guardedalloc.h"
 
@@ -52,7 +53,7 @@ void node_get_stack(bNode *node, bNodeStack *stack, bNodeStack **in, bNodeStack 
 
 static void node_init_input_index(bNodeSocket *sock, int *index)
 {
-  /* Only consider existing link if from socket is valid! */
+  /* Only consider existing link when the `from` socket is valid! */
   if (sock->link && !(sock->link->flag & NODE_LINK_MUTED) && sock->link->fromsock &&
       sock->link->fromsock->stack_index >= 0)
   {
@@ -122,6 +123,12 @@ static bNodeStack *setup_stack(bNodeStack *stack, bNodeTree *ntree, bNode *node,
   ns->sockettype = sock->type;
 
   switch (sock->type) {
+    case SOCK_INT:
+      ns->vec[0] = node_socket_get_int(ntree, node, sock);
+      break;
+    case SOCK_BOOLEAN:
+      ns->vec[0] = node_socket_get_bool(ntree, node, sock);
+      break;
     case SOCK_FLOAT:
       ns->vec[0] = node_socket_get_float(ntree, node, sock);
       break;
@@ -134,6 +141,43 @@ static bNodeStack *setup_stack(bNodeStack *stack, bNodeTree *ntree, bNode *node,
   }
 
   return ns;
+}
+
+static blender::Vector<bNode *> get_node_code_gen_order(bNodeTree &ntree)
+{
+  using namespace blender;
+  ntree.ensure_topology_cache();
+  Vector<bNode *> nodes = ntree.toposort_left_to_right();
+  const bke::bNodeTreeZones *zones = ntree.zones();
+  if (!zones) {
+    return nodes;
+  }
+  /* Insertion sort to make sure that all nodes in a zone are packed together right before the zone
+   * output. */
+  for (int old_i = nodes.size() - 1; old_i >= 0; old_i--) {
+    bNode *node = nodes[old_i];
+    const bke::bNodeTreeZone *zone = zones->get_zone_by_node(node->identifier);
+    if (!zone) {
+      /* Nones outside of any zone can stay where they are. */
+      continue;
+    }
+    if (zone->output_node_id == node->identifier) {
+      /* The output of a zone should not be moved. */
+      continue;
+    }
+    for (int new_i = old_i + 1; new_i < nodes.size(); new_i++) {
+      bNode *next_node = nodes[new_i];
+      const bke::bNodeTreeZone *zone_to_check = zones->get_zone_by_node(next_node->identifier);
+      if (zone_to_check &&
+          (zone == zone_to_check || zone->contains_zone_recursively(*zone_to_check)))
+      {
+        /* Don't move the node further than the next node in the zone. */
+        break;
+      }
+      std::swap(nodes[new_i - 1], nodes[new_i]);
+    }
+  }
+  return nodes;
 }
 
 bNodeTreeExec *ntree_exec_begin(bNodeExecContext *context,
@@ -156,10 +200,10 @@ bNodeTreeExec *ntree_exec_begin(bNodeExecContext *context,
   BKE_ntree_update_after_single_tree_change(*G.main, *ntree);
 
   ntree->ensure_topology_cache();
-  const Span<bNode *> nodelist = ntree->toposort_left_to_right();
+  Vector<bNode *> nodelist = get_node_code_gen_order(*ntree);
 
   /* XXX could let callbacks do this for specialized data */
-  exec = MEM_cnew<bNodeTreeExec>("node tree execution data");
+  exec = MEM_callocN<bNodeTreeExec>("node tree execution data");
   /* Back-pointer to node tree. */
   exec->nodetree = ntree;
 
@@ -187,11 +231,10 @@ bNodeTreeExec *ntree_exec_begin(bNodeExecContext *context,
 
   /* allocated exec data pointers for nodes */
   exec->totnodes = nodelist.size();
-  exec->nodeexec = (bNodeExec *)MEM_callocN(exec->totnodes * sizeof(bNodeExec),
-                                            "node execution data");
+  exec->nodeexec = MEM_calloc_arrayN<bNodeExec>(exec->totnodes, "node execution data");
   /* allocate data pointer for node stack */
   exec->stacksize = index;
-  exec->stack = (bNodeStack *)MEM_callocN(exec->stacksize * sizeof(bNodeStack), "bNodeStack");
+  exec->stack = MEM_calloc_arrayN<bNodeStack>(exec->stacksize, "bNodeStack");
 
   /* all non-const results are considered inputs */
   int n;
@@ -223,9 +266,6 @@ bNodeTreeExec *ntree_exec_begin(bNodeExecContext *context,
     }
 
     nodekey = bke::node_instance_key(parent_key, ntree, node);
-    nodeexec->data.preview = context->previews ? (bNodePreview *)bke::node_instance_hash_lookup(
-                                                     context->previews, nodekey) :
-                                                 nullptr;
     if (node->typeinfo->init_exec_fn) {
       nodeexec->data.data = node->typeinfo->init_exec_fn(context, node, nodekey);
     }

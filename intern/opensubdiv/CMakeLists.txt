@@ -4,6 +4,7 @@
 
 set(INC
   .
+  ../../source/blender/gpu/intern
 )
 
 set(INC_SYS
@@ -21,6 +22,7 @@ set(SRC
 set(LIB
   PRIVATE bf::blenlib
   PRIVATE bf::intern::guardedalloc
+  PRIVATE bf::gpu
 )
 
 if(WITH_OPENSUBDIV)
@@ -55,8 +57,11 @@ if(WITH_OPENSUBDIV)
     internal/evaluator/evaluator_cache_impl.h
     internal/evaluator/evaluator_capi.cc
     internal/evaluator/evaluator_impl.cc
-    internal/evaluator/gl_compute_evaluator.cc
-    internal/evaluator/gl_compute_evaluator.h
+    internal/evaluator/gpu_compute_evaluator.cc
+    internal/evaluator/gpu_compute_evaluator.h
+    internal/evaluator/gpu_patch_table.cc
+    internal/evaluator/gpu_patch_table.hh
+    internal/evaluator/gpu_vertex_buffer_wrapper.hh
     internal/evaluator/patch_map.cc
     internal/evaluator/patch_map.h
 
@@ -75,21 +80,51 @@ if(WITH_OPENSUBDIV)
     ${Epoxy_LIBRARIES}
   )
 
-  if(WITH_OPENMP AND WITH_OPENMP_STATIC)
-    list(APPEND LIB
-      ${OpenMP_LIBRARIES}
-    )
-  endif()
-
   if(WIN32)
     add_definitions(-DNOMINMAX)
     add_definitions(-D_USE_MATH_DEFINES)
   endif()
 
-  data_to_c_simple(
-    internal/evaluator/shaders/glsl_compute_kernel.glsl
-    SRC
+  set(GLSL_SRC
+    internal/evaluator/shaders/osd_eval_stencils_comp.glsl
+    internal/evaluator/shaders/osd_eval_patches_comp.glsl
   )
+
+  set(GLSL_C)
+  foreach(GLSL_FILE ${GLSL_SRC})
+    glsl_to_c(${GLSL_FILE} GLSL_C)
+  endforeach()
+
+  blender_add_lib(bf_osd_shaders "${GLSL_C}" "" "" "")
+
+  list(APPEND LIB
+    bf_osd_shaders
+  )
+
+  set(GLSL_SOURCE_CONTENT "")
+  set(GLSL_METADATA_CONTENT "")
+  set(GLSL_INFOS_CONTENT "")
+  foreach(GLSL_FILE ${GLSL_SRC})
+    get_filename_component(GLSL_FILE_NAME ${GLSL_FILE} NAME)
+    string(REPLACE "." "_" GLSL_FILE_NAME_UNDERSCORES ${GLSL_FILE_NAME})
+    string(APPEND GLSL_SOURCE_CONTENT "SHADER_SOURCE\(${GLSL_FILE_NAME_UNDERSCORES}, \"${GLSL_FILE_NAME}\", \"${GLSL_FILE}\"\)\n")
+    string(APPEND GLSL_METADATA_CONTENT "#include \"${GLSL_FILE}.hh\"\n")
+    string(APPEND GLSL_INFOS_CONTENT "#include \"${GLSL_FILE}.info\"\n")
+  endforeach()
+
+  set(glsl_source_list_file "${CMAKE_CURRENT_BINARY_DIR}/glsl_osd_source_list.h")
+  file(GENERATE OUTPUT ${glsl_source_list_file} CONTENT "${GLSL_SOURCE_CONTENT}")
+  list(APPEND SRC ${glsl_source_list_file})
+  set(glsl_metadata_list_file "${CMAKE_CURRENT_BINARY_DIR}/glsl_osd_metadata_list.hh")
+  file(GENERATE OUTPUT ${glsl_metadata_list_file} CONTENT "${GLSL_METADATA_CONTENT}")
+  list(APPEND SRC ${glsl_metadata_list_file})
+  set(glsl_infos_list_file "${CMAKE_CURRENT_BINARY_DIR}/glsl_osd_infos_list.hh")
+  file(GENERATE OUTPUT ${glsl_infos_list_file} CONTENT "${GLSL_INFOS_CONTENT}")
+  list(APPEND SRC ${glsl_infos_list_file})
+  list(APPEND INC ${CMAKE_CURRENT_BINARY_DIR})
+
+  target_include_directories(bf_osd_shaders PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+
 else()
   list(APPEND SRC
     stub/opensubdiv_stub.cc
@@ -105,5 +140,9 @@ if(WITH_GTESTS AND WITH_OPENSUBDIV)
   add_definitions(${GFLAGS_DEFINES})
   add_definitions(${GLOG_DEFINES})
 
-  blender_add_test_executable(opensubdiv_mesh_topology "internal/topology/mesh_topology_test.cc" "${INC}" "${INC_SYS}" "${LIB};bf_intern_opensubdiv")
+  set(TEST_SRC
+    internal/topology/mesh_topology_test.cc
+  )
+
+  blender_add_test_suite_lib(intern_opensubdiv "${TEST_SRC}" "${INC}" "${INC_SYS}" "${LIB};bf_intern_opensubdiv")
 endif()

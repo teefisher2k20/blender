@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "BLI_color.hh"
+#include "BLI_color_types.hh"
 #include "BLI_math_quaternion_types.hh"
 
 #include "FN_field.hh"
@@ -12,17 +12,21 @@
 #include "FN_multi_function_builder.hh"
 
 #include "BKE_attribute_filter.hh"
-#include "BKE_attribute_math.hh"
 #include "BKE_geometry_fields.hh"
 #include "BKE_geometry_nodes_reference_set.hh"
 #include "BKE_geometry_set.hh"
 #include "BKE_node_socket_value.hh"
 #include "BKE_volume_grid_fwd.hh"
+#include "NOD_geometry_nodes_bundle_fwd.hh"
+#include "NOD_geometry_nodes_closure_fwd.hh"
+#include "NOD_geometry_nodes_list_fwd.hh"
 
 #include "DNA_node_types.h"
 
 #include "NOD_derived_node_tree.hh"
 #include "NOD_geometry_nodes_lazy_function.hh"
+#include "NOD_geometry_nodes_values.hh"
+#include "NOD_menu_value.hh"
 
 namespace blender::nodes {
 
@@ -58,7 +62,6 @@ using fn::FieldInput;
 using fn::FieldOperation;
 using fn::GField;
 using geo_eval_log::NamedAttributeUsage;
-using geo_eval_log::NodeWarningType;
 
 class NodeAttributeFilter : public AttributeFilter {
  private:
@@ -96,22 +99,6 @@ class GeoNodeExecParams {
   {
   }
 
-  template<typename T>
-  static inline constexpr bool is_field_base_type_v = is_same_any_v<T,
-                                                                    float,
-                                                                    int,
-                                                                    bool,
-                                                                    ColorGeometry4f,
-                                                                    float3,
-                                                                    std::string,
-                                                                    math::Quaternion,
-                                                                    float4x4>;
-
-  template<typename T>
-  static inline constexpr bool stored_as_SocketValueVariant_v =
-      is_field_base_type_v<T> || fn::is_field_v<T> || bke::is_VolumeGrid_v<T> ||
-      is_same_any_v<T, GField, bke::GVolumeGrid>;
-
   /**
    * Get the input value for the input socket with the given identifier.
    *
@@ -119,24 +106,42 @@ class GeoNodeExecParams {
    */
   template<typename T> T extract_input(StringRef identifier)
   {
-    if constexpr (stored_as_SocketValueVariant_v<T>) {
-      SocketValueVariant value_variant = this->extract_input<SocketValueVariant>(identifier);
-      return value_variant.extract<T>();
+#ifndef NDEBUG
+    this->check_input_access(identifier);
+#endif
+    const int index = this->get_input_index(identifier);
+    if constexpr (is_GeoNodesMultiInput_v<T>) {
+      using ValueT = typename T::value_type;
+      BLI_assert(node_.input_by_identifier(identifier)->is_multi_input());
+      if constexpr (std::is_same_v<ValueT, SocketValueVariant>) {
+        return params_.extract_input<T>(index);
+      }
+      else {
+        auto values_variants = params_.extract_input<GeoNodesMultiInput<SocketValueVariant>>(
+            index);
+        GeoNodesMultiInput<ValueT> values;
+        values.values.reserve(values_variants.values.size());
+        for (const int i : values_variants.values.index_range()) {
+          values.values.append(values_variants.values[i].extract<ValueT>());
+        }
+        return values;
+      }
     }
     else {
-#ifndef NDEBUG
-      this->check_input_access(identifier, &CPPType::get<T>());
-#endif
-      const int index = this->get_input_index(identifier);
-      T value = params_.extract_input<T>(index);
-      if constexpr (std::is_same_v<T, GeometrySet>) {
-        this->check_input_geometry_set(identifier, value);
-      }
+      SocketValueVariant value_variant = params_.extract_input<SocketValueVariant>(index);
       if constexpr (std::is_same_v<T, SocketValueVariant>) {
-        BLI_assert(value.valid_for_socket(
-            eNodeSocketDatatype(node_.input_by_identifier(identifier).type)));
+        return value_variant;
       }
-      return value;
+      else if constexpr (std::is_enum_v<T>) {
+        return T(value_variant.extract<MenuValue>().value);
+      }
+      else {
+        T value = value_variant.extract<T>();
+        if constexpr (std::is_same_v<T, GeometrySet>) {
+          this->check_input_geometry_set(identifier, value);
+        }
+        return value;
+      }
     }
   }
 
@@ -148,25 +153,51 @@ class GeoNodeExecParams {
    */
   template<typename T> T get_input(StringRef identifier) const
   {
-    if constexpr (stored_as_SocketValueVariant_v<T>) {
-      auto value_variant = this->get_input<SocketValueVariant>(identifier);
-      return value_variant.extract<T>();
+#ifndef NDEBUG
+    this->check_input_access(identifier);
+#endif
+    const int index = this->get_input_index(identifier);
+    if constexpr (is_GeoNodesMultiInput_v<T>) {
+      using ValueT = typename T::value_type;
+      BLI_assert(node_.input_by_identifier(identifier)->is_multi_input());
+      if constexpr (std::is_same_v<ValueT, SocketValueVariant>) {
+        return params_.get_input<T>(index);
+      }
+      else {
+        auto values_variants = params_.get_input<GeoNodesMultiInput<SocketValueVariant>>(index);
+        Vector<ValueT> values(values_variants.values.size());
+        for (const int i : values_variants.values.index_range()) {
+          values[i] = values_variants.values[i].extract<ValueT>();
+        }
+        return values;
+      }
     }
     else {
-#ifndef NDEBUG
-      this->check_input_access(identifier, &CPPType::get<T>());
-#endif
-      const int index = this->get_input_index(identifier);
-      const T &value = params_.get_input<T>(index);
-      if constexpr (std::is_same_v<T, GeometrySet>) {
-        this->check_input_geometry_set(identifier, value);
-      }
+      const SocketValueVariant &value_variant = params_.get_input<SocketValueVariant>(index);
       if constexpr (std::is_same_v<T, SocketValueVariant>) {
-        BLI_assert(value.valid_for_socket(
-            eNodeSocketDatatype(node_.input_by_identifier(identifier).type)));
+        return value_variant;
       }
-      return value;
+      else if constexpr (std::is_enum_v<T>) {
+        return T(value_variant.get<MenuValue>().value);
+      }
+      else {
+        T value = value_variant.get<T>();
+        if constexpr (std::is_same_v<T, GeometrySet>) {
+          this->check_input_geometry_set(identifier, value);
+        }
+        return value;
+      }
     }
+  }
+
+  /**
+   * Low level access to the parameters. Usually, it's better to use #get_input, #extract_input and
+   * #set_output instead because they are easier to use and more safe. Sometimes it can be
+   * beneficial to have more direct access to the raw values though and avoid the indirection.
+   */
+  lf::Params &low_level_lazy_function_params()
+  {
+    return params_;
   }
 
   /**
@@ -175,24 +206,18 @@ class GeoNodeExecParams {
   template<typename T> void set_output(StringRef identifier, T &&value)
   {
     using StoredT = std::decay_t<T>;
-    if constexpr (stored_as_SocketValueVariant_v<StoredT>) {
-      SocketValueVariant value_variant(std::forward<T>(value));
-      this->set_output(identifier, std::move(value_variant));
+#ifndef NDEBUG
+    this->check_output_access(identifier);
+#endif
+    if constexpr (std::is_same_v<StoredT, GeometrySet>) {
+      this->check_output_geometry_set(value);
+    }
+    const int index = this->get_output_index(identifier);
+    if constexpr (std::is_same_v<StoredT, SocketValueVariant>) {
+      params_.set_output(index, std::forward<T>(value));
     }
     else {
-#ifndef NDEBUG
-      const CPPType &type = CPPType::get<StoredT>();
-      this->check_output_access(identifier, type);
-      if constexpr (std::is_same_v<StoredT, SocketValueVariant>) {
-        BLI_assert(value.valid_for_socket(
-            eNodeSocketDatatype(node_.output_by_identifier(identifier).type)));
-      }
-#endif
-      if constexpr (std::is_same_v<StoredT, GeometrySet>) {
-        this->check_output_geometry_set(value);
-      }
-      const int index = this->get_output_index(identifier);
-      params_.set_output(index, std::forward<T>(value));
+      params_.set_output(index, SocketValueVariant::From(std::forward<T>(value)));
     }
   }
 
@@ -250,14 +275,14 @@ class GeoNodeExecParams {
 
   Main *bmain() const;
 
-  GeoNodesLFUserData *user_data() const
+  GeoNodesUserData *user_data() const
   {
-    return static_cast<GeoNodesLFUserData *>(lf_context_.user_data);
+    return static_cast<GeoNodesUserData *>(lf_context_.user_data);
   }
 
-  GeoNodesLFLocalUserData *local_user_data() const
+  GeoNodesLocalUserData *local_user_data() const
   {
-    return static_cast<GeoNodesLFLocalUserData *>(lf_context_.local_user_data);
+    return static_cast<GeoNodesLocalUserData *>(lf_context_.local_user_data);
   }
 
   /**
@@ -277,7 +302,7 @@ class GeoNodeExecParams {
   {
     const int lf_index =
         lf_input_for_output_bsocket_usage_[node_.output_by_identifier(output_identifier)
-                                               .index_in_all_outputs()];
+                                               ->index_in_all_outputs()];
     return params_.get_input<bool>(lf_index);
   }
 
@@ -291,7 +316,7 @@ class GeoNodeExecParams {
     if (!this->anonymous_attribute_output_is_required(output_identifier) && !force_create) {
       return std::nullopt;
     }
-    const bNodeSocket &output_socket = node_.output_by_identifier(output_identifier);
+    const bNodeSocket &output_socket = *node_.output_by_identifier(output_identifier);
     return get_output_attribute_id_(output_socket.index());
   }
 
@@ -300,17 +325,22 @@ class GeoNodeExecParams {
    */
   NodeAttributeFilter get_attribute_filter(const StringRef output_identifier) const
   {
-    const int lf_index =
-        lf_input_for_attribute_propagation_to_output_[node_.output_by_identifier(output_identifier)
-                                                          .index_in_all_outputs()];
+    const int lf_index = lf_input_for_attribute_propagation_to_output_
+        [node_.output_by_identifier(output_identifier)->index_in_all_outputs()];
     const GeometryNodesReferenceSet &set = params_.get_input<GeometryNodesReferenceSet>(lf_index);
     return NodeAttributeFilter(set);
   }
 
+  /**
+   * If the path is relative, attempt to make it absolute. If the current node tree is linked,
+   * the path is relative to the linked file. Otherwise, the path is relative to the current file.
+   */
+  std::optional<std::string> ensure_absolute_path(StringRefNull path) const;
+
  private:
   /* Utilities for detecting common errors at when using this class. */
-  void check_input_access(StringRef identifier, const CPPType *requested_type = nullptr) const;
-  void check_output_access(StringRef identifier, const CPPType &value_type) const;
+  void check_input_access(StringRef identifier) const;
+  void check_output_access(StringRef identifier) const;
 
   /* Find the active socket with the input name (not the identifier). */
   const bNodeSocket *find_available_socket(const StringRef name) const;

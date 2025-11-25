@@ -12,6 +12,7 @@
  * this could be made into its own module, alongside creator.
  */
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -29,15 +30,16 @@
 
 #include "CLG_log.h"
 
+#include "BLI_enum_flags.hh"
 #include "BLI_fileops.h"
 #include "BLI_listbase.h"
 #include "BLI_math_vector_types.hh"
 #include "BLI_path_utils.hh"
 #include "BLI_rect.h"
 #include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_system.h"
 #include "BLI_time.h"
-#include "BLI_utildefines.h"
 
 #include "IMB_colormanagement.hh"
 #include "IMB_imbuf.hh"
@@ -46,6 +48,7 @@
 #include "MOV_read.hh"
 #include "MOV_util.hh"
 
+#include "BKE_blender.hh"
 #include "BKE_image.hh"
 
 #include "BIF_glutil.hh"
@@ -58,11 +61,11 @@
 #include "GPU_matrix.hh"
 #include "GPU_state.hh"
 
-#include "BLF_api.hh"
 #include "DNA_scene_types.h"
-#include "GHOST_C-api.h"
+#include "DNA_userdef_types.h"
 
-#include "DEG_depsgraph.hh"
+#include "BLF_api.hh"
+#include "GHOST_C-api.h"
 
 #include "wm_window_private.hh"
 
@@ -88,7 +91,10 @@ static struct {
 #  define PLAY_FRAME_CACHE_MAX 30
 #endif
 
-static CLG_LogRef LOG = {"wm.playanim"};
+static CLG_LogRef LOG = {"image"};
+
+/** Used in user viable messages. */
+static const char *message_prefix = "Animation Player";
 
 struct PlayState;
 static void playanim_window_zoom(PlayState &ps, const float zoom_offset);
@@ -122,7 +128,7 @@ static bool buffer_from_filepath(const char *filepath,
   if (UNLIKELY(size == size_t(-1))) {
     *r_error_message = BLI_sprintfN("failure '%s' to access size", strerror(errno));
   }
-  else if (r_mem && UNLIKELY(!(mem = static_cast<uchar *>(MEM_mallocN(size, __func__))))) {
+  else if (r_mem && UNLIKELY(!(mem = MEM_malloc_arrayN<uchar>(size, __func__)))) {
     *r_error_message = BLI_sprintfN("error allocating buffer %" PRIu64 " size", uint64_t(size));
   }
   else if (r_mem && UNLIKELY((size_read = BLI_read(file, mem, size)) != size)) {
@@ -165,7 +171,7 @@ enum eWS_Qual {
   WS_QUAL_RMOUSE = (1 << 18),
 #define WS_QUAL_MOUSE (WS_QUAL_LMOUSE | WS_QUAL_MMOUSE | WS_QUAL_RMOUSE)
 };
-ENUM_OPERATORS(eWS_Qual, WS_QUAL_RMOUSE)
+ENUM_OPERATORS(eWS_Qual)
 
 struct GhostData {
   GHOST_SystemHandle system;
@@ -462,11 +468,12 @@ static ImBuf *ibuf_from_picture(PlayAnimPict *pic)
   }
   else if (pic->mem) {
     /* Use correct color-space here. */
-    ibuf = IMB_ibImageFromMemory(pic->mem, pic->size, pic->IB_flags, nullptr, pic->filepath);
+    ibuf = IMB_load_image_from_memory(
+        pic->mem, pic->size, pic->IB_flags, pic->filepath, pic->filepath);
   }
   else {
     /* Use correct color-space here. */
-    ibuf = IMB_loadiffname(pic->filepath, pic->IB_flags, nullptr);
+    ibuf = IMB_load_image_from_filepath(pic->filepath, pic->IB_flags);
   }
 
   return ibuf;
@@ -501,7 +508,7 @@ static int pupdate_time()
 static void *ocio_transform_ibuf(const PlayDisplayContext &display_ctx,
                                  ImBuf *ibuf,
                                  bool *r_glsl_used,
-                                 eGPUTextureFormat *r_format,
+                                 blender::gpu::TextureFormat *r_format,
                                  eGPUDataFormat *r_data,
                                  void **r_buffer_cache_handle)
 {
@@ -512,7 +519,7 @@ static void *ocio_transform_ibuf(const PlayDisplayContext &display_ctx,
   force_fallback |= (ibuf->dither != 0.0f);
 
   /* Default. */
-  *r_format = GPU_RGBA8;
+  *r_format = blender::gpu::TextureFormat::UNORM_8_8_8_8;
   *r_data = GPU_DATA_UBYTE;
 
   /* Fallback to CPU based color space conversion. */
@@ -525,11 +532,11 @@ static void *ocio_transform_ibuf(const PlayDisplayContext &display_ctx,
 
     *r_data = GPU_DATA_FLOAT;
     if (ibuf->channels == 4) {
-      *r_format = GPU_RGBA16F;
+      *r_format = blender::gpu::TextureFormat::SFLOAT_16_16_16_16;
     }
     else if (ibuf->channels == 3) {
       /* Alpha is implicitly 1. */
-      *r_format = GPU_RGB16F;
+      *r_format = blender::gpu::TextureFormat::SFLOAT_16_16_16;
     }
 
     if (ibuf->float_buffer.colorspace) {
@@ -563,7 +570,7 @@ static void *ocio_transform_ibuf(const PlayDisplayContext &display_ctx,
   if ((ibuf->byte_buffer.data || ibuf->float_buffer.data) && !*r_glsl_used) {
     display_buffer = IMB_display_buffer_acquire(
         ibuf, &display_ctx.view_settings, &display_ctx.display_settings, r_buffer_cache_handle);
-    *r_format = GPU_RGBA8;
+    *r_format = blender::gpu::TextureFormat::UNORM_8_8_8_8;
     *r_data = GPU_DATA_UBYTE;
   }
 
@@ -577,13 +584,13 @@ static void draw_display_buffer(const PlayDisplayContext &display_ctx,
 {
   /* Format needs to be created prior to any #immBindShader call.
    * Do it here because OCIO binds its own shader. */
-  eGPUTextureFormat format;
+  blender::gpu::TextureFormat format;
   eGPUDataFormat data;
   bool glsl_used = false;
   GPUVertFormat *imm_format = immVertexFormat();
-  uint pos = GPU_vertformat_attr_add(imm_format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+  uint pos = GPU_vertformat_attr_add(imm_format, "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   uint texCoord = GPU_vertformat_attr_add(
-      imm_format, "texCoord", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+      imm_format, "texCoord", blender::gpu::VertAttrType::SFLOAT_32_32);
 
   void *buffer_cache_handle = nullptr;
   void *display_buffer = ocio_transform_ibuf(
@@ -591,7 +598,7 @@ static void draw_display_buffer(const PlayDisplayContext &display_ctx,
 
   /* NOTE: This may fail, especially for large images that exceed the GPU's texture size limit.
    * Large images could be supported although this isn't so common for animation playback. */
-  GPUTexture *texture = GPU_texture_create_2d(
+  blender::gpu::Texture *texture = GPU_texture_create_2d(
       "display_buf", ibuf->x, ibuf->y, 1, format, GPU_TEXTURE_USAGE_SHADER_READ, nullptr);
 
   if (texture) {
@@ -669,8 +676,11 @@ static void playanim_toscreen_ex(GhostData &ghost_data,
   GHOST_ActivateWindowDrawingContext(ghost_data.window);
   GPU_render_begin();
 
+  GHOST_SwapWindowBufferAcquire(ghost_data.window);
   GPUContext *restore_context = GPU_context_active_get();
+
   GPU_context_active_set(ghost_data.gpu_context);
+  GPU_context_begin_frame(ghost_data.gpu_context);
 
   GPU_clear_color(0.1f, 0.1f, 0.1f, 0.0f);
 
@@ -756,7 +766,8 @@ static void playanim_toscreen_ex(GhostData &ghost_data,
     GPU_matrix_push();
     GPU_matrix_identity_set();
 
-    uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+    uint pos = GPU_vertformat_attr_add(
+        immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
 
     immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
     immUniformColor3ub(0, 255, 0);
@@ -777,7 +788,8 @@ static void playanim_toscreen_ex(GhostData &ghost_data,
     GPU_flush();
   }
 
-  GHOST_SwapWindowBuffers(ghost_data.window);
+  GPU_context_end_frame(ghost_data.gpu_context);
+  GHOST_SwapWindowBufferRelease(ghost_data.window);
   GPU_context_active_set(restore_context);
   GPU_render_end();
 }
@@ -846,7 +858,7 @@ static void build_pict_list_from_anim(ListBase &picsbase,
                                       const int frame_offset)
 {
   /* OCIO_TODO: support different input color space. */
-  MovieReader *anim = MOV_open_file(filepath_first, IB_rect, 0, nullptr);
+  MovieReader *anim = MOV_open_file(filepath_first, IB_byte_data, 0, false, nullptr);
   if (anim == nullptr) {
     CLOG_WARN(&LOG, "couldn't open anim '%s'", filepath_first);
     return;
@@ -859,10 +871,10 @@ static void build_pict_list_from_anim(ListBase &picsbase,
   }
 
   for (int pic = 0; pic < MOV_get_duration_frames(anim, IMB_TC_NONE); pic++) {
-    PlayAnimPict *picture = static_cast<PlayAnimPict *>(MEM_callocN(sizeof(PlayAnimPict), "Pict"));
+    PlayAnimPict *picture = MEM_callocN<PlayAnimPict>("Pict");
     picture->anim = anim;
     picture->frame = pic + frame_offset;
-    picture->IB_flags = IB_rect;
+    picture->IB_flags = IB_byte_data;
     picture->filepath = BLI_sprintfN("%s : %4.d", filepath_first, pic + 1);
     BLI_addtail(&picsbase, picture);
   }
@@ -912,7 +924,7 @@ static void build_pict_list_from_image_sequence(ListBase &picsbase,
   g_playanim.total_time = 1.0;
 
   for (int pic = 0; pic < totframes; pic++) {
-    if (!IMB_ispic(filepath)) {
+    if (!IMB_test_image(filepath)) {
       break;
     }
 
@@ -927,10 +939,9 @@ static void build_pict_list_from_image_sequence(ListBase &picsbase,
       size = 0;
     }
 
-    PlayAnimPict *picture = static_cast<PlayAnimPict *>(
-        MEM_callocN(sizeof(PlayAnimPict), "picture"));
+    PlayAnimPict *picture = MEM_callocN<PlayAnimPict>("picture");
     picture->size = size;
-    picture->IB_flags = IB_rect;
+    picture->IB_flags = IB_byte_data;
     picture->mem = static_cast<uchar *>(mem);
     picture->filepath = BLI_strdup(filepath);
     picture->error_message = error_message;
@@ -1002,7 +1013,7 @@ static void build_pict_list(ListBase &picsbase,
 {
   *loading_p = true;
 
-  /* NOTE(@ideasman42): When loading many files (expanded from shell globing for e.g.)
+  /* NOTE(@ideasman42): When loading many files (e.g. expanded from shell globing)
    * it's important the frame number increases each time. Otherwise playing `*.png`
    * in a directory will expand into many arguments, each calling this function adding
    * a frame that's set to zero. */
@@ -1561,7 +1572,7 @@ static bool ghost_event_proc(GHOST_EventHandle ghost_event, GHOST_TUserDataPtr p
       if (ddd->dataType == GHOST_kDragnDropTypeFilenames) {
         const GHOST_TStringArray *stra = static_cast<const GHOST_TStringArray *>(ddd->data);
         ps.argc_next = stra->count;
-        ps.argv_next = static_cast<char **>(MEM_mallocN(sizeof(char **) * ps.argc_next, __func__));
+        ps.argv_next = MEM_malloc_arrayN<char *>(size_t(ps.argc_next), __func__);
         for (int i = 0; i < stra->count; i++) {
           ps.argv_next[i] = BLI_strdup(reinterpret_cast<const char *>(stra->strings[i]));
         }
@@ -1581,12 +1592,16 @@ static bool ghost_event_proc(GHOST_EventHandle ghost_event, GHOST_TUserDataPtr p
 static GHOST_WindowHandle playanim_window_open(
     GHOST_SystemHandle ghost_system, const char *title, int posx, int posy, int sizex, int sizey)
 {
-  GHOST_GPUSettings gpusettings = {0};
-  const eGPUBackendType gpu_backend = GPU_backend_type_selection_get();
-  gpusettings.context_type = wm_ghost_drawing_context_type(gpu_backend);
-  gpusettings.preferred_device.index = U.gpu_preferred_index;
-  gpusettings.preferred_device.vendor_id = U.gpu_preferred_vendor_id;
-  gpusettings.preferred_device.device_id = U.gpu_preferred_device_id;
+  GHOST_GPUSettings gpu_settings = {0};
+  const GPUBackendType gpu_backend = GPU_backend_type_selection_get();
+  gpu_settings.context_type = wm_ghost_drawing_context_type(gpu_backend);
+  gpu_settings.preferred_device.index = U.gpu_preferred_index;
+  gpu_settings.preferred_device.vendor_id = U.gpu_preferred_vendor_id;
+  gpu_settings.preferred_device.device_id = U.gpu_preferred_device_id;
+  if (GPU_backend_vsync_is_overridden()) {
+    gpu_settings.flags |= GHOST_gpuVSyncIsOverridden;
+    gpu_settings.vsync = GHOST_TVSyncModes(GPU_backend_vsync_get());
+  }
 
   {
     bool screen_size_valid = false;
@@ -1641,7 +1656,7 @@ static GHOST_WindowHandle playanim_window_open(
                             /* Could optionally start full-screen. */
                             GHOST_kWindowStateNormal,
                             false,
-                            gpusettings);
+                            gpu_settings);
 }
 
 static void playanim_window_zoom(PlayState &ps, const float zoom_offset)
@@ -1687,7 +1702,7 @@ static bool playanim_window_font_scale_from_dpi(PlayState &ps)
  * \return True when `args_next` is filled with arguments used to re-run this function
  * (used for drag & drop).
  */
-static bool wm_main_playanim_intern(int argc, const char **argv, PlayArgs *args_next)
+static std::optional<int> wm_main_playanim_intern(int argc, const char **argv, PlayArgs *args_next)
 {
   ImBuf *ibuf = nullptr;
   blender::int2 window_pos = {0, 0};
@@ -1721,10 +1736,10 @@ static bool wm_main_playanim_intern(int argc, const char **argv, PlayArgs *args_
   IMB_init();
   MOV_init();
 
-  STRNCPY(ps.display_ctx.display_settings.display_device,
-          IMB_colormanagement_role_colorspace_name_get(COLOR_ROLE_DEFAULT_BYTE));
-  IMB_colormanagement_init_default_view_settings(&ps.display_ctx.view_settings,
-                                                 &ps.display_ctx.display_settings);
+  STRNCPY_UTF8(ps.display_ctx.display_settings.display_device,
+               IMB_colormanagement_role_colorspace_name_get(COLOR_ROLE_DEFAULT_BYTE));
+  IMB_colormanagement_init_untonemapped_view_settings(&ps.display_ctx.view_settings,
+                                                      &ps.display_ctx.display_settings);
   ps.display_ctx.ui_scale = 1.0f;
 
   while ((argc > 0) && (argv[0][0] == '-')) {
@@ -1802,67 +1817,93 @@ static bool wm_main_playanim_intern(int argc, const char **argv, PlayArgs *args_
     argv++;
   }
 
-  if (argc == 0) {
-    printf("%s: no filepath argument given\n", __func__);
-    exit(EXIT_FAILURE);
-  }
-
-  const char *filepath = argv[0];
-
-  if (MOV_is_movie_file(filepath)) {
-    /* OCIO_TODO: support different input color spaces. */
-    MovieReader *anim = MOV_open_file(filepath, IB_rect, 0, nullptr);
-    if (anim) {
-      ibuf = MOV_decode_frame(anim, 0, IMB_TC_NONE, IMB_PROXY_NONE);
-      MOV_close(anim);
-      anim = nullptr;
-    }
-  }
-  else if (!IMB_ispic(filepath)) {
-    printf("%s: '%s' not an image file\n", __func__, filepath);
-    exit(EXIT_FAILURE);
-  }
-
-  if (ibuf == nullptr) {
-    /* OCIO_TODO: support different input color space. */
-    ibuf = IMB_loadiffname(filepath, IB_rect, nullptr);
-  }
-
-  if (ibuf == nullptr) {
-    printf("%s: '%s' couldn't open\n", __func__, filepath);
-    exit(EXIT_FAILURE);
-  }
-
-  /* Select GPU backend. */
-  GPU_backend_type_selection_detect();
-
-  /* Init GHOST and open window. */
+  const char *filepath = nullptr;
   GHOST_EventConsumerHandle ghost_event_consumer = nullptr;
+
   {
-    ghost_event_consumer = GHOST_CreateEventConsumer(ghost_event_proc, &ps);
+    std::optional<int> exit_code = [&]() -> std::optional<int> {
+      if (argc == 0) {
+        fprintf(stderr, "%s: no filepath argument given\n", message_prefix);
+        return EXIT_FAILURE;
+      }
 
-    GHOST_SetBacktraceHandler((GHOST_TBacktraceFn)BLI_system_backtrace);
+      filepath = argv[0];
+      if (MOV_is_movie_file(filepath)) {
+        /* OCIO_TODO: support different input color spaces. */
+        /* Image buffer is used for display, which does support displaying any buffer from any
+         * colorspace. Skip colorspace conversions in the movie module to improve performance. */
+        MovieReader *anim = MOV_open_file(filepath, IB_byte_data, 0, true, nullptr);
+        if (anim) {
+          ibuf = MOV_decode_frame(anim, 0, IMB_TC_NONE, IMB_PROXY_NONE);
+          MOV_close(anim);
+          anim = nullptr;
+        }
+      }
+      else if (IMB_test_image(filepath)) {
+        /* Pass. */
+      }
+      else {
+        fprintf(stderr, "%s: '%s' not an image file\n", message_prefix, filepath);
+        return EXIT_FAILURE;
+      }
 
-    ps.ghost_data.system = GHOST_CreateSystem();
-    GPU_backend_ghost_system_set(ps.ghost_data.system);
+      if (ibuf == nullptr) {
+        /* OCIO_TODO: support different input color space. */
+        ibuf = IMB_load_image_from_filepath(filepath, IB_byte_data);
+      }
 
-    if (UNLIKELY(ps.ghost_data.system == nullptr)) {
-      /* GHOST will have reported the back-ends that failed to load. */
-      CLOG_WARN(&LOG, "GHOST: unable to initialize, exiting!");
-      /* This will leak memory, it's preferable to crashing. */
-      exit(EXIT_FAILURE);
+      if (ibuf == nullptr) {
+        fprintf(stderr, "%s: '%s' couldn't open\n", message_prefix, filepath);
+        return EXIT_FAILURE;
+      }
+
+      /* Select GPU backend. */
+      GPU_backend_type_selection_detect();
+
+      /* Init GHOST and open window. */
+      GHOST_SetBacktraceHandler((GHOST_TBacktraceFn)BLI_system_backtrace);
+      GHOST_UseWindowFrame(WM_init_window_frame_get());
+
+      ps.ghost_data.system = GHOST_CreateSystem();
+      if (UNLIKELY(ps.ghost_data.system == nullptr)) {
+        /* GHOST will have reported the back-ends that failed to load. */
+        fprintf(stderr, "%s: unable to initialize GHOST, exiting!\n", message_prefix);
+        return EXIT_FAILURE;
+      }
+
+      GPU_backend_ghost_system_set(ps.ghost_data.system);
+
+      GHOST_UseNativePixels();
+
+      ps.ghost_data.window = playanim_window_open(ps.ghost_data.system,
+                                                  "Blender Animation Player",
+                                                  window_pos[0],
+                                                  window_pos[1],
+                                                  ibuf->x,
+                                                  ibuf->y);
+
+      if (UNLIKELY(ps.ghost_data.window == nullptr)) {
+        fprintf(stderr, "%s: unable to create window, exiting!\n", message_prefix);
+        return EXIT_FAILURE;
+      }
+
+      ghost_event_consumer = GHOST_CreateEventConsumer(ghost_event_proc, &ps);
+      GHOST_AddEventConsumer(ps.ghost_data.system, ghost_event_consumer);
+
+      return std::nullopt;
+    }();
+
+    if (exit_code) {
+      if (ps.ghost_data.system) {
+        GHOST_DisposeSystem(ps.ghost_data.system);
+      }
+      if (ibuf) {
+        IMB_freeImBuf(ibuf);
+      }
+      IMB_exit();
+      MOV_exit();
+      return exit_code;
     }
-
-    GHOST_AddEventConsumer(ps.ghost_data.system, ghost_event_consumer);
-
-    GHOST_UseNativePixels();
-
-    ps.ghost_data.window = playanim_window_open(ps.ghost_data.system,
-                                                "Blender Animation Player",
-                                                window_pos[0],
-                                                window_pos[1],
-                                                ibuf->x,
-                                                ibuf->y);
   }
 
   // GHOST_ActivateWindowDrawingContext(ps.ghost_data.window);
@@ -1883,6 +1924,7 @@ static bool wm_main_playanim_intern(int argc, const char **argv, PlayArgs *args_
 
   ps.display_ctx.size = ps.ibuf_size;
 
+  GHOST_SwapWindowBufferAcquire(ps.ghost_data.window);
   GPU_render_begin();
   GPU_render_step();
   GPU_clear_color(0.1f, 0.1f, 0.1f, 0.0f);
@@ -1894,7 +1936,7 @@ static bool wm_main_playanim_intern(int argc, const char **argv, PlayArgs *args_
     playanim_gpu_matrix();
   }
 
-  GHOST_SwapWindowBuffers(ps.ghost_data.window);
+  GHOST_SwapWindowBufferRelease(ps.ghost_data.window);
   GPU_render_end();
 
   /* One of the frames was invalid or not passed in. */
@@ -1976,9 +2018,7 @@ static bool wm_main_playanim_intern(int argc, const char **argv, PlayArgs *args_
         ps.picture = ps.picture->prev;
       }
     }
-    if (g_playanim.total_time > 0.0) {
-      g_playanim.total_time = 0.0;
-    }
+    g_playanim.total_time = std::min(g_playanim.total_time, 0.0);
 
 #ifdef WITH_AUDASPACE
     if (g_audaspace.playback_handle) {
@@ -2014,6 +2054,7 @@ static bool wm_main_playanim_intern(int argc, const char **argv, PlayArgs *args_
 #endif /* USE_FRAME_CACHE_LIMIT */
 
           STRNCPY(ibuf->filepath, ps.picture->filepath);
+          ibuf->fileframe = ps.picture->frame;
         }
 
         while (pupdate_time()) {
@@ -2105,9 +2146,9 @@ static bool wm_main_playanim_intern(int argc, const char **argv, PlayArgs *args_
       MEM_freeN(ps.picture->mem);
     }
     if (ps.picture->error_message) {
-      MEM_freeN(static_cast<void *>(ps.picture->error_message));
+      MEM_freeN(ps.picture->error_message);
     }
-    MEM_freeN(const_cast<char *>(ps.picture->filepath));
+    MEM_freeN(ps.picture->filepath);
     MEM_freeN(ps.picture);
   }
 
@@ -2137,16 +2178,15 @@ static bool wm_main_playanim_intern(int argc, const char **argv, PlayArgs *args_
   g_audaspace.source = nullptr;
 #endif
 
-  /* We still miss freeing a lot!
-   * But many areas could skip initialization too for anim play. */
-
-  DEG_free_node_types();
+  /* Free subsystems the animation player is responsible for starting.
+   * The rest is handled by #BKE_blender_atexit, see early-exit logic in `creator.cc`. */
 
   BLF_exit();
 
   /* NOTE: Must happen before GPU Context destruction as GPU resources are released via
    * Color Management module. */
   IMB_exit();
+  MOV_exit();
 
   if (ps.ghost_data.gpu_context) {
     GPU_context_active_set(ps.ghost_data.gpu_context);
@@ -2159,28 +2199,19 @@ static bool wm_main_playanim_intern(int argc, const char **argv, PlayArgs *args_
 
   GHOST_DisposeWindow(ps.ghost_data.system, ps.ghost_data.window);
 
-  /* Early exit, IMB and BKE should be exited only in end. */
+  GHOST_DisposeSystem(ps.ghost_data.system);
+
   if (ps.argv_next) {
     args_next->argc = ps.argc_next;
     args_next->argv = ps.argv_next;
-    return true;
+    /* Returning none, run this function again with the *next* arguments. */
+    return std::nullopt;
   }
 
-  GHOST_DisposeSystem(ps.ghost_data.system);
-
-#if 0
-  const int totblock = MEM_get_memory_blocks_in_use();
-  if (totblock != 0) {
-    /* Prints many `bAKey`, `bArgument` messages which are tricky to fix. */
-    printf("Error Totblock: %d\n", totblock);
-    MEM_printmemlist();
-  }
-#endif
-
-  return false;
+  return EXIT_SUCCESS;
 }
 
-void WM_main_playanim(int argc, const char **argv)
+int WM_main_playanim(int argc, const char **argv)
 {
 #ifdef WITH_AUDASPACE
   {
@@ -2198,18 +2229,19 @@ void WM_main_playanim(int argc, const char **argv)
   }
 #endif
 
+  std::optional<int> exit_code = std::nullopt;
   PlayArgs args_next = {0};
   do {
     PlayArgs args_free = args_next;
     args_next = {0};
 
-    if (wm_main_playanim_intern(argc, argv, &args_next)) {
-      argc = args_next.argc;
-      argv = const_cast<const char **>(args_next.argv);
-    }
-    else {
+    if ((exit_code = wm_main_playanim_intern(argc, argv, &args_next))) {
       argc = 0;
       argv = nullptr;
+    }
+    else {
+      argc = args_next.argc;
+      argv = const_cast<const char **>(args_next.argv);
     }
 
     if (args_free.argv) {
@@ -2219,9 +2251,16 @@ void WM_main_playanim(int argc, const char **argv)
       MEM_freeN(args_free.argv);
     }
   } while (argv != nullptr);
+  /* Set in the loop. */
+  BLI_assert(exit_code.has_value());
 
 #ifdef WITH_AUDASPACE
   AUD_exit(g_audaspace.audio_device);
   AUD_exitOnce();
 #endif
+
+  /* Cleanup sub-systems started before this function was called. */
+  BKE_blender_atexit();
+
+  return exit_code.value();
 }

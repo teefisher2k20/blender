@@ -336,7 +336,8 @@ def smoke_step_$ID$():\n\
     \n\
     if using_dissolve_s$ID$:\n\
         mantaMsg('Dissolving smoke')\n\
-        dissolveSmoke(flags=flags_s$ID$, density=density_s$ID$, heat=heat_s$ID$, red=color_r_s$ID$, green=color_g_s$ID$, blue=color_b_s$ID$, speed=dissolveSpeed_s$ID$, logFalloff=using_logdissolve_s$ID$)\n\
+        dissolveSmoke(flags=flags_s$ID$, density=density_s$ID$, heat=heat_s$ID$, red=color_r_s$ID$, green=color_g_s$ID$, blue=color_b_s$ID$, \
+                      speed=dissolveSpeed_s$ID$, logFalloff=using_logdissolve_s$ID$, dissolveScale=s$ID$.timestep / frameLengthUnscaled_s$ID$)\n\
     \n\
     mantaMsg('Advecting density')\n\
     advectSemiLagrange(flags=flags_s$ID$, vel=vel_s$ID$, grid=density_s$ID$, order=2)\n\
@@ -365,8 +366,8 @@ def smoke_step_$ID$():\n\
     mantaMsg('Vorticity')\n\
     if using_fire_s$ID$:\n\
         flame_s$ID$.copyFrom(fuel_s$ID$) # temporarily misuse flame grid as vorticity storage\n\
-        flame_s$ID$.multConst(flameVorticity_s$ID$)\n\
-    vorticityConfinement(vel=vel_s$ID$, flags=flags_s$ID$, strength=vorticity_s$ID$, strengthCell=flame_s$ID$ if using_fire_s$ID$ else None)\n\
+        flame_s$ID$.multConst(flameVorticity_s$ID$ * s$ID$.timestep / frameLengthUnscaled_s$ID$)\n\
+    vorticityConfinement(vel=vel_s$ID$, flags=flags_s$ID$, strength=vorticity_s$ID$ * s$ID$.timestep / frameLengthUnscaled_s$ID$, strengthCell=flame_s$ID$ if using_fire_s$ID$ else None)\n\
     \n\
     if using_heat_s$ID$:\n\
         mantaMsg('Adding heat buoyancy')\n\
@@ -469,7 +470,8 @@ def step_noise_$ID$():\n\
     \n\
     if using_dissolve_s$ID$:\n\
         mantaMsg('Dissolving noise')\n\
-        dissolveSmoke(flags=flags_sn$ID$, density=density_sn$ID$, heat=None, red=color_r_sn$ID$, green=color_g_sn$ID$, blue=color_b_sn$ID$, speed=dissolveSpeed_s$ID$, logFalloff=using_logdissolve_s$ID$)\n\
+        dissolveSmoke(flags=flags_sn$ID$, density=density_sn$ID$, heat=None, red=color_r_sn$ID$, green=color_g_sn$ID$, blue=color_b_sn$ID$, \
+                      speed=dissolveSpeed_s$ID$, logFalloff=using_logdissolve_s$ID$, dissolveScale=s$ID$.timestep / frameLengthUnscaled_s$ID$)\n\
     \n\
     mantaMsg('Advecting UVs and updating UV weight')\n\
     advectSemiLagrange(flags=flags_s$ID$, vel=vel_s$ID$, grid=uvGrid0_s$ID$, order=2)\n\

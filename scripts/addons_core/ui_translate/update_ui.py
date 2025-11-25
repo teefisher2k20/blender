@@ -23,7 +23,7 @@ else:
         CollectionProperty,
     )
     from . import settings
-    from bl_i18n_utils import utils as utils_i18n
+    from _bl_i18n_utils import utils as utils_i18n
 
 from bpy.app.translations import pgettext_iface as iface_
 
@@ -107,13 +107,8 @@ class UI_UL_i18n_languages(UIList):
     """ """
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        if self.layout_type in {'DEFAULT', 'COMPACT'}:
-            layout.label(text=item.name, icon_value=icon)
-            layout.prop(item, "use", text="")
-        elif self.layout_type in {'GRID'}:
-            layout.alignment = 'CENTER'
-            layout.label(text=item.uid)
-            layout.prop(item, "use", text="")
+        layout.label(text=item.name, icon_value=icon)
+        layout.prop(item, "use", text="")
 
 
 class UI_PT_i18n_update_translations_settings(Panel):

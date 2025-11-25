@@ -2,13 +2,15 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "../eevee_next/eevee_lut.hh" /* TODO: find somewhere to share blue noise Table. */
+#include "../eevee/eevee_lut.hh" /* TODO: find somewhere to share blue noise Table. */
 
 #include "BKE_studiolight.h"
 
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
+#include "BLI_math_vector.h"
 
+#include "GPU_batch_utils.hh"
 #include "IMB_imbuf_types.hh"
 
 #include "draw_common_c.hh"
@@ -37,7 +39,7 @@ static bool get_matcap_tx(Texture &matcap_tx, StudioLight &studio_light)
     }
 
     matcap_tx = Texture(studio_light.name,
-                        GPU_RGBA16F,
+                        gpu::TextureFormat::SFLOAT_16_16_16_16,
                         GPU_TEXTURE_USAGE_SHADER_READ,
                         int2(matcap_diffuse->x, matcap_diffuse->y),
                         layers,
@@ -58,10 +60,10 @@ static float4x4 get_world_shading_rotation_matrix(float studiolight_rot_z)
   return float4x4(R);
 }
 
-static LightData get_light_data_from_studio_solidlight(const SolidLight *sl,
-                                                       const float4x4 &world_shading_rotation)
+static SolidLightData get_light_data_from_studio_solidlight(const SolidLight *sl,
+                                                            const float4x4 &world_shading_rotation)
 {
-  LightData light = {};
+  SolidLightData light = {};
   if (sl && sl->flag) {
     float3 direction = math::transform_direction(world_shading_rotation, float3(sl->vec));
     light.direction = float4(direction, 0.0f);
@@ -99,20 +101,22 @@ void SceneResources::load_jitter_tx(int total_samples)
   }
 
   jitter_tx.free();
-  jitter_tx.ensure_2d(
-      GPU_RGBA16F, int2(jitter_tx_size), GPU_TEXTURE_USAGE_SHADER_READ, jitter[0][0]);
+  jitter_tx.ensure_2d(gpu::TextureFormat::SFLOAT_16_16_16_16,
+                      int2(jitter_tx_size),
+                      GPU_TEXTURE_USAGE_SHADER_READ,
+                      jitter[0][0]);
 }
 
-void SceneResources::init(const SceneState &scene_state)
+void SceneResources::init(const SceneState &scene_state, const DRWContext *ctx)
 {
   const View3DShading &shading = scene_state.shading;
 
-  world_buf.viewport_size = DRW_viewport_size_get();
-  world_buf.viewport_size_inv = DRW_viewport_invert_size_get();
+  world_buf.viewport_size = ctx->viewport_size_get();
+  world_buf.viewport_size_inv = 1.0f / world_buf.viewport_size;
   world_buf.xray_alpha = shading.xray_alpha;
   world_buf.background_color = scene_state.background_color;
   world_buf.object_outline_color = float4(float3(shading.object_outline_color), 1.0f);
-  world_buf.ui_scale = DRW_state_is_image_render() ? 1.0f : G_draw.block.size_pixel;
+  world_buf.ui_scale = ctx->is_image_render() ? 1.0f : U.pixelsize;
   world_buf.matcap_orientation = (shading.flag & V3D_SHADING_MATCAP_FLIP_X) != 0;
 
   StudioLight *studio_light = nullptr;
@@ -134,7 +138,8 @@ void SceneResources::init(const SceneState &scene_state)
     }
   }
   if (!matcap_tx.is_valid()) {
-    matcap_tx.ensure_2d_array(GPU_RGBA16F, int2(1), 1, GPU_TEXTURE_USAGE_SHADER_READ);
+    matcap_tx.ensure_2d_array(
+        gpu::TextureFormat::SFLOAT_16_16_16_16, int2(1), 1, GPU_TEXTURE_USAGE_SHADER_READ);
   }
 
   float4x4 world_shading_rotation = float4x4::identity();
@@ -179,17 +184,31 @@ void SceneResources::init(const SceneState &scene_state)
 
   clip_planes_buf.push_update();
 
-  missing_tx.ensure_2d(
-      GPU_RGBA8, int2(1), GPU_TEXTURE_USAGE_SHADER_READ, float4(1.0f, 0.0f, 1.0f, 1.0f));
-  missing_texture.gpu.texture = missing_tx;
+  missing_tx.ensure_2d(gpu::TextureFormat::UNORM_8_8_8_8,
+                       int2(1),
+                       GPU_TEXTURE_USAGE_SHADER_READ,
+                       float4(1.0f, 0.0f, 1.0f, 1.0f));
+  missing_texture.gpu.texture = &missing_tx;
   missing_texture.name = "Missing Texture";
 
-  dummy_texture_tx.ensure_2d(
-      GPU_RGBA8, int2(1), GPU_TEXTURE_USAGE_SHADER_READ, float4(0.0f, 0.0f, 0.0f, 0.0f));
-  dummy_tile_array_tx.ensure_2d_array(
-      GPU_RGBA8, int2(1), 1, GPU_TEXTURE_USAGE_SHADER_READ, float4(0.0f, 0.0f, 0.0f, 0.0f));
-  dummy_tile_data_tx.ensure_1d_array(
-      GPU_RGBA8, 1, 1, GPU_TEXTURE_USAGE_SHADER_READ, float4(0.0f, 0.0f, 0.0f, 0.0f));
+  dummy_texture_tx.ensure_2d(gpu::TextureFormat::UNORM_8_8_8_8,
+                             int2(1),
+                             GPU_TEXTURE_USAGE_SHADER_READ,
+                             float4(0.0f, 0.0f, 0.0f, 0.0f));
+  dummy_tile_array_tx.ensure_2d_array(gpu::TextureFormat::UNORM_8_8_8_8,
+                                      int2(1),
+                                      1,
+                                      GPU_TEXTURE_USAGE_SHADER_READ,
+                                      float4(0.0f, 0.0f, 0.0f, 0.0f));
+  dummy_tile_data_tx.ensure_1d_array(gpu::TextureFormat::UNORM_8_8_8_8,
+                                     1,
+                                     1,
+                                     GPU_TEXTURE_USAGE_SHADER_READ,
+                                     float4(0.0f, 0.0f, 0.0f, 0.0f));
+
+  if (volume_cube_batch == nullptr) {
+    volume_cube_batch = GPU_batch_unit_cube();
+  }
 }
 
 }  // namespace blender::workbench

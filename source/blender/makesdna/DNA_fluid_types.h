@@ -10,6 +10,15 @@
 
 #include "DNA_listBase.h"
 
+#ifdef __cplusplus
+namespace blender::gpu {
+class Texture;
+}  // namespace blender::gpu
+using GPUTexture = blender::gpu::Texture;
+#else
+typedef struct GPUTexture GPUTexture;
+#endif
+
 /**
  * #FluidDomainSettings.flags
  * Domain flags.
@@ -473,19 +482,19 @@ typedef struct FluidDomainSettings {
   struct Collection *fluid_group;
   struct Collection *force_group;    /* UNUSED */
   struct Collection *effector_group; /* Effector objects group. */
-  struct GPUTexture *tex_density;
-  struct GPUTexture *tex_color;
-  struct GPUTexture *tex_wt;
-  struct GPUTexture *tex_shadow;
-  struct GPUTexture *tex_flame;
-  struct GPUTexture *tex_flame_coba;
-  struct GPUTexture *tex_coba;
-  struct GPUTexture *tex_field;
-  struct GPUTexture *tex_velocity_x;
-  struct GPUTexture *tex_velocity_y;
-  struct GPUTexture *tex_velocity_z;
-  struct GPUTexture *tex_flags;
-  struct GPUTexture *tex_range_field;
+  GPUTexture *tex_density;
+  GPUTexture *tex_color;
+  GPUTexture *tex_wt;
+  GPUTexture *tex_shadow;
+  GPUTexture *tex_flame;
+  GPUTexture *tex_flame_coba;
+  GPUTexture *tex_coba;
+  GPUTexture *tex_field;
+  GPUTexture *tex_velocity_x;
+  GPUTexture *tex_velocity_y;
+  GPUTexture *tex_velocity_z;
+  GPUTexture *tex_flags;
+  GPUTexture *tex_range_field;
   struct Object *guide_parent;
   struct EffectorWeights *effector_weights;
 
@@ -629,7 +638,7 @@ typedef struct FluidDomainSettings {
   char cache_data_format;
   char cache_particle_format;
   char cache_noise_format;
-  char cache_directory[1024];
+  char cache_directory[/*FILE_MAX*/ 1024];
   char error[64]; /* Bake error description. */
   short cache_type;
   char cache_id[4]; /* Run-time only */
@@ -783,8 +792,7 @@ typedef struct FluidFlowSettings {
   float texture_size;
   float texture_offset;
   char _pad2[4];
-  /* MAX_CUSTOMDATA_LAYER_NAME. */
-  char uvlayer_name[68];
+  char uvlayer_name[/*MAX_CUSTOMDATA_LAYER_NAME*/ 68];
   char _pad3[4];
   short vgroup_density;
 

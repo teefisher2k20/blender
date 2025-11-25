@@ -12,15 +12,10 @@
 #include "IMB_imbuf.hh"
 #include "IMB_imbuf_types.hh"
 
-#include "imbuf.hh"
-
-#include "MEM_guardedalloc.h"
-
 #include "BLI_math_vector.h"
 #include "BLI_utildefines.h"
 
 #include "DNA_scene_types.h"
-#include "DNA_userdef_types.h"
 
 /* prototypes */
 struct Stereo3DData;
@@ -627,8 +622,9 @@ ImBuf *IMB_stereo3d_ImBuf(const ImageFormatData *im_format, ImBuf *ibuf_left, Im
   ImBuf *ibuf_stereo = nullptr;
   Stereo3DData s3d_data = {{nullptr}};
   size_t width, height;
-  const bool is_float = ibuf_left->float_buffer.data && ibuf_right->float_buffer.data;
   const bool is_byte = ibuf_left->byte_buffer.data && ibuf_right->byte_buffer.data;
+  const bool is_float = ibuf_left->float_buffer.data && ibuf_right->float_buffer.data &&
+                        !(is_byte && im_format->depth <= 8);
 
   if (!(is_float || is_byte)) {
     return nullptr;
@@ -639,11 +635,11 @@ ImBuf *IMB_stereo3d_ImBuf(const ImageFormatData *im_format, ImBuf *ibuf_left, Im
   ibuf_stereo = IMB_allocImBuf(width, height, ibuf_left->planes, 0);
 
   if (is_float) {
-    imb_addrectfloatImBuf(ibuf_stereo, ibuf_left->channels);
+    IMB_alloc_float_pixels(ibuf_stereo, ibuf_left->channels);
     ibuf_stereo->float_buffer.colorspace = ibuf_left->float_buffer.colorspace;
   }
   else {
-    imb_addrectImBuf(ibuf_stereo);
+    IMB_alloc_byte_pixels(ibuf_stereo);
     ibuf_stereo->byte_buffer.colorspace = ibuf_left->byte_buffer.colorspace;
   }
 
@@ -1171,12 +1167,12 @@ void IMB_ImBufFromStereo3d(const Stereo3dFormat *s3d,
   ibuf_right = IMB_allocImBuf(width, height, ibuf_stereo3d->planes, 0);
 
   if (is_float) {
-    imb_addrectfloatImBuf(ibuf_left, ibuf_stereo3d->channels);
-    imb_addrectfloatImBuf(ibuf_right, ibuf_stereo3d->channels);
+    IMB_alloc_float_pixels(ibuf_left, ibuf_stereo3d->channels);
+    IMB_alloc_float_pixels(ibuf_right, ibuf_stereo3d->channels);
   }
   else {
-    imb_addrectImBuf(ibuf_left);
-    imb_addrectImBuf(ibuf_right);
+    IMB_alloc_byte_pixels(ibuf_left);
+    IMB_alloc_byte_pixels(ibuf_right);
   }
 
   ibuf_left->flags = ibuf_stereo3d->flags;

@@ -36,7 +36,7 @@ wmKeyConfigPref *BKE_keyconfig_pref_ensure(UserDef *userdef, const char *kc_idna
   wmKeyConfigPref *kpt = static_cast<wmKeyConfigPref *>(BLI_findstring(
       &userdef->user_keyconfig_prefs, kc_idname, offsetof(wmKeyConfigPref, idname)));
   if (kpt == nullptr) {
-    kpt = static_cast<wmKeyConfigPref *>(MEM_callocN(sizeof(*kpt), __func__));
+    kpt = MEM_callocN<wmKeyConfigPref>(__func__);
     STRNCPY(kpt->idname, kc_idname);
     BLI_addtail(&userdef->user_keyconfig_prefs, kpt);
   }
@@ -117,7 +117,7 @@ void BKE_keyconfig_pref_set_select_mouse(UserDef *userdef, int value, bool overr
     IDP_AddToGroup(kpt->prop, blender::bke::idprop::create("select_mouse", value).release());
   }
   else if (override) {
-    IDP_Int(idprop) = value;
+    IDP_int_set(idprop, value);
   }
 }
 

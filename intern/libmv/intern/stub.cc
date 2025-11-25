@@ -33,7 +33,7 @@ int libmv_trackRegion(const libmv_TrackRegionOptions* /*options*/,
                       libmv_TrackRegionResult* result,
                       double* x2,
                       double* y2) {
-  /* Convert to doubles for the libmv api. The four corners and the center. */
+  /* Convert to doubles for the libmv API. The four corners and the center. */
   for (int i = 0; i < 5; ++i) {
     x2[i] = x1[i];
     y2[i] = y1[i];
@@ -216,10 +216,6 @@ void libmv_cameraIntrinsicsDestroy(
 void libmv_cameraIntrinsicsUpdate(
     const libmv_CameraIntrinsicsOptions* /*libmv_camera_intrinsics_options*/,
     libmv_CameraIntrinsics* /*libmv_intrinsics*/) {
-}
-
-void libmv_cameraIntrinsicsSetThreads(
-    libmv_CameraIntrinsics* /*libmv_intrinsics*/, int /*threads*/) {
 }
 
 void libmv_cameraIntrinsicsExtractOptions(

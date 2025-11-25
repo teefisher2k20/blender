@@ -6,8 +6,6 @@
  * \ingroup edobj
  */
 
-#include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -27,7 +25,7 @@
 #include "BKE_lib_id.hh"
 #include "BKE_object.hh"
 #include "BKE_report.hh"
-#include "BKE_shader_fx.h"
+#include "BKE_shader_fx.hh"
 
 #include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_build.hh"
@@ -236,7 +234,7 @@ void shaderfx_link(Object *dst, Object *src)
 void shaderfx_copy(Object *dst, ShaderFxData *fx)
 {
   ShaderFxData *nfx = BKE_shaderfx_new(fx->type);
-  STRNCPY(nfx->name, fx->name);
+  STRNCPY_UTF8(nfx->name, fx->name);
   BKE_shaderfx_copydata(fx, nfx);
   BLI_addtail(&dst->shader_fx, nfx);
 
@@ -298,7 +296,7 @@ static bool edit_shaderfx_poll(bContext *C)
 /** \name Add Effect Operator
  * \{ */
 
-static int shaderfx_add_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus shaderfx_add_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
   Scene *scene = CTX_data_scene(C);
@@ -366,7 +364,7 @@ void OBJECT_OT_shaderfx_add(wmOperatorType *ot)
   ot->description = "Add a visual effect to the active object";
   ot->idname = "OBJECT_OT_shaderfx_add";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = WM_menu_invoke;
   ot->exec = shaderfx_add_exec;
   ot->poll = edit_shaderfx_poll;
@@ -412,7 +410,7 @@ static void edit_shaderfx_report_property(wmOperatorType *ot)
 static bool edit_shaderfx_invoke_properties(bContext *C,
                                             wmOperator *op,
                                             const wmEvent *event,
-                                            int *r_retval)
+                                            wmOperatorStatus *r_retval)
 {
   if (RNA_struct_property_is_set(op->ptr, "shaderfx")) {
     return true;
@@ -471,7 +469,7 @@ static ShaderFxData *edit_shaderfx_property_get(wmOperator *op, Object *ob, int 
 /** \name Remove ShaderFX Operator
  * \{ */
 
-static int shaderfx_remove_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus shaderfx_remove_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
   Object *ob = context_active_object(C);
@@ -482,7 +480,7 @@ static int shaderfx_remove_exec(bContext *C, wmOperator *op)
 
   /* Store name temporarily for report. */
   char name[MAX_NAME];
-  STRNCPY(name, fx->name);
+  STRNCPY_UTF8(name, fx->name);
 
   if (!shaderfx_remove(op->reports, bmain, ob, fx)) {
     return OPERATOR_CANCELLED;
@@ -497,9 +495,9 @@ static int shaderfx_remove_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int shaderfx_remove_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus shaderfx_remove_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
-  int retval;
+  wmOperatorStatus retval;
   if (edit_shaderfx_invoke_properties(C, op, event, &retval)) {
     return shaderfx_remove_exec(C, op);
   }
@@ -528,7 +526,7 @@ void OBJECT_OT_shaderfx_remove(wmOperatorType *ot)
 /** \name Move up ShaderFX Operator
  * \{ */
 
-static int shaderfx_move_up_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus shaderfx_move_up_exec(bContext *C, wmOperator *op)
 {
   Object *ob = context_active_object(C);
   ShaderFxData *fx = edit_shaderfx_property_get(op, ob, 0);
@@ -543,9 +541,9 @@ static int shaderfx_move_up_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int shaderfx_move_up_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus shaderfx_move_up_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
-  int retval;
+  wmOperatorStatus retval;
   if (edit_shaderfx_invoke_properties(C, op, event, &retval)) {
     return shaderfx_move_up_exec(C, op);
   }
@@ -573,7 +571,7 @@ void OBJECT_OT_shaderfx_move_up(wmOperatorType *ot)
 /** \name Move Down ShaderFX Operator
  * \{ */
 
-static int shaderfx_move_down_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus shaderfx_move_down_exec(bContext *C, wmOperator *op)
 {
   Object *ob = context_active_object(C);
   ShaderFxData *fx = edit_shaderfx_property_get(op, ob, 0);
@@ -588,9 +586,11 @@ static int shaderfx_move_down_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int shaderfx_move_down_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus shaderfx_move_down_invoke(bContext *C,
+                                                  wmOperator *op,
+                                                  const wmEvent *event)
 {
-  int retval;
+  wmOperatorStatus retval;
   if (edit_shaderfx_invoke_properties(C, op, event, &retval)) {
     return shaderfx_move_down_exec(C, op);
   }
@@ -618,7 +618,7 @@ void OBJECT_OT_shaderfx_move_down(wmOperatorType *ot)
 /** \name Move ShaderFX to Index Operator
  * \{ */
 
-static int shaderfx_move_to_index_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus shaderfx_move_to_index_exec(bContext *C, wmOperator *op)
 {
   Object *ob = context_active_object(C);
   ShaderFxData *fx = edit_shaderfx_property_get(op, ob, 0);
@@ -631,9 +631,11 @@ static int shaderfx_move_to_index_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int shaderfx_move_to_index_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus shaderfx_move_to_index_invoke(bContext *C,
+                                                      wmOperator *op,
+                                                      const wmEvent *event)
 {
-  int retval;
+  wmOperatorStatus retval;
   if (edit_shaderfx_invoke_properties(C, op, event, &retval)) {
     return shaderfx_move_to_index_exec(C, op);
   }
@@ -665,7 +667,7 @@ void OBJECT_OT_shaderfx_move_to_index(wmOperatorType *ot)
 /** \name Copy Shader Operator
  * \{ */
 
-static int shaderfx_copy_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus shaderfx_copy_exec(bContext *C, wmOperator *op)
 {
   Object *ob = context_active_object(C);
   ShaderFxData *fx = edit_shaderfx_property_get(op, ob, 0);
@@ -677,7 +679,7 @@ static int shaderfx_copy_exec(bContext *C, wmOperator *op)
     return OPERATOR_CANCELLED;
   }
 
-  STRNCPY(nfx->name, fx->name);
+  STRNCPY_UTF8(nfx->name, fx->name);
   /* Make sure effect data has unique name. */
   BKE_shaderfx_unique_name(&ob->shader_fx, nfx);
 
@@ -690,9 +692,9 @@ static int shaderfx_copy_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int shaderfx_copy_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus shaderfx_copy_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
-  int retval;
+  wmOperatorStatus retval;
   if (edit_shaderfx_invoke_properties(C, op, event, &retval)) {
     return shaderfx_copy_exec(C, op);
   }

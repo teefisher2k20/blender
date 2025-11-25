@@ -23,7 +23,6 @@ KERNEL_DATA_ARRAY(KernelObject, objects)
 KERNEL_DATA_ARRAY(Transform, object_motion_pass)
 KERNEL_DATA_ARRAY(DecomposedTransform, object_motion)
 KERNEL_DATA_ARRAY(uint, object_flag)
-KERNEL_DATA_ARRAY(float, object_volume_step)
 KERNEL_DATA_ARRAY(uint, object_prim_offset)
 
 /* cameras */
@@ -33,17 +32,12 @@ KERNEL_DATA_ARRAY(DecomposedTransform, camera_motion)
 KERNEL_DATA_ARRAY(uint, tri_shader)
 KERNEL_DATA_ARRAY(packed_float3, tri_vnormal)
 KERNEL_DATA_ARRAY(packed_uint3, tri_vindex)
-KERNEL_DATA_ARRAY(uint, tri_patch)
-KERNEL_DATA_ARRAY(float2, tri_patch_uv)
 KERNEL_DATA_ARRAY(packed_float3, tri_verts)
 
 /* curves */
 KERNEL_DATA_ARRAY(KernelCurve, curves)
 KERNEL_DATA_ARRAY(float4, curve_keys)
 KERNEL_DATA_ARRAY(KernelCurveSegment, curve_segments)
-
-/* patches */
-KERNEL_DATA_ARRAY(uint, patches)
 
 /* pointclouds */
 KERNEL_DATA_ARRAY(float4, points)
@@ -89,5 +83,11 @@ KERNEL_DATA_ARRAY(TextureInfo, texture_info)
 
 /* ies lights */
 KERNEL_DATA_ARRAY(float, ies)
+
+/* Volume. */
+KERNEL_DATA_ARRAY(KernelOctreeNode, volume_tree_nodes)
+KERNEL_DATA_ARRAY(KernelOctreeRoot, volume_tree_roots)
+KERNEL_DATA_ARRAY(int, volume_tree_root_ids)
+KERNEL_DATA_ARRAY(float, volume_step_size)
 
 #undef KERNEL_DATA_ARRAY

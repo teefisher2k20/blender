@@ -3,7 +3,11 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #pragma once
 
-#include "BLI_listbase.h"
+#include "DNA_listBase.h"
+
+#include "BLI_compiler_attrs.h"
+#include "BLI_enum_flags.hh"
+#include "BLI_math_vector_types.hh"
 #include "BLI_sys_types.h"
 #include "BLI_utility_mixins.hh"
 
@@ -18,6 +22,7 @@ struct BlendfileLinkAppendContext;
 struct BlendHandle;
 struct BlendThumbnail;
 struct FileData;
+struct FileReader;
 struct ID;
 struct Library;
 struct LinkNode;
@@ -63,7 +68,7 @@ struct BlendFileData : blender::NonCopyable, blender::NonMovable {
    * generated the auto-saved one being recovered.
    *
    * NOTE: Currently expected to be the same path as #BlendFileData.filepath. */
-  char filepath[1024] = {}; /* 1024 = FILE_MAX */
+  char filepath[/*FILE_MAX*/ 1024] = {};
 
   /** TODO: think this isn't needed anymore? */
   bScreen *curscreen = nullptr;
@@ -140,6 +145,9 @@ struct BlendFileReadReport {
   int resynced_lib_overrides_libraries_count;
   bool do_resynced_lib_overrides_libraries_list;
   LinkNode *resynced_lib_overrides_libraries;
+
+  /** Whether a pre-2.50 blend file was loaded, in which case any animation is lost. */
+  bool pre_animato_file_loaded;
 };
 
 /** Skip reading some data-block types (may want to skip screen data too). */
@@ -152,7 +160,7 @@ enum eBLOReadSkip {
   /** Do not attempt to re-use IDs from old bmain for unchanged ones in case of undo. */
   BLO_READ_SKIP_UNDO_OLD_MAIN = (1 << 2),
 };
-ENUM_OPERATORS(eBLOReadSkip, BLO_READ_SKIP_UNDO_OLD_MAIN)
+ENUM_OPERATORS(eBLOReadSkip)
 #define BLO_READ_SKIP_ALL (BLO_READ_SKIP_USERDEF | BLO_READ_SKIP_DATA)
 
 /**
@@ -223,7 +231,7 @@ void BLO_read_do_version_after_setup(Main *new_bmain,
  * \{ */
 
 struct BLODataBlockInfo {
-  char name[64]; /* MAX_NAME */
+  char name[/*MAX_ID_NAME-2*/ 256];
   AssetMetaData *asset_data;
   /** Ownership over #asset_data above can be "stolen out" of this struct, for more permanent
    * storage. In that case, set this to false to avoid double freeing of the stolen data. */
@@ -264,6 +272,9 @@ BlendHandle *BLO_blendhandle_from_file(const char *filepath, BlendFileReadReport
 BlendHandle *BLO_blendhandle_from_memory(const void *mem,
                                          int memsize,
                                          BlendFileReadReport *reports);
+
+/** Returns the major and minor version number of Blender used to create the file. */
+blender::int3 BLO_blendhandle_get_version(const BlendHandle *bh);
 
 /**
  * Gets the names of all the data-blocks in a file of a certain type
@@ -367,6 +378,11 @@ enum eBLOLibLinkFlags {
   BLO_LIBLINK_USE_PLACEHOLDERS = 1 << 16,
   /** Force loaded ID to be tagged as #ID_TAG_INDIRECT (used in reload context only). */
   BLO_LIBLINK_FORCE_INDIRECT = 1 << 17,
+  /**
+   * Set the object active when #OB_FLAG_ACTIVE_CLIPBOARD is set.
+   * Used for copy & paste so the active object is preserved.
+   */
+  BLO_LIBLINK_APPEND_SET_OB_ACTIVE_CLIPBOARD = 1 << 18,
   /** Set fake user on appended IDs. */
   BLO_LIBLINK_APPEND_SET_FAKEUSER = 1 << 19,
   /**
@@ -383,6 +399,17 @@ enum eBLOLibLinkFlags {
   BLO_LIBLINK_OBDATA_INSTANCE = 1 << 24,
   /** Instantiate collections as empties, instead of linking them into current view layer. */
   BLO_LIBLINK_COLLECTION_INSTANCE = 1 << 25,
+  /**
+   * Do not rebuild collections hierarchy runtime data (mainly the parents info)
+   * as part of #BLO_library_link_end.
+   * Needed when some IDs have been temporarily removed from Main,
+   * see e.g. #BKE_blendfile_library_relocate.
+   */
+  BLO_LIBLINK_COLLECTION_NO_HIERARCHY_REBUILD = 1 << 26,
+  /**
+   * Pack the linked data-blocks to keep them working even if the source file is not available.
+   */
+  BLO_LIBLINK_PACK = 1 << 27,
 };
 
 /**
@@ -455,20 +482,18 @@ ID *BLO_library_link_named_part(Main *mainl,
  * \param bh: The blender file handle (WARNING! may be freed by this function!).
  * \param params: Settings for linking that don't change from beginning to end of linking.
  */
-void BLO_library_link_end(Main *mainl, BlendHandle **bh, const LibraryLink_Params *params);
+void BLO_library_link_end(Main *mainl,
+                          BlendHandle **bh,
+                          const LibraryLink_Params *params,
+                          ReportList *reports);
 
 /**
  * Struct for temporarily loading datablocks from a blend file.
  */
 struct TempLibraryContext {
-  /** Temporary main used for library data. */
-  Main *bmain_lib;
   /** Temporary main used to load data into (currently initialized from `real_main`). */
   Main *bmain_base;
-  BlendHandle *blendhandle;
   BlendFileReadReport bf_reports;
-  LibraryLink_Params liblink_params;
-  Library *lib;
 
   /** The ID datablock that was loaded. Is NULL if loading failed. */
   ID *temp_id;
@@ -484,18 +509,6 @@ void BLO_library_temp_free(TempLibraryContext *temp_lib_ctx);
 /** \} */
 
 void *BLO_library_read_struct(FileData *fd, BHead *bh, const char *blockname);
-
-using BLOExpandDoitCallback = void (*)(void *fdhandle, Main *mainvar, void *idv);
-
-/**
- * Loop over all ID data in Main to mark relations.
- * Set (id->tag & ID_TAG_NEED_EXPAND) to mark expanding. Flags get cleared after expanding.
- *
- * \param fdhandle: usually file-data, or own handle. May be nullptr.
- * \param mainvar: the Main database to expand.
- * \param calback: Called for each ID block it finds.
- */
-void BLO_expand_main(void *fdhandle, Main *mainvar, BLOExpandDoitCallback callback);
 
 /**
  * Update defaults in startup.blend, without having to save and embed it.
@@ -545,7 +558,24 @@ short BLO_version_from_file(const char *filepath);
  */
 struct ID_Readfile_Data {
   struct Tags {
-    bool is_id_link_placeholder : 1;
+    /* General ID reading related tags. */
+
+    /**
+     * Mark ID placeholders for linked data-blocks needing to be read from their library
+     * blend-files.
+     */
+    bool is_link_placeholder : 1;
+    /**
+     * Mark IDs needing to be expanded (only done once). See #expand_main.
+     */
+    bool needs_expanding : 1;
+    /**
+     * Mark IDs needing to be 'lib-linked', i.e. to get their pointers to other data-blocks
+     * updated from the 'UID' values stored in `.blend` files to the new, actual pointers.
+     */
+    bool needs_linking : 1;
+
+    /* Specific ID-type reading/versioning related tags. */
 
     /**
      * Set when this ID used a legacy Action, in which case it also should pick
@@ -558,13 +588,20 @@ struct ID_Readfile_Data {
 };
 
 /**
- * Return `id->runtime.readfile_data->tags` if the `readfile_data` is allocated,
+ * Return `id->runtime->readfile_data->tags` if the `readfile_data` is allocated,
  * otherwise return an all-zero set of tags.
  */
 ID_Readfile_Data::Tags BLO_readfile_id_runtime_tags(ID &id);
 
 /**
- * Free the ID_Readfile_Data of all IDs in this bmain and all their embedded IDs.
+ * Create the `readfile_data` if needed, and return `id->runtime->readfile_data->tags`.
+ *
+ * Use it instead of #BLO_readfile_id_runtime_tags when tags need to be set.
+ */
+ID_Readfile_Data::Tags &BLO_readfile_id_runtime_tags_for_write(ID &id);
+
+/**
+ * Free the #ID_Readfile_Data of all IDs in this bmain and all their embedded IDs.
  *
  * This is typically called at the end of the versioning process, as after that
  * `ID.runtime.readfile_data` should no longer be needed.
@@ -572,6 +609,8 @@ ID_Readfile_Data::Tags BLO_readfile_id_runtime_tags(ID &id);
 void BLO_readfile_id_runtime_data_free_all(Main &bmain);
 
 /**
- *  Free the ID_Readfile_Data of this ID. Does _not_ deal with embedded IDs.
+ *  Free the #ID_Readfile_Data of this ID. Does _not_ deal with embedded IDs.
  */
 void BLO_readfile_id_runtime_data_free(ID &id);
+
+#define BLEN_THUMB_MEMSIZE_FILE(_x, _y) (sizeof(int) * (2 + (size_t)(_x) * (size_t)(_y)))

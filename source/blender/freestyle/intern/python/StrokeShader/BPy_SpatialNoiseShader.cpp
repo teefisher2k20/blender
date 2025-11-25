@@ -11,10 +11,6 @@
 #include "../../stroke/AdvancedStrokeShaders.h"
 #include "../BPy_Convert.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -50,7 +46,6 @@ PyDoc_STRVAR(
     "\n"
     "   :arg stroke: A Stroke object.\n"
     "   :type stroke: :class:`freestyle.types.Stroke`\n");
-
 static int SpatialNoiseShader___init__(BPy_SpatialNoiseShader *self,
                                        PyObject *args,
                                        PyObject *kwds)
@@ -124,7 +119,3 @@ PyTypeObject SpatialNoiseShader_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

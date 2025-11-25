@@ -8,11 +8,15 @@
  *   Potmesil, Michael, and Indranil Chakravarty. "A lens and aperture camera model for synthetic
  *   image generation." ACM SIGGRAPH Computer Graphics 15.3 (1981): 297-305. */
 
+#include "infos/compositor_defocus_infos.hh"
+
+COMPUTE_SHADER_CREATE_INFO(compositor_defocus_radius_from_depth)
+
 #include "gpu_shader_compositor_texture_utilities.glsl"
 
 void main()
 {
-  ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+  int2 texel = int2(gl_GlobalInvocationID.xy);
   float depth = texture_load(depth_tx, texel).x;
 
   /* Compute `Vu` in equation (7). */
@@ -25,7 +29,7 @@ void main()
                        (focal_length / (f_stop * distance_to_image_of_object)));
 
   /* The diameter is in meters, so multiply by the pixels per meter. */
-  float radius = (diameter / 2.0) * pixels_per_meter;
+  float radius = (diameter / 2.0f) * pixels_per_meter;
 
-  imageStore(radius_img, texel, vec4(min(max_radius, radius)));
+  imageStore(radius_img, texel, float4(min(max_radius, radius)));
 }

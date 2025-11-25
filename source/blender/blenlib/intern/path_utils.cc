@@ -16,6 +16,7 @@
 #include "BLI_fnmatch.h"
 #include "BLI_path_utils.hh"
 #include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_string_utils.hh"
 #include "BLI_utildefines.h"
 
@@ -133,6 +134,12 @@ void BLI_path_sequence_encode(char *path,
 {
   BLI_string_debug_size(path, path_maxncpy);
 
+  /* FIXME: MAX_ID_NAME & FILE_MAXFILE
+   *
+   * As this function directly works on a full file path (typically a FILE_MAX long char buffer),
+   * and does not perform any check on the filename part of the path, it can easily generate final
+   * paths containing a filename longer than the max supported length (FILE_MAXFILE).
+   */
   BLI_snprintf(path, path_maxncpy, "%s%.*d%s", head, numlen, std::max(0, pic), tail);
 }
 
@@ -271,7 +278,7 @@ static int path_normalize_impl(char *path, bool check_blend_relative_prefix)
     char *start = start_base;
     char *start_temp;
     while ((start_temp = strstr(start, SEP_STR ".." SEP_STR)) ||
-           /* Check if the string ends with `/..` & assign when found, else NULL. */
+           /* Check if the string ends with `/..` & assign when found, else nullptr. */
            (start_temp = ((start <= &path[path_len - 3]) &&
                           STREQ(&path[path_len - 3], SEP_STR "..")) ?
                              &path[path_len - 3] :
@@ -445,9 +452,9 @@ bool BLI_path_make_safe_filename_ex(char *filename, bool allow_tokens)
 #ifdef WIN32
   {
     const char *invalid_names[] = {
-        "con",  "prn",  "aux",  "null", "com1", "com2", "com3", "com4",
-        "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3",
-        "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9", NULL,
+        "con",  "prn",  "aux",  "null", "com1", "com2", "com3",  "com4",
+        "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2",  "lpt3",
+        "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9", nullptr,
     };
     const size_t len = strlen(filename);
     char *filename_lower = BLI_strdupn(filename, len);
@@ -1065,10 +1072,15 @@ void BLI_path_to_display_name(char *display_name, int display_name_maxncpy, cons
     strip_offset++;
   }
 
-  BLI_strncpy(display_name, name + strip_offset, display_name_maxncpy);
+  int display_name_len = BLI_strncpy_rlen(display_name, name + strip_offset, display_name_maxncpy);
 
   /* Replace underscores with spaces. */
   BLI_string_replace_char(display_name, '_', ' ');
+
+  /* In rare cases file paths may not contain valid UTF8 sequences.
+   * In this case show *something*, since it's possible stripping would remove all text.
+   * Use a dummy character as a hint the character could not be shown. */
+  BLI_str_utf8_invalid_substitute(display_name, display_name_len, '_');
 
   BLI_path_extension_strip(display_name);
 
@@ -1368,7 +1380,7 @@ void BLI_setenv_if_new(const char *env, const char *val)
 const char *BLI_getenv(const char *env)
 {
 #ifdef _MSC_VER
-  const char *result = NULL;
+  const char *result = nullptr;
   /* 32767 is the maximum size of the environment variable on windows,
    * reserve one more character for the zero terminator. */
   static wchar_t buffer[32768];
@@ -1380,7 +1392,7 @@ const char *BLI_getenv(const char *env)
       if (res_utf8) {
         if (strlen(res_utf8) + 1 < sizeof(buffer)) {
           /* We are re-using the utf16 buffer here, since allocating a second static buffer to
-           * contain the UTF-8 version to return would be wasteful. */
+           * contain the UTF8 version to return would be wasteful. */
           memcpy(buffer, res_utf8, strlen(res_utf8) + 1);
           result = (const char *)buffer;
         }
@@ -1886,7 +1898,7 @@ bool BLI_path_contains(const char *container_path, const char *containee_path)
   }
 
   /* Add a trailing slash to prevent same-prefix directories from matching.
-   * e.g. "/some/path" doesn't contain "/some/path_lib". */
+   * e.g. `/some/path` doesn't contain `/some/path_lib`. */
   BLI_path_slash_ensure(container_native, sizeof(container_native));
 
   return BLI_str_startswith(containee_native, container_native);
@@ -1988,9 +2000,9 @@ int BLI_path_cmp_normalized(const char *p1, const char *p2)
   const size_t p2_size = strlen(p2) + 1;
 
   char *norm_p1 = (p1_size <= sizeof(norm_p1_buf)) ? norm_p1_buf :
-                                                     MEM_cnew_array<char>(p1_size, __func__);
+                                                     MEM_calloc_arrayN<char>(p1_size, __func__);
   char *norm_p2 = (p2_size <= sizeof(norm_p2_buf)) ? norm_p2_buf :
-                                                     MEM_cnew_array<char>(p2_size, __func__);
+                                                     MEM_calloc_arrayN<char>(p2_size, __func__);
 
   memcpy(norm_p1, p1, p1_size);
   memcpy(norm_p2, p2, p2_size);

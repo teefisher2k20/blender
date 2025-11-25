@@ -21,8 +21,6 @@ __all__ = (
 
     "pkg_make_obsolete_for_testing",
 
-    "dummy_progress",
-
     # Public Stand-Alone Utilities.
     "pkg_theme_file_list",
     "pkg_manifest_params_compatible_or_error",
@@ -107,8 +105,21 @@ IDLE_WAIT_ON_READ = 0.05
 
 
 # -----------------------------------------------------------------------------
+# Typing Stubs
+#
+# These functions exist to allow messages to be translated,
+# without having to depend on Blender-only modules, as this module is fully type-checked
+# as well as being used outside of Blender.
+
+
+# Maybe overwritten by `bpy.app.translations.pgettext_rpt`.
+def rpt_(text: str) -> str:
+    return text
+
+# -----------------------------------------------------------------------------
 # Internal Functions.
 #
+
 
 if sys.platform == "win32":
     # See: https://stackoverflow.com/a/35052424/432509
@@ -232,7 +243,13 @@ def command_output_from_json_0(
     # Note that the context-manager isn't used to wait until the process is finished as
     # the function only finishes when `poll()` is not none, it's just use to ensure file-handles
     # are closed before this function exits, this only seems to be a problem on WIN32.
-    with subprocess.Popen(cmd, stdout=subprocess.PIPE) as ps:
+
+    # WIN32 needs to use a separate process-group else Blender will receive the "break", see #131947.
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+    with subprocess.Popen(cmd, stdout=subprocess.PIPE, creationflags=creationflags) as ps:
         stdout = ps.stdout
         assert stdout is not None
 
@@ -291,7 +308,11 @@ def command_output_from_json_0(
             # It also means a request to exit might not be responded to soon enough.
             request_exit = yield json_messages
             if request_exit and not request_exit_signal_sent:
-                ps.send_signal(signal.SIGINT)
+                if sys.platform == "win32":
+                    # Caught by the `signal.SIGBREAK` signal handler.
+                    ps.send_signal(signal.CTRL_BREAK_EVENT)
+                else:
+                    ps.send_signal(signal.SIGINT)
                 request_exit_signal_sent = True
 
 
@@ -698,26 +719,6 @@ def pkg_uninstall(
 
 
 # -----------------------------------------------------------------------------
-# Public Demo Actions
-#
-
-def dummy_progress(
-        *,
-        use_idle: bool,
-        python_args: Sequence[str],
-) -> Generator[InfoItemSeq, bool, None]:
-    """
-    Implementation:
-    ``bpy.ops.extensions.dummy_progress()``.
-    """
-    yield from command_output_from_json_0([
-        "dummy-progress",
-        "--time-duration=1.0",
-    ], use_idle=use_idle, python_args=python_args)
-    yield [COMPLETE_ITEM]
-
-
-# -----------------------------------------------------------------------------
 # Public (non-command-line-wrapping) functions
 #
 
@@ -908,6 +909,28 @@ class CommandBatch_StatusFlag(NamedTuple):
 
 
 class CommandBatch:
+    """
+    This class manages running command-line programs as sub-processes, abstracting away process management,
+    performing non-blocking reads to access JSON output.
+
+    The sub-processes must conform to the following constraints:
+
+    - Only output JSON to the STDOUT.
+    - Exit gracefully when: SIGINT signal is sent
+      (``signal.CTRL_BREAK_EVENT`` on WIN32).
+    - Errors must be caught and forwarded as JSON error messages.
+      Unhandled exceptions are not expected and and will produce ugly
+      messages from the STDERR output.
+
+    The user of this class creates the class with all known jobs,
+    setting the limit for the number of jobs that run simultaneously.
+
+    The caller can then monitor the processes:
+    - By calling ``exec_blocking``.
+    - Or by periodically calling ``exec_non_blocking``.
+
+      Canceling is performed by calling ``exec_non_blocking`` with ``request_exit=True``.
+    """
     __slots__ = (
         "title",
 
@@ -1113,25 +1136,25 @@ class CommandBatch:
         if status_data.failure_count == 0:
             fail_text = ""
         elif status_data.failure_count == status_data.count:
-            fail_text = ", failed"
+            fail_text = rpt_(", failed")
         else:
-            fail_text = ", some actions failed"
+            fail_text = rpt_(", some actions failed")
 
         if (
                 status_data.flag == (1 << CommandBatchItem.STATUS_NOT_YET_STARTED) or
                 status_data.flag & (1 << CommandBatchItem.STATUS_RUNNING)
         ):
-            return "Checking for Extension Updates{:s}".format(fail_text), 'SORTTIME'
+            return rpt_("Checking for Extension Updates{:s}").format(fail_text), 'SORTTIME'
 
         if status_data.flag == 1 << CommandBatchItem.STATUS_COMPLETE:
             if update_count > 0:
                 # NOTE: the UI design in #120612 has the number of extensions available in icon.
                 # Include in the text as this is not yet supported.
-                return "Extensions Updates Available ({:d}){:s}".format(update_count, fail_text), 'INTERNET'
-            return "All Extensions Up-to-date{:s}".format(fail_text), 'CHECKMARK'
+                return rpt_("Extensions Updates Available ({:d}){:s}").format(update_count, fail_text), 'INTERNET'
+            return rpt_("All Extensions Up-to-date{:s}").format(fail_text), 'CHECKMARK'
 
         # Should never reach this line!
-        return "Internal error, unknown state!{:s}".format(fail_text), 'ERROR'
+        return rpt_("Internal error, unknown state!{:s}").format(fail_text), 'ERROR'
 
     def calc_status_log_or_none(self) -> list[tuple[str, str]] | None:
         """
@@ -1321,6 +1344,7 @@ class PkgManifest_Normalized(NamedTuple):
             error_fn(ex)
             return None
 
+        import re
         return PkgManifest_Normalized(
             name=field_name,
             tagline=field_tagline,
@@ -1328,7 +1352,7 @@ class PkgManifest_Normalized(NamedTuple):
             type=field_type,
             # Remove the maintainers email while it's not private, showing prominently
             # could cause maintainers to get direct emails instead of issue tracking systems.
-            maintainer=field_maintainer.split("<", 1)[0].rstrip(),
+            maintainer=re.sub(r"\s*<.*?>", "", field_maintainer),
             license=license_info_to_text(field_license),
 
             # Optional.
@@ -1392,7 +1416,7 @@ def pkg_manifest_params_compatible_or_error(
         blender_version_max: str,
         platforms: list[str],
         python_versions: list[str],
-        this_platform: tuple[int, int, int],
+        this_platform: str,
         this_blender_version: tuple[int, int, int],
         this_python_version: tuple[int, int, int],
         error_fn: Callable[[Exception], None],
@@ -1826,7 +1850,7 @@ class _RepoDataSouce_TOML_FILES(_RepoDataSouce_ABC):
         """
         Detect a change and return as early as possibly.
         Ideally this would not have to scan many files, since this could become *expensive*
-        with very large repositories however as each package has it's own TOML,
+        with very large repositories however as each package has its own TOML,
         there is no viable alternative.
         """
         # Caller must check `self.exists()`.

@@ -10,20 +10,14 @@
 
 #include "intern/builder/deg_builder_nodes.h"
 
-#include <cstdio>
 #include <cstdlib>
 
-#include "MEM_guardedalloc.h"
-
-#include "BLI_blenlib.h"
-#include "BLI_string.h"
-#include "BLI_utildefines.h"
-
-#include "DNA_anim_types.h"
 #include "DNA_armature_types.h"
 #include "DNA_constraint_types.h"
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
+
+#include "BLI_listbase.h"
 
 #include "BKE_action.hh"
 #include "BKE_armature.hh"
@@ -33,8 +27,6 @@
 #include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_build.hh"
 
-#include "intern/builder/deg_builder.h"
-#include "intern/depsgraph_type.hh"
 #include "intern/eval/deg_eval_copy_on_write.h"
 #include "intern/node/deg_node.hh"
 #include "intern/node/deg_node_component.hh"
@@ -247,8 +239,16 @@ void DepsgraphNodeBuilder::build_rig(Object *object)
     op_node->set_as_exit();
 
     /* Custom properties. */
+    bool add_idprops_operation = false;
     if (pchan->prop != nullptr) {
       build_idproperties(pchan->prop);
+      add_idprops_operation = true;
+    }
+    if (pchan->system_properties != nullptr) {
+      build_idproperties(pchan->system_properties);
+      add_idprops_operation = true;
+    }
+    if (add_idprops_operation) {
       add_operation_node(
           &object->id, NodeType::PARAMETERS, OperationCode::PARAMETERS_EVAL, nullptr, pchan->name);
     }

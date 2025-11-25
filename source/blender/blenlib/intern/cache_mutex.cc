@@ -2,12 +2,16 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bli
+ */
+
 #include "BLI_cache_mutex.hh"
 #include "BLI_task.hh"
 
 namespace blender {
 
-void CacheMutex::ensure(const FunctionRef<void()> compute_cache)
+void CacheMutex::ensure_impl(const FunctionRef<void()> compute_cache)
 {
   if (cache_valid_.load(std::memory_order_acquire)) {
     return;

@@ -9,9 +9,11 @@
 
 #pragma once
 
-#include <functional>
-
 #include "GHOST_Types.h"
+
+#ifdef WITH_VULKAN_BACKEND
+#  include <functional>
+#endif
 
 /**
  * Interface for GHOST context.
@@ -25,7 +27,12 @@ class GHOST_IContext {
   /**
    * Destructor.
    */
-  virtual ~GHOST_IContext() {}
+  virtual ~GHOST_IContext() = default;
+
+  /**
+   * Returns the thread's currently active drawing context.
+   */
+  static GHOST_IContext *getActiveDrawingContext();
 
   /**
    * Activates the drawing context.
@@ -39,8 +46,22 @@ class GHOST_IContext {
    */
   virtual GHOST_TSuccess releaseDrawingContext() = 0;
 
+  /**
+   * Gets the OpenGL frame-buffer associated with the OpenGL context
+   * \return The ID of an OpenGL frame-buffer object.
+   */
   virtual unsigned int getDefaultFramebuffer() = 0;
-  virtual GHOST_TSuccess swapBuffers() = 0;
+  /**
+   * Acquire next buffer for drawing.
+   * \return A boolean success indicator.
+   */
+  virtual GHOST_TSuccess swapBufferAcquire() = 0;
+
+  /**
+   * Swaps front and back buffers of a window.
+   * \return A boolean success indicator.
+   */
+  virtual GHOST_TSuccess swapBufferRelease() = 0;
 
 #ifdef WITH_VULKAN_BACKEND
   /**
@@ -51,36 +72,13 @@ class GHOST_IContext {
    * Other contexts will not return any handles and leave the
    * handles where the parameters are referring to unmodified.
    *
-   * \param context: GHOST context handle of a vulkan context to
-   *     get the Vulkan handles from.
-   * \param r_instance: After calling this function the VkInstance
-   *     referenced by this parameter will contain the VKInstance handle
-   *     of the context associated with the `context` parameter.
-   * \param r_physical_device: After calling this function the VkPhysicalDevice
-   *     referenced by this parameter will contain the VKPhysicalDevice handle
-   *     of the context associated with the `context` parameter.
-   * \param r_device: After calling this function the VkDevice
-   *     referenced by this parameter will contain the VKDevice handle
-   *     of the context associated with the `context` parameter.
-   * \param r_graphic_queue_family: After calling this function the uint32_t
-   *     referenced by this parameter will contain the graphic queue family id
-   *     of the context associated with the `context` parameter.
-   * \param r_queue: After calling this function the VkQueue
-   *     referenced by this parameter will contain the VKQueue handle
-   *     of the context associated with the `context` parameter.
-   * \param r_queue_mutex: After calling this function the std::mutex referred
-   *     by this parameter will contain the mutex of the context associated
-   *     with the context parameter.
+   * \param r_handles: After calling this structure is filled with
+   *     the vulkan handles of the context.
    */
-  virtual GHOST_TSuccess getVulkanHandles(void *r_instance,
-                                          void *r_physical_device,
-                                          void *r_device,
-                                          uint32_t *r_graphic_queue_family,
-                                          void *r_queue,
-                                          void **r_queue_mutex) = 0;
+  virtual GHOST_TSuccess getVulkanHandles(GHOST_VulkanHandles &r_handles) = 0;
 
   /**
-   * Acquire the current swap chain format.
+   * Acquire the current swap-chain format.
    *
    * \param windowhandle:  GHOST window handle to a window to get the resource from.
    * \param r_surface_format: After calling this function the VkSurfaceFormatKHR
@@ -95,19 +93,25 @@ class GHOST_IContext {
       GHOST_VulkanSwapChainData *r_swap_chain_data) = 0;
 
   /**
-   * Set the pre and post callbacks for vulkan swap chain in the given context.
+   * Set the pre and post callbacks for vulkan swap-chain in the given context.
    *
    * \param context: GHOST context handle of a vulkan context to
    *     get the Vulkan handles from.
-   * \param swap_buffers_pre_callback: Function pointer to be called at the beginning of
-   * swapBuffers. Inside this callback the next swap chain image needs to be acquired and filled.
-   * \param swap_buffers_post_callback: Function to be called at th end of swapBuffers. swapBuffers
-   *     can recreate the swap chain. When this is done the application should be informed by those
-   *     changes.
+   * \param swap_buffer_draw_callback: Function pointer to be called when acquired swap buffer is
+   *     released, allowing Vulkan backend to update the swap chain.
+   * \param swap_buffer_acquired_callback: Function to be called at when swap buffer is acquired.
+   *     Allowing Vulkan backend to update the framebuffer. It is also called when no swap chain
+   *     exists indicating that the window was minimuzed.
+   * \param openxr_acquire_image_callback: Function to be called when an image needs to be acquired
+   *     to be drawn to an OpenXR swap-chain.
+   * \param openxr_release_image_callback: Function to be called after an image has been drawn to
+   *     the OpenXR swap-chain.
    */
   virtual GHOST_TSuccess setVulkanSwapBuffersCallbacks(
-      std::function<void(const GHOST_VulkanSwapChainData *)> swap_buffers_pre_callback,
-      std::function<void(void)> swap_buffers_post_callback) = 0;
+      std::function<void(const GHOST_VulkanSwapChainData *)> swap_buffer_draw_callback,
+      std::function<void(void)> swap_buffer_acquired_callback,
+      std::function<void(GHOST_VulkanOpenXRData *)> openxr_acquire_framebuffer_image_callback,
+      std::function<void(GHOST_VulkanOpenXRData *)> openxr_release_framebuffer_image_callback) = 0;
 #endif
 
   MEM_CXX_CLASS_ALLOC_FUNCS("GHOST:GHOST_IContext")

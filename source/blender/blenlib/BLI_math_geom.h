@@ -16,10 +16,6 @@
 #  pragma GCC diagnostic ignored "-Wredundant-decls"
 #endif
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /* -------------------------------------------------------------------- */
 /** \name Polygons
  * \{ */
@@ -1244,10 +1240,10 @@ void tangent_from_uv_v3(const float uv1[2],
  * Input:
  *
  * \param list_size: 4 lists as pointer to array[list_size]
- * \param pos: current pos array of 'new' positions
- * \param weight: current weight array of 'new'weights (may be NULL pointer if you have no weights)
- * \param rpos: Reference rpos array of 'old' positions
- * \param rweight: Reference rweight array of 'old'weights
+ * \param pos: current pos array of `new` positions
+ * \param weight: current weight array of `new`weights (may be NULL pointer if you have no weights)
+ * \param rpos: Reference rpos array of `old` positions
+ * \param rweight: Reference rweight array of `old` weights
  * (may be NULL pointer if you have no weights).
  *
  * Output:
@@ -1283,7 +1279,7 @@ void axis_dominant_v3_to_m3_negate(float r_mat[3][3], const float normal[3]);
  * \brief Normal to x,y matrix
  *
  * Creates a 3x3 matrix from a normal.
- * This matrix can be applied to vectors so their 'z' axis runs along \a normal.
+ * This matrix can be applied to vectors so their `z` axis runs along \a normal.
  * In practice it means you can use x,y as 2d coords. \see
  *
  * \param r_mat: The matrix to return.
@@ -1383,16 +1379,12 @@ float geodesic_distance_propagate_across_triangle(
 
 /** \} */
 
-#ifdef __cplusplus
-}
-#endif
-
 /* -------------------------------------------------------------------- */
 /** \name Inline Definitions
  * \{ */
 
 #if BLI_MATH_DO_INLINE
-#  include "intern/math_geom_inline.c"  // IWYU pragma: export
+#  include "intern/math_geom_inline.cc"  // IWYU pragma: export
 #endif
 
 #ifdef BLI_MATH_GCC_WARN_PRAGMA

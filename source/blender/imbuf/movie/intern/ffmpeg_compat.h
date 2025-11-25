@@ -50,7 +50,7 @@
 
 #if (LIBAVFORMAT_VERSION_MAJOR < 59)
 /* For versions older than FFMPEG 5.0, use the old channel layout variables.
- * We intend to only keep this  workaround for around two releases (3.5, 3.6).
+ * We intend to only keep this workaround for around two releases (3.5, 3.6).
  * If it sticks around any longer, then we should consider refactoring this.
  */
 #  define FFMPEG_USE_OLD_CHANNEL_VARS
@@ -139,7 +139,7 @@ int64_t av_get_pts_from_frame(AVFrame *picture)
   return timestamp_from_pts_or_dts(picture->pts, picture->pkt_dts);
 }
 
-/*  Duration of the frame, in the same units as pts. 0 if unknown. */
+/* Duration of the frame, in the same units as pts. 0 if unknown. */
 FFMPEG_INLINE
 int64_t av_get_frame_duration_in_pts_units(const AVFrame *picture)
 {
@@ -206,5 +206,52 @@ FFMPEG_INLINE int ffmpeg_get_video_rotation(const AVStream *stream)
 #endif
   return 0;
 }
+
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 13, 100)
+FFMPEG_INLINE const enum AVPixelFormat *ffmpeg_get_pix_fmts(struct AVCodecContext *context,
+                                                            const AVCodec *codec)
+{
+  const enum AVPixelFormat *pix_fmts = NULL;
+  avcodec_get_supported_config(
+      context, codec, AV_CODEC_CONFIG_PIX_FORMAT, 0, (const void **)&pix_fmts, NULL);
+  return pix_fmts;
+}
+
+FFMPEG_INLINE const enum AVSampleFormat *ffmpeg_get_sample_fmts(struct AVCodecContext *context,
+                                                                const AVCodec *codec)
+{
+  const enum AVSampleFormat *sample_fmts = NULL;
+  avcodec_get_supported_config(
+      context, codec, AV_CODEC_CONFIG_SAMPLE_FORMAT, 0, (const void **)&sample_fmts, NULL);
+  return sample_fmts;
+}
+
+FFMPEG_INLINE const int *ffmpeg_get_sample_rates(struct AVCodecContext *context,
+                                                 const AVCodec *codec)
+{
+  const int *sample_rates = NULL;
+  avcodec_get_supported_config(
+      context, codec, AV_CODEC_CONFIG_SAMPLE_RATE, 0, (const void **)&sample_rates, NULL);
+  return sample_rates;
+}
+#else
+FFMPEG_INLINE const enum AVPixelFormat *ffmpeg_get_pix_fmts(struct AVCodecContext * /*context*/,
+                                                            const AVCodec *codec)
+{
+  return codec->pix_fmts;
+}
+
+FFMPEG_INLINE const enum AVSampleFormat *ffmpeg_get_sample_fmts(
+    struct AVCodecContext * /*context*/, const AVCodec *codec)
+{
+  return codec->sample_fmts;
+}
+
+FFMPEG_INLINE const int *ffmpeg_get_sample_rates(struct AVCodecContext * /*context*/,
+                                                 const AVCodec *codec)
+{
+  return codec->supported_samplerates;
+}
+#endif
 
 #endif

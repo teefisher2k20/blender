@@ -16,10 +16,6 @@
 
 #include "DNA_userdef_types.h" /* for #SolidLight */
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 struct ImBuf;
 
 #define STUDIOLIGHT_ICON_ID_TYPE_RADIANCE (1 << 0)
@@ -31,7 +27,9 @@ struct ImBuf;
 
 #define STUDIOLIGHT_ICON_SIZE 96
 
-struct GPUTexture;
+namespace blender::gpu {
+class Texture;
+}  // namespace blender::gpu
 struct StudioLight;
 
 /** #StudioLight.flag */
@@ -62,7 +60,7 @@ typedef void StudioLightFreeFunction(struct StudioLight *, void *data);
 
 typedef struct StudioLightImage {
   struct ImBuf *ibuf;
-  struct GPUTexture *gputexture;
+  blender::gpu::Texture *gputexture;
 } StudioLightImage;
 
 typedef struct StudioLight {
@@ -79,7 +77,7 @@ typedef struct StudioLight {
   StudioLightImage matcap_diffuse;
   StudioLightImage matcap_specular;
   struct ImBuf *equirect_radiance_buffer;
-  struct GPUTexture *equirect_radiance_gputexture;
+  blender::gpu::Texture *equirect_radiance_gputexture;
   SolidLight light[STUDIOLIGHT_MAX_LIGHT];
   float light_ambient[3];
 
@@ -120,7 +118,3 @@ void BKE_studiolight_set_free_function(StudioLight *sl,
                                        StudioLightFreeFunction *free_function,
                                        void *data);
 void BKE_studiolight_unset_icon_id(StudioLight *sl, int icon_id);
-
-#ifdef __cplusplus
-}
-#endif

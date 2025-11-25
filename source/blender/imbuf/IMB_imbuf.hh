@@ -1,4 +1,5 @@
 /* SPDX-FileCopyrightText: 2001-2002 NaN Holding BV. All rights reserved.
+ * SPDX-FileCopyrightText: 2025 Blender Authors
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
@@ -6,43 +7,12 @@
  * \ingroup imbuf
  */
 
-/**
- * \brief IMage Buffer module.
- *
- * This module offers import/export of several graphical file formats.
- * \ingroup imbuf
- *
- * \page IMB ImBuf module external interface
- * \section imb_about About the IMB module
- *
- * External interface of the IMage Buffer module. This module offers
- * import/export of several graphical file formats. It offers the
- * ImBuf type as a common structure to refer to different graphical
- * file formats, and to enable a uniform way of handling them.
- *
- * \section imb_issues Known issues with IMB
- *
- * - imbuf is written in C.
- * - Endianness issues are dealt with internally.
- * - File I/O must be done externally. The module uses FILE*'s to
- *   direct input/output.
- *
- * \section imb_dependencies Dependencies
- *
- * IMB needs:
- * - \ref DNA module
- *     The #ListBase types are used for handling the memory management.
- * - \ref blenlib module
- *     blenlib handles guarded memory management in blender-style.
- *     BLI_winstuff.h makes a few windows specific behaviors
- *     posix-compliant.
- */
-
 #pragma once
 
 #include "../gpu/GPU_texture.hh"
 
-#include "BLI_utildefines.h"
+#include "BLI_enum_flags.hh"
+#include "BLI_math_matrix_types.hh"
 
 #include "IMB_imbuf_types.hh"
 
@@ -50,41 +20,68 @@ struct ImBuf;
 struct rctf;
 struct rcti;
 
-struct ColorManagedDisplay;
-
-struct GSet;
 struct ImageFormatData;
 struct Stereo3dFormat;
 
+/**
+ * Module init/exit.
+ */
 void IMB_init();
 void IMB_exit();
 
-ImBuf *IMB_ibImageFromMemory(const unsigned char *mem,
-                             size_t size,
-                             int flags,
-                             char colorspace[IM_MAX_SPACE],
-                             const char *descr);
+/**
+ * Load image.
+ */
+ImBuf *IMB_load_image_from_memory(const unsigned char *mem,
+                                  const size_t size,
+                                  const int flags,
+                                  const char *descr,
+                                  const char *filepath = nullptr,
+                                  char r_colorspace[IM_MAX_SPACE] = nullptr);
 
-ImBuf *IMB_testiffname(const char *filepath, int flags);
+ImBuf *IMB_load_image_from_file_descriptor(const int file,
+                                           const int flags,
+                                           const char *filepath = nullptr,
+                                           char r_colorspace[IM_MAX_SPACE] = nullptr);
 
-ImBuf *IMB_loadiffname(const char *filepath, int flags, char colorspace[IM_MAX_SPACE]);
+ImBuf *IMB_load_image_from_filepath(const char *filepath,
+                                    const int flags,
+                                    char r_colorspace[IM_MAX_SPACE] = nullptr);
 
+/**
+ * Save image.
+ */
+bool IMB_save_image(ImBuf *ibuf, const char *filepath, const int flags);
+
+/**
+ * Test image file.
+ */
+bool IMB_test_image(const char *filepath);
+bool IMB_test_image_type_matches(const char *filepath, int filetype);
+int IMB_test_image_type_from_memory(const unsigned char *buf, size_t buf_size);
+int IMB_test_image_type(const char *filepath);
+
+/**
+ * Load thumbnail image.
+ */
 enum class IMBThumbLoadFlags {
   Zero = 0,
   /** Normally files larger than 100MB are not loaded for thumbnails, except when this flag is set.
    */
   LoadLargeFiles = (1 << 0),
 };
-ENUM_OPERATORS(IMBThumbLoadFlags, IMBThumbLoadFlags::LoadLargeFiles);
+ENUM_OPERATORS(IMBThumbLoadFlags);
 
 ImBuf *IMB_thumb_load_image(const char *filepath,
                             const size_t max_thumb_size,
                             char colorspace[IM_MAX_SPACE],
-                            IMBThumbLoadFlags load_flags = IMBThumbLoadFlags::Zero);
+                            const IMBThumbLoadFlags load_flags = IMBThumbLoadFlags::Zero);
 
-void IMB_freeImBuf(ImBuf *ibuf);
-
+/**
+ * Allocate and free image buffer.
+ */
 ImBuf *IMB_allocImBuf(unsigned int x, unsigned int y, unsigned char planes, unsigned int flags);
+void IMB_freeImBuf(ImBuf *ibuf);
 
 /**
  * Initialize given ImBuf.
@@ -117,8 +114,7 @@ ImBuf *IMB_allocFromBuffer(const uint8_t *byte_buffer,
  * Assign the content of the corresponding buffer with the given data and ownership.
  * The current content of the buffer is released corresponding to its ownership configuration.
  *
- * \note Does not modify the topology (width, height, number of channels)
- * or the mipmaps in any way.
+ * \note Does not modify the topology (width, height, number of channels).
  */
 void IMB_assign_byte_buffer(ImBuf *ibuf, uint8_t *buffer_data, ImBufOwnership ownership);
 void IMB_assign_float_buffer(ImBuf *ibuf, float *buffer_data, ImBufOwnership ownership);
@@ -127,8 +123,7 @@ void IMB_assign_float_buffer(ImBuf *ibuf, float *buffer_data, ImBufOwnership own
  * Assign the content and the color space of the corresponding buffer the data from the given
  * buffer.
  *
- * \note Does not modify the topology (width, height, number of channels)
- * or the mipmaps in any way.
+ * \note Does not modify the topology (width, height, number of channels).
  *
  * \note The ownership of the data in the source buffer is ignored.
  */
@@ -168,16 +163,16 @@ ImBuf *IMB_dupImBuf(const ImBuf *ibuf1);
 /**
  * Approximate size of ImBuf in memory
  */
-size_t IMB_get_size_in_memory(ImBuf *ibuf);
+size_t IMB_get_size_in_memory(const ImBuf *ibuf);
 
 /**
- * \brief Get the length of the rect of the given image buffer in terms of pixels.
+ * \brief Get the length of the data of the given image buffer in pixels.
  *
  * This is the width * the height of the image buffer.
- * This function is preferred over `ibuf->x * ibuf->y` due to overflow issues when
- * working with large resolution images (30kx30k).
+ * This function is preferred over `ibuf->x * ibuf->y` due to 32 bit int overflow
+ * issues when working with very large resolution images.
  */
-size_t IMB_get_rect_len(const ImBuf *ibuf);
+size_t IMB_get_pixel_count(const ImBuf *ibuf);
 
 enum IMB_BlendMode {
   IMB_BLEND_MIX = 0,
@@ -302,19 +297,8 @@ void IMB_mask_clear(ImBuf *ibuf, const char *mask, int val);
  * will be used for the average. The mask will be set to one for the pixels which were written.
  */
 void IMB_filter_extend(ImBuf *ibuf, char *mask, int filter);
-/**
- * Frees too (if there) and recreates new data.
- */
-void IMB_makemipmap(ImBuf *ibuf, int use_filter);
-/**
- * Thread-safe version, only recreates existing maps.
- */
-void IMB_remakemipmap(ImBuf *ibuf, int use_filter);
-ImBuf *IMB_getmipmap(ImBuf *ibuf, int level);
 
 void IMB_filtery(ImBuf *ibuf);
-
-ImBuf *IMB_onehalf(ImBuf *ibuf1);
 
 /** Interpolation filter used by `IMB_scale`. */
 enum class IMBScaleFilter {
@@ -351,13 +335,6 @@ ImBuf *IMB_scale_into_new(const ImBuf *ibuf,
                           IMBScaleFilter filter,
                           bool threaded = true);
 
-bool IMB_saveiff(ImBuf *ibuf, const char *filepath, int flags);
-
-bool IMB_ispic(const char *filepath);
-bool IMB_ispic_type_matches(const char *filepath, int filetype);
-int IMB_ispic_type_from_memory(const unsigned char *buf, size_t buf_size);
-int IMB_ispic_type(const char *filepath);
-
 /**
  * Test if color-space conversions of pixels in buffer need to take into account alpha.
  */
@@ -366,9 +343,9 @@ bool IMB_alpha_affects_rgb(const ImBuf *ibuf);
 /**
  * Create char buffer, color corrected if necessary, for ImBufs that lack one.
  */
-void IMB_rect_from_float(ImBuf *ibuf);
-void IMB_float_from_rect_ex(ImBuf *dst, const ImBuf *src, const rcti *region_to_update);
-void IMB_float_from_rect(ImBuf *ibuf);
+void IMB_byte_from_float(ImBuf *ibuf);
+void IMB_float_from_byte_ex(ImBuf *dst, const ImBuf *src, const rcti *region_to_update);
+void IMB_float_from_byte(ImBuf *ibuf);
 /**
  * No profile conversion.
  */
@@ -390,7 +367,8 @@ void IMB_buffer_byte_from_float(unsigned char *rect_to,
                                 int width,
                                 int height,
                                 int stride_to,
-                                int stride_from);
+                                int stride_from,
+                                int start_y = 0);
 /**
  * Float to byte pixels, output 4-channel RGBA.
  */
@@ -463,26 +441,13 @@ void IMB_buffer_byte_from_byte(unsigned char *rect_to,
                                int stride_to,
                                int stride_from);
 
-/**
- * Change the ordering of the color bytes pointed to by rect from
- * RGBA to ABGR. size * 4 color bytes are reordered.
- *
- * Only this one is used liberally here, and in imbuf.
- */
-void IMB_convert_rgba_to_abgr(ImBuf *ibuf);
-
 void IMB_alpha_under_color_float(float *rect_float, int x, int y, float backcol[3]);
 void IMB_alpha_under_color_byte(unsigned char *rect, int x, int y, const float backcol[3]);
-
-ImBuf *IMB_loadifffile(int file, int flags, char colorspace[IM_MAX_SPACE], const char *descr);
-
-ImBuf *IMB_half_x(ImBuf *ibuf1);
-ImBuf *IMB_half_y(ImBuf *ibuf1);
 
 void IMB_flipx(ImBuf *ibuf);
 void IMB_flipy(ImBuf *ibuf);
 
-/* Rotate by 90 degree increments. Returns true if the ImBuf is altered. */
+/** Rotate by 90 degree increments. Returns true if the ImBuf is altered. */
 bool IMB_rotate_orthogonal(ImBuf *ibuf, int degrees);
 
 /* Pre-multiply alpha. */
@@ -499,47 +464,18 @@ void IMB_rectfill(ImBuf *drect, const float col[4]);
 /**
  * Blend pixels of image area with solid color.
  *
- * For images with `uchar` buffer use color matching image color-space.
- * For images with float buffer use color display color-space.
- * If display color-space can not be referenced, use color in SRGB color-space.
- *
  * \param ibuf: an image to be filled with color. It must be 4 channel image.
- * \param col: RGBA color.
- * \param x1, y1, x2, y2: (x1, y1) defines starting point of the rectangular area to be filled,
- * (x2, y2) is the end point. Note that values are allowed to be loosely ordered, which means that
- * x2 is allowed to be lower than x1, as well as y2 is allowed to be lower than y1. No matter the
- * order the area between x1 and x2, and y1 and y2 is filled.
- * \param display: color-space reference for display space.
+ * \param scene_linear_color: RGBA color in scene linear colorspace. For byte buffers, this is
+ * converted to the byte buffer colorspace.
+ * \param x1, y1, x2, y2: (x1, y1) defines starting point
+ * of the rectangular area to be filled, (x2, y2) is the end point. Note that values are allowed to
+ * be loosely ordered, which means that x2 is allowed to be lower than x1, as well as y2 is allowed
+ * to be lower than y1. No matter the order the area between x1 and x2, and y1 and y2 is filled.
+ * \param colorspace: color-space reference for display space.
  */
 void IMB_rectfill_area(
-    ImBuf *ibuf, const float col[4], int x1, int y1, int x2, int y2, ColorManagedDisplay *display);
-/**
- * Replace pixels of image area with solid color.
- * \param ibuf: an image to be filled with color. It must be 4 channel image.
- * \param col: RGBA color, which is assigned directly to both byte (via scaling) and float buffers.
- * \param x1, y1, x2, y2: (x1, y1) defines starting point of the rectangular area to be filled,
- * (x2, y2) is the end point. Note that values are allowed to be loosely ordered, which means that
- * x2 is allowed to be lower than x1, as well as y2 is allowed to be lower than y1. No matter the
- * order the area between x1 and x2, and y1 and y2 is filled.
- */
-void IMB_rectfill_area_replace(
-    const ImBuf *ibuf, const float col[4], int x1, int y1, int x2, int y2);
+    ImBuf *ibuf, const float scene_linear_color[4], int x1, int y1, int x2, int y2);
 void IMB_rectfill_alpha(ImBuf *ibuf, float value);
-
-/**
- * This should not be here, really,
- * we needed it for operating on render data, #IMB_rectfill_area calls it.
- */
-void buf_rectfill_area(unsigned char *rect,
-                       float *rectf,
-                       int width,
-                       int height,
-                       const float col[4],
-                       ColorManagedDisplay *display,
-                       int x1,
-                       int y1,
-                       int x2,
-                       int y2);
 
 /**
  * Exported for image tools in blender, to quickly allocate 32 bits rect.
@@ -551,42 +487,37 @@ void *imb_alloc_pixels(unsigned int x,
                        bool initialize_pixels,
                        const char *alloc_name);
 
-bool imb_addrectImBuf(ImBuf *ibuf, bool initialize_pixels = true);
 /**
- * Any free `ibuf->rect` frees mipmaps to be sure, creation is in render on first request.
+ * Allocate storage for byte type pixels.
+ * If the image already contains byte data storage, it is freed first.
  */
-void imb_freerectImBuf(ImBuf *ibuf);
+bool IMB_alloc_byte_pixels(ImBuf *ibuf, bool initialize_pixels = true);
 
-bool imb_addrectfloatImBuf(ImBuf *ibuf,
-                           const unsigned int channels,
-                           bool initialize_pixels = true);
 /**
- * Any free `ibuf->rect` frees mipmaps to be sure, creation is in render on first request.
+ * Deallocate image byte storage.
  */
-void imb_freerectfloatImBuf(ImBuf *ibuf);
-void imb_freemipmapImBuf(ImBuf *ibuf);
+void IMB_free_byte_pixels(ImBuf *ibuf);
 
-/** Free all CPU pixel data (associated with image size). */
-void imb_freerectImbuf_all(ImBuf *ibuf);
+/**
+ * Allocate storage for float type pixels.
+ * If the image already contains float data storage, it is freed first.
+ */
+bool IMB_alloc_float_pixels(ImBuf *ibuf,
+                            const unsigned int channels,
+                            bool initialize_pixels = true);
+/**
+ * Deallocate image float storage.
+ */
+void IMB_free_float_pixels(ImBuf *ibuf);
 
-/* Free the GPU textures of the given image buffer, leaving the CPU buffers unchanged.
- * The ibuf can be nullptr, in which case the function does nothing. */
+/** Deallocate all CPU side data storage (byte, float, encoded). */
+void IMB_free_all_data(ImBuf *ibuf);
+
+/**
+ * Free the GPU textures of the given image buffer, leaving the CPU buffers unchanged.
+ * The ibuf can be nullptr, in which case the function does nothing.
+ */
 void IMB_free_gpu_textures(ImBuf *ibuf);
-
-/**
- * Threaded processors.
- */
-void IMB_processor_apply_threaded(
-    int buffer_lines,
-    int handle_size,
-    void *init_customdata,
-    void(init_handle)(void *handle, int start_line, int tot_line, void *customdata),
-    void *(do_thread)(void *));
-
-using ScanlineThreadFunc = void (*)(void *custom_data, int scanline);
-void IMB_processor_apply_threaded_scanlines(int total_scanlines,
-                                            ScanlineThreadFunc do_thread,
-                                            void *custom_data);
 
 /**
  * \brief Transform modes to use for IMB_transform function.
@@ -625,17 +556,20 @@ void IMB_transform(const ImBuf *src,
                    ImBuf *dst,
                    eIMBTransformMode mode,
                    eIMBInterpolationFilterMode filter,
-                   const float transform_matrix[4][4],
+                   const blender::float3x3 &transform_matrix,
                    const rctf *src_crop);
 
-GPUTexture *IMB_create_gpu_texture(const char *name,
-                                   ImBuf *ibuf,
-                                   bool use_high_bitdepth,
-                                   bool use_premult);
+blender::gpu::Texture *IMB_create_gpu_texture(const char *name,
+                                              ImBuf *ibuf,
+                                              bool use_high_bitdepth,
+                                              bool use_premult);
 
-eGPUTextureFormat IMB_gpu_get_texture_format(const ImBuf *ibuf,
-                                             bool high_bitdepth,
-                                             bool use_grayscale);
+blender::gpu::TextureFormat IMB_gpu_get_texture_format(const ImBuf *ibuf,
+                                                       bool high_bitdepth,
+                                                       bool use_grayscale);
+
+bool IMB_gpu_get_compressed_format(const ImBuf *ibuf,
+                                   blender::gpu::TextureFormat *r_texture_format);
 
 /**
  * Ensures that values stored in the float rect can safely loaded into half float gpu textures.
@@ -648,20 +582,19 @@ void IMB_gpu_clamp_half_float(ImBuf *image_buffer);
  * The `ibuf` is only here to detect the storage type. The produced texture will have undefined
  * content. It will need to be populated by using #IMB_update_gpu_texture_sub().
  */
-GPUTexture *IMB_touch_gpu_texture(const char *name,
-                                  ImBuf *ibuf,
-                                  int w,
-                                  int h,
-                                  int layers,
-                                  bool use_high_bitdepth,
-                                  bool use_grayscale);
+blender::gpu::Texture *IMB_touch_gpu_texture(const char *name,
+                                             ImBuf *ibuf,
+                                             int w,
+                                             int h,
+                                             int layers,
+                                             bool use_high_bitdepth,
+                                             bool use_grayscale);
 
 /**
- * Will update a #GPUTexture using the content of the #ImBuf. Only one layer will be updated.
- * Will resize the ibuf if needed.
- * Z is the layer to update. Unused if the texture is 2D.
+ * Will update a #blender::gpu::Texture using the content of the #ImBuf. Only one layer will be
+ * updated. Will resize the ibuf if needed. Z is the layer to update. Unused if the texture is 2D.
  */
-void IMB_update_gpu_texture_sub(GPUTexture *tex,
+void IMB_update_gpu_texture_sub(blender::gpu::Texture *tex,
                                 ImBuf *ibuf,
                                 int x,
                                 int y,

@@ -321,7 +321,9 @@ void BKE_mesh_runtime_clear_geometry(Mesh *mesh)
   mesh->runtime->vert_to_corner_map_cache.tag_dirty();
   mesh->runtime->corner_to_face_map_cache.tag_dirty();
   mesh->runtime->vert_normals_cache.tag_dirty();
+  mesh->runtime->vert_normals_true_cache.tag_dirty();
   mesh->runtime->face_normals_cache.tag_dirty();
+  mesh->runtime->face_normals_true_cache.tag_dirty();
   mesh->runtime->corner_normals_cache.tag_dirty();
   mesh->runtime->loose_edges_cache.tag_dirty();
   mesh->runtime->loose_verts_cache.tag_dirty();
@@ -332,7 +334,8 @@ void BKE_mesh_runtime_clear_geometry(Mesh *mesh)
   mesh->runtime->max_material_index.tag_dirty();
   mesh->runtime->subsurf_face_dot_tags.clear_and_shrink();
   mesh->runtime->subsurf_optimal_display_edges.clear_and_shrink();
-  mesh->flag &= ~ME_NO_OVERLAPPING_TOPOLOGY;
+  mesh->runtime->spatial_groups.reset();
+  mesh->flag &= ~(ME_NO_OVERLAPPING_TOPOLOGY | ME_FLAG_UV_SELECT_SYNC_VALID);
 }
 
 void Mesh::tag_edges_split()
@@ -340,6 +343,7 @@ void Mesh::tag_edges_split()
   /* Triangulation didn't change because vertex positions and loop vertex indices didn't change. */
   free_bvh_caches(*this->runtime);
   this->runtime->vert_normals_cache.tag_dirty();
+  this->runtime->corner_normals_cache.tag_dirty();
   this->runtime->subdiv_ccg.reset();
   this->runtime->vert_to_face_offset_cache.tag_dirty();
   this->runtime->vert_to_face_map_cache.tag_dirty();
@@ -366,11 +370,15 @@ void Mesh::tag_edges_split()
 
 void Mesh::tag_sharpness_changed()
 {
+  this->runtime->vert_normals_cache.tag_dirty();
+  this->runtime->face_normals_cache.tag_dirty();
   this->runtime->corner_normals_cache.tag_dirty();
 }
 
 void Mesh::tag_custom_normals_changed()
 {
+  this->runtime->vert_normals_cache.tag_dirty();
+  this->runtime->face_normals_cache.tag_dirty();
   this->runtime->corner_normals_cache.tag_dirty();
 }
 
@@ -378,6 +386,8 @@ void Mesh::tag_face_winding_changed()
 {
   this->runtime->vert_normals_cache.tag_dirty();
   this->runtime->face_normals_cache.tag_dirty();
+  this->runtime->vert_normals_true_cache.tag_dirty();
+  this->runtime->face_normals_true_cache.tag_dirty();
   this->runtime->corner_normals_cache.tag_dirty();
   this->runtime->vert_to_corner_map_cache.tag_dirty();
   this->runtime->shrinkwrap_boundary_cache.tag_dirty();
@@ -387,6 +397,8 @@ void Mesh::tag_positions_changed()
 {
   this->runtime->vert_normals_cache.tag_dirty();
   this->runtime->face_normals_cache.tag_dirty();
+  this->runtime->vert_normals_true_cache.tag_dirty();
+  this->runtime->face_normals_true_cache.tag_dirty();
   this->runtime->corner_normals_cache.tag_dirty();
   this->runtime->shrinkwrap_boundary_cache.tag_dirty();
   this->tag_positions_changed_no_normals();
@@ -440,78 +452,17 @@ void BKE_mesh_batch_cache_dirty_tag(Mesh *mesh, eMeshBatchDirtyMode mode)
   if (mesh->runtime->batch_cache) {
     BKE_mesh_batch_cache_dirty_tag_cb(mesh, mode);
   }
+
+  /* Also tag batch cache for subdivided mesh, if it exists this will be
+   * the mesh that is actually being drawn. */
+  Mesh *mesh_eval = mesh->runtime->mesh_eval;
+  if (mesh_eval && mesh_eval->runtime->batch_cache) {
+    BKE_mesh_batch_cache_dirty_tag_cb(mesh_eval, mode);
+  }
 }
 void BKE_mesh_batch_cache_free(void *batch_cache)
 {
   BKE_mesh_batch_cache_free_cb(batch_cache);
 }
-
-/** \} */
-
-/* -------------------------------------------------------------------- */
-/** \name Mesh Runtime Validation
- * \{ */
-
-#ifndef NDEBUG
-
-bool BKE_mesh_runtime_is_valid(Mesh *mesh_eval)
-{
-  const bool do_verbose = true;
-  const bool do_fixes = false;
-
-  bool is_valid = true;
-  bool changed = true;
-
-  if (do_verbose) {
-    printf("MESH: %s\n", mesh_eval->id.name + 2);
-  }
-
-  MutableSpan<float3> positions = mesh_eval->vert_positions_for_write();
-  MutableSpan<blender::int2> edges = mesh_eval->edges_for_write();
-  Span<int> face_offsets = mesh_eval->face_offsets();
-  Span<int> corner_verts = mesh_eval->corner_verts();
-  MutableSpan<int> corner_edges = mesh_eval->corner_edges_for_write();
-
-  is_valid &= BKE_mesh_validate_all_customdata(
-      &mesh_eval->vert_data,
-      mesh_eval->verts_num,
-      &mesh_eval->edge_data,
-      mesh_eval->edges_num,
-      &mesh_eval->corner_data,
-      mesh_eval->corners_num,
-      &mesh_eval->face_data,
-      mesh_eval->faces_num,
-      false, /* setting mask here isn't useful, gives false positives */
-      do_verbose,
-      do_fixes,
-      &changed);
-
-  MDeformVert *dverts = static_cast<MDeformVert *>(
-      CustomData_get_layer_for_write(&mesh_eval->vert_data, CD_MDEFORMVERT, mesh_eval->verts_num));
-  is_valid &= BKE_mesh_validate_arrays(
-      mesh_eval,
-      reinterpret_cast<float(*)[3]>(positions.data()),
-      positions.size(),
-      edges.data(),
-      edges.size(),
-      static_cast<MFace *>(CustomData_get_layer_for_write(
-          &mesh_eval->fdata_legacy, CD_MFACE, mesh_eval->totface_legacy)),
-      mesh_eval->totface_legacy,
-      corner_verts.data(),
-      corner_edges.data(),
-      corner_verts.size(),
-      face_offsets.data(),
-      mesh_eval->faces_num,
-      dverts,
-      do_verbose,
-      do_fixes,
-      &changed);
-
-  BLI_assert(changed == false);
-
-  return is_valid;
-}
-
-#endif /* !NDEBUG */
 
 /** \} */

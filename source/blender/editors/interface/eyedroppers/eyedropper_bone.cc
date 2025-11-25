@@ -16,7 +16,7 @@
 
 #include "BLI_assert.h"
 #include "BLI_math_vector.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "RNA_access.hh"
 #include "RNA_prototypes.hh"
@@ -30,7 +30,6 @@
 #include "WM_api.hh"
 #include "WM_types.hh"
 
-#include "UI_interface.hh"
 #include "UI_view2d.hh"
 
 #include "eyedropper_intern.hh"
@@ -48,18 +47,18 @@ enum class SampleResult {
 };
 
 struct BoneDropper {
-  PointerRNA ptr;
-  PropertyRNA *prop;
-  PointerRNA search_ptr;
-  PropertyRNA *search_prop;
+  PointerRNA ptr = {};
+  PropertyRNA *prop = nullptr;
+  PointerRNA search_ptr = {};
+  PropertyRNA *search_prop = nullptr;
 
-  bool is_undo;
+  bool is_undo = false;
 
-  ScrArea *cursor_area; /* Area under the cursor. */
-  ARegionType *area_region_type;
-  void *draw_handle_pixel;
-  int name_pos[2];
-  char name[64];
+  ScrArea *cursor_area = nullptr; /* Area under the cursor. */
+  ARegionType *area_region_type = nullptr;
+  void *draw_handle_pixel = nullptr;
+  int name_pos[2] = {};
+  char name[64] = {};
 };
 
 struct BoneSampleData {
@@ -99,7 +98,7 @@ static int bonedropper_init(bContext *C, wmOperator *op)
   PropertyRNA *button_prop;
   uiBut *button = UI_context_active_but_prop_get(C, &button_ptr, &button_prop, &index_dummy);
 
-  if (!button || button->type != UI_BTYPE_SEARCH_MENU) {
+  if (!button || button->type != ButType::SearchMenu) {
     return false;
   }
 
@@ -334,7 +333,7 @@ static BoneSampleData bonedropper_sample_pt(
   }
 
   if (sample_data.name) {
-    SNPRINTF(bdr.name, "%s", sample_data.name);
+    STRNCPY_UTF8(bdr.name, sample_data.name);
     copy_v2_v2_int(bdr.name_pos, mval);
   }
 
@@ -428,7 +427,7 @@ static void generate_sample_warning(SampleResult result, wmOperator *op)
   }
 }
 
-static int bonedropper_modal(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus bonedropper_modal(bContext *C, wmOperator *op, const wmEvent *event)
 {
   BoneDropper *bdr = (BoneDropper *)op->customdata;
   if (!bdr) {
@@ -468,7 +467,7 @@ static int bonedropper_modal(bContext *C, wmOperator *op, const wmEvent *event)
 
   return OPERATOR_RUNNING_MODAL;
 }
-static int bonedropper_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus bonedropper_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
 {
   /* This is needed to ensure viewport picking works. */
   BKE_object_update_select_id(CTX_data_main(C));
@@ -485,7 +484,7 @@ static int bonedropper_invoke(bContext *C, wmOperator *op, const wmEvent * /*eve
   return OPERATOR_CANCELLED;
 }
 
-static int bonedropper_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus bonedropper_exec(bContext *C, wmOperator *op)
 {
   if (bonedropper_init(C, op)) {
     bonedropper_exit(C, op);
@@ -505,13 +504,25 @@ static bool bonedropper_poll(bContext *C)
     return false;
   }
 
+  const Object *active_object = CTX_data_active_object(C);
+
+  if (!active_object || active_object->type != OB_ARMATURE) {
+    CTX_wm_operator_poll_msg_set(C, "The active object needs to be an armature");
+    return false;
+  }
+
+  if (!ELEM(active_object->mode, OB_MODE_POSE, OB_MODE_EDIT)) {
+    CTX_wm_operator_poll_msg_set(C, "The armature needs to be in Pose mode or Edit mode");
+    return false;
+  }
+
   uiBut *but = UI_context_active_but_prop_get(C, &ptr, &prop, &index_dummy);
 
   if (!but) {
     return false;
   }
 
-  if (but->type != UI_BTYPE_SEARCH_MENU || !(but->flag & UI_BUT_VALUE_CLEAR)) {
+  if (but->type != ButType::SearchMenu || !(but->flag & UI_BUT_VALUE_CLEAR)) {
     return false;
   }
 

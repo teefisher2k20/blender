@@ -10,10 +10,6 @@
 
 #include "../../../stroke/AdvancedFunctions0D.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -44,7 +40,6 @@ PyDoc_STRVAR(
     "   :type it: :class:`freestyle.types.Interface0DIterator`\n"
     "   :return: A pixel in a map.\n"
     "   :rtype: float\n");
-
 static int ReadMapPixelF0D___init__(BPy_ReadMapPixelF0D *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"map_name", "level", nullptr};
@@ -103,7 +98,3 @@ PyTypeObject ReadMapPixelF0D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

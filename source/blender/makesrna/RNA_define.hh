@@ -15,6 +15,7 @@
 #include <limits.h>
 
 #include "DNA_listBase.h"
+
 #include "RNA_types.hh"
 
 #ifdef UNIT_TEST
@@ -75,6 +76,10 @@ void RNA_def_struct_clear_flag(StructRNA *srna, int flag);
 void RNA_def_struct_property_tags(StructRNA *srna, const EnumPropertyItem *prop_tag_defines);
 void RNA_def_struct_refine_func(StructRNA *srna, const char *refine);
 void RNA_def_struct_idprops_func(StructRNA *srna, const char *idproperties);
+/**
+ * Define the callback to access the struct's system IDProperty root.
+ */
+void RNA_def_struct_system_idprops_func(StructRNA *srna, const char *system_idproperties);
 void RNA_def_struct_register_funcs(StructRNA *srna,
                                    const char *reg,
                                    const char *unreg,
@@ -392,7 +397,40 @@ void RNA_def_property_boolean_bitset_array_sdna(
 void RNA_def_property_int_sdna(PropertyRNA *prop, const char *structname, const char *propname);
 void RNA_def_property_float_sdna(PropertyRNA *prop, const char *structname, const char *propname);
 void RNA_def_property_string_sdna(PropertyRNA *prop, const char *structname, const char *propname);
+/**
+ * Define a regular, non-bitflags-aware enum property.
+ *
+ * The key aspect of using this call is that when setting the property, the whole underlying DNA
+ * property will be overwritten.
+ *
+ * This should typically be used for:
+ *   - Non-bitflags enums.
+ *   - Bitflags enums using a callback function to define their items.
+ *
+ * \note This behavior is the only one available for runtime-defined enum properties. C++-defined
+ * runtime properties can work around this limitation by defining their own setter to handle the
+ * bitmasking.
+ *
+ * \note This is not related to the #PROP_ENUM_FLAG property option.
+ */
 void RNA_def_property_enum_sdna(PropertyRNA *prop, const char *structname, const char *propname);
+/**
+ * Define a bitflags-aware enum property.
+ *
+ * The key aspect of using this call is that when setting the property, a bitmask is used to avoid
+ * overwriting unrelated bits in the underlying DNA property.
+ *
+ * The bitmask is computed from the values defined in the static 'items' array defined by
+ * `RNA_def_property_enum_items`, so it won't be valid in case an `items` callback function is
+ * defined, that may use bitflags outside of that statically computed bitmask.
+ *
+ * This should typically be used for bitflags enums. It is especially critical when several
+ * bitflags enums and/or bitflag booleans (defined with `RNA_def_property_boolean_sdna` or
+ * `RNA_def_property_boolean_negative_sdna`) share the same DNA variable. Otherwise, setting one
+ * RNA property may affect unrelated bitflags.
+ *
+ * \note This is not related to the #PROP_ENUM_FLAG property option.
+ */
 void RNA_def_property_enum_bitflag_sdna(PropertyRNA *prop,
                                         const char *structname,
                                         const char *propname);
@@ -408,6 +446,15 @@ void RNA_def_property_flag(PropertyRNA *prop, PropertyFlag flag);
 void RNA_def_property_clear_flag(PropertyRNA *prop, PropertyFlag flag);
 void RNA_def_property_override_flag(PropertyRNA *prop, PropertyOverrideFlag flag);
 void RNA_def_property_override_clear_flag(PropertyRNA *prop, PropertyOverrideFlag flag);
+
+/**
+ * In some cases showing properties in the outliner crashes.
+ * It's a bug that occurs when accessing a value re-allocates
+ * memory which may already be referenced by other RNA.
+ * See: #145877.
+ */
+void RNA_def_property_flag_hide_from_ui_workaround(PropertyRNA *prop);
+
 /**
  * Add the property-tags passed as \a tags to \a prop (if valid).
  *
@@ -446,6 +493,13 @@ void RNA_def_property_enum_default(PropertyRNA *prop, int value);
 void RNA_def_property_string_default(PropertyRNA *prop, const char *value);
 
 void RNA_def_property_ui_text(PropertyRNA *prop, const char *name, const char *description);
+void RNA_def_property_ui_name_func(PropertyRNA *prop, const char *name_func);
+
+void RNA_def_property_deprecated(PropertyRNA *prop,
+                                 const char *note,
+                                 short version,
+                                 short removal_version);
+
 /**
  * The values hare are a little confusing:
  *
@@ -508,6 +562,7 @@ void RNA_def_property_string_funcs(PropertyRNA *prop,
 void RNA_def_property_string_search_func(PropertyRNA *prop,
                                          const char *search,
                                          eStringPropertySearchFlag search_flag);
+void RNA_def_property_string_filepath_filter_func(PropertyRNA *prop, const char *filter);
 void RNA_def_property_pointer_funcs(
     PropertyRNA *prop, const char *get, const char *set, const char *type_fn, const char *poll);
 void RNA_def_property_collection_funcs(PropertyRNA *prop,
@@ -523,40 +578,70 @@ void RNA_def_property_collection_funcs(PropertyRNA *prop,
 void RNA_def_property_float_default_func(PropertyRNA *prop, const char *get_default);
 void RNA_def_property_int_default_func(PropertyRNA *prop, const char *get_default);
 void RNA_def_property_boolean_default_func(PropertyRNA *prop, const char *get_default);
+void RNA_def_property_enum_default_func(PropertyRNA *prop, const char *get_default);
+void RNA_def_property_string_default_func(PropertyRNA *prop, const char *get_default);
 
 void RNA_def_property_srna(PropertyRNA *prop, const char *type);
 void RNA_def_py_data(PropertyRNA *prop, void *py_data);
 
+/* API to define callbacks for runtime-defined properties (mainly for Operators, and from the
+ * Python `bpy.props` API).
+ *
+ * These expect 'extended' versions of the callbacks, with both the StructRNA owner and the
+ * PropertyRNA as first arguments.
+ *
+ * The 'Transform' ones allow to add a transform step (applied after getting, or before setting the
+ * value), which only modifies the value, but does not handle actual storage. Currently only used
+ * by `bpy`, more details in the documentation of #BPyPropStore.
+ */
 void RNA_def_property_boolean_funcs_runtime(PropertyRNA *prop,
                                             BooleanPropertyGetFunc getfunc,
-                                            BooleanPropertySetFunc setfunc);
-void RNA_def_property_boolean_array_funcs_runtime(PropertyRNA *prop,
-                                                  BooleanArrayPropertyGetFunc getfunc,
-                                                  BooleanArrayPropertySetFunc setfunc);
+                                            BooleanPropertySetFunc setfunc,
+                                            BooleanPropertyGetTransformFunc get_transform_fn,
+                                            BooleanPropertySetTransformFunc set_transform_fn);
+void RNA_def_property_boolean_array_funcs_runtime(
+    PropertyRNA *prop,
+    BooleanArrayPropertyGetFunc getfunc,
+    BooleanArrayPropertySetFunc setfunc,
+    BooleanArrayPropertyGetTransformFunc get_transform_fn,
+    BooleanArrayPropertySetTransformFunc set_transform_fn);
 void RNA_def_property_int_funcs_runtime(PropertyRNA *prop,
                                         IntPropertyGetFunc getfunc,
                                         IntPropertySetFunc setfunc,
-                                        IntPropertyRangeFunc rangefunc);
+                                        IntPropertyRangeFunc rangefunc,
+                                        IntPropertyGetTransformFunc get_transform_fn,
+                                        IntPropertySetTransformFunc set_transform_fn);
 void RNA_def_property_int_array_funcs_runtime(PropertyRNA *prop,
                                               IntArrayPropertyGetFunc getfunc,
                                               IntArrayPropertySetFunc setfunc,
-                                              IntPropertyRangeFunc rangefunc);
+                                              IntPropertyRangeFunc rangefunc,
+                                              IntArrayPropertyGetTransformFunc get_transform_fn,
+                                              IntArrayPropertySetTransformFunc set_transform_fn);
 void RNA_def_property_float_funcs_runtime(PropertyRNA *prop,
                                           FloatPropertyGetFunc getfunc,
                                           FloatPropertySetFunc setfunc,
-                                          FloatPropertyRangeFunc rangefunc);
-void RNA_def_property_float_array_funcs_runtime(PropertyRNA *prop,
-                                                FloatArrayPropertyGetFunc getfunc,
-                                                FloatArrayPropertySetFunc setfunc,
-                                                FloatPropertyRangeFunc rangefunc);
+                                          FloatPropertyRangeFunc rangefunc,
+                                          FloatPropertyGetTransformFunc get_transform_fn,
+                                          FloatPropertySetTransformFunc set_transform_fn);
+void RNA_def_property_float_array_funcs_runtime(
+    PropertyRNA *prop,
+    FloatArrayPropertyGetFunc getfunc,
+    FloatArrayPropertySetFunc setfunc,
+    FloatPropertyRangeFunc rangefunc,
+    FloatArrayPropertyGetTransformFunc get_transform_fn,
+    FloatArrayPropertySetTransformFunc set_transform_fn);
 void RNA_def_property_enum_funcs_runtime(PropertyRNA *prop,
                                          EnumPropertyGetFunc getfunc,
                                          EnumPropertySetFunc setfunc,
-                                         EnumPropertyItemFunc itemfunc);
+                                         EnumPropertyItemFunc itemfunc,
+                                         EnumPropertyGetTransformFunc get_transform_fn,
+                                         EnumPropertySetTransformFunc set_transform_fn);
 void RNA_def_property_string_funcs_runtime(PropertyRNA *prop,
                                            StringPropertyGetFunc getfunc,
                                            StringPropertyLengthFunc lengthfunc,
-                                           StringPropertySetFunc setfunc);
+                                           StringPropertySetFunc setfunc,
+                                           StringPropertyGetTransformFunc get_transform_fn,
+                                           StringPropertySetTransformFunc set_transform_fn);
 void RNA_def_property_string_search_func_runtime(PropertyRNA *prop,
                                                  StringPropertySearchFunc search_fn,
                                                  eStringPropertySearchFlag search_flag);
@@ -581,6 +666,8 @@ void RNA_def_parameter_flags(PropertyRNA *prop,
 void RNA_def_parameter_clear_flags(PropertyRNA *prop,
                                    PropertyFlag flag_property,
                                    ParameterFlag flag_parameter);
+void RNA_def_property_path_template_type(PropertyRNA *prop,
+                                         PropertyPathTemplateType path_template_type);
 
 /* Dynamic Enums
  * strings are not freed, assumed pointing to static location. */

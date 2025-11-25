@@ -17,12 +17,6 @@
 #  include "MEM_guardedalloc.h"
 #endif
 
-/*-------------------------DOC STRINGS ---------------------------*/
-PyDoc_STRVAR(
-    /* Wrap. */
-    M_Interpolate_doc,
-    "The Blender interpolate module");
-
 /* ---------------------------------WEIGHT CALCULATION ----------------------- */
 
 #ifndef MATH_STANDALONE
@@ -30,7 +24,7 @@ PyDoc_STRVAR(
 PyDoc_STRVAR(
     /* Wrap. */
     M_Interpolate_poly_3d_calc_doc,
-    ".. function:: poly_3d_calc(veclist, pt)\n"
+    ".. function:: poly_3d_calc(veclist, pt, /)\n"
     "\n"
     "   Calculate barycentric weights for a point on a polygon.\n"
     "\n"
@@ -43,7 +37,7 @@ PyDoc_STRVAR(
 static PyObject *M_Interpolate_poly_3d_calc(PyObject * /*self*/, PyObject *args)
 {
   float fp[3];
-  float(*vecs)[3];
+  float (*vecs)[3];
   Py_ssize_t len;
 
   PyObject *point, *veclist, *ret;
@@ -65,7 +59,7 @@ static PyObject *M_Interpolate_poly_3d_calc(PyObject * /*self*/, PyObject *args)
   }
 
   if (len) {
-    float *weights = static_cast<float *>(MEM_mallocN(sizeof(float) * len, __func__));
+    float *weights = MEM_malloc_arrayN<float>(size_t(len), __func__);
 
     interp_weights_poly_v3(weights, vecs, len, fp);
 
@@ -97,6 +91,10 @@ static PyMethodDef M_Interpolate_methods[] = {
     {nullptr, nullptr, 0, nullptr},
 };
 
+PyDoc_STRVAR(
+    /* Wrap. */
+    M_Interpolate_doc,
+    "The Blender interpolate module.");
 static PyModuleDef M_Interpolate_module_def = {
     /*m_base*/ PyModuleDef_HEAD_INIT,
     /*m_name*/ "mathutils.interpolate",

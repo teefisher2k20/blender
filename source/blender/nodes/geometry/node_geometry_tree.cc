@@ -4,8 +4,6 @@
 
 #include <cstring>
 
-#include "BLI_string.h"
-
 #include "MEM_guardedalloc.h"
 
 #include "NOD_geometry.hh"
@@ -36,8 +34,12 @@ static void geometry_node_tree_get_from_context(const bContext *C,
                                                 ID **r_from)
 {
   const SpaceNode *snode = CTX_wm_space_node(C);
-  if (snode->geometry_nodes_type == SNODE_GEOMETRY_TOOL) {
-    *r_ntree = snode->geometry_nodes_tool_tree;
+  if (snode->node_tree_sub_type == SNODE_GEOMETRY_TOOL) {
+    if (snode->selected_node_group && snode->selected_node_group->type == NTREE_GEOMETRY) {
+      *r_ntree = snode->selected_node_group;
+      return;
+    }
+    *r_ntree = nullptr;
     return;
   }
 
@@ -68,7 +70,7 @@ static void geometry_node_tree_get_from_context(const bContext *C,
 
 static void geometry_node_tree_update(bNodeTree *ntree)
 {
-  blender::bke::node_tree_set_output(ntree);
+  blender::bke::node_tree_set_output(*ntree);
 
   /* Needed to give correct types to reroutes. */
   ntree_update_reroute_nodes(ntree);
@@ -118,22 +120,23 @@ static bool geometry_node_tree_validate_link(eNodeSocketDatatype type_a,
 static bool geometry_node_tree_socket_type_valid(blender::bke::bNodeTreeType * /*treetype*/,
                                                  blender::bke::bNodeSocketType *socket_type)
 {
-  return blender::bke::node_is_static_socket_type(socket_type) && ELEM(socket_type->type,
-                                                                       SOCK_FLOAT,
-                                                                       SOCK_VECTOR,
-                                                                       SOCK_RGBA,
-                                                                       SOCK_BOOLEAN,
-                                                                       SOCK_ROTATION,
-                                                                       SOCK_MATRIX,
-                                                                       SOCK_INT,
-                                                                       SOCK_STRING,
-                                                                       SOCK_OBJECT,
-                                                                       SOCK_GEOMETRY,
-                                                                       SOCK_COLLECTION,
-                                                                       SOCK_TEXTURE,
-                                                                       SOCK_IMAGE,
-                                                                       SOCK_MATERIAL,
-                                                                       SOCK_MENU);
+  return blender::bke::node_is_static_socket_type(*socket_type) &&
+         (ELEM(socket_type->type,
+               SOCK_FLOAT,
+               SOCK_VECTOR,
+               SOCK_RGBA,
+               SOCK_BOOLEAN,
+               SOCK_ROTATION,
+               SOCK_MATRIX,
+               SOCK_INT,
+               SOCK_STRING,
+               SOCK_OBJECT,
+               SOCK_GEOMETRY,
+               SOCK_COLLECTION,
+               SOCK_IMAGE,
+               SOCK_MATERIAL,
+               SOCK_MENU) ||
+          ELEM(socket_type->type, SOCK_BUNDLE, SOCK_CLOSURE));
 }
 
 void register_node_tree_type_geo()
@@ -145,7 +148,7 @@ void register_node_tree_type_geo()
   tt->group_idname = "GeometryNodeGroup";
   tt->ui_name = N_("Geometry Node Editor");
   tt->ui_icon = ICON_GEOMETRY_NODES;
-  tt->ui_description = N_("Geometry nodes");
+  tt->ui_description = N_("Advanced geometry editing and tools creation using nodes");
   tt->rna_ext.srna = &RNA_GeometryNodeTree;
   tt->update = geometry_node_tree_update;
   tt->get_from_context = geometry_node_tree_get_from_context;
@@ -153,7 +156,7 @@ void register_node_tree_type_geo()
   tt->valid_socket_type = geometry_node_tree_socket_type_valid;
   tt->validate_link = geometry_node_tree_validate_link;
 
-  blender::bke::node_tree_type_add(tt);
+  blender::bke::node_tree_type_add(*tt);
 }
 
 bool is_layer_selection_field(const bNodeTreeInterfaceSocket &socket)

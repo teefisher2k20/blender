@@ -59,7 +59,7 @@ def main() -> int:
                 blender_bin = blender_app_path
 
     icons_blend = (
-        os.path.join(ROOTDIR, "release", "datafiles", "assets", "icons", "toolbar.blend"),
+        os.path.join(ROOTDIR, "release", "datafiles", "icons_blend", "toolbar.blend"),
     )
 
     def names_and_time_from_path(path: str) -> Iterator[tuple[str, float]]:
@@ -71,7 +71,7 @@ def main() -> int:
     # Collect icons files and update CMake.
     icon_files = []
 
-    # create .dat geometry (which are stored in git)
+    # Create `.dat` geometry (which are stored in GIT).
     for blend in icons_blend:
         output_dir = os.path.join(BASEDIR, "icons")
         files_old = set(names_and_time_from_path(output_dir))
@@ -97,7 +97,7 @@ def main() -> int:
         files_new = set(names_and_time_from_path(output_dir))
 
         icon_files.extend([
-            name[:-4]  # no .dat
+            name[:-4]  # No `.dat`.
             for (name, _) in sorted((files_new - files_old))
         ])
 

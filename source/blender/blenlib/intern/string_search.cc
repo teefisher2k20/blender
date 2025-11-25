@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bli
+ */
+
 #include "BLI_array.hh"
 #include "BLI_linear_allocator.hh"
 #include "BLI_multi_value_map.hh"
@@ -13,7 +17,7 @@
 #include "BLI_string_utf8_symbols.h"
 #include "BLI_task.hh"
 
-/* Right arrow, keep in sync with #UI_MENU_ARROW_SEP in `UI_interface.hh`. */
+/* Right arrow, keep in sync with #UI_MENU_ARROW_SEP in `UI_interface_c.hh`. */
 #define UI_MENU_ARROW_SEP BLI_STR_UTF8_BLACK_RIGHT_POINTING_SMALL_TRIANGLE
 #define UI_MENU_ARROW_SEP_UNICODE 0x25b8
 
@@ -121,7 +125,7 @@ int get_fuzzy_match_errors(StringRef query, StringRef full)
   const char *window_begin = full_begin;
   const char *window_end = window_begin;
   const int window_size = std::min(query_size + max_errors, full_size);
-  const int extra_chars = window_size - query_size;
+  const int extra_chars = std::max(window_size - query_size, 0);
   const int max_acceptable_distance = max_errors + extra_chars;
 
   for (int i = 0; i < window_size; i++) {

@@ -6,7 +6,7 @@
 
 #include "BKE_attribute_math.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "NOD_socket_search_link.hh"
@@ -25,13 +25,16 @@ static void node_declare(NodeDeclarationBuilder &b)
                        GeometryComponent::Type::PointCloud,
                        GeometryComponent::Type::Curve,
                        GeometryComponent::Type::Instance,
-                       GeometryComponent::Type::GreasePencil});
+                       GeometryComponent::Type::GreasePencil})
+      .description("Geometry to sample a value on");
   if (node != nullptr) {
     const eCustomDataType data_type = eCustomDataType(node_storage(*node).data_type);
     b.add_input(data_type, "Value").hide_value().field_on_all();
   }
-  b.add_input<decl::Int>("Index").supports_field().description(
-      "Which element to retrieve a value from on the geometry");
+  b.add_input<decl::Int>("Index")
+      .supports_field()
+      .description("Which element to retrieve a value from on the geometry")
+      .structure_type(StructureType::Dynamic);
 
   if (node != nullptr) {
     const eCustomDataType data_type = eCustomDataType(node_storage(*node).data_type);
@@ -41,14 +44,14 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "data_type", UI_ITEM_NONE, "", ICON_NONE);
-  uiItemR(layout, ptr, "domain", UI_ITEM_NONE, "", ICON_NONE);
-  uiItemR(layout, ptr, "clamp", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "data_type", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "domain", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "clamp", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
 {
-  NodeGeometrySampleIndex *data = MEM_cnew<NodeGeometrySampleIndex>(__func__);
+  NodeGeometrySampleIndex *data = MEM_callocN<NodeGeometrySampleIndex>(__func__);
   data->data_type = CD_PROP_FLOAT;
   data->domain = int8_t(AttrDomain::Point);
   data->clamp = 0;
@@ -203,14 +206,12 @@ static void node_geo_exec(GeoNodeExecParams params)
   SocketValueVariant index_value_variant = params.extract_input<SocketValueVariant>("Index");
   const CPPType &cpp_type = value_field.cpp_type();
 
-  if (index_value_variant.is_context_dependent_field()) {
-    /* If the index is a field, the output has to be a field that still depends on the input. */
-    auto fn = std::make_shared<SampleIndexFunction>(
-        std::move(geometry), std::move(value_field), domain, use_clamp);
-    auto op = FieldOperation::Create(std::move(fn), {index_value_variant.extract<Field<int>>()});
-    params.set_output("Value", GField(std::move(op)));
-  }
-  else if (const GeometryComponent *component = find_source_component(geometry, domain)) {
+  if (index_value_variant.is_single()) {
+    const GeometryComponent *component = find_source_component(geometry, domain);
+    if (!component) {
+      params.set_default_remaining_outputs();
+      return;
+    }
     /* Optimization for the case when the index is a single value. Here only that one index has to
      * be evaluated. */
     const int domain_size = component->attribute_domain_size(domain);
@@ -233,11 +234,25 @@ static void node_geo_exec(GeoNodeExecParams params)
     else {
       params.set_output("Value", fn::make_constant_field(cpp_type, cpp_type.default_value()));
     }
+    return;
   }
-  else {
-    /* Output default value if there is no geometry. */
-    params.set_output("Value", fn::make_constant_field(cpp_type, cpp_type.default_value()));
+
+  bke::SocketValueVariant output_value;
+  std::string error_message;
+  if (!execute_multi_function_on_value_variant(
+          std::make_shared<SampleIndexFunction>(
+              std::move(geometry), std::move(value_field), domain, use_clamp),
+          {&index_value_variant},
+          {&output_value},
+          params.user_data(),
+          error_message))
+  {
+    params.set_default_remaining_outputs();
+    params.error_message_add(NodeWarningType::Error, std::move(error_message));
+    return;
   }
+
+  params.set_output("Value", std::move(output_value));
 }
 
 static void node_register()
@@ -252,11 +267,11 @@ static void node_register()
   ntype.initfunc = node_init;
   ntype.declare = node_declare;
   blender::bke::node_type_storage(
-      &ntype, "NodeGeometrySampleIndex", node_free_standard_storage, node_copy_standard_storage);
+      ntype, "NodeGeometrySampleIndex", node_free_standard_storage, node_copy_standard_storage);
   ntype.geometry_node_execute = node_geo_exec;
   ntype.draw_buttons = node_layout;
   ntype.gather_link_search_ops = node_gather_link_searches;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

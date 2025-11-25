@@ -8,10 +8,10 @@
 
 #pragma once
 
-#include "BLI_utildefines.h"
+#include "BLI_enum_flags.hh"
 
 #ifdef __cplusplus
-#  include "BLI_color.hh"
+#  include "BLI_color_types.hh"
 #  include "BLI_function_ref.hh"
 #  include "BLI_span.hh"
 #  include "BLI_string_ref.hh"
@@ -61,12 +61,44 @@ typedef enum NodeTreeInterfaceSocketFlag {
   NODE_INTERFACE_SOCKET_HIDE_VALUE = 1 << 2,
   NODE_INTERFACE_SOCKET_HIDE_IN_MODIFIER = 1 << 3,
   NODE_INTERFACE_SOCKET_COMPACT = 1 << 4,
-  NODE_INTERFACE_SOCKET_SINGLE_VALUE_ONLY = 1 << 5,
+  /* To be deprecated when structure types are moved out of experimental. */
+  NODE_INTERFACE_SOCKET_SINGLE_VALUE_ONLY_LEGACY = 1 << 5,
   NODE_INTERFACE_SOCKET_LAYER_SELECTION = 1 << 6,
   /* INSPECT is used by Connect to Output operator to ensure socket that exits from node group. */
   NODE_INTERFACE_SOCKET_INSPECT = 1 << 7,
+  /* Socket is used in the panel header as a toggle. */
+  NODE_INTERFACE_SOCKET_PANEL_TOGGLE = 1 << 8,
+  /* Menu socket should be drawn expanded instead of as drop-down menu. */
+  NODE_INTERFACE_SOCKET_MENU_EXPANDED = 1 << 9,
+  /**
+   * Indicates that drawing code may decide not to draw the label if that would result in a
+   * cleaner UI.
+   */
+  NODE_INTERFACE_SOCKET_OPTIONAL_LABEL = 1 << 10,
 } NodeTreeInterfaceSocketFlag;
-ENUM_OPERATORS(NodeTreeInterfaceSocketFlag, NODE_INTERFACE_SOCKET_INSPECT);
+ENUM_OPERATORS(NodeTreeInterfaceSocketFlag);
+
+typedef enum NodeSocketInterfaceStructureType {
+  NODE_INTERFACE_SOCKET_STRUCTURE_TYPE_AUTO = 0,
+  NODE_INTERFACE_SOCKET_STRUCTURE_TYPE_SINGLE = 1,
+  NODE_INTERFACE_SOCKET_STRUCTURE_TYPE_DYNAMIC = 2,
+  NODE_INTERFACE_SOCKET_STRUCTURE_TYPE_FIELD = 3,
+  NODE_INTERFACE_SOCKET_STRUCTURE_TYPE_GRID = 4,
+  NODE_INTERFACE_SOCKET_STRUCTURE_TYPE_LIST = 5,
+} NodeSocketInterfaceStructureType;
+
+// TODO: Move out of DNA.
+#ifdef __cplusplus
+namespace blender::nodes {
+enum class StructureType : int8_t {
+  Single = NODE_INTERFACE_SOCKET_STRUCTURE_TYPE_SINGLE,
+  Dynamic = NODE_INTERFACE_SOCKET_STRUCTURE_TYPE_DYNAMIC,
+  Field = NODE_INTERFACE_SOCKET_STRUCTURE_TYPE_FIELD,
+  Grid = NODE_INTERFACE_SOCKET_STRUCTURE_TYPE_GRID,
+  List = NODE_INTERFACE_SOCKET_STRUCTURE_TYPE_LIST,
+};
+}
+#endif
 
 typedef struct bNodeTreeInterfaceSocket {
   bNodeTreeInterfaceItem item;
@@ -81,7 +113,7 @@ typedef struct bNodeTreeInterfaceSocket {
 
   /* AttrDomain */
   int16_t attribute_domain;
-  /** GeometryNodeDefaultInputType. */
+  /** NodeDefaultInputType. */
   int16_t default_input;
   char *default_attribute_name;
 
@@ -91,6 +123,10 @@ typedef struct bNodeTreeInterfaceSocket {
   void *socket_data;
 
   struct IDProperty *properties;
+
+  /** #NodeSocketInterfaceStructureType. */
+  int8_t structure_type;
+  char _pad[7];
 
 #ifdef __cplusplus
   bNodeSocketTypeHandle *socket_typeinfo() const;
@@ -118,20 +154,21 @@ typedef enum NodeTreeInterfacePanelFlag {
   NODE_INTERFACE_PANEL_ALLOW_CHILD_PANELS_LEGACY = 1 << 1,
   /* Allow adding sockets after panels. */
   NODE_INTERFACE_PANEL_ALLOW_SOCKETS_AFTER_PANELS = 1 << 2,
+  /* Whether the panel is collapsed in the node group interface tree view. */
+  NODE_INTERFACE_PANEL_IS_COLLAPSED = 1 << 3,
 } NodeTreeInterfacePanelFlag;
-ENUM_OPERATORS(NodeTreeInterfacePanelFlag, NODE_INTERFACE_PANEL_DEFAULT_CLOSED);
+ENUM_OPERATORS(NodeTreeInterfacePanelFlag);
 
-/** Use the same default for different node systems. */
-#define NODE_INPUT_DEFAULT_VALUE 0
-
-typedef enum GeometryNodeDefaultInputType {
-  GEO_NODE_DEFAULT_INPUT_VALUE = NODE_INPUT_DEFAULT_VALUE,
-  GEO_NODE_DEFAULT_FIELD_INPUT_INDEX_FIELD = 1,
-  GEO_NODE_DEFAULT_FIELD_INPUT_ID_INDEX_FIELD = 2,
-  GEO_NODE_DEFAULT_FIELD_INPUT_NORMAL_FIELD = 3,
-  GEO_NODE_DEFAULT_FIELD_INPUT_POSITION_FIELD = 4,
-  GEO_NODE_DEFAULT_FIELD_INPUT_INSTANCE_TRANSFORM_FIELD = 5,
-} GeometryNodeDefaultInputType;
+typedef enum NodeDefaultInputType {
+  NODE_DEFAULT_INPUT_VALUE = 0,
+  NODE_DEFAULT_INPUT_INDEX_FIELD = 1,
+  NODE_DEFAULT_INPUT_ID_INDEX_FIELD = 2,
+  NODE_DEFAULT_INPUT_NORMAL_FIELD = 3,
+  NODE_DEFAULT_INPUT_POSITION_FIELD = 4,
+  NODE_DEFAULT_INPUT_INSTANCE_TRANSFORM_FIELD = 5,
+  NODE_DEFAULT_INPUT_HANDLE_LEFT_FIELD = 6,
+  NODE_DEFAULT_INPUT_HANDLE_RIGHT_FIELD = 7,
+} NodeDefaultInputType;
 
 typedef struct bNodeTreeInterfacePanel {
   bNodeTreeInterfaceItem item;
@@ -221,6 +258,10 @@ typedef struct bNodeTreeInterfacePanel {
   /** Same as above but for a const interface. */
   void foreach_item(blender::FunctionRef<bool(const bNodeTreeInterfaceItem &item)> fn,
                     bool include_self = false) const;
+
+  /** Get the socket that is part of the panel header if available. */
+  const bNodeTreeInterfaceSocket *header_toggle_socket() const;
+  bNodeTreeInterfaceSocket *header_toggle_socket();
 
  private:
   /** Find a valid position for inserting in the items span. */
@@ -433,19 +474,26 @@ typedef struct bNodeTreeInterface {
   /** Ensure the items cache can be accessed. */
   void ensure_items_cache() const;
 
-  /** True if any runtime change flag is set. */
-  bool is_changed() const;
+  /** True if any trees and nodes depending on the interface require updates. */
+  bool requires_dependent_tree_updates() const;
+
+  /** Call after changing the items list. */
+  void tag_items_changed();
+  /** Call after generic user changes through the API. */
+  void tag_items_changed_generic();
+  /** Call after changing an item property. */
+  void tag_item_property_changed();
 
   /**
-   * Tag runtime data and invalidate the cache.
-   * Must be called after any direct change to interface DNA data.
+   * Reset flag to indicate that dependent trees have been updated.
+   * Should only be called by #NodeTreeMainUpdater.
    */
-  void tag_items_changed();
-
-  /** Reset runtime flags after updates have been processed. */
-  void reset_changed_flags();
+  void reset_interface_changed();
 
  private:
+  /** Tag after interface changes that require updates to dependent trees. */
+  void tag_interface_changed();
+  /** Invalidate caches and force full tree update after loading DNA. */
   void tag_missing_runtime_data();
 
 #endif

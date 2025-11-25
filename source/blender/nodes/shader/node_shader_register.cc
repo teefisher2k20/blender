@@ -36,8 +36,6 @@ void register_shader_nodes()
   register_node_type_sh_camera();
   register_node_type_sh_clamp();
   register_node_type_sh_combcolor();
-  register_node_type_sh_combhsv();
-  register_node_type_sh_combrgb();
   register_node_type_sh_combxyz();
   register_node_type_sh_curve_float();
   register_node_type_sh_curve_rgb();
@@ -71,12 +69,11 @@ void register_shader_nodes()
   register_node_type_sh_output_world();
   register_node_type_sh_particle_info();
   register_node_type_sh_point_info();
+  register_node_type_sh_radial_tiling();
   register_node_type_sh_rgb();
   register_node_type_sh_rgbtobw();
   register_node_type_sh_script();
   register_node_type_sh_sepcolor();
-  register_node_type_sh_sephsv();
-  register_node_type_sh_seprgb();
   register_node_type_sh_sepxyz();
   register_node_type_sh_shadertorgb();
   register_node_type_sh_squeeze();
@@ -92,7 +89,6 @@ void register_shader_nodes()
   register_node_type_sh_tex_image();
   register_node_type_sh_tex_magic();
   register_node_type_sh_tex_noise();
-  register_node_type_sh_tex_pointdensity();
   register_node_type_sh_tex_sky();
   register_node_type_sh_tex_voronoi();
   register_node_type_sh_tex_wave();
@@ -110,6 +106,7 @@ void register_shader_nodes()
   register_node_type_sh_volume_info();
   register_node_type_sh_volume_principled();
   register_node_type_sh_volume_scatter();
+  register_node_type_sh_volume_coefficients();
   register_node_type_sh_wavelength();
   register_node_type_sh_wireframe();
 }

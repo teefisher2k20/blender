@@ -119,14 +119,12 @@ static openvdb::FloatGrid::Ptr mesh_to_density_grid_impl(
     const float interior_band_width,
     const float density)
 {
-  if (voxel_size < 1e-5f) {
+  if (!BKE_volume_voxel_size_valid(float3(voxel_size))) {
     return nullptr;
   }
 
   float4x4 mesh_to_index_space_transform = math::from_scale<float4x4>(float3(1.0f / voxel_size));
   mesh_to_index_space_transform *= mesh_to_volume_space_transform;
-  /* Better align generated grid with the source mesh. */
-  mesh_to_index_space_transform.location() -= 0.5f;
 
   OpenVDBMeshAdapter mesh_adapter{
       positions, corner_verts, corner_tris, mesh_to_index_space_transform};
@@ -140,10 +138,10 @@ static openvdb::FloatGrid::Ptr mesh_to_density_grid_impl(
   openvdb::tools::sdfToFogVolume(*new_grid);
 
   if (density != 1.0f) {
-    openvdb::tools::foreach (new_grid->beginValueOn(),
-                             [&](const openvdb::FloatGrid::ValueOnIter &iter) {
-                               iter.modifyValue([&](float &value) { value *= density; });
-                             });
+    openvdb::tools::foreach(new_grid->beginValueOn(),
+                            [&](const openvdb::FloatGrid::ValueOnIter &iter) {
+                              iter.modifyValue([&](float &value) { value *= density; });
+                            });
   }
   return new_grid;
 }
@@ -174,7 +172,7 @@ bke::VolumeGrid<float> mesh_to_sdf_grid(const Span<float3> positions,
                                         const float voxel_size,
                                         const float half_band_width)
 {
-  if (voxel_size <= 0.0f || half_band_width <= 0.0f) {
+  if (!BKE_volume_voxel_size_valid(float3(voxel_size)) || half_band_width <= 0.0f) {
     return {};
   }
 
@@ -184,7 +182,7 @@ bke::VolumeGrid<float> mesh_to_sdf_grid(const Span<float3> positions,
   threading::parallel_for(positions.index_range(), 2048, [&](const IndexRange range) {
     for (const int i : range) {
       const float3 &co = positions[i];
-      points[i] = openvdb::Vec3s(co.x, co.y, co.z) - 0.5f * voxel_size;
+      points[i] = openvdb::Vec3s(co.x, co.y, co.z);
     }
   });
 

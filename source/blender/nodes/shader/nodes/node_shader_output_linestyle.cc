@@ -4,7 +4,7 @@
 
 #include "node_shader_util.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 namespace blender::nodes::node_shader_output_linestyle_cc {
@@ -29,10 +29,10 @@ static void node_buts_output_linestyle(uiLayout *layout, bContext * /*C*/, Point
 {
   uiLayout *row, *col;
 
-  col = uiLayoutColumn(layout, false);
-  row = uiLayoutRow(col, true);
-  uiItemR(row, ptr, "blend_type", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
-  uiItemR(col, ptr, "use_clamp", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+  col = &layout->column(false);
+  row = &col->row(true);
+  row->prop(ptr, "blend_type", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
+  col->prop(ptr, "use_clamp", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
 }
 
 }  // namespace blender::nodes::node_shader_output_linestyle_cc
@@ -46,6 +46,8 @@ void register_node_type_sh_output_linestyle()
 
   sh_node_type_base(&ntype, "ShaderNodeOutputLineStyle", SH_NODE_OUTPUT_LINESTYLE);
   ntype.ui_name = "Line Style Output";
+  ntype.ui_description =
+      "Control the mixing of texture information into the base color of line styles";
   ntype.enum_name_legacy = "OUTPUT_LINESTYLE";
   ntype.nclass = NODE_CLASS_OUTPUT;
   ntype.declare = file_ns::node_declare;
@@ -53,5 +55,5 @@ void register_node_type_sh_output_linestyle()
   ntype.draw_buttons = file_ns::node_buts_output_linestyle;
   ntype.no_muting = true;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

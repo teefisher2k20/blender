@@ -6,10 +6,10 @@
 
 #include "GPU_capabilities.hh"
 #include "GPU_compute.hh"
+#include "GPU_state.hh"
 #include "GPU_vertex_buffer.hh"
 #include "GPU_vertex_format.hh"
 
-#include "BLI_index_range.hh"
 #include "BLI_math_vector_types.hh"
 
 #include "gpu_testing.hh"
@@ -19,13 +19,13 @@ namespace blender::gpu::tests {
 static void test_buffer_texture()
 {
   /* Build compute shader. */
-  GPUShader *shader = GPU_shader_create_from_info_name("gpu_buffer_texture_test");
+  gpu::Shader *shader = GPU_shader_create_from_info_name("gpu_buffer_texture_test");
   EXPECT_NE(shader, nullptr);
   GPU_shader_bind(shader);
 
   /* Vertex buffer. */
   GPUVertFormat format = {};
-  uint value_pos = GPU_vertformat_attr_add(&format, "value", GPU_COMP_F32, 1, GPU_FETCH_FLOAT);
+  uint value_pos = GPU_vertformat_attr_add(&format, "value", gpu::VertAttrType::SFLOAT_32);
   VertBuf *vertex_buffer = GPU_vertbuf_create_with_format_ex(format,
                                                              GPU_USAGE_FLAG_BUFFER_TEXTURE_ONLY);
   float4 value = float4(42.42, 23.23, 1.0, -1.0);
@@ -35,7 +35,7 @@ static void test_buffer_texture()
                               GPU_shader_get_sampler_binding(shader, "bufferTexture"));
 
   /* Construct SSBO. */
-  GPUStorageBuf *ssbo = GPU_storagebuf_create_ex(
+  StorageBuf *ssbo = GPU_storagebuf_create_ex(
       4 * sizeof(float), nullptr, GPU_USAGE_STATIC, __func__);
   GPU_storagebuf_bind(ssbo, GPU_shader_get_ssbo_binding(shader, "data_out"));
 

@@ -6,8 +6,9 @@
  * \ingroup gpu
  */
 
+#pragma once
+
 #ifndef USE_GPU_SHADER_CREATE_INFO
-#  pragma once
 
 #  include "GPU_shader_shared_utils.hh"
 
@@ -19,7 +20,7 @@ struct TestOutputRawData;
  * required in the common use-case where a float3 and an int/float are paired together for optimal
  * data transfer. */
 
-enum eGPUKeyframeShapes : uint32_t {
+enum GPUKeyframeShapes : uint32_t {
   GPU_KEYFRAME_SHAPE_DIAMOND = (1u << 0u),
   GPU_KEYFRAME_SHAPE_CIRCLE = (1u << 1u),
   GPU_KEYFRAME_SHAPE_CLIPPED_VERTICAL = (1u << 2u),
@@ -47,30 +48,37 @@ struct NodeSocketShaderParameters {
 };
 BLI_STATIC_ASSERT_ALIGN(NodeSocketShaderParameters, 16)
 
+/* Per link data. */
 struct NodeLinkData {
-  float4 colors[3];
-  /* bezierPts Is actually a float2, but due to std140 each element needs to be aligned to 16
-   * bytes. */
-  float4 bezierPts[4];
-  bool32_t doArrow;
-  bool32_t doMuted;
+  float4 start_color;
+  float4 end_color;
+  float2 bezier_P0;
+  float2 bezier_P1;
+  float2 bezier_P2;
+  float2 bezier_P3;
+  uint color_ids;
+  float dash_length;
+  float dash_factor;
+  float dash_alpha;
   float dim_factor;
   float thickness;
-  float4 dash_params;
-  bool32_t has_back_link;
   float aspect;
-  float arrowSize;
-  float _pad;
+  bool32_t do_arrow;
+  bool32_t do_muted;
+  bool32_t has_back_link;
+  float _pad0;
+  float _pad1;
 };
 BLI_STATIC_ASSERT_ALIGN(NodeLinkData, 16)
 
-struct NodeLinkInstanceData {
+/* Data common to all links. */
+struct NodeLinkUniformData {
   float4 colors[6];
   float aspect;
-  float arrowSize;
+  float arrow_size;
   float2 _pad;
 };
-BLI_STATIC_ASSERT_ALIGN(NodeLinkInstanceData, 16)
+BLI_STATIC_ASSERT_ALIGN(NodeLinkUniformData, 16)
 
 struct GPencilStrokeData {
   float2 viewport;
@@ -108,7 +116,7 @@ BLI_STATIC_ASSERT_ALIGN(MultiIconCallData, 16)
 
 #define GPU_SEQ_STRIP_DRAW_DATA_LEN 256
 
-enum eGPUSeqFlags : uint32_t {
+enum GPUSeqFlags : uint32_t {
   GPU_SEQ_FLAG_BACKGROUND = (1u << 0u),
   GPU_SEQ_FLAG_SINGLE_IMAGE = (1u << 1u),
   GPU_SEQ_FLAG_COLOR_BAND = (1u << 2u),
@@ -122,13 +130,21 @@ enum eGPUSeqFlags : uint32_t {
   GPU_SEQ_FLAG_BORDER = (1u << 10u),
   GPU_SEQ_FLAG_SELECTED_LH = (1u << 11u),
   GPU_SEQ_FLAG_SELECTED_RH = (1u << 12u),
-  GPU_SEQ_FLAG_DRAW_LH = (1u << 13u),
-  GPU_SEQ_FLAG_DRAW_RH = (1u << 14u),
   GPU_SEQ_FLAG_OVERLAP = (1u << 15u),
+  GPU_SEQ_FLAG_CLAMPED = (1u << 16u),
 
-  GPU_SEQ_FLAG_ANY_HANDLE = GPU_SEQ_FLAG_SELECTED_LH | GPU_SEQ_FLAG_SELECTED_RH |
-                            GPU_SEQ_FLAG_DRAW_LH | GPU_SEQ_FLAG_DRAW_RH
+  GPU_SEQ_FLAG_ANY_HANDLE = GPU_SEQ_FLAG_SELECTED_LH | GPU_SEQ_FLAG_SELECTED_RH
 };
+
+/* Glyph for text rendering. */
+struct GlyphQuad {
+  int4 position;
+  float4 glyph_color; /* Cannot be name `color` because of metal macros. */
+  int2 glyph_size;
+  int offset;
+  uint flags;
+};
+BLI_STATIC_ASSERT_ALIGN(GlyphQuad, 16)
 
 /* VSE per-strip data for timeline rendering. */
 struct SeqStripDrawData {
@@ -141,7 +157,7 @@ struct SeqStripDrawData {
   float bottom;
   float top;
   float strip_content_top; /* Content coordinate, i.e. below title bar if there is one. */
-  uint flags;              /* eGPUSeqFlags bitmask. */
+  uint flags;              /* GPUSeqFlags bitmask. */
   /* Strip colors, each is uchar4 packed with equivalent of packUnorm4x8. */
   uint col_background;
   uint col_outline;
@@ -172,6 +188,14 @@ struct SeqContextDrawData {
   float _pad0;
 };
 BLI_STATIC_ASSERT_ALIGN(SeqContextDrawData, 16)
+
+/* VSE scope point rasterizer data. */
+struct SeqScopeRasterData {
+  uint col_r;
+  uint col_g;
+  uint col_b;
+  uint col_a;
+};
 
 struct GreasePencilStrokeData {
   packed_float3 position;

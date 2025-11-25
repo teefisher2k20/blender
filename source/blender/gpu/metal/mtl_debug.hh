@@ -18,9 +18,6 @@
  * Use -1 for unlimited. */
 #define METAL_DEBUG_CAPTURE_MAX_NESTED_GROUPS -1
 
-/* Whether empty debug groups should be hidden. */
-#define METAL_DEBUG_CAPTURE_HIDE_EMPTY 0
-
 namespace blender::gpu::debug {
 
 extern CLG_LogRef LOG;
@@ -46,10 +43,10 @@ void mtl_debug_init();
     } \
   }
 
-#define MTL_LOG_INFO(info, ...) \
+#define MTL_LOG_DEBUG(info, ...) \
   { \
     if (G.debug & G_DEBUG_GPU) { \
-      CLOG_INFO(&debug::LOG, 2, info EXPAND_ARGS(__VA_ARGS__)); \
+      CLOG_DEBUG(&debug::LOG, info EXPAND_ARGS(__VA_ARGS__)); \
     } \
   }
 

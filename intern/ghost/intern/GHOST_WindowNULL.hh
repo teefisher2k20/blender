@@ -17,7 +17,7 @@ class GHOST_SystemHeadless;
 
 class GHOST_WindowNULL : public GHOST_Window {
  public:
-  GHOST_TSuccess hasCursorShape(GHOST_TStandardCursor /*cursorShape*/) override
+  GHOST_TSuccess hasCursorShape(GHOST_TStandardCursor /*cursor_shape*/) override
   {
     return GHOST_kSuccess;
   }
@@ -28,10 +28,10 @@ class GHOST_WindowNULL : public GHOST_Window {
                    uint32_t width,
                    uint32_t height,
                    GHOST_TWindowState state,
-                   const GHOST_IWindow * /*parentWindow*/,
+                   const GHOST_IWindow * /*parent_window*/,
                    GHOST_TDrawingContextType /*type*/,
-                   const bool stereoVisual)
-      : GHOST_Window(width, height, state, stereoVisual, false)
+                   const GHOST_ContextParams &context_params)
+      : GHOST_Window(width, height, state, context_params, false)
   {
   }
 
@@ -52,13 +52,11 @@ class GHOST_WindowNULL : public GHOST_Window {
   {
     return GHOST_kSuccess;
   }
-  GHOST_TSuccess setWindowCustomCursorShape(uint8_t * /*bitmap*/,
-                                            uint8_t * /*mask*/,
-                                            int /*sizex*/,
-                                            int /*sizey*/,
-                                            int /*hotX*/,
-                                            int /*hotY*/,
-                                            bool /*canInvertColor*/) override
+  GHOST_TSuccess setWindowCustomCursorShape(const uint8_t * /*bitmap*/,
+                                            const uint8_t * /*mask*/,
+                                            const int /*size*/[2],
+                                            const int /*hot_spot*/[2],
+                                            bool /*can_invert_color*/) override
   {
     return GHOST_kSuccess;
   }
@@ -74,9 +72,9 @@ class GHOST_WindowNULL : public GHOST_Window {
   {
     return "untitled";
   }
-  GHOST_TSuccess setPath(const char * /*filepath*/) override
+  void setPath(const char * /*filepath*/) override
   {
-    return GHOST_kFailure;
+    /* Pass. */
   }
   void getWindowBounds(GHOST_Rect &bounds) const override
   {
@@ -107,7 +105,7 @@ class GHOST_WindowNULL : public GHOST_Window {
     outX = inX;
     outY = inY;
   }
-  GHOST_TSuccess swapBuffers() override
+  GHOST_TSuccess swapBufferRelease() override
   {
     return GHOST_kFailure;
   }
@@ -134,15 +132,6 @@ class GHOST_WindowNULL : public GHOST_Window {
     return GHOST_kSuccess;
   }
   GHOST_TSuccess setOrder(GHOST_TWindowOrder /*order*/) override
-  {
-    return GHOST_kSuccess;
-  }
-
-  GHOST_TSuccess beginFullScreen() const override
-  {
-    return GHOST_kSuccess;
-  }
-  GHOST_TSuccess endFullScreen() const override
   {
     return GHOST_kSuccess;
   }

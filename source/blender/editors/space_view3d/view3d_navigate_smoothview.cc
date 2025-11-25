@@ -275,7 +275,7 @@ void ED_view3d_smooth_view_ex(
   }
 
   if (sview->camera) {
-    Object *ob_camera_eval = DEG_get_evaluated_object(depsgraph, sview->camera);
+    Object *ob_camera_eval = DEG_get_evaluated(depsgraph, sview->camera);
     if (sview->ofs != nullptr) {
       sms.dst.dist = ED_view3d_offset_distance(
           ob_camera_eval->object_to_world().ptr(), sview->ofs, VIEW3D_DIST_FALLBACK);
@@ -301,8 +301,11 @@ void ED_view3d_smooth_view_ex(
 
     /* Original values. */
     if (sview->camera_old) {
-      Object *ob_camera_old_eval = DEG_get_evaluated_object(depsgraph, sview->camera_old);
+      Object *ob_camera_old_eval = DEG_get_evaluated(depsgraph, sview->camera_old);
       if (sview->ofs != nullptr) {
+        /* This assignment will temporarily set the #RegionView3D::dist to zero.
+         * While this isn't typically allowed, it's not a bug to set this temporarily,
+         * doing so shouldn't crash or cause an invalid display, see !143946. */
         sms.src.dist = ED_view3d_offset_distance(
             ob_camera_old_eval->object_to_world().ptr(), sview->ofs, 0.0f);
       }
@@ -329,7 +332,7 @@ void ED_view3d_smooth_view_ex(
     /* Ensure it shows correct. */
     if (sms.to_camera) {
       /* Use orthographic if we move from an orthographic view to an orthographic camera. */
-      Object *ob_camera_eval = DEG_get_evaluated_object(depsgraph, sview->camera);
+      Object *ob_camera_eval = DEG_get_evaluated(depsgraph, sview->camera);
       rv3d->persp = ((rv3d->is_persp == false) && (ob_camera_eval->type == OB_CAMERA) &&
                      (static_cast<Camera *>(ob_camera_eval->data)->type == CAM_ORTHO)) ?
                         RV3D_ORTHO :
@@ -344,8 +347,7 @@ void ED_view3d_smooth_view_ex(
 
     /* Keep track of running timer! */
     if (rv3d->sms == nullptr) {
-      rv3d->sms = static_cast<SmoothView3DStore *>(
-          MEM_mallocN(sizeof(SmoothView3DStore), "smoothview v3d"));
+      rv3d->sms = MEM_mallocN<SmoothView3DStore>("smoothview v3d");
     }
     *rv3d->sms = sms;
     if (rv3d->smooth_timer) {
@@ -525,7 +527,9 @@ static void view3d_smoothview_apply_from_timer(bContext *C, View3D *v3d, ARegion
   ED_region_tag_redraw(region);
 }
 
-static int view3d_smoothview_invoke(bContext *C, wmOperator * /*op*/, const wmEvent *event)
+static wmOperatorStatus view3d_smoothview_invoke(bContext *C,
+                                                 wmOperator * /*op*/,
+                                                 const wmEvent *event)
 {
   View3D *v3d = CTX_wm_view3d(C);
   ARegion *region = CTX_wm_region(C);
@@ -614,6 +618,11 @@ void VIEW3D_OT_smoothview(wmOperatorType *ot)
 
   /* Flags. */
   ot->flag = OPTYPE_INTERNAL;
+}
+
+void view3d_smooth_free(RegionView3D *rv3d)
+{
+  MEM_SAFE_FREE(rv3d->sms);
 }
 
 /** \} */

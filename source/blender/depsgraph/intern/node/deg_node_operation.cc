@@ -8,10 +8,6 @@
 
 #include "intern/node/deg_node_operation.hh"
 
-#include "MEM_guardedalloc.h"
-
-#include "BLI_utildefines.h"
-
 #include "intern/depsgraph.hh"
 #include "intern/node/deg_node_component.hh"
 #include "intern/node/deg_node_factory.hh"
@@ -47,6 +43,8 @@ const char *operationCodeAsString(OperationCode opcode)
       return "ANIMATION_EXIT";
     case OperationCode::DRIVER:
       return "DRIVER";
+    case OperationCode::DRIVER_UNSHARE:
+      return "DRIVER_UNSHARE";
     /* Scene related. */
     case OperationCode::SCENE_EVAL:
       return "SCENE_EVAL";
@@ -213,14 +211,14 @@ const char *operationCodeAsString(OperationCode opcode)
 
 OperationNode::OperationNode() : name_tag(-1), flag(0) {}
 
-string OperationNode::identifier() const
+std::string OperationNode::identifier() const
 {
-  return string(operationCodeAsString(opcode)) + "(" + name + ")";
+  return std::string(operationCodeAsString(opcode)) + "(" + name + ")";
 }
 
-string OperationNode::full_identifier() const
+std::string OperationNode::full_identifier() const
 {
-  string owner_str = owner->owner->name;
+  std::string owner_str = owner->owner->name;
   if (owner->type == NodeType::BONE || !owner->name.empty()) {
     owner_str += "/" + owner->name;
   }

@@ -6,8 +6,6 @@
  * \ingroup sequencer
  */
 
-#include "BLI_math_vector.hh"
-
 #include "DNA_sequence_types.h"
 
 #include "IMB_imbuf.hh"
@@ -16,7 +14,7 @@
 
 #include "effects.hh"
 
-using namespace blender;
+namespace blender::seq {
 
 struct CrossEffectOp {
   template<typename T> void apply(const T *src1, const T *src2, T *dst, int64_t size) const
@@ -46,8 +44,9 @@ struct CrossEffectOp {
   float factor;
 };
 
-static ImBuf *do_cross_effect(const SeqRenderData *context,
-                              Strip * /*seq*/,
+static ImBuf *do_cross_effect(const RenderData *context,
+                              SeqRenderState * /*state*/,
+                              Strip * /*strip*/,
                               float /*timeline_frame*/,
                               float fac,
                               ImBuf *src1,
@@ -99,8 +98,9 @@ struct GammaCrossEffectOp {
   float factor;
 };
 
-static ImBuf *do_gammacross_effect(const SeqRenderData *context,
-                                   Strip * /*seq*/,
+static ImBuf *do_gammacross_effect(const RenderData *context,
+                                   SeqRenderState * /*state*/,
+                                   Strip * /*strip*/,
                                    float /*timeline_frame*/,
                                    float fac,
                                    ImBuf *src1,
@@ -113,16 +113,16 @@ static ImBuf *do_gammacross_effect(const SeqRenderData *context,
   return dst;
 }
 
-void cross_effect_get_handle(SeqEffectHandle &rval)
+void cross_effect_get_handle(EffectHandle &rval)
 {
   rval.execute = do_cross_effect;
   rval.early_out = early_out_fade;
-  rval.get_default_fac = get_default_fac_fade;
 }
 
-void gamma_cross_effect_get_handle(SeqEffectHandle &rval)
+void gamma_cross_effect_get_handle(EffectHandle &rval)
 {
   rval.early_out = early_out_fade;
-  rval.get_default_fac = get_default_fac_fade;
   rval.execute = do_gammacross_effect;
 }
+
+}  // namespace blender::seq

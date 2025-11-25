@@ -19,9 +19,8 @@
 #include "DNA_meshdata_types.h"
 #include "DNA_object_types.h"
 #include "DNA_screen_types.h"
+#include "DNA_texture_types.h"
 
-#include "BKE_attribute.hh"
-#include "BKE_customdata.hh"
 #include "BKE_deform.hh"
 #include "BKE_image.hh"
 #include "BKE_lib_query.hh"
@@ -30,6 +29,7 @@
 #include "BKE_texture.h"
 
 #include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "RNA_access.hh"
@@ -146,7 +146,6 @@ struct DisplaceUserdata {
   blender::MutableSpan<blender::float3> positions;
   float local_mat[4][4];
   blender::Span<blender::float3> vert_normals;
-  float (*vert_clnors)[3];
 };
 
 static void displaceModifier_do_task(void *__restrict userdata,
@@ -161,11 +160,10 @@ static void displaceModifier_do_task(void *__restrict userdata,
   int defgrp_index = data->defgrp_index;
   int direction = data->direction;
   bool use_global_direction = data->use_global_direction;
-  float(*tex_co)[3] = data->tex_co;
+  float (*tex_co)[3] = data->tex_co;
   blender::MutableSpan<blender::float3> positions = data->positions;
-  float(*vert_clnors)[3] = data->vert_clnors;
 
-  /* When no texture is used, we fallback to white. */
+  /* When no texture is used, we fall back to white. */
   const float delta_fixed = 1.0f - dmd->midlevel;
 
   TexResult texres;
@@ -238,10 +236,8 @@ static void displaceModifier_do_task(void *__restrict userdata,
       add_v3_v3(positions[iter], local_vec);
       break;
     case MOD_DISP_DIR_NOR:
-      madd_v3_v3fl(positions[iter], data->vert_normals[iter], delta);
-      break;
     case MOD_DISP_DIR_CLNOR:
-      madd_v3_v3fl(positions[iter], vert_clnors[iter], delta);
+      madd_v3_v3fl(positions[iter], data->vert_normals[iter], delta);
       break;
   }
 }
@@ -255,10 +251,8 @@ static void displaceModifier_do(DisplaceModifierData *dmd,
   const MDeformVert *dvert;
   int direction = dmd->direction;
   int defgrp_index;
-  float(*tex_co)[3];
+  float (*tex_co)[3];
   float weight = 1.0f; /* init value unused but some compilers may complain */
-  float(*vert_clnors)[3] = nullptr;
-  float local_mat[4][4] = {{0}};
   const bool use_global_direction = dmd->space == MOD_DISP_SPACE_GLOBAL;
 
   if (dmd->texture == nullptr && dmd->direction == MOD_DISP_DIR_RGB_XYZ) {
@@ -277,40 +271,18 @@ static void displaceModifier_do(DisplaceModifierData *dmd,
 
   Tex *tex_target = dmd->texture;
   if (tex_target != nullptr) {
-    tex_co = static_cast<float(*)[3]>(MEM_calloc_arrayN(
-        size_t(positions.size()), sizeof(*tex_co), "displaceModifier_do tex_co"));
+    tex_co = MEM_calloc_arrayN<float[3]>(positions.size(), "displaceModifier_do tex_co");
     MOD_get_texture_coords((MappingInfoModifierData *)dmd,
                            ctx,
                            ob,
                            mesh,
-                           reinterpret_cast<float(*)[3]>(positions.data()),
+                           reinterpret_cast<float (*)[3]>(positions.data()),
                            tex_co);
 
     MOD_init_texture((MappingInfoModifierData *)dmd, ctx);
   }
   else {
     tex_co = nullptr;
-  }
-
-  if (direction == MOD_DISP_DIR_CLNOR) {
-    if (mesh->attributes().contains("custom_normal")) {
-      vert_clnors = static_cast<float(*)[3]>(
-          MEM_malloc_arrayN(positions.size(), sizeof(*vert_clnors), __func__));
-      BKE_mesh_normals_loop_to_vertex(
-          positions.size(),
-          mesh->corner_verts().data(),
-          mesh->corners_num,
-          reinterpret_cast<const float(*)[3]>(mesh->corner_normals().data()),
-          vert_clnors);
-    }
-    else {
-      direction = MOD_DISP_DIR_NOR;
-    }
-  }
-  else if (ELEM(direction, MOD_DISP_DIR_X, MOD_DISP_DIR_Y, MOD_DISP_DIR_Z, MOD_DISP_DIR_RGB_XYZ) &&
-           use_global_direction)
-  {
-    copy_m4_m4(local_mat, ob->object_to_world().ptr());
   }
 
   DisplaceUserdata data = {nullptr};
@@ -324,11 +296,17 @@ static void displaceModifier_do(DisplaceModifierData *dmd,
   data.tex_target = tex_target;
   data.tex_co = tex_co;
   data.positions = positions;
-  copy_m4_m4(data.local_mat, local_mat);
   if (direction == MOD_DISP_DIR_NOR) {
+    data.vert_normals = mesh->vert_normals_true();
+  }
+  else if (direction == MOD_DISP_DIR_CLNOR) {
     data.vert_normals = mesh->vert_normals();
   }
-  data.vert_clnors = vert_clnors;
+  else if (ELEM(direction, MOD_DISP_DIR_X, MOD_DISP_DIR_Y, MOD_DISP_DIR_Z, MOD_DISP_DIR_RGB_XYZ) &&
+           use_global_direction)
+  {
+    copy_m4_m4(data.local_mat, ob->object_to_world().ptr());
+  }
   if (tex_target != nullptr) {
     data.pool = BKE_image_pool_new();
     BKE_texture_fetch_images_for_pool(tex_target, data.pool);
@@ -344,10 +322,6 @@ static void displaceModifier_do(DisplaceModifierData *dmd,
 
   if (tex_co) {
     MEM_freeN(tex_co);
-  }
-
-  if (vert_clnors) {
-    MEM_freeN(vert_clnors);
   }
 }
 
@@ -373,55 +347,54 @@ static void panel_draw(const bContext *C, Panel *panel)
   bool has_texture = !RNA_pointer_is_null(&texture_ptr);
   int texture_coords = RNA_enum_get(ptr, "texture_coords");
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
   uiTemplateID(layout, C, ptr, "texture", "texture.new", nullptr, nullptr);
 
-  col = uiLayoutColumn(layout, false);
-  uiLayoutSetActive(col, has_texture);
-  uiItemR(col, ptr, "texture_coords", UI_ITEM_NONE, IFACE_("Coordinates"), ICON_NONE);
+  col = &layout->column(false);
+  col->active_set(has_texture);
+  col->prop(ptr, "texture_coords", UI_ITEM_NONE, IFACE_("Coordinates"), ICON_NONE);
   if (texture_coords == MOD_DISP_MAP_OBJECT) {
-    uiItemR(col, ptr, "texture_coords_object", UI_ITEM_NONE, IFACE_("Object"), ICON_NONE);
+    col->prop(ptr, "texture_coords_object", UI_ITEM_NONE, IFACE_("Object"), ICON_NONE);
     PointerRNA texture_coords_obj_ptr = RNA_pointer_get(ptr, "texture_coords_object");
     if (!RNA_pointer_is_null(&texture_coords_obj_ptr) &&
         (RNA_enum_get(&texture_coords_obj_ptr, "type") == OB_ARMATURE))
     {
       PointerRNA texture_coords_obj_data_ptr = RNA_pointer_get(&texture_coords_obj_ptr, "data");
-      uiItemPointerR(col,
-                     ptr,
-                     "texture_coords_bone",
-                     &texture_coords_obj_data_ptr,
-                     "bones",
-                     IFACE_("Bone"),
-                     ICON_NONE);
+      col->prop_search(ptr,
+                       "texture_coords_bone",
+                       &texture_coords_obj_data_ptr,
+                       "bones",
+                       IFACE_("Bone"),
+                       ICON_NONE);
     }
   }
   else if (texture_coords == MOD_DISP_MAP_UV && RNA_enum_get(&ob_ptr, "type") == OB_MESH) {
-    uiItemPointerR(col, ptr, "uv_layer", &obj_data_ptr, "uv_layers", std::nullopt, ICON_GROUP_UVS);
+    col->prop_search(ptr, "uv_layer", &obj_data_ptr, "uv_layers", std::nullopt, ICON_GROUP_UVS);
   }
 
-  uiItemS(layout);
+  layout->separator();
 
-  col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "direction", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col = &layout->column(false);
+  col->prop(ptr, "direction", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   if (ELEM(RNA_enum_get(ptr, "direction"),
            MOD_DISP_DIR_X,
            MOD_DISP_DIR_Y,
            MOD_DISP_DIR_Z,
            MOD_DISP_DIR_RGB_XYZ))
   {
-    uiItemR(col, ptr, "space", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col->prop(ptr, "space", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 
-  uiItemS(layout);
+  layout->separator();
 
-  col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "strength", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "mid_level", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col = &layout->column(false);
+  col->prop(ptr, "strength", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col->prop(ptr, "mid_level", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   modifier_vgroup_ui(col, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", std::nullopt);
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void panel_register(ARegionType *region_type)
@@ -462,4 +435,5 @@ ModifierTypeInfo modifierType_Displace = {
     /*blend_write*/ nullptr,
     /*blend_read*/ nullptr,
     /*foreach_cache*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
 };

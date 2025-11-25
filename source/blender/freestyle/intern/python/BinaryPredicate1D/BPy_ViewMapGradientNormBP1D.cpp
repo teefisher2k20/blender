@@ -11,10 +11,6 @@
 #include "../BPy_Convert.h"
 #include "../BPy_IntegrationType.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -56,7 +52,6 @@ PyDoc_STRVAR(
     "   :type inter2: :class:`freestyle.types.Interface1D`\n"
     "   :return: True or false.\n"
     "   :rtype: bool\n");
-
 static int ViewMapGradientNormBP1D___init__(BPy_ViewMapGradientNormBP1D *self,
                                             PyObject *args,
                                             PyObject *kwds)
@@ -120,7 +115,3 @@ PyTypeObject ViewMapGradientNormBP1D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

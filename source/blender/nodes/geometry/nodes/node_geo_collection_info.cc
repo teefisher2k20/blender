@@ -2,13 +2,14 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "BLI_listbase.h"
 #include "BLI_string.h"
 
 #include "DNA_collection_types.h"
 
 #include "NOD_rna_define.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "BKE_collection.hh"
@@ -26,7 +27,7 @@ NODE_STORAGE_FUNCS(NodeGeometryCollectionInfo)
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Collection>("Collection").hide_label();
+  b.add_input<decl::Collection>("Collection").optional_label();
   b.add_input<decl::Bool>("Separate Children")
       .description(
           "Output each child of the collection as a separate instance, sorted alphabetically");
@@ -34,17 +35,19 @@ static void node_declare(NodeDeclarationBuilder &b)
       .description(
           "Reset the transforms of every child instance in the output. Only used when Separate "
           "Children is enabled");
-  b.add_output<decl::Geometry>("Instances");
+  b.add_output<decl::Geometry>("Instances")
+      .description(
+          "Instance of the collection or instances of all the children in the collection");
 }
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "transform_space", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "transform_space", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 }
 
 static void node_node_init(bNodeTree * /*tree*/, bNode *node)
 {
-  NodeGeometryCollectionInfo *data = MEM_cnew<NodeGeometryCollectionInfo>(__func__);
+  NodeGeometryCollectionInfo *data = MEM_callocN<NodeGeometryCollectionInfo>(__func__);
   data->transform_space = GEO_NODE_TRANSFORM_SPACE_ORIGINAL;
   node->storage = data;
 }
@@ -57,7 +60,7 @@ struct InstanceListEntry {
 
 static void node_geo_exec(GeoNodeExecParams params)
 {
-  Collection *collection = params.get_input<Collection *>("Collection");
+  Collection *collection = params.extract_input<Collection *>("Collection");
 
   if (collection == nullptr) {
     params.set_default_remaining_outputs();
@@ -74,7 +77,7 @@ static void node_geo_exec(GeoNodeExecParams params)
   }
   if (!DEG_collection_geometry_is_evaluated(*collection)) {
     params.error_message_add(NodeWarningType::Error,
-                             TIP_("Can't access collections geometry because it's not evaluated "
+                             TIP_("Cannot access collections geometry because it's not evaluated "
                                   "yet. This can happen when there is a dependency cycle"));
     params.set_default_remaining_outputs();
     return;
@@ -86,9 +89,9 @@ static void node_geo_exec(GeoNodeExecParams params)
 
   std::unique_ptr<bke::Instances> instances = std::make_unique<bke::Instances>();
 
-  const bool separate_children = params.get_input<bool>("Separate Children");
+  const bool separate_children = params.extract_input<bool>("Separate Children");
   if (separate_children) {
-    const bool reset_children = params.get_input<bool>("Reset Children");
+    const bool reset_children = params.extract_input<bool>("Reset Children");
     Vector<Collection *> children_collections;
     LISTBASE_FOREACH (CollectionChild *, collection_child, &collection->children) {
       children_collections.append(collection_child->collection);
@@ -194,13 +197,11 @@ static void node_register()
   ntype.nclass = NODE_CLASS_INPUT;
   ntype.declare = node_declare;
   ntype.initfunc = node_node_init;
-  blender::bke::node_type_storage(&ntype,
-                                  "NodeGeometryCollectionInfo",
-                                  node_free_standard_storage,
-                                  node_copy_standard_storage);
+  blender::bke::node_type_storage(
+      ntype, "NodeGeometryCollectionInfo", node_free_standard_storage, node_copy_standard_storage);
   ntype.geometry_node_execute = node_geo_exec;
   ntype.draw_buttons = node_layout;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

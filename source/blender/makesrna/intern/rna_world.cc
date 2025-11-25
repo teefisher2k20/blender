@@ -15,16 +15,11 @@
 
 #include "rna_internal.hh"
 
-#include "DNA_lightprobe_types.h"
-#include "DNA_material_types.h"
-#include "DNA_texture_types.h"
 #include "DNA_world_types.h"
 
 #include "WM_types.hh"
 
 #ifdef RNA_RUNTIME
-
-#  include "MEM_guardedalloc.h"
 
 #  include "BKE_context.hh"
 #  include "BKE_layer.hh"
@@ -40,12 +35,12 @@
 
 static PointerRNA rna_World_lighting_get(PointerRNA *ptr)
 {
-  return rna_pointer_inherit_refine(ptr, &RNA_WorldLighting, ptr->owner_id);
+  return RNA_pointer_create_with_parent(*ptr, &RNA_WorldLighting, ptr->owner_id);
 }
 
 static PointerRNA rna_World_mist_get(PointerRNA *ptr)
 {
-  return rna_pointer_inherit_refine(ptr, &RNA_WorldMistSettings, ptr->owner_id);
+  return RNA_pointer_create_with_parent(*ptr, &RNA_WorldMistSettings, ptr->owner_id);
 }
 
 static void rna_World_update(Main * /*bmain*/, Scene * /*scene*/, PointerRNA *ptr)
@@ -75,21 +70,6 @@ static void rna_World_draw_update(Main * /*bmain*/, Scene * /*scene*/, PointerRN
   WM_main_add_notifier(NC_OBJECT | ND_DRAW, nullptr);
 }
 
-static void rna_World_use_nodes_update(bContext *C, PointerRNA *ptr)
-{
-  World *wrld = (World *)ptr->data;
-  Main *bmain = CTX_data_main(C);
-  Scene *scene = CTX_data_scene(C);
-
-  if (wrld->use_nodes && wrld->nodetree == nullptr) {
-    ED_node_shader_default(C, &wrld->id);
-  }
-
-  DEG_relations_tag_update(bmain);
-  rna_World_update(bmain, scene, ptr);
-  rna_World_draw_update(bmain, scene, ptr);
-}
-
 void rna_World_lightgroup_get(PointerRNA *ptr, char *value)
 {
   LightgroupMembership *lgm = ((World *)ptr->owner_id)->lightgroup;
@@ -107,6 +87,19 @@ int rna_World_lightgroup_length(PointerRNA *ptr)
 void rna_World_lightgroup_set(PointerRNA *ptr, const char *value)
 {
   BKE_lightgroup_membership_set(&((World *)ptr->owner_id)->lightgroup, value);
+}
+
+bool rna_World_use_nodes_get(PointerRNA * /*ptr*/)
+{
+  /* #use_nodes is deprecated. Worlds always use nodes. */
+  return true;
+}
+
+void rna_World_use_nodes_set(PointerRNA * /*ptr*/, bool /*new_value*/)
+{
+  /* #use_nodes is deprecated. Setting the property has no effect.
+   * Note: Users will get a warning through the RNA deprecation warning, so no need to log a
+   * warning here. */
 }
 
 #else
@@ -268,7 +261,12 @@ void RNA_def_world(BlenderRNA *brna)
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
   RNA_def_property_flag(prop, PROP_CONTEXT_UPDATE);
   RNA_def_property_ui_text(prop, "Use Nodes", "Use shader nodes to render the world");
-  RNA_def_property_update(prop, 0, "rna_World_use_nodes_update");
+  RNA_def_property_boolean_funcs(prop, "rna_World_use_nodes_get", "rna_World_use_nodes_set");
+  RNA_def_property_deprecated(prop,
+                              "Unused but kept for compatibility reasons. Setting the property "
+                              "has no effect, and getting it always returns True.",
+                              500,
+                              600);
 
   /* Lightgroup Membership */
   prop = RNA_def_property(srna, "lightgroup", PROP_STRING, PROP_NONE);

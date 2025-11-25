@@ -8,8 +8,6 @@
 
 #pragma once
 
-#include "BLI_utildefines.h"
-
 #include "DNA_space_types.h"
 #include "DNA_tracking_types.h"
 
@@ -180,8 +178,6 @@ bool clip_view_calculate_view_selection(
  * Locking to selection is not possible if there is no selection.
  */
 bool clip_view_has_locked_selection(const bContext *C);
-
-void clip_draw_sfra_efra(View2D *v2d, Scene *scene);
 
 /* tracking_ops.cc */
 

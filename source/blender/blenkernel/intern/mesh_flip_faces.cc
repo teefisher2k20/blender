@@ -57,7 +57,6 @@ void mesh_flip_faces(Mesh &mesh, const IndexMask &selection)
     }
   });
 
-  flip_custom_data_type<float4>(faces, mesh.corner_data, selection, CD_TANGENT);
   flip_custom_data_type<float4>(faces, mesh.corner_data, selection, CD_MLOOPTANGENT);
   flip_custom_data_type<GridPaintMask>(faces, mesh.corner_data, selection, CD_GRID_PAINT_MASK);
   flip_custom_data_type<OrigSpaceLoop>(faces, mesh.corner_data, selection, CD_ORIGSPACE_MLOOP);
@@ -74,7 +73,7 @@ void mesh_flip_faces(Mesh &mesh, const IndexMask &selection)
 
   MutableAttributeAccessor attributes = mesh.attributes_for_write();
   attributes.foreach_attribute([&](const AttributeIter &iter) {
-    if (iter.data_type == CD_PROP_STRING) {
+    if (iter.data_type == bke::AttrType::String) {
       return;
     }
     if (iter.domain != AttrDomain::Corner) {

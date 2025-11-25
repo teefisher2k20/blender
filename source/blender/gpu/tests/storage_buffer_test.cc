@@ -27,8 +27,7 @@ static Vector<int32_t> test_data()
 
 static void test_storage_buffer_create_update_read()
 {
-  GPUStorageBuf *ssbo = GPU_storagebuf_create_ex(
-      SIZE_IN_BYTES, nullptr, GPU_USAGE_STATIC, __func__);
+  StorageBuf *ssbo = GPU_storagebuf_create_ex(SIZE_IN_BYTES, nullptr, GPU_USAGE_STATIC, __func__);
   EXPECT_NE(ssbo, nullptr);
 
   /* Upload some dummy data. */
@@ -52,8 +51,7 @@ GPU_TEST(storage_buffer_create_update_read);
 
 static void test_storage_buffer_clear_zero()
 {
-  GPUStorageBuf *ssbo = GPU_storagebuf_create_ex(
-      SIZE_IN_BYTES, nullptr, GPU_USAGE_STATIC, __func__);
+  StorageBuf *ssbo = GPU_storagebuf_create_ex(SIZE_IN_BYTES, nullptr, GPU_USAGE_STATIC, __func__);
   EXPECT_NE(ssbo, nullptr);
 
   /* Upload some dummy data. */
@@ -77,8 +75,7 @@ GPU_TEST(storage_buffer_clear_zero);
 
 static void test_storage_buffer_clear()
 {
-  GPUStorageBuf *ssbo = GPU_storagebuf_create_ex(
-      SIZE_IN_BYTES, nullptr, GPU_USAGE_STATIC, __func__);
+  StorageBuf *ssbo = GPU_storagebuf_create_ex(SIZE_IN_BYTES, nullptr, GPU_USAGE_STATIC, __func__);
   EXPECT_NE(ssbo, nullptr);
 
   GPU_storagebuf_clear(ssbo, 157255);
@@ -98,16 +95,38 @@ static void test_storage_buffer_clear()
 
 GPU_TEST(storage_buffer_clear);
 
+static void test_storage_buffer_clear_byte_pattern()
+{
+  StorageBuf *ssbo = GPU_storagebuf_create_ex(SIZE_IN_BYTES, nullptr, GPU_USAGE_STATIC, __func__);
+  EXPECT_NE(ssbo, nullptr);
+
+  /* Tests a different clear command on Metal. */
+  GPU_storagebuf_clear(ssbo, 0xFCFCFCFCu);
+
+  /* Read back data from SSBO. */
+  Vector<int32_t> read_data;
+  read_data.resize(SIZE, 0);
+  GPU_storagebuf_read(ssbo, read_data.data());
+
+  /* Check if datatest_ is the same. */
+  for (int i : IndexRange(SIZE)) {
+    EXPECT_EQ(0xFCFCFCFCu, read_data[i]);
+  }
+
+  GPU_storagebuf_free(ssbo);
+}
+
+GPU_TEST(storage_buffer_clear_byte_pattern);
+
 static void test_storage_buffer_copy_from_vertex_buffer()
 {
-  GPUStorageBuf *ssbo = GPU_storagebuf_create_ex(
-      SIZE_IN_BYTES, nullptr, GPU_USAGE_STATIC, __func__);
+  StorageBuf *ssbo = GPU_storagebuf_create_ex(SIZE_IN_BYTES, nullptr, GPU_USAGE_STATIC, __func__);
   EXPECT_NE(ssbo, nullptr);
 
   /* Create vertex buffer. */
   GPUVertFormat format = {0};
-  GPU_vertformat_attr_add(&format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
-  GPU_vertformat_attr_add(&format, "color", GPU_COMP_F32, 4, GPU_FETCH_FLOAT);
+  GPU_vertformat_attr_add(&format, "pos", gpu::VertAttrType::SFLOAT_32_32);
+  GPU_vertformat_attr_add(&format, "color", gpu::VertAttrType::SFLOAT_32_32_32_32);
 
   VertBuf *vbo = GPU_vertbuf_create_with_format(format);
   GPU_vertbuf_data_alloc(*vbo, 4);
@@ -125,7 +144,7 @@ static void test_storage_buffer_copy_from_vertex_buffer()
   for (int i : IndexRange(4)) {
     GPU_vertbuf_vert_set(vbo, i, &data[i]);
   }
-  float *expected_data = static_cast<float *>(static_cast<void *>(&data));
+  Span<float> expected_data(static_cast<float *>(static_cast<void *>(&data)), 24);
 
   Vector<float> read_data;
   read_data.resize(SIZE, 0);
@@ -137,7 +156,7 @@ static void test_storage_buffer_copy_from_vertex_buffer()
 
     /* Validate content of SSBO. */
     GPU_storagebuf_read(ssbo, read_data.data());
-    EXPECT_EQ_ARRAY(expected_data, read_data.data(), 24);
+    EXPECT_EQ_SPAN<float>(expected_data, read_data.as_span().slice(IndexRange(24)));
     for (int i : IndexRange(24, SIZE - 24)) {
       EXPECT_EQ(0.0, read_data[i]);
     }
@@ -153,8 +172,7 @@ static void test_storage_buffer_copy_from_vertex_buffer()
     for (int i : IndexRange(4)) {
       EXPECT_EQ(0.0, read_data[i]);
     }
-    float *expected_data = static_cast<float *>(static_cast<void *>(&data));
-    EXPECT_EQ_ARRAY(expected_data, &(read_data.data()[4]), 24);
+    EXPECT_EQ_SPAN(expected_data, read_data.as_span().slice(4, 24));
     for (int i : IndexRange(28, SIZE - 28)) {
       EXPECT_EQ(0.0, read_data[i]);
     }
@@ -170,8 +188,7 @@ static void test_storage_buffer_copy_from_vertex_buffer()
     for (int i : IndexRange(4)) {
       EXPECT_EQ(0.0, read_data[i]);
     }
-    float *expected_data = static_cast<float *>(static_cast<void *>(&data));
-    EXPECT_EQ_ARRAY(&expected_data[6], &(read_data.data()[4]), 12);
+    EXPECT_EQ_SPAN(expected_data.slice(6, 12), read_data.as_span().slice(4, 12));
     for (int i : IndexRange(16, SIZE - 16)) {
       EXPECT_EQ(0.0, read_data[i]);
     }

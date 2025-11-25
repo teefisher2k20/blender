@@ -9,7 +9,8 @@
 #pragma once
 
 #include "DNA_space_types.h"
-#include "DNA_windowmanager_types.h"
+
+#include "BKE_report.hh"
 
 #include "ED_fileselect.hh"
 
@@ -23,10 +24,12 @@ struct FileSelectParams;
 struct Main;
 struct SpaceFile;
 struct View2D;
-struct uiLayout;
 namespace blender::asset_system {
 class AssetLibrary;
 }
+namespace blender::ui {
+struct Layout;
+}  // namespace blender::ui
 
 bool file_main_region_needs_refresh_before_draw(SpaceFile *sfile);
 
@@ -106,6 +109,14 @@ void FILE_OT_start_filter(wmOperatorType *ot);
 void FILE_OT_edit_directory_path(wmOperatorType *ot);
 void FILE_OT_view_selected(wmOperatorType *ot);
 
+/**
+ * This callback runs when the user has entered a new path in the file selectors directory field.
+ *
+ * Expand & normalize the path then:
+ * - Change the path when it exists.
+ * - Prompt the user to create the path if it doesn't
+ *   (providing it passes basic sanity checks).
+ */
 void file_directory_enter_handle(bContext *C, void *arg_unused, void *arg_but);
 void file_filename_enter_handle(bContext *C, void *arg_unused, void *arg_but);
 
@@ -179,8 +190,8 @@ void file_params_rename_end(wmWindowManager *wm,
  */
 void file_params_renamefile_activate(SpaceFile *sfile, FileSelectParams *params);
 
-typedef void *onReloadFnData;
-typedef void (*onReloadFn)(SpaceFile *space_data, onReloadFnData custom_data);
+using onReloadFnData = void *;
+using onReloadFn = void (*)(SpaceFile *space_data, onReloadFnData custom_data);
 struct SpaceFile_Runtime {
   /* Called once after the file browser has reloaded. Reset to NULL after calling.
    * Use file_on_reload_callback_register() to register a callback. */
@@ -236,7 +247,7 @@ namespace blender::ed::asset_browser {
 
 void file_create_asset_catalog_tree_view_in_layout(const bContext *C,
                                                    asset_system::AssetLibrary *asset_library,
-                                                   uiLayout *layout,
+                                                   ui::Layout &layout,
                                                    SpaceFile *space_file,
                                                    FileAssetSelectParams *params);
 

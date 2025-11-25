@@ -19,7 +19,7 @@
 #include "BLI_math_vector.h"
 #include "BLI_memarena.h"
 #include "BLI_ordered_edge.hh"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "BLT_translation.hh"
 
@@ -36,6 +36,8 @@
 #include "eigen_capi.h"
 
 #include "meshlaplacian.h"
+
+#include <algorithm>
 
 /* ************* XXX *************** */
 static void waitcursor(int /*val*/) {}
@@ -102,8 +104,7 @@ static void laplacian_increase_edge_count(blender::Map<blender::OrderedEdge, int
                                           int v1,
                                           int v2)
 {
-  edgehash.add_or_modify(
-      {v1, v2}, [](int *value) { *value = 1; }, [](int *value) { (*value)++; });
+  edgehash.add_or_modify({v1, v2}, [](int *value) { *value = 1; }, [](int *value) { (*value)++; });
 }
 
 static int laplacian_edge_count(const blender::Map<blender::OrderedEdge, int> &edgehash,
@@ -200,11 +201,9 @@ static LaplacianSystem *laplacian_system_construct_begin(int verts_num, int face
 
   sys = MEM_new<LaplacianSystem>(__func__);
 
-  sys->verts = static_cast<float **>(
-      MEM_callocN(sizeof(float *) * verts_num, "LaplacianSystemVerts"));
-  sys->vpinned = static_cast<char *>(
-      MEM_callocN(sizeof(char) * verts_num, "LaplacianSystemVpinned"));
-  sys->faces = static_cast<int(*)[3]>(
+  sys->verts = MEM_calloc_arrayN<float *>(verts_num, "LaplacianSystemVerts");
+  sys->vpinned = MEM_calloc_arrayN<char>(verts_num, "LaplacianSystemVpinned");
+  sys->faces = static_cast<int (*)[3]>(
       MEM_callocN(sizeof(int[3]) * faces_num, "LaplacianSystemFaces"));
 
   sys->verts_num = 0;
@@ -241,13 +240,12 @@ void laplacian_add_triangle(LaplacianSystem *sys, int v1, int v2, int v3)
 
 static void laplacian_system_construct_end(LaplacianSystem *sys)
 {
-  int(*face)[3];
+  int (*face)[3];
   int a, verts_num = sys->verts_num, faces_num = sys->faces_num;
 
   laplacian_begin_solve(sys, 0);
 
-  sys->varea = static_cast<float *>(
-      MEM_callocN(sizeof(float) * verts_num, "LaplacianSystemVarea"));
+  sys->varea = MEM_calloc_arrayN<float>(verts_num, "LaplacianSystemVarea");
 
   sys->edgehash.reserve(sys->faces_num);
   for (a = 0, face = sys->faces; a < sys->faces_num; a++, face++) {
@@ -279,7 +277,7 @@ static void laplacian_system_construct_end(LaplacianSystem *sys)
   }
 
   if (sys->storeweights) {
-    sys->fweights = static_cast<float(*)[3]>(
+    sys->fweights = static_cast<float (*)[3]>(
         MEM_callocN(sizeof(float[3]) * faces_num, "LaplacianFWeight"));
   }
 
@@ -369,10 +367,10 @@ struct BVHCallbackUserData {
 
 static void bvh_callback(void *userdata, int index, const BVHTreeRay *ray, BVHTreeRayHit *hit)
 {
-  BVHCallbackUserData *data = (BVHCallbackUserData *)userdata;
+  BVHCallbackUserData *data = static_cast<BVHCallbackUserData *>(userdata);
   const blender::int3 &tri = data->sys->heat.corner_tris[index];
   const blender::Span<int> corner_verts = data->sys->heat.corner_verts;
-  float(*verts)[3] = data->sys->heat.verts;
+  float (*verts)[3] = data->sys->heat.verts;
   const float *vtri_co[3];
   float dist_test;
 
@@ -404,7 +402,7 @@ static void heat_ray_tree_create(LaplacianSystem *sys)
 {
   const blender::int3 *corner_tris = sys->heat.corner_tris;
   const blender::Span<int> corner_verts = sys->heat.corner_verts;
-  float(*verts)[3] = sys->heat.verts;
+  float (*verts)[3] = sys->heat.verts;
   int tris_num = sys->heat.tris_num;
   int verts_num = sys->heat.verts_num;
   int a;
@@ -514,9 +512,7 @@ static void heat_set_H(LaplacianSystem *sys, int vertex)
   for (j = 0; j < sys->heat.numsource; j++) {
     dist = heat_source_distance(sys, vertex, j);
 
-    if (dist < mindist) {
-      mindist = dist;
-    }
+    mindist = std::min(dist, mindist);
   }
 
   sys->heat.mindist[vertex] = mindist;
@@ -547,7 +543,7 @@ static void heat_calc_vnormals(LaplacianSystem *sys)
   float fnor[3];
   int a, v1, v2, v3, (*face)[3];
 
-  sys->heat.vert_normals = static_cast<float(*)[3]>(
+  sys->heat.vert_normals = static_cast<float (*)[3]>(
       MEM_callocN(sizeof(float[3]) * sys->verts_num, "HeatVNors"));
 
   for (a = 0, face = sys->faces; a < sys->faces_num; a++, face++) {
@@ -576,9 +572,9 @@ static void heat_laplacian_create(LaplacianSystem *sys)
   int a;
 
   /* heat specific definitions */
-  sys->heat.mindist = static_cast<float *>(MEM_callocN(sizeof(float) * verts_num, "HeatMinDist"));
-  sys->heat.H = static_cast<float *>(MEM_callocN(sizeof(float) * verts_num, "HeatH"));
-  sys->heat.p = static_cast<float *>(MEM_callocN(sizeof(float) * verts_num, "HeatP"));
+  sys->heat.mindist = MEM_calloc_arrayN<float>(verts_num, "HeatMinDist");
+  sys->heat.H = MEM_calloc_arrayN<float>(verts_num, "HeatH");
+  sys->heat.p = MEM_calloc_arrayN<float>(verts_num, "HeatP");
 
   /* add verts and faces to laplacian */
   for (a = 0; a < verts_num; a++) {
@@ -604,8 +600,8 @@ static void heat_laplacian_create(LaplacianSystem *sys)
 static void heat_system_free(LaplacianSystem *sys)
 {
   BLI_bvhtree_free(sys->heat.bvhtree);
-  MEM_freeN((void *)sys->heat.vltree);
-  MEM_freeN((void *)sys->heat.corner_tris);
+  MEM_freeN(sys->heat.vltree);
+  MEM_freeN(sys->heat.corner_tris);
 
   MEM_freeN(sys->heat.mindist);
   MEM_freeN(sys->heat.H);
@@ -660,8 +656,7 @@ void heat_bone_weighting(Object *ob,
 
   /* count triangles and create mask */
   if (ob->mode & OB_MODE_WEIGHT_PAINT && (use_face_sel || use_vert_sel)) {
-    mask = static_cast<int *>(
-        MEM_callocN(sizeof(int) * mesh->verts_num, "heat_bone_weighting mask"));
+    mask = MEM_calloc_arrayN<int>(mesh->verts_num, "heat_bone_weighting mask");
 
     /*  (added selectedVerts content for vertex mask, they used to just equal 1) */
     if (use_vert_sel) {
@@ -714,7 +709,7 @@ void heat_bone_weighting(Object *ob,
   laplacian_system_construct_end(sys);
 
   if (dgroupflip) {
-    vertsflipped = static_cast<int *>(MEM_callocN(sizeof(int) * mesh->verts_num, "vertsflipped"));
+    vertsflipped = MEM_calloc_arrayN<int>(mesh->verts_num, "vertsflipped");
     for (a = 0; a < mesh->verts_num; a++) {
       vertsflipped[a] = mesh_get_x_mirror_vert(ob, nullptr, a, use_topology);
     }
@@ -1031,7 +1026,7 @@ static MDefBoundIsect *meshdeform_ray_tree_intersect(MeshDeformBind *mdb,
     const blender::Span<int> corner_verts = mdb->cagemesh_cache.corner_verts;
     const int face_i = mdb->cagemesh_cache.tri_faces[hit.index];
     const blender::IndexRange face = mdb->cagemesh_cache.faces[face_i];
-    const float(*cagecos)[3] = mdb->cagecos;
+    const float (*cagecos)[3] = mdb->cagecos;
     const float len = isect_mdef.lambda;
     MDefBoundIsect *isect;
 
@@ -1056,7 +1051,7 @@ static MDefBoundIsect *meshdeform_ray_tree_intersect(MeshDeformBind *mdb,
     }
 
     interp_weights_poly_v3(isect->poly_weights,
-                           reinterpret_cast<float(*)[3]>(mp_cagecos.data()),
+                           reinterpret_cast<float (*)[3]>(mp_cagecos.data()),
                            face.size(),
                            isect->co);
 
@@ -1155,7 +1150,7 @@ static void meshdeform_bind_floodfill(MeshDeformBind *mdb)
   int *stack, *tag = mdb->tag;
   int a, b, i, xyz[3], stacksize, size = mdb->size;
 
-  stack = static_cast<int *>(MEM_callocN(sizeof(int) * mdb->size3, __func__));
+  stack = MEM_calloc_arrayN<int>(mdb->size3, __func__);
 
   /* we know lower left corner is EXTERIOR because of padding */
   tag[0] = MESHDEFORM_TAG_EXTERIOR;
@@ -1459,7 +1454,7 @@ static void meshdeform_matrix_solve(MeshDeformModifierData *mmd, MeshDeformBind 
   char message[256];
 
   /* setup variable indices */
-  mdb->varidx = static_cast<int *>(MEM_callocN(sizeof(int) * mdb->size3, "MeshDeformDSvaridx"));
+  mdb->varidx = MEM_calloc_arrayN<int>(mdb->size3, "MeshDeformDSvaridx");
   for (a = 0, totvar = 0; a < mdb->size3; a++) {
     mdb->varidx[a] = (mdb->tag[a] == MESHDEFORM_TAG_EXTERIOR) ? -1 : totvar++;
   }
@@ -1554,7 +1549,7 @@ static void meshdeform_matrix_solve(MeshDeformModifierData *mmd, MeshDeformBind 
       break;
     }
 
-    SNPRINTF(message, "Mesh deform solve %d / %d       |||", a + 1, mdb->cage_verts_num);
+    SNPRINTF_UTF8(message, "Mesh deform solve %d / %d       |||", a + 1, mdb->cage_verts_num);
     progress_bar(float(a + 1) / float(mdb->cage_verts_num), message);
   }
 
@@ -1581,6 +1576,7 @@ static void meshdeform_matrix_solve(MeshDeformModifierData *mmd, MeshDeformBind 
 
 static void harmonic_coordinates_bind(MeshDeformModifierData *mmd, MeshDeformBind *mdb)
 {
+  using namespace blender;
   MDefBindInfluence *inf;
   MDefInfluence *mdinf;
   MDefCell *cell;
@@ -1597,30 +1593,27 @@ static void harmonic_coordinates_bind(MeshDeformModifierData *mmd, MeshDeformBin
   /* allocate memory */
   mdb->size = (2 << (mmd->gridsize - 1)) + 2;
   mdb->size3 = mdb->size * mdb->size * mdb->size;
-  mdb->tag = static_cast<int *>(MEM_callocN(sizeof(int) * mdb->size3, "MeshDeformBindTag"));
-  mdb->phi = static_cast<float *>(MEM_callocN(sizeof(float) * mdb->size3, "MeshDeformBindPhi"));
-  mdb->totalphi = static_cast<float *>(
-      MEM_callocN(sizeof(float) * mdb->size3, "MeshDeformBindTotalPhi"));
+  mdb->tag = MEM_calloc_arrayN<int>(mdb->size3, "MeshDeformBindTag");
+  mdb->phi = MEM_calloc_arrayN<float>(mdb->size3, "MeshDeformBindPhi");
+  mdb->totalphi = MEM_calloc_arrayN<float>(mdb->size3, "MeshDeformBindTotalPhi");
   mdb->boundisect = static_cast<MDefBoundIsect *(*)[6]>(
       MEM_callocN(sizeof(*mdb->boundisect) * mdb->size3, "MDefBoundIsect"));
-  mdb->semibound = static_cast<int *>(MEM_callocN(sizeof(int) * mdb->size3, "MDefSemiBound"));
+  mdb->semibound = MEM_calloc_arrayN<int>(mdb->size3, "MDefSemiBound");
   mdb->bvhdata = mdb->cagemesh->bvh_corner_tris();
   mdb->bvhtree = mdb->bvhdata.tree;
-  mdb->inside = static_cast<int *>(MEM_callocN(sizeof(int) * mdb->verts_num, "MDefInside"));
+  mdb->inside = MEM_calloc_arrayN<int>(mdb->verts_num, "MDefInside");
 
   if (mmd->flag & MOD_MDEF_DYNAMIC_BIND) {
-    mdb->dyngrid = static_cast<MDefBindInfluence **>(
-        MEM_callocN(sizeof(MDefBindInfluence *) * mdb->size3, "MDefDynGrid"));
+    mdb->dyngrid = MEM_calloc_arrayN<MDefBindInfluence *>(mdb->size3, "MDefDynGrid");
   }
   else {
-    mdb->weights = static_cast<float *>(
-        MEM_callocN(sizeof(float) * mdb->verts_num * mdb->cage_verts_num, "MDefWeights"));
+    mdb->weights = MEM_calloc_arrayN<float>(mdb->verts_num * mdb->cage_verts_num, "MDefWeights");
   }
 
   mdb->memarena = BLI_memarena_new(BLI_MEMARENA_STD_BUFSIZE, "harmonic coords arena");
   BLI_memarena_use_calloc(mdb->memarena);
 
-  /* initialize data from 'cagedm' for reuse */
+  /* Initialize data from `cagedm` for reuse. */
   {
     Mesh *mesh = mdb->cagemesh;
     mdb->cagemesh_cache.faces = mesh->faces();
@@ -1634,9 +1627,7 @@ static void harmonic_coordinates_bind(MeshDeformModifierData *mmd, MeshDeformBin
    * width of the cells */
   maxwidth = -1.0f;
   for (a = 0; a < 3; a++) {
-    if (mdb->max[a] - mdb->min[a] > maxwidth) {
-      maxwidth = mdb->max[a] - mdb->min[a];
-    }
+    maxwidth = std::max(mdb->max[a] - mdb->min[a], maxwidth);
   }
 
   for (a = 0; a < 3; a++) {
@@ -1706,10 +1697,10 @@ static void harmonic_coordinates_bind(MeshDeformModifierData *mmd, MeshDeformBin
     }
 
     /* convert MDefBindInfluences to smaller MDefInfluences */
-    mmd->dyngrid = static_cast<MDefCell *>(
-        MEM_callocN(sizeof(MDefCell) * mdb->size3, "MDefDynGrid"));
-    mmd->dyninfluences = static_cast<MDefInfluence *>(
-        MEM_callocN(sizeof(MDefInfluence) * mmd->influences_num, "MDefInfluence"));
+    mmd->dyngrid = MEM_calloc_arrayN<MDefCell>(mdb->size3, "MDefDynGrid");
+    mmd->dyngrid_sharing_info = implicit_sharing::info_for_mem_free(mmd->dyngrid);
+    mmd->dyninfluences = MEM_calloc_arrayN<MDefInfluence>(mmd->influences_num, "MDefInfluence");
+    mmd->dyninfluences_sharing_info = implicit_sharing::info_for_mem_free(mmd->dyninfluences);
     offset = 0;
     for (a = 0; a < mdb->size3; a++) {
       cell = &mmd->dyngrid[a];
@@ -1735,6 +1726,7 @@ static void harmonic_coordinates_bind(MeshDeformModifierData *mmd, MeshDeformBin
     }
 
     mmd->dynverts = mdb->inside;
+    mmd->dynverts_sharing_info = implicit_sharing::info_for_mem_free(mmd->dynverts);
     mmd->dyngridsize = mdb->size;
     copy_v3_v3(mmd->dyncellmin, mdb->min);
     mmd->dyncellwidth = mdb->width[0];
@@ -1760,8 +1752,9 @@ void ED_mesh_deform_bind_callback(Object *object,
                                   int verts_num,
                                   float cagemat[4][4])
 {
-  MeshDeformModifierData *mmd_orig = (MeshDeformModifierData *)BKE_modifier_get_original(
-      object, &mmd->modifier);
+  using namespace blender;
+  MeshDeformModifierData *mmd_orig = reinterpret_cast<MeshDeformModifierData *>(
+      BKE_modifier_get_original(object, &mmd->modifier));
   MeshDeformBind mdb{};
   int a;
 
@@ -1772,13 +1765,13 @@ void ED_mesh_deform_bind_callback(Object *object,
   BKE_mesh_wrapper_ensure_mdata(cagemesh);
 
   /* get mesh and cage mesh */
-  mdb.vertexcos = static_cast<float(*)[3]>(
+  mdb.vertexcos = static_cast<float (*)[3]>(
       MEM_callocN(sizeof(float[3]) * verts_num, "MeshDeformCos"));
   mdb.verts_num = verts_num;
 
   mdb.cagemesh = cagemesh;
   mdb.cage_verts_num = mdb.cagemesh->verts_num;
-  mdb.cagecos = static_cast<float(*)[3]>(
+  mdb.cagecos = static_cast<float (*)[3]>(
       MEM_callocN(sizeof(*mdb.cagecos) * mdb.cage_verts_num, "MeshDeformBindCos"));
   copy_m4_m4(mdb.cagemat, cagemat);
 
@@ -1795,6 +1788,7 @@ void ED_mesh_deform_bind_callback(Object *object,
 
   /* assign bind variables */
   mmd_orig->bindcagecos = (float *)mdb.cagecos;
+  mmd_orig->bindcagecos_sharing_info = implicit_sharing::info_for_mem_free(mmd_orig->bindcagecos);
   mmd_orig->verts_num = mdb.verts_num;
   mmd_orig->cage_verts_num = mdb.cage_verts_num;
   copy_m4_m4(mmd_orig->bindmat, mmd_orig->object->object_to_world().ptr());
@@ -1808,7 +1802,7 @@ void ED_mesh_deform_bind_callback(Object *object,
   MEM_freeN(mdb.vertexcos);
 
   /* compact weights */
-  BKE_modifier_mdef_compact_influences((ModifierData *)mmd_orig);
+  BKE_modifier_mdef_compact_influences(reinterpret_cast<ModifierData *>(mmd_orig));
 
   end_progress_bar();
   waitcursor(0);

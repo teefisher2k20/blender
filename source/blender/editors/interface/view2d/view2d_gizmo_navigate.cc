@@ -39,6 +39,8 @@
 /* How much mini buttons offset from the primary. */
 #define GIZMO_MINI_OFFSET_FAC 0.38f
 
+namespace {
+
 enum {
   GZ_INDEX_MOVE = 0,
   GZ_INDEX_ZOOM = 1,
@@ -51,6 +53,16 @@ struct NavigateGizmoInfo {
   const char *gizmo;
   uint icon;
 };
+
+struct NavigateWidgetGroup {
+  wmGizmo *gz_array[GZ_INDEX_TOTAL];
+  /* Store the view state to check for changes. */
+  struct {
+    rcti rect_visible;
+  } state;
+};
+
+}  // namespace
 
 static NavigateGizmoInfo g_navigate_params_for_space_image[GZ_INDEX_TOTAL] = {
     {
@@ -104,14 +116,6 @@ static NavigateGizmoInfo *navigate_params_from_space_type(short space_type)
   }
 }
 
-struct NavigateWidgetGroup {
-  wmGizmo *gz_array[GZ_INDEX_TOTAL];
-  /* Store the view state to check for changes. */
-  struct {
-    rcti rect_visible;
-  } state;
-};
-
 static bool WIDGETGROUP_navigate_poll(const bContext *C, wmGizmoGroupType * /*gzgt*/)
 {
   if ((U.uiflag & USER_SHOW_GIZMO_NAVIGATE) == 0) {
@@ -149,7 +153,7 @@ static bool WIDGETGROUP_navigate_poll(const bContext *C, wmGizmoGroupType * /*gz
 
 static void WIDGETGROUP_navigate_setup(const bContext * /*C*/, wmGizmoGroup *gzgroup)
 {
-  NavigateWidgetGroup *navgroup = MEM_cnew<NavigateWidgetGroup>(__func__);
+  NavigateWidgetGroup *navgroup = MEM_callocN<NavigateWidgetGroup>(__func__);
 
   const NavigateGizmoInfo *navigate_params = navigate_params_from_space_type(
       gzgroup->type->gzmap_params.spaceid);
@@ -189,8 +193,13 @@ static void WIDGETGROUP_navigate_setup(const bContext * /*C*/, wmGizmoGroup *gzg
           gz->ptr, "draw_options", ED_GIZMO_BUTTON_SHOW_OUTLINE | ED_GIZMO_BUTTON_SHOW_BACKDROP);
     }
 
-    wmOperatorType *ot = WM_operatortype_find(info->opname, true);
-    WM_gizmo_operator_set(gz, 0, ot, nullptr);
+    wmOperatorType *ot = WM_operatortype_find(info->opname, false);
+#ifdef WITH_PYTHON
+    if (ot != nullptr)
+#endif
+    {
+      WM_gizmo_operator_set(gz, 0, ot, nullptr);
+    }
   }
 
   /* Modal operators, don't use initial mouse location since we're clicking on a button. */

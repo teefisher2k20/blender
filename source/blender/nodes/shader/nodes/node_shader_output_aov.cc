@@ -7,7 +7,7 @@
 
 #include "BLI_hash.h"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 namespace blender::nodes::node_shader_output_aov_cc {
@@ -20,12 +20,12 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_shader_buts_output_aov(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "aov_name", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "aov_name", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
 }
 
 static void node_shader_init_output_aov(bNodeTree * /*ntree*/, bNode *node)
 {
-  NodeShaderOutputAOV *aov = MEM_cnew<NodeShaderOutputAOV>("NodeShaderOutputAOV");
+  NodeShaderOutputAOV *aov = MEM_callocN<NodeShaderOutputAOV>("NodeShaderOutputAOV");
   node->storage = aov;
 }
 
@@ -70,10 +70,10 @@ void register_node_type_sh_output_aov()
   ntype.draw_buttons = file_ns::node_shader_buts_output_aov;
   ntype.initfunc = file_ns::node_shader_init_output_aov;
   blender::bke::node_type_storage(
-      &ntype, "NodeShaderOutputAOV", node_free_standard_storage, node_copy_standard_storage);
+      ntype, "NodeShaderOutputAOV", node_free_standard_storage, node_copy_standard_storage);
   ntype.gpu_fn = file_ns::node_shader_gpu_output_aov;
 
   ntype.no_muting = true;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

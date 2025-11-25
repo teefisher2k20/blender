@@ -30,12 +30,12 @@ def link_samplers(animation: gltf2_io.Animation, export_settings):
     # TODO: move this to some util module and update gltf2 exporter also
     T = typing.TypeVar('T')
 
-    def __append_unique_and_get_index(l: typing.List[T], item: T):
-        if item in l:
-            return l.index(item)
+    def __append_unique_and_get_index(list_items: typing.List[T], item: T):
+        if item in list_items:
+            return list_items.index(item)
         else:
-            index = len(l)
-            l.append(item)
+            index = len(list_items)
+            list_items.append(item)
             return index
 
     for i, channel in enumerate(animation.channels):
@@ -174,7 +174,7 @@ def merge_tracks_perform(merged_tracks, animations, export_settings):
     for anim in new_animations:
         new_samplers = []
         for s in anim.samplers:
-            if type(s) == int:
+            if type(s) is int:
                 new_samplers.append(anim.samplers[s])
             else:
                 new_samplers.append(s)
@@ -269,13 +269,13 @@ def bake_animation(obj_uuid: str, animation_key: str, export_settings, mode=None
                 name=export_settings['vtree'].nodes[obj_uuid].blender_object.name if obj_uuid == animation_key else animation_key,
                 samplers=[]
             )
-        link_samplers(animation, export_settings)
+            link_samplers(animation, export_settings)
         if animation is not None:
             return animation
     return None
 
 
-def bake_data_animation(blender_type_data, blender_id, animation_key, slot_handle, on_type, export_settings):
+def bake_data_animation(blender_type_data, blender_id, animation_key, slot_identifier, on_type, export_settings):
     # if there is no animation in file => no need to bake
     if len(bpy.data.actions) == 0:
         return None
@@ -287,7 +287,10 @@ def bake_data_animation(blender_type_data, blender_id, animation_key, slot_handl
             or export_settings['gltf_animation_mode'] == "NLA_TRACKS"):
 
         if blender_type_data == "materials":
-            blender_data_object = [i for i in bpy.data.materials if id(i) == blender_id][0]
+            if export_settings['gltf_animation_mode'] == "NLA_TRACKS" and export_settings['gltf_apply'] is True:
+                blender_data_object = export_settings['material_identifiers'][blender_id]
+            else:
+                blender_data_object = [i for i in bpy.data.materials if id(i) == blender_id][0]
         elif blender_type_data == "cameras":
             blender_data_object = [i for i in bpy.data.cameras if id(i) == blender_id][0]
         elif blender_type_data == "lights":
@@ -300,7 +303,7 @@ def bake_data_animation(blender_type_data, blender_id, animation_key, slot_handl
             if len(export_settings['KHR_animation_pointer'][blender_type_data][i]['paths']) == 0:
                 continue
 
-            channels = gather_data_sampled_channels(blender_type_data, i, animation_key, slot_handle, on_type, export_settings)
+            channels = gather_data_sampled_channels(blender_type_data, i, animation_key, slot_identifier, on_type, export_settings)
             if channels is not None:
                 total_channels.extend(channels)
 
@@ -316,14 +319,3 @@ def bake_data_animation(blender_type_data, blender_id, animation_key, slot_handl
     if animation is not None and animation.channels:
         link_samplers(animation, export_settings)
         return animation
-
-
-def get_channelbag_for_slot(action, slot):
-    # This is on purpose limited to the first layer and strip. To support more
-    # than 1 layer, a rewrite of this operator is needed which ideally would
-    # happen in C++.
-    for layer in action.layers:
-        for strip in layer.strips:
-            channelbag = strip.channels(slot.handle)
-            return channelbag
-    return None

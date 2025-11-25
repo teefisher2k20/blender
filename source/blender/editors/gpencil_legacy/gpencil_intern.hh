@@ -19,7 +19,6 @@ struct bGPDstroke;
 struct bGPdata;
 struct tGPspoint;
 
-struct GHash;
 struct RNG;
 
 struct ARegion;
@@ -92,13 +91,6 @@ void gpencil_point_to_xy(const GP_SpaceConversion *gsc,
 /* Copy/Paste Buffer --------------------------------- */
 /* `gpencil_edit.cc` */
 
-/**
- * list of #bGPDstroke instances
- *
- * \note is exposed within the editors/gpencil module so that other tools can use it too.
- */
-extern ListBase gpencil_strokes_copypastebuf;
-
 /* ***************************************************** */
 /* Operator Defines */
 
@@ -123,9 +115,3 @@ enum eGPencil_PaintModes {
 
 /* chunk size for gp-session buffer (the total size is a multiple of this number) */
 #define GP_STROKE_BUFFER_CHUNK 2048
-
-/* undo stack ---------- */
-
-void gpencil_undo_init(bGPdata *gpd);
-void gpencil_undo_push(bGPdata *gpd);
-void gpencil_undo_finish();

@@ -6,6 +6,7 @@
 
 #include <functional>
 
+#include "BLI_index_mask.hh"
 #include "BLI_task.hh"
 
 #include "DNA_scene_types.h"
@@ -51,13 +52,13 @@ Vector<ed::greasepencil::MutableDrawingInfo> get_drawings_for_stroke_operation(c
 Vector<ed::greasepencil::MutableDrawingInfo> get_drawings_with_masking_for_stroke_operation(
     const bContext &C);
 /* Get the brush radius accounting for pen pressure. */
-float brush_radius(const Scene &scene, const Brush &brush, float pressure);
+float brush_radius(const Paint &paint, const Brush &brush, float pressure);
 
 /* Make sure the brush has all necessary grease pencil settings. */
 void init_brush(Brush &brush);
 
 /* Index mask of all points within the brush radius. */
-IndexMask brush_point_influence_mask(const Scene &scene,
+IndexMask brush_point_influence_mask(const Paint &paint,
                                      const Brush &brush,
                                      const float2 &mouse_position,
                                      float pressure,
@@ -68,7 +69,7 @@ IndexMask brush_point_influence_mask(const Scene &scene,
                                      IndexMaskMemory &memory);
 
 /* Influence value at point co for the brush. */
-float brush_point_influence(const Scene &scene,
+float brush_point_influence(const Paint &paint,
                             const Brush &brush,
                             const float2 &co,
                             const InputSample &sample,
@@ -80,7 +81,7 @@ float brush_point_influence(const Scene &scene,
  */
 float closest_distance_to_surface_2d(const float2 pt, const Span<float2> verts);
 /* Influence value for an entire fill. */
-float brush_fill_influence(const Scene &scene,
+float brush_fill_influence(const Paint &paint,
                            const Brush &brush,
                            Span<float2> fill_positions,
                            const InputSample &sample,
@@ -134,10 +135,12 @@ bke::crazyspace::GeometryDeformation get_drawing_deformation(
     const GreasePencilStrokeParams &params);
 
 /* Project points from layer space into 2D view space. */
-Array<float2> calculate_view_positions(const GreasePencilStrokeParams &params,
-                                       const IndexMask &selection);
-Array<float> calculate_view_radii(const GreasePencilStrokeParams &params,
-                                  const IndexMask &selection);
+Array<float2> view_positions_from_point_mask(const GreasePencilStrokeParams &params,
+                                             const IndexMask &point_mask);
+Array<float2> view_positions_from_curve_mask(const GreasePencilStrokeParams &params,
+                                             const IndexMask &curve_mask);
+Array<float> view_radii_from_point_selection(const GreasePencilStrokeParams &params,
+                                             const IndexMask &selection);
 
 /* Get an appropriate projection function from screen space to layer space.
  * This is an alternative to using the DrawingPlacement. */
@@ -179,7 +182,7 @@ class GreasePencilStrokeOperationCommon : public GreasePencilStrokeOperation {
   };
   Array<AutoMaskingInfo> auto_masking_info_per_drawing;
 
-  GreasePencilStrokeOperationCommon() {}
+  GreasePencilStrokeOperationCommon() = default;
   GreasePencilStrokeOperationCommon(const BrushStrokeMode stroke_mode) : stroke_mode(stroke_mode)
   {
   }
@@ -200,6 +203,11 @@ class GreasePencilStrokeOperationCommon : public GreasePencilStrokeOperation {
                        const IndexMask &points,
                        const DeltaProjectionFunc &projection_fn)> fn) const;
 
+  void foreach_editable_drawing(
+      const bContext &C,
+      FunctionRef<bool(const GreasePencilStrokeParams &params,
+                       const DeltaProjectionFunc &projection_fn)> fn) const;
+
   /** Used in vertex paint mode. */
   void foreach_editable_drawing(
       const bContext &C, FunctionRef<bool(const GreasePencilStrokeParams &params)> fn) const;
@@ -211,11 +219,11 @@ class GreasePencilStrokeOperationCommon : public GreasePencilStrokeOperation {
 
 /* Operations */
 
-std::unique_ptr<GreasePencilStrokeOperation> new_paint_operation(bool temp_draw = false);
+std::unique_ptr<GreasePencilStrokeOperation> new_paint_operation(bool do_fill_guides = false);
 std::unique_ptr<GreasePencilStrokeOperation> new_erase_operation(bool temp_eraser = false);
-std::unique_ptr<GreasePencilStrokeOperation> new_tint_operation();
+std::unique_ptr<GreasePencilStrokeOperation> new_tint_operation(bool temp_eraser = false);
 std::unique_ptr<GreasePencilStrokeOperation> new_weight_paint_draw_operation(
-    const BrushStrokeMode &brush_mode);
+    const BrushStrokeMode &stroke_mode);
 std::unique_ptr<GreasePencilStrokeOperation> new_weight_paint_blur_operation();
 std::unique_ptr<GreasePencilStrokeOperation> new_weight_paint_average_operation();
 std::unique_ptr<GreasePencilStrokeOperation> new_weight_paint_smear_operation();

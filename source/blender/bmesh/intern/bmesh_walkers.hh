@@ -10,22 +10,24 @@
 
 #include "bmesh_class.hh"
 
+#include "BLI_set.hh"
+
 /*
  * NOTE: do NOT modify topology while walking a mesh!
  */
 
-typedef enum {
+enum BMWOrder {
   BMW_DEPTH_FIRST,
   BMW_BREADTH_FIRST,
-} BMWOrder;
+};
 
-typedef enum {
+enum BMWFlag {
   BMW_FLAG_NOP = 0,
   BMW_FLAG_TEST_HIDDEN = (1 << 0),
-} BMWFlag;
+};
 
 /*Walkers*/
-typedef struct BMWalker {
+struct BMWalker {
   char begin_htype; /* only for validating input */
   void (*begin)(struct BMWalker *walker, void *start);
   void *(*step)(struct BMWalker *walker);
@@ -49,19 +51,19 @@ typedef struct BMWalker {
 
   BMWFlag flag;
 
-  struct GSet *visit_set;
-  struct GSet *visit_set_alt;
+  blender::Set<const void *> *visit_set;
+  blender::Set<const void *> *visit_set_alt;
   int depth;
-} BMWalker;
+};
 
 /* define to make BMW_init more clear */
 #define BMW_MASK_NOP 0
 
 /**
- * \brief Init Walker
+ * \brief Initialize Walker
  *
  * Allocates and returns a new mesh walker of a given type.
- * The elements visited are filtered by the bitmask 'searchmask'.
+ * The elements visited are filtered by the bit-mask `searchmask`.
  */
 void BMW_init(struct BMWalker *walker,
               BMesh *bm,

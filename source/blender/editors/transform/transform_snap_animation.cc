@@ -18,7 +18,7 @@
 #include "transform.hh"
 #include "transform_snap.hh"
 
-using namespace blender;
+namespace blender::ed::transform {
 
 /* -------------------------------------------------------------------- */
 /** \name Snapping in Anim Editors
@@ -48,10 +48,12 @@ void snapFrameTransform(TransInfo *t,
     }
     case SCE_SNAP_TO_SECOND: {
       if (snap_flag & SCE_SNAP_ABS_TIME_STEP) {
-        *r_val_final = floorf((val_final / FPS) + 0.5) * FPS;
+        *r_val_final = floorf((val_final / scene->frames_per_second()) + 0.5) *
+                       scene->frames_per_second();
       }
       else {
-        deltax = float(floor((deltax / FPS) + 0.5) * FPS);
+        deltax = float(floor((deltax / scene->frames_per_second()) + 0.5) *
+                       scene->frames_per_second());
         *r_val_final = val_initial + deltax;
       }
       break;
@@ -80,7 +82,7 @@ static void transform_snap_anim_flush_data_ex(
 
   AnimData *adt = nullptr;
   if (!ELEM(t->spacetype, SPACE_NLA, SPACE_SEQ) && !(td->flag & TD_GREASE_PENCIL_FRAME)) {
-    /* #TD_GREASE_PENCIL_FRAME stores #blender::bke::greasepencil::Layer* in
+    /* #TD_GREASE_PENCIL_FRAME stores #bke::greasepencil::Layer* in
      * `td->extra`, and not the #AnimData. */
     adt = static_cast<AnimData *>(td->extra);
   }
@@ -183,3 +185,5 @@ bool transform_snap_nla_calc(TransInfo *t, float *vec)
 }
 
 /** \} */
+
+}  // namespace blender::ed::transform

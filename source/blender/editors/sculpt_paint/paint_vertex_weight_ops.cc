@@ -9,6 +9,8 @@
 #include "MEM_guardedalloc.h"
 
 #include "BLI_bitmap.h"
+#include "BLI_enum_flags.hh"
+#include "BLI_listbase.h"
 #include "BLI_math_geom.h"
 #include "BLI_math_vector.h"
 
@@ -46,6 +48,7 @@
 #include "ED_view3d.hh"
 
 #include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "paint_intern.hh" /* own include */
@@ -74,8 +77,7 @@ static void wpaint_prev_create(WPaintPrev *wpp, MDeformVert *dverts, int dcount)
   wpaint_prev_init(wpp);
 
   if (dverts && dcount) {
-    wpp->wpaint_prev = static_cast<MDeformVert *>(
-        MEM_malloc_arrayN(dcount, sizeof(MDeformVert), __func__));
+    wpp->wpaint_prev = MEM_malloc_arrayN<MDeformVert>(dcount, __func__);
     wpp->tot = dcount;
     BKE_defvert_array_copy(wpp->wpaint_prev, dverts, dcount);
   }
@@ -103,7 +105,7 @@ static bool weight_from_bones_poll(bContext *C)
   return (ob && (ob->mode & OB_MODE_WEIGHT_PAINT) && BKE_modifiers_is_deformed_by_armature(ob));
 }
 
-static int weight_from_bones_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus weight_from_bones_exec(bContext *C, wmOperator *op)
 {
   Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
   Scene *scene = CTX_data_scene(C);
@@ -141,7 +143,7 @@ void PAINT_OT_weight_from_bones(wmOperatorType *ot)
       ("Set the weights of the groups matching the attached armature's selected bones, "
        "using the distance between the vertices and the bones");
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = weight_from_bones_exec;
   ot->invoke = WM_menu_invoke;
   ot->poll = weight_from_bones_poll;
@@ -165,7 +167,7 @@ void PAINT_OT_weight_from_bones(wmOperatorType *ot)
  *
  * \note we can't sample front-buffer, weight colors are interpolated too unpredictable.
  */
-static int weight_sample_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus weight_sample_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
   Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
   Mesh *mesh;
@@ -180,7 +182,7 @@ static int weight_sample_invoke(bContext *C, wmOperator *op, const wmEvent *even
     int v_idx_best = -1;
     uint index;
 
-    view3d_operator_needs_opengl(C);
+    view3d_operator_needs_gpu(C);
     ED_view3d_init_mats_rv3d(vc.obact, vc.rv3d);
 
     if (use_vert_sel) {
@@ -257,7 +259,7 @@ static int weight_sample_invoke(bContext *C, wmOperator *op, const wmEvent *even
       MEM_SAFE_FREE(defbase_unlocked);
 
       CLAMP(vgroup_weight, 0.0f, 1.0f);
-      BKE_brush_weight_set(vc.scene, brush, vgroup_weight);
+      BKE_brush_weight_set(&ts->wpaint->paint, brush, vgroup_weight);
       changed = true;
     }
   }
@@ -278,7 +280,7 @@ void PAINT_OT_weight_sample(wmOperatorType *ot)
   ot->idname = "PAINT_OT_weight_sample";
   ot->description = "Use the mouse to sample a weight in the 3D view";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = weight_sample_invoke;
   ot->poll = weight_paint_mode_poll;
 
@@ -312,7 +314,9 @@ static bool weight_paint_sample_mark_groups(const MDeformVert *dvert,
   return found;
 }
 
-static int weight_sample_group_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus weight_sample_group_invoke(bContext *C,
+                                                   wmOperator *op,
+                                                   const wmEvent *event)
 {
   Depsgraph *depsgraph = CTX_data_depsgraph_pointer(C);
   ViewContext vc = ED_view3d_viewcontext_init(C, depsgraph);
@@ -330,7 +334,7 @@ static int weight_sample_group_invoke(bContext *C, wmOperator *op, const wmEvent
 
   bool found = false;
 
-  view3d_operator_needs_opengl(C);
+  view3d_operator_needs_gpu(C);
   ED_view3d_init_mats_rv3d(vc.obact, vc.rv3d);
 
   if (use_vert_sel) {
@@ -361,18 +365,17 @@ static int weight_sample_group_invoke(bContext *C, wmOperator *op, const wmEvent
 
   uiPopupMenu *pup = UI_popup_menu_begin(
       C, WM_operatortype_name(op->type, op->ptr).c_str(), ICON_NONE);
-  uiLayout *layout = UI_popup_menu_layout(pup);
+  blender::ui::Layout &layout = *UI_popup_menu_layout(pup);
   wmOperatorType *ot = WM_operatortype_find("OBJECT_OT_vertex_group_set_active", false);
-  wmOperatorCallContext opcontext = WM_OP_EXEC_DEFAULT;
-  uiLayoutSetOperatorContext(layout, opcontext);
+  blender::wm::OpCallContext opcontext = blender::wm::OpCallContext::ExecDefault;
+  layout.operator_context_set(opcontext);
   int i = 0;
   LISTBASE_FOREACH_INDEX (bDeformGroup *, dg, &mesh->vertex_group_names, i) {
     if (groups[i] == false) {
       continue;
     }
-    PointerRNA op_ptr;
-    uiItemFullO_ptr(
-        layout, ot, dg->name, ICON_NONE, nullptr, WM_OP_EXEC_DEFAULT, UI_ITEM_NONE, &op_ptr);
+    PointerRNA op_ptr = layout.op(
+        ot, dg->name, ICON_NONE, blender::wm::OpCallContext::ExecDefault, UI_ITEM_NONE);
     RNA_property_enum_set(&op_ptr, ot->prop, i);
   }
   UI_popup_menu_end(C, pup);
@@ -387,7 +390,7 @@ void PAINT_OT_weight_sample_group(wmOperatorType *ot)
   ot->idname = "PAINT_OT_weight_sample_group";
   ot->description = "Select one of the vertex groups available under current mouse position";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = weight_sample_group_invoke;
   ot->poll = weight_paint_mode_region_view3d_poll;
 
@@ -491,13 +494,12 @@ static bool weight_paint_set(Object *ob, float paintweight)
   return true;
 }
 
-static int weight_paint_set_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus weight_paint_set_exec(bContext *C, wmOperator *op)
 {
-  Scene *scene = CTX_data_scene(C);
   Object *obact = CTX_data_active_object(C);
   ToolSettings *ts = CTX_data_tool_settings(C);
   Brush *brush = BKE_paint_brush(&ts->wpaint->paint);
-  float vgroup_weight = BKE_brush_weight_get(scene, brush);
+  float vgroup_weight = BKE_brush_weight_get(&ts->wpaint->paint, brush);
 
   if (ED_wpaint_ensure_data(C, op->reports, WPAINT_ENSURE_MIRROR, nullptr) == false) {
     return OPERATOR_CANCELLED;
@@ -517,7 +519,7 @@ void PAINT_OT_weight_set(wmOperatorType *ot)
   ot->idname = "PAINT_OT_weight_set";
   ot->description = "Fill the active vertex group with the current paint weight";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = weight_paint_set_exec;
   ot->poll = weight_paint_mode_poll;
 
@@ -542,7 +544,7 @@ struct WPGradient_vertStore {
   float weight_orig;
   Flag flag;
 };
-ENUM_OPERATORS(WPGradient_vertStore::Flag, WPGradient_vertStore::VGRAD_STORE_IS_MODIFIED);
+ENUM_OPERATORS(WPGradient_vertStore::Flag);
 
 struct WPGradient_vertStoreBase {
   WPaintPrev wpp;
@@ -594,10 +596,9 @@ static void gradientVert_update(WPGradient_userData *grad_data, int index)
     BLI_assert(grad_data->type == WPAINT_GRADIENT_TYPE_RADIAL);
     alpha = len_v2v2(grad_data->sco_start, vs->sco) * grad_data->sco_line_div;
   }
-  /* no need to clamp 'alpha' yet */
 
   /* adjust weight */
-  alpha = BKE_brush_curve_strength_clamped(grad_data->brush, alpha, 1.0f);
+  alpha = BKE_brush_curve_strength_clamped(grad_data->brush, std::max(0.0f, alpha), 1.0f);
 
   if (alpha != 0.0f) {
     MDeformVert *dv = &grad_data->dvert[index];
@@ -693,13 +694,15 @@ static void gradientVertInit__mapFunc(void *user_data,
   gradientVert_update(grad_data, index);
 }
 
-static int paint_weight_gradient_modal(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus paint_weight_gradient_modal(bContext *C,
+                                                    wmOperator *op,
+                                                    const wmEvent *event)
 {
   wmGesture *gesture = static_cast<wmGesture *>(op->customdata);
   WPGradient_vertStoreBase *vert_cache = static_cast<WPGradient_vertStoreBase *>(
       gesture->user_data.data);
   Object *ob = CTX_data_active_object(C);
-  int ret;
+  wmOperatorStatus ret;
 
   if (BKE_object_defgroup_active_is_locked(ob)) {
     BKE_report(op->reports, RPT_WARNING, "Active group is locked, aborting");
@@ -741,7 +744,7 @@ static int paint_weight_gradient_modal(bContext *C, wmOperator *op, const wmEven
   return ret;
 }
 
-static int paint_weight_gradient_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus paint_weight_gradient_exec(bContext *C, wmOperator *op)
 {
   using namespace blender;
   wmGesture *gesture = static_cast<wmGesture *>(op->customdata);
@@ -816,16 +819,16 @@ static int paint_weight_gradient_exec(bContext *C, wmOperator *op)
     VPaint *wp = ts->wpaint;
     Brush *brush = BKE_paint_brush(&wp->paint);
 
-    BKE_curvemapping_init(brush->curve);
+    BKE_curvemapping_init(brush->curve_distance_falloff);
 
     data.brush = brush;
-    data.weightpaint = BKE_brush_weight_get(scene, brush);
+    data.weightpaint = BKE_brush_weight_get(&wp->paint, brush);
     data.use_vgroup_restrict = (ts->wpaint->flag & VP_FLAG_VGROUP_RESTRICT) != 0;
   }
 
   ED_view3d_init_mats_rv3d(ob, static_cast<RegionView3D *>(region->regiondata));
 
-  const Object *ob_eval = DEG_get_evaluated_object(depsgraph, ob);
+  const Object *ob_eval = DEG_get_evaluated(depsgraph, ob);
   const Mesh *mesh_eval = BKE_object_get_evaluated_mesh(ob_eval);
   if (data.is_init) {
     data.vert_visit = BLI_BITMAP_NEW(mesh->verts_num, __func__);
@@ -849,20 +852,23 @@ static int paint_weight_gradient_exec(bContext *C, wmOperator *op)
   if (scene->toolsettings->auto_normalize) {
     const int vgroup_num = BLI_listbase_count(&mesh->vertex_group_names);
     bool *lock_flags = BKE_object_defgroup_lock_flags_get(ob, vgroup_num);
+    if (!lock_flags) {
+      lock_flags = MEM_malloc_arrayN<bool>(vgroup_num, "lock_flags");
+      std::memset(lock_flags, 0, vgroup_num); /* Clear to false. */
+      lock_flags[data.def_nr] = true;
+    }
     bool *vgroup_validmap = BKE_object_defgroup_validmap_get(ob, vgroup_num);
     if (vgroup_validmap != nullptr) {
       MDeformVert *dvert = dverts;
+      Span<bool> subset_flags_span = Span(vgroup_validmap, vgroup_num);
+      Span<bool> lock_flags_span = Span(lock_flags, vgroup_num);
+
       for (int i = 0; i < mesh->verts_num; i++) {
         if ((data.vert_cache->elem[i].flag & WPGradient_vertStore::VGRAD_STORE_IS_MODIFIED) != 0) {
-          if (lock_flags != nullptr) {
-            BKE_defvert_normalize_lock_map(
-                &dvert[i], vgroup_validmap, vgroup_num, lock_flags, vgroup_num);
-          }
-          else {
-            BKE_defvert_normalize_lock_single(&dvert[i], vgroup_validmap, vgroup_num, data.def_nr);
-          }
+          BKE_defvert_normalize_lock_map(dvert[i], subset_flags_span, lock_flags_span);
         }
       }
+      MEM_SAFE_FREE(lock_flags);
       MEM_freeN(vgroup_validmap);
     }
   }
@@ -870,9 +876,11 @@ static int paint_weight_gradient_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int paint_weight_gradient_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus paint_weight_gradient_invoke(bContext *C,
+                                                     wmOperator *op,
+                                                     const wmEvent *event)
 {
-  int ret;
+  wmOperatorStatus ret;
 
   if (ED_wpaint_ensure_data(C, op->reports, eWPaintFlag(0), nullptr) == false) {
     return OPERATOR_CANCELLED;
@@ -908,7 +916,7 @@ void PAINT_OT_weight_gradient(wmOperatorType *ot)
   ot->idname = "PAINT_OT_weight_gradient";
   ot->description = "Draw a line to apply a weight gradient to selected vertices";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = paint_weight_gradient_invoke;
   ot->modal = paint_weight_gradient_modal;
   ot->exec = paint_weight_gradient_exec;

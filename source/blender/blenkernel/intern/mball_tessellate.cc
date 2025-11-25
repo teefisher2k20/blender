@@ -19,6 +19,7 @@
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 
+#include "BLI_listbase.h"
 #include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
@@ -37,7 +38,7 @@
 #include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_query.hh"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 /* experimental (faster) normal calculation (see #103021) */
 #define USE_ACCUM_NORMAL
@@ -311,7 +312,7 @@ static float densfunc(const MetaElem *ball, float x, float y, float z)
   float dist2;
   float dvec[3] = {x, y, z};
 
-  mul_m4_v3((const float(*)[4])ball->imat, dvec);
+  mul_m4_v3((const float (*)[4])ball->imat, dvec);
 
   switch (ball->type) {
     case MB_BALL:
@@ -443,7 +444,7 @@ static void make_face(PROCESS *process, int i1, int i2, int i3, int i4)
 
   if (UNLIKELY(process->totindex == process->curindex)) {
     process->totindex = process->totindex ? (process->totindex * 2) : MBALL_ARRAY_LEN_INIT;
-    process->indices = static_cast<int(*)[4]>(
+    process->indices = static_cast<int (*)[4]>(
         MEM_reallocN(process->indices, sizeof(int[4]) * process->totindex));
   }
 
@@ -766,7 +767,7 @@ static void makecubetable()
     for (e = 0; e < 12; e++) {
       if (!done[e] && (pos[corner1[e]] != pos[corner2[e]])) {
         INTLIST *ints = nullptr;
-        INTLISTS *lists = static_cast<INTLISTS *>(MEM_callocN(sizeof(INTLISTS), "mball_intlist"));
+        INTLISTS *lists = MEM_callocN<INTLISTS>("mball_intlist");
         int start = e, edge = e;
 
         /* get face that is to right of edge from pos to neg corner: */
@@ -778,7 +779,7 @@ static void makecubetable()
           if (pos[corner1[edge]] != pos[corner2[edge]]) {
             INTLIST *tmp = ints;
 
-            ints = static_cast<INTLIST *>(MEM_callocN(sizeof(INTLIST), "mball_intlist"));
+            ints = MEM_callocN<INTLIST>("mball_intlist");
             ints->i = edge;
             ints->next = tmp; /* add edge to head of list */
 
@@ -1135,14 +1136,11 @@ static void polygonize(PROCESS *process)
 {
   CUBE c;
 
-  process->centers = static_cast<CENTERLIST **>(
-      MEM_callocN(HASHSIZE * sizeof(CENTERLIST *), "mbproc->centers"));
-  process->corners = static_cast<CORNER **>(
-      MEM_callocN(HASHSIZE * sizeof(CORNER *), "mbproc->corners"));
-  process->edges = static_cast<EDGELIST **>(
-      MEM_callocN(2 * HASHSIZE * sizeof(EDGELIST *), "mbproc->edges"));
-  process->bvh_queue = static_cast<MetaballBVHNode **>(
-      MEM_callocN(sizeof(MetaballBVHNode *) * process->bvh_queue_size, "Metaball BVH Queue"));
+  process->centers = MEM_calloc_arrayN<CENTERLIST *>(HASHSIZE, "mbproc->centers");
+  process->corners = MEM_calloc_arrayN<CORNER *>(HASHSIZE, "mbproc->corners");
+  process->edges = MEM_calloc_arrayN<EDGELIST *>(2 * HASHSIZE, "mbproc->edges");
+  process->bvh_queue = MEM_calloc_arrayN<MetaballBVHNode *>(process->bvh_queue_size,
+                                                            "Metaball BVH Queue");
 
   makecubetable();
 
@@ -1280,9 +1278,9 @@ static void init_meta(Depsgraph *depsgraph, PROCESS *process, Scene *scene, Obje
        *   rotation ->
        *   ml local space
        */
-      mul_m4_series((float(*)[4])new_ml->mat, obinv, bob->object_to_world().ptr(), pos, rot);
+      mul_m4_series((float (*)[4])new_ml->mat, obinv, bob->object_to_world().ptr(), pos, rot);
       /* ml local space -> basis object space */
-      invert_m4_m4((float(*)[4])new_ml->imat, (float(*)[4])new_ml->mat);
+      invert_m4_m4((float (*)[4])new_ml->imat, (float (*)[4])new_ml->mat);
 
       /* rad2 is inverse of squared radius */
       new_ml->rad2 = 1 / (ml->rad * ml->rad);
@@ -1325,7 +1323,7 @@ static void init_meta(Depsgraph *depsgraph, PROCESS *process, Scene *scene, Obje
 
       /* Transformation of meta-elem bounding-box. */
       for (uint i = 0; i < 8; i++) {
-        mul_m4_v3((float(*)[4])new_ml->mat, new_ml->bb->vec[i]);
+        mul_m4_v3((float (*)[4])new_ml->mat, new_ml->bb->vec[i]);
       }
 
       /* Find max and min of transformed bounding-box. */
@@ -1412,15 +1410,20 @@ Mesh *BKE_mball_polygonize(Depsgraph *depsgraph, Scene *scene, Object *ob)
 
   build_bvh_spatial(&process, &process.metaball_bvh, 0, process.totelem, &process.allbb);
 
-  /* Don't polygonize meta-balls with too high resolution (base meta-ball too small).
-   * NOTE: Epsilon was 0.0001f but this was giving problems for blood animation for
-   * the open movie "Sintel", using 0.00001f. */
-  if (ob->scale[0] < 0.00001f * (process.allbb.max[0] - process.allbb.min[0]) ||
-      ob->scale[1] < 0.00001f * (process.allbb.max[1] - process.allbb.min[1]) ||
-      ob->scale[2] < 0.00001f * (process.allbb.max[2] - process.allbb.min[2]))
   {
-    freepolygonize(&process);
-    return nullptr;
+    /* Don't polygonize meta-balls with too high resolution (base meta-ball too small).
+     * NOTE: Epsilon was 0.0001f but this was giving problems for blood animation for
+     * the open movie "Sintel", using 0.00001f. */
+    const float eps = 0.00001f;
+    const blender::float4x4 &object_to_world = ob->object_to_world();
+    for (int i = 0; i < 3; i++) {
+      if (blender::math::length_squared(object_to_world[i].xyz()) <
+          blender::math::square(eps * (process.allbb.max[i] - process.allbb.min[i])))
+      {
+        freepolygonize(&process);
+        return nullptr;
+      }
+    }
   }
 
   polygonize(&process);

@@ -15,9 +15,8 @@
 #include "BKE_nla.hh"
 #include "BKE_node.hh"
 
+#include "BLI_listbase.h"
 #include "BLI_set.hh"
-
-#include "DNA_anim_types.h"
 
 #include "ANIM_action.hh"
 #include "ANIM_action_iterators.hh"

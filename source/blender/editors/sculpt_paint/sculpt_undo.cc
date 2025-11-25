@@ -4,7 +4,7 @@
 
 /** \file
  * \ingroup edsculpt
- * Implements the Sculpt Mode tools.
+ * Implements the Sculpt Mode undo system.
  *
  * Usage Guide
  * ===========
@@ -12,32 +12,32 @@
  * The sculpt undo system is a delta-based system. Each undo step stores the difference with the
  * prior one.
  *
- * To use the sculpt undo system, you must call push_begin inside an operator exec or invoke
- * callback (geometry_begin may be called if you wish to save a non-delta copy of the entire mesh).
- * This will initialize the sculpt undo stack and set up an undo step.
+ * To use the sculpt undo system, you must call #push_begin inside an operator exec or invoke
+ * callback (#geometry_begin may be called if you wish to save a non-delta copy of the entire
+ * mesh). This will initialize the sculpt undo stack and set up an undo step.
  *
- * At the end of the operator you should call push_end.
+ * At the end of the operator you should call #push_end.
  *
- * push_begin and geometry_begin both take a #wmOperatorType as an argument. There are _ex versions
- * that allow a custom name; try to avoid using them. These can break the redo panel since it
- * requires the undo push to have the same name as the calling operator.
- *
- * NOTE: Sculpt undo steps are not appended to the global undo stack until the operator finishes.
- * We use BKE_undosys_step_push_init_with_type to build a tentative undo step with is appended
- * later when the operator ends. Operators must have the OPTYPE_UNDO flag set for this to work
- * properly.
+ * #push_begin and #geometry_begin both take a #wmOperatorType as an argument. There are _ex
+ * versions that allow a custom name; try to avoid using them. These can break the redo panel since
+ * it requires the undo push to have the same name as the calling operator.
  */
 #include "sculpt_undo.hh"
 
 #include <mutex>
+#include <zstd.h>
 
 #include "CLG_log.h"
 
 #include "BLI_array.hh"
 #include "BLI_bit_group_vector.hh"
+#include "BLI_compression.hh"
+#include "BLI_enumerable_thread_specific.hh"
 #include "BLI_listbase.h"
 #include "BLI_map.hh"
-#include "BLI_string.h"
+#include "BLI_memory_counter.hh"
+#include "BLI_string_utf8.h"
+#include "BLI_task.h"
 #include "BLI_utildefines.h"
 #include "BLI_vector.hh"
 
@@ -47,6 +47,7 @@
 #include "DNA_screen_types.h"
 
 #include "BKE_attribute.hh"
+#include "BKE_attribute_legacy_convert.hh"
 #include "BKE_ccg.hh"
 #include "BKE_context.hh"
 #include "BKE_customdata.hh"
@@ -58,9 +59,9 @@
 #include "BKE_multires.hh"
 #include "BKE_object.hh"
 #include "BKE_paint.hh"
+#include "BKE_paint_types.hh"
 #include "BKE_scene.hh"
 #include "BKE_subdiv_ccg.hh"
-#include "BKE_subsurf.hh"
 #include "BKE_undo_system.hh"
 
 /* TODO(sergey): Ideally should be no direct call to such low level things. */
@@ -79,14 +80,18 @@
 #include "bmesh.hh"
 #include "mesh_brush_common.hh"
 #include "paint_hide.hh"
-#include "paint_intern.hh"
-#include "sculpt_automask.hh"
 #include "sculpt_color.hh"
 #include "sculpt_dyntopo.hh"
 #include "sculpt_face_set.hh"
 #include "sculpt_intern.hh"
 
-static CLG_LogRef LOG = {"ed.sculpt.undo"};
+// #define DEBUG_TIME
+
+#ifdef DEBUG_TIME
+#  include "BLI_timeit.hh"
+#endif
+
+static CLG_LogRef LOG = {"undo.sculpt"};
 
 namespace blender::ed::sculpt_paint::undo {
 
@@ -98,7 +103,7 @@ namespace blender::ed::sculpt_paint::undo {
  * Node type used for undo depends on specific operation and active sculpt mode ("regular" or
  * dynamic topology).
  *
- * Regular sculpt brushes will use Position, HideVert, HideFace, Mask, Face Set * nodes. These
+ * Regular sculpt brushes will use Position, HideVert, HideFace, Mask, FaceSet nodes. These
  * nodes are created for every BVH node which is affected by the brush. The undo push for the node
  * happens BEFORE modifications. This makes the operation undo to work in the following way: for
  * every node in the undo step swap happens between node in the undo stack and the corresponding
@@ -178,15 +183,20 @@ struct NodeGeometry {
   CustomData face_data;
   int *face_offset_indices;
   const ImplicitSharingInfo *face_offsets_sharing_info;
-  int totvert;
-  int totedge;
-  int totloop;
+  int verts_num;
+  int edges_num;
+  int corners_num;
   int faces_num;
 };
 
 struct Node;
+struct PositionUndoStorage;
 
 struct StepData {
+ private:
+  bool applied_ = true;
+
+ public:
   /**
    * The type of data stored in this undo step. For historical reasons this is often set when the
    * first undo node is pushed.
@@ -216,6 +226,16 @@ struct StepData {
   } grids;
 
   struct {
+    /**
+     * The current log entry for the given BMLog step. Represents the most recent step at the time
+     * that this entry is added.
+     *
+     * There are two usages of this pointer:
+     * - If undoing or redoing a enter / exit from Dyntopo, this entry is used to rebuild the
+     *   BMLog from all of the relevant entries
+     * - When an undo step is no longer valid, this is used to free the data that it holds and
+     *   remove it from the underlying list.
+     */
     BMLogEntry *bm_entry;
 
     /* Geometry at the bmesh enter moment. */
@@ -231,9 +251,7 @@ struct StepData {
   /* Modified geometry is stored after the modification and is restored from when redoing. */
   NodeGeometry geometry_modified;
 
-  bool applied;
-
-  std::mutex nodes_mutex;
+  Mutex nodes_mutex;
 
   /**
    * #undo::Node is stored per #pbvh::Node to reduce data storage needed for changes only impacting
@@ -248,8 +266,186 @@ struct StepData {
 
   /** Storage of per-node undo data after creation of the undo step is finished. */
   Vector<std::unique_ptr<Node>> nodes;
-
+  std::unique_ptr<PositionUndoStorage> position_step_storage;
   size_t undo_size;
+
+  /** Whether processing code needs to handle the current data as an undo step. */
+  bool needs_undo() const
+  {
+    return applied_;
+  }
+
+  void tag_needs_undo()
+  {
+    applied_ = true;
+  }
+
+  void tag_needs_redo()
+  {
+    applied_ = false;
+  }
+};
+
+namespace compression {
+
+/**
+ * Compress a span, using a prefiltering step that can improve compression speed and ratios for
+ * certain float data types.
+ */
+template<typename T>
+void filter_compress(const Span<T> src,
+                     Vector<std::byte> &filter_buffer,
+                     Vector<std::byte> &compress_buffer)
+{
+  filter_buffer.resize(src.size_in_bytes());
+  filter_transpose_delta(reinterpret_cast<const uint8_t *>(src.data()),
+                         reinterpret_cast<uint8_t *>(filter_buffer.data()),
+                         src.size(),
+                         sizeof(T));
+
+  /* Level 3 gives a good balance of compression performance and ratio, and is also used elsewhere
+   * across Blender for calls to #ZSTD_compress. */
+  constexpr int zstd_level = 3;
+  compress_buffer.resize(ZSTD_compressBound(src.size_in_bytes()));
+  const size_t dst_size = ZSTD_compress(compress_buffer.data(),
+                                        compress_buffer.size(),
+                                        filter_buffer.data(),
+                                        filter_buffer.size(),
+                                        zstd_level);
+  if (ZSTD_isError(dst_size)) {
+    compress_buffer.clear();
+    return;
+  }
+
+  compress_buffer.resize(dst_size);
+}
+
+template<typename T>
+void filter_decompress(const Span<std::byte> src, Vector<std::byte> &buffer, Vector<T> &dst)
+{
+  const unsigned long long dst_size_in_bytes = ZSTD_getFrameContentSize(src.data(), src.size());
+  if (ELEM(dst_size_in_bytes, ZSTD_CONTENTSIZE_ERROR, ZSTD_CONTENTSIZE_UNKNOWN)) {
+    dst.clear();
+    return;
+  }
+
+  buffer.resize(dst_size_in_bytes);
+  const size_t result = ZSTD_decompress(buffer.data(), buffer.size(), src.data(), src.size());
+  if (ZSTD_isError(result)) {
+    dst.clear();
+    return;
+  }
+
+  dst.resize(buffer.size() / sizeof(T));
+  unfilter_transpose_delta(reinterpret_cast<const uint8_t *>(buffer.data()),
+                           reinterpret_cast<uint8_t *>(dst.data()),
+                           dst.size(),
+                           sizeof(T));
+}
+
+template void filter_compress<float3>(Span<float3>, Vector<std::byte> &, Vector<std::byte> &);
+template void filter_compress<int>(Span<int>, Vector<std::byte> &, Vector<std::byte> &);
+
+template void filter_decompress<float3>(Span<std::byte>, Vector<std::byte> &, Vector<float3> &);
+template void filter_decompress<int>(Span<std::byte>, Vector<std::byte> &, Vector<int> &);
+
+}  // namespace compression
+
+struct PositionUndoStorage : NonMovable {
+  Vector<std::unique_ptr<Node>> nodes_to_compress;
+  bool multires_undo;
+
+  Array<Array<std::byte>> compressed_indices;
+
+  /* As undo and redo happen, the data in these arrays is swapped (an undo step becomes a redo
+   * step, and vice versa). */
+  Array<Array<std::byte>> compressed_positions;
+
+  Array<int> unique_verts_nums;
+
+  TaskPool *compression_task_pool;
+  std::atomic<bool> compression_ready = false;
+  std::atomic<bool> compression_started = false;
+  StepData *owner_step_data = nullptr;
+
+  explicit PositionUndoStorage(StepData &step_data)
+      : nodes_to_compress(std::move(step_data.nodes)), owner_step_data(&step_data)
+  {
+    this->multires_undo = step_data.grids.grids_num != 0;
+    if (!multires_undo) {
+      this->unique_verts_nums.reinitialize(this->nodes_to_compress.size());
+      for (const int i : this->nodes_to_compress.index_range()) {
+        this->unique_verts_nums[i] = this->nodes_to_compress[i]->unique_verts_num;
+      }
+    }
+
+    this->compression_task_pool = BLI_task_pool_create_background(this, TASK_PRIORITY_LOW);
+    this->compression_started = true;
+
+    BLI_task_pool_push(this->compression_task_pool, compress_fn, this, false, nullptr);
+  }
+
+  ~PositionUndoStorage()
+  {
+    if (compression_started.load() && compression_task_pool) {
+      BLI_task_pool_work_and_wait(compression_task_pool);
+      BLI_task_pool_free(compression_task_pool);
+    }
+  }
+
+  void ensure_compression_complete()
+  {
+    if (!compression_ready.load(std::memory_order_acquire)) {
+      BLI_task_pool_work_and_wait(compression_task_pool);
+    }
+  }
+
+  static void compress_fn(TaskPool * /*pool*/, void *task_data)
+  {
+#ifdef DEBUG_TIME
+    SCOPED_TIMER_AVERAGED(__func__);
+#endif
+    auto *data = static_cast<PositionUndoStorage *>(task_data);
+    MutableSpan<std::unique_ptr<Node>> nodes = data->nodes_to_compress;
+    const int nodes_num = nodes.size();
+
+    Array<Array<std::byte>> compressed_indices(nodes.size(), NoInitialization());
+    Array<Array<std::byte>> compressed_data(nodes.size(), NoInitialization());
+    struct CompressLocalData {
+      Vector<std::byte> filtered;
+      Vector<std::byte> compressed;
+    };
+    threading::isolate_task([&]() {
+      threading::EnumerableThreadSpecific<CompressLocalData> all_tls;
+      threading::parallel_for(IndexRange(nodes_num), 1, [&](const IndexRange range) {
+        CompressLocalData &local_data = all_tls.local();
+        for (const int i : range) {
+          const Span<int> indices = data->multires_undo ? nodes[i]->grids : nodes[i]->vert_indices;
+          const Span<float3> positions = !nodes[i]->orig_position.is_empty() ?
+                                             nodes[i]->orig_position :
+                                             nodes[i]->position;
+          compression::filter_compress(indices, local_data.filtered, local_data.compressed);
+          new (&compressed_indices[i]) Array<std::byte>(local_data.compressed.as_span());
+          compression::filter_compress(positions, local_data.filtered, local_data.compressed);
+          new (&compressed_data[i]) Array<std::byte>(local_data.compressed.as_span());
+          nodes[i].reset();
+        }
+      });
+    });
+    data->nodes_to_compress.clear_and_shrink();
+
+    size_t memory_size = 0;
+    for (const int i : IndexRange(nodes_num)) {
+      memory_size += compressed_indices[i].as_span().size_in_bytes();
+      memory_size += compressed_data[i].as_span().size_in_bytes();
+    }
+
+    data->compressed_indices = std::move(compressed_indices);
+    data->compressed_positions = std::move(compressed_data);
+    data->owner_step_data->undo_size += memory_size;
+
+    data->compression_ready.store(true, std::memory_order_release);
+  }
 };
 
 struct SculptUndoStep {
@@ -263,6 +459,21 @@ struct SculptUndoStep {
   /* Active color attribute at the end of this undo step. */
   SculptAttrRef active_color_end;
 };
+
+size_t step_memory_size_get(UndoStep *step)
+{
+  if (step->type != BKE_UNDOSYS_TYPE_SCULPT) {
+    return 0;
+  }
+
+  SculptUndoStep *sculpt_step = reinterpret_cast<SculptUndoStep *>(step);
+
+  if (sculpt_step->data.position_step_storage) {
+    sculpt_step->data.position_step_storage->ensure_compression_complete();
+  }
+
+  return sculpt_step->data.undo_size;
+}
 
 static SculptUndoStep *get_active_step()
 {
@@ -339,37 +550,57 @@ static void swap_indexed_data(MutableSpan<T> full, const Span<int> indices, Muta
 }
 
 static void restore_position_mesh(Object &object,
-                                  const Span<std::unique_ptr<Node>> unodes,
+                                  PositionUndoStorage &undo_data,
                                   const MutableSpan<bool> modified_verts)
 {
+#ifdef DEBUG_TIME
+  SCOPED_TIMER_AVERAGED(__func__);
+#endif
+  SculptSession &ss = *object.sculpt;
   Mesh &mesh = *static_cast<Mesh *>(object.data);
   MutableSpan<float3> positions = mesh.vert_positions_for_write();
   std::optional<ShapeKeyData> shape_key_data = ShapeKeyData::from_object(object);
 
-  threading::parallel_for(unodes.index_range(), 1, [&](const IndexRange range) {
-    for (const int node_i : range) {
-      Node &unode = *unodes[node_i];
-      const Span<int> verts = unode.vert_indices.as_span().take_front(unode.unique_verts_num);
+  undo_data.ensure_compression_complete();
 
-      if (unode.orig_position.is_empty()) {
+  const int nodes_num = undo_data.unique_verts_nums.size();
+
+  struct LocalData {
+    Vector<std::byte> compress_buffer;
+    Vector<std::byte> filter_buffer;
+    Vector<int> indices;
+    Vector<float3> positions;
+  };
+  threading::EnumerableThreadSpecific<LocalData> all_tls;
+  threading::parallel_for(IndexRange(nodes_num), 1, [&](const IndexRange range) {
+    LocalData &tls = all_tls.local();
+    for (const int i : range) {
+      compression::filter_decompress<int>(
+          undo_data.compressed_indices[i], tls.compress_buffer, tls.indices);
+      const int unique_verts_num = undo_data.unique_verts_nums[i];
+      const Span<int> verts = tls.indices.as_span().take_front(unique_verts_num);
+
+      compression::filter_decompress<float3>(
+          undo_data.compressed_positions[i], tls.compress_buffer, tls.positions);
+      MutableSpan undo_positions = tls.positions.as_mutable_span();
+
+      if (!ss.deform_modifiers_active) {
         /* When original positions aren't written separately in the undo step, there are no
          * deform modifiers. Therefore the original and evaluated deform positions will be the
          * same, and modifying the positions from the original mesh is enough. */
-        swap_indexed_data(
-            unode.position.as_mutable_span().take_front(unode.unique_verts_num), verts, positions);
+        swap_indexed_data(undo_positions.take_front(unique_verts_num), verts, positions);
       }
       else {
         /* When original positions are stored in the undo step, undo/redo will cause a reevaluation
          * of the object. The evaluation will recompute the evaluated positions, so dealing with
          * them here is unnecessary. */
-        MutableSpan<float3> undo_positions = unode.orig_position;
-
         if (shape_key_data) {
           MutableSpan<float3> active_data = shape_key_data->active_key_data;
 
           if (!shape_key_data->dependent_keys.is_empty()) {
             Array<float3, 1024> translations(verts.size());
-            translations_from_new_positions(undo_positions, verts, active_data, translations);
+            translations_from_new_positions(
+                undo_positions.take_front(unique_verts_num), verts, active_data, translations);
             for (MutableSpan<float3> data : shape_key_data->dependent_keys) {
               apply_translations(translations, verts, data);
             }
@@ -379,35 +610,61 @@ static void restore_position_mesh(Object &object,
             /* The basis key positions and the mesh positions are always kept in sync. */
             scatter_data_mesh(undo_positions.as_span(), verts, positions);
           }
-          swap_indexed_data(undo_positions.take_front(unode.unique_verts_num), verts, active_data);
+          swap_indexed_data(undo_positions.take_front(unique_verts_num), verts, active_data);
         }
         else {
           /* There is a deform modifier, but no shape keys. */
-          swap_indexed_data(undo_positions.take_front(unode.unique_verts_num), verts, positions);
+          swap_indexed_data(undo_positions.take_front(unique_verts_num), verts, positions);
         }
       }
+
       modified_verts.fill_indices(verts, true);
+
+      compression::filter_compress<float3>(undo_positions, tls.filter_buffer, tls.compress_buffer);
+      undo_data.compressed_positions[i] = tls.compress_buffer.as_span();
     }
   });
 }
 
 static void restore_position_grids(const MutableSpan<float3> positions,
                                    const CCGKey &key,
-                                   Node &unode,
+                                   PositionUndoStorage &undo_data,
                                    const MutableSpan<bool> modified_grids)
 {
-  const Span<int> grids = unode.grids;
-  const MutableSpan<float3> undo_position = unode.position;
+  const int nodes_num = undo_data.compressed_indices.size();
 
-  for (const int i : grids.index_range()) {
-    MutableSpan data = positions.slice(bke::ccg::grid_range(key, grids[i]));
-    MutableSpan undo_data = undo_position.slice(bke::ccg::grid_range(key, i));
-    for (const int offset : data.index_range()) {
-      std::swap(data[offset], undo_data[offset]);
+  struct LocalData {
+    Vector<std::byte> compress_buffer;
+    Vector<std::byte> filter_buffer;
+    Vector<int> indices;
+    Vector<float3> positions;
+  };
+  threading::EnumerableThreadSpecific<LocalData> all_tls;
+  threading::parallel_for(IndexRange(nodes_num), 1, [&](const IndexRange range) {
+    LocalData &tls = all_tls.local();
+    for (const int i : range) {
+      compression::filter_decompress<int>(
+          undo_data.compressed_indices[i], tls.compress_buffer, tls.indices);
+      const Span<int> grids = tls.indices.as_span();
+
+      compression::filter_decompress<float3>(
+          undo_data.compressed_positions[i], tls.compress_buffer, tls.positions);
+      MutableSpan node_positions = tls.positions.as_mutable_span();
+
+      for (const int i : grids.index_range()) {
+        MutableSpan data = positions.slice(bke::ccg::grid_range(key, grids[i]));
+        MutableSpan undo_data = node_positions.slice(bke::ccg::grid_range(key, i));
+        for (const int offset : data.index_range()) {
+          std::swap(data[offset], undo_data[offset]);
+        }
+      }
+
+      modified_grids.fill_indices(grids, true);
+
+      compression::filter_compress<float3>(node_positions, tls.filter_buffer, tls.compress_buffer);
+      undo_data.compressed_positions[i] = tls.compress_buffer.as_span();
     }
-  }
-
-  modified_grids.fill_indices(grids, true);
+  });
 }
 
 static void restore_vert_visibility_mesh(Object &object,
@@ -566,15 +823,16 @@ static bool restore_face_sets(Object &object,
   return modified;
 }
 
-static void bmesh_restore_generic(StepData &step_data, Object &object, const SculptSession &ss)
+static void bmesh_restore_generic(StepData &step_data, Object &object)
 {
-  if (step_data.applied) {
+  SculptSession &ss = *object.sculpt;
+  if (step_data.needs_undo()) {
     BM_log_undo(ss.bm, ss.bm_log);
-    step_data.applied = false;
+    step_data.tag_needs_redo();
   }
   else {
     BM_log_redo(ss.bm, ss.bm_log);
-    step_data.applied = true;
+    step_data.tag_needs_undo();
   }
 
   if (step_data.type == Type::Mask) {
@@ -582,6 +840,7 @@ static void bmesh_restore_generic(StepData &step_data, Object &object, const Scu
     IndexMaskMemory memory;
     const IndexMask node_mask = bke::pbvh::all_leaf_nodes(pbvh, memory);
     pbvh.tag_masks_changed(node_mask);
+    bke::pbvh::update_mask_bmesh(*ss.bm, node_mask, pbvh);
   }
   else {
     BKE_sculptsession_free_pbvh(object);
@@ -612,42 +871,38 @@ static void bmesh_enable(Object &object, const StepData &step_data)
   ss.bm_log = BM_log_from_existing_entries_create(ss.bm, step_data.bmesh.bm_entry);
 }
 
-static void bmesh_restore_begin(bContext *C,
-                                StepData &step_data,
-                                Object &object,
-                                const SculptSession &ss)
+static void bmesh_handle_dyntopo_begin(bContext *C, StepData &step_data, Object &object)
 {
-  if (step_data.applied) {
+  if (step_data.needs_undo()) {
     dyntopo::disable(C, &step_data);
-    step_data.applied = false;
+    step_data.tag_needs_redo();
   }
-  else {
+  else /* needs_redo */ {
+    SculptSession &ss = *object.sculpt;
     bmesh_enable(object, step_data);
 
     /* Restore the mesh from the first log entry. */
     BM_log_redo(ss.bm, ss.bm_log);
 
-    step_data.applied = true;
+    step_data.tag_needs_undo();
   }
 }
 
-static void bmesh_restore_end(bContext *C,
-                              StepData &step_data,
-                              Object &object,
-                              const SculptSession &ss)
+static void bmesh_handle_dyntopo_end(bContext *C, StepData &step_data, Object &object)
 {
-  if (step_data.applied) {
+  if (step_data.needs_undo()) {
+    SculptSession &ss = *object.sculpt;
     bmesh_enable(object, step_data);
 
     /* Restore the mesh from the last log entry. */
     BM_log_undo(ss.bm, ss.bm_log);
 
-    step_data.applied = false;
+    step_data.tag_needs_redo();
   }
-  else {
+  else /* needs_redo */ {
     /* Disable dynamic topology sculpting. */
     dyntopo::disable(C, nullptr);
-    step_data.applied = true;
+    step_data.tag_needs_undo();
   }
 }
 
@@ -671,9 +926,9 @@ static void store_geometry_data(NodeGeometry *geometry, const Object &object)
                                         &geometry->face_offset_indices,
                                         &geometry->face_offsets_sharing_info);
 
-  geometry->totvert = mesh->verts_num;
-  geometry->totedge = mesh->edges_num;
-  geometry->totloop = mesh->corners_num;
+  geometry->verts_num = mesh->verts_num;
+  geometry->edges_num = mesh->edges_num;
+  geometry->corners_num = mesh->corners_num;
   geometry->faces_num = mesh->faces_num;
 }
 
@@ -683,18 +938,18 @@ static void restore_geometry_data(const NodeGeometry *geometry, Mesh *mesh)
 
   BKE_mesh_clear_geometry(mesh);
 
-  mesh->verts_num = geometry->totvert;
-  mesh->edges_num = geometry->totedge;
-  mesh->corners_num = geometry->totloop;
+  mesh->verts_num = geometry->verts_num;
+  mesh->edges_num = geometry->edges_num;
+  mesh->corners_num = geometry->corners_num;
   mesh->faces_num = geometry->faces_num;
   mesh->totface_legacy = 0;
 
   CustomData_init_from(
-      &geometry->vert_data, &mesh->vert_data, CD_MASK_MESH.vmask, geometry->totvert);
+      &geometry->vert_data, &mesh->vert_data, CD_MASK_MESH.vmask, geometry->verts_num);
   CustomData_init_from(
-      &geometry->edge_data, &mesh->edge_data, CD_MASK_MESH.emask, geometry->totedge);
+      &geometry->edge_data, &mesh->edge_data, CD_MASK_MESH.emask, geometry->edges_num);
   CustomData_init_from(
-      &geometry->corner_data, &mesh->corner_data, CD_MASK_MESH.lmask, geometry->totloop);
+      &geometry->corner_data, &mesh->corner_data, CD_MASK_MESH.lmask, geometry->corners_num);
   CustomData_init_from(
       &geometry->face_data, &mesh->face_data, CD_MASK_MESH.pmask, geometry->faces_num);
   implicit_sharing::copy_shared_pointer(geometry->face_offset_indices,
@@ -705,10 +960,10 @@ static void restore_geometry_data(const NodeGeometry *geometry, Mesh *mesh)
 
 static void geometry_free_data(NodeGeometry *geometry)
 {
-  CustomData_free(&geometry->vert_data, geometry->totvert);
-  CustomData_free(&geometry->edge_data, geometry->totedge);
-  CustomData_free(&geometry->corner_data, geometry->totloop);
-  CustomData_free(&geometry->face_data, geometry->faces_num);
+  CustomData_free(&geometry->vert_data);
+  CustomData_free(&geometry->edge_data);
+  CustomData_free(&geometry->corner_data);
+  CustomData_free(&geometry->face_data);
   implicit_sharing::free_shared_data(&geometry->face_offset_indices,
                                      &geometry->face_offsets_sharing_info);
 }
@@ -720,13 +975,13 @@ static void restore_geometry(StepData &step_data, Object &object)
 
   Mesh *mesh = static_cast<Mesh *>(object.data);
 
-  if (step_data.applied) {
-    restore_geometry_data(&step_data.geometry_modified, mesh);
-    step_data.applied = false;
+  if (step_data.needs_undo()) {
+    restore_geometry_data(&step_data.geometry_original, mesh);
+    step_data.tag_needs_redo();
   }
   else {
-    restore_geometry_data(&step_data.geometry_original, mesh);
-    step_data.applied = true;
+    restore_geometry_data(&step_data.geometry_modified, mesh);
+    step_data.tag_needs_undo();
   }
 }
 
@@ -734,26 +989,23 @@ static void restore_geometry(StepData &step_data, Object &object)
  *
  * Returns true if this was a dynamic-topology undo step, otherwise
  * returns false to indicate the non-dyntopo code should run. */
-static int bmesh_restore(bContext *C,
-                         Depsgraph &depsgraph,
-                         StepData &step_data,
-                         Object &object,
-                         const SculptSession &ss)
+static int bmesh_restore(bContext *C, Depsgraph &depsgraph, StepData &step_data, Object &object)
 {
+  SculptSession &ss = *object.sculpt;
   switch (step_data.type) {
     case Type::DyntopoBegin:
       BKE_sculpt_update_object_for_edit(&depsgraph, &object, false);
-      bmesh_restore_begin(C, step_data, object, ss);
+      bmesh_handle_dyntopo_begin(C, step_data, object);
       return true;
 
     case Type::DyntopoEnd:
       BKE_sculpt_update_object_for_edit(&depsgraph, &object, false);
-      bmesh_restore_end(C, step_data, object, ss);
+      bmesh_handle_dyntopo_end(C, step_data, object);
       return true;
     default:
       if (ss.bm_log) {
         BKE_sculpt_update_object_for_edit(&depsgraph, &object, false);
-        bmesh_restore_generic(step_data, object, ss);
+        bmesh_restore_generic(step_data, object);
         return true;
       }
       break;
@@ -767,7 +1019,7 @@ void restore_from_bmesh_enter_geometry(const StepData &step_data, Mesh &mesh)
   restore_geometry_data(&step_data.bmesh.geometry_enter, &mesh);
 }
 
-BMLogEntry *get_bmesh_log_entry()
+bool has_bmesh_log_entry()
 {
   return get_step_data()->bmesh.bm_entry;
 }
@@ -808,18 +1060,19 @@ static void restore_list(bContext *C, Depsgraph *depsgraph, StepData &step_data)
     return;
   }
   SculptSession &ss = *object.sculpt;
-  bke::pbvh::Tree &pbvh = *bke::object::pbvh_get(object);
+  bke::pbvh::Tree &pbvh = bke::object::pbvh_ensure(*depsgraph, object);
 
   /* Restore pivot. */
   ss.pivot_pos = step_data.pivot_pos;
   ss.pivot_rot = step_data.pivot_rot;
 
-  if (bmesh_restore(C, *depsgraph, step_data, object, ss)) {
+  if (bmesh_restore(C, *depsgraph, step_data, object)) {
     return;
   }
 
   /* Switching to sculpt mode does not push a particular type.
    * See #124484. */
+  /* TODO: Add explicit type for switching into Sculpt Mode. */
   if (step_data.type == Type::None && step_data.nodes.is_empty()) {
     return;
   }
@@ -860,9 +1113,9 @@ static void restore_list(bContext *C, Depsgraph *depsgraph, StepData &step_data)
         const CCGKey key = BKE_subdiv_ccg_key_top_level(subdiv_ccg);
 
         Array<bool> modified_grids(subdiv_ccg.grids_num, false);
-        for (std::unique_ptr<Node> &unode : step_data.nodes) {
-          restore_position_grids(subdiv_ccg.positions, key, *unode, modified_grids);
-        }
+        restore_position_grids(
+            subdiv_ccg.positions, key, *step_data.position_step_storage, modified_grids);
+
         const IndexMask changed_nodes = IndexMask::from_predicate(
             node_mask, GrainSize(1), memory, [&](const int i) {
               return indices_contain_true(modified_grids, nodes[i].grids());
@@ -877,7 +1130,7 @@ static void restore_list(bContext *C, Depsgraph *depsgraph, StepData &step_data)
         }
         const Mesh &mesh = *static_cast<const Mesh *>(object.data);
         Array<bool> modified_verts(mesh.verts_num, false);
-        restore_position_mesh(object, step_data.nodes, modified_verts);
+        restore_position_mesh(object, *step_data.position_step_storage, modified_verts);
 
         const IndexMask changed_nodes = IndexMask::from_predicate(
             node_mask, GrainSize(1), memory, [&](const int i) {
@@ -898,7 +1151,7 @@ static void restore_list(bContext *C, Depsgraph *depsgraph, StepData &step_data)
          * We need to manually clear that cache. */
         mesh.runtime->corner_normals_cache.tag_dirty();
       }
-      bke::pbvh::update_bounds(*depsgraph, object, pbvh);
+      pbvh.update_bounds(*depsgraph, object);
       bke::pbvh::store_bounds_orig(pbvh);
       break;
     }
@@ -939,7 +1192,7 @@ static void restore_list(bContext *C, Depsgraph *depsgraph, StepData &step_data)
       }
 
       BKE_pbvh_sync_visibility_from_verts(object);
-      bke::pbvh::update_visibility(object, pbvh);
+      pbvh.update_visibility(object);
       if (BKE_sculpt_multires_active(scene, &object)) {
         multires_mark_as_modified(depsgraph, &object, MULTIRES_HIDDEN_MODIFIED);
       }
@@ -982,7 +1235,7 @@ static void restore_list(bContext *C, Depsgraph *depsgraph, StepData &step_data)
       }
 
       hide::sync_all_from_faces(object);
-      bke::pbvh::update_visibility(object, pbvh);
+      pbvh.update_visibility(object);
       break;
     }
     case Type::Mask: {
@@ -1131,7 +1384,7 @@ static const Node *get_node(const bke::pbvh::Node *node, const Type type)
   }
   /* This access does not need to be locked because this function is not expected to be called
    * while the per-node undo data is being pushed. In other words, this must not be called
-   * concurrently with #push_node.*/
+   * concurrently with #push_node. */
   std::unique_ptr<Node> *node_ptr = step_data->undo_nodes_by_pbvh_node.lookup_ptr(node);
   if (!node_ptr) {
     return nullptr;
@@ -1143,7 +1396,7 @@ static void store_vert_visibility_grids(const SubdivCCG &subdiv_ccg,
                                         const bke::pbvh::GridsNode &node,
                                         Node &unode)
 {
-  const BitGroupVector<> grid_hidden = subdiv_ccg.grid_hidden;
+  const BitGroupVector<> &grid_hidden = subdiv_ccg.grid_hidden;
   if (grid_hidden.is_empty()) {
     return;
   }
@@ -1279,8 +1532,6 @@ static void geometry_push(const Object &object)
   StepData *step_data = get_step_data();
 
   step_data->type = Type::Geometry;
-
-  step_data->applied = false;
 
   NodeGeometry *geometry = geometry_get(*step_data);
   store_geometry_data(geometry, object);
@@ -1443,14 +1694,14 @@ BLI_NOINLINE static void bmesh_push(const Object &object,
 
   std::scoped_lock lock(step_data->nodes_mutex);
 
-  Node *unode = step_data->nodes.is_empty() ? nullptr : step_data->nodes.first().get();
-
-  if (unode == nullptr) {
+  if (step_data->nodes.is_empty()) {
+    /* We currently need to append data here so that the overall undo system knows to indicate that
+     * data should be flushed to the memfile */
+    /* TODO: Once we store entering Sculpt Mode as a specific type of action, we can remove this
+     * call. */
     step_data->nodes.append(std::make_unique<Node>());
-    unode = step_data->nodes.last().get();
 
     step_data->type = type;
-    step_data->applied = true;
 
     if (type == Type::DyntopoEnd) {
       step_data->bmesh.bm_entry = BM_log_entry_add(ss.bm_log);
@@ -1560,7 +1811,7 @@ void push_node(const Depsgraph &depsgraph,
     return;
   }
 
-  ss.needs_flush_to_id = 1;
+  ss.needs_flush_to_id = true;
 
   switch (pbvh.type()) {
     case bke::pbvh::Type::Mesh:
@@ -1583,7 +1834,7 @@ void push_nodes(const Depsgraph &depsgraph,
 {
   SculptSession &ss = *object.sculpt;
 
-  ss.needs_flush_to_id = 1;
+  ss.needs_flush_to_id = true;
 
   const bke::pbvh::Tree &pbvh = *bke::object::pbvh_get(object);
   if (ss.bm || ELEM(type, Type::DyntopoBegin, Type::DyntopoEnd)) {
@@ -1650,17 +1901,12 @@ static void save_active_attribute(Object &object, SculptAttrRef *attr)
   const char *name = mesh->active_color_attribute;
   const bke::AttributeAccessor attributes = mesh->attributes();
   const std::optional<bke::AttributeMetaData> meta_data = attributes.lookup_meta_data(name);
-  if (!meta_data) {
-    return;
-  }
-  if (!(ATTR_DOMAIN_AS_MASK(meta_data->domain) & ATTR_DOMAIN_MASK_COLOR) ||
-      !(CD_TYPE_AS_MASK(meta_data->data_type) & CD_MASK_COLOR_ALL))
-  {
+  if (!bke::mesh::is_color_attribute(meta_data)) {
     return;
   }
   attr->domain = meta_data->domain;
-  STRNCPY(attr->name, name);
-  attr->type = meta_data->data_type;
+  STRNCPY_UTF8(attr->name, name);
+  attr->type = *bke::attr_type_to_custom_data_type(meta_data->data_type);
 }
 
 /**
@@ -1793,17 +2039,22 @@ void push_end_ex(Object &ob, const bool use_nested_undo)
    * just one positions array that has a different semantic meaning depending on whether there are
    * deform modifiers. */
 
-  step_data->undo_size = threading::parallel_reduce(
-      step_data->nodes.index_range(),
-      16,
-      0,
-      [&](const IndexRange range, size_t size) {
-        for (const int i : range) {
-          size += node_size_in_bytes(*step_data->nodes[i]);
-        }
-        return size;
-      },
-      std::plus<size_t>());
+  if (step_data->type == Type::Position) {
+    step_data->position_step_storage = std::make_unique<PositionUndoStorage>(*step_data);
+  }
+  else {
+    step_data->undo_size = threading::parallel_reduce(
+        step_data->nodes.index_range(),
+        16,
+        0,
+        [&](const IndexRange range, size_t size) {
+          for (const int i : range) {
+            size += node_size_in_bytes(*step_data->nodes[i]);
+          }
+          return size;
+        },
+        std::plus<size_t>());
+  }
 
   /* We could remove this and enforce all callers run in an operator using 'OPTYPE_UNDO'. */
   wmWindowManager *wm = static_cast<wmWindowManager *>(G_MAIN->wm.first);
@@ -1832,9 +2083,9 @@ void push_end(Object &ob)
 /** \name Implements ED Undo System
  * \{ */
 
-static void set_active_layer(bContext *C, const SculptAttrRef *attr)
+static void set_active_layer(bContext *C, const SculptAttrRef *attr_ref)
 {
-  if (attr->domain == bke::AttrDomain::Auto) {
+  if (attr_ref->domain == bke::AttrDomain::Auto) {
     return;
   }
 
@@ -1844,8 +2095,7 @@ static void set_active_layer(bContext *C, const SculptAttrRef *attr)
   SculptAttrRef existing;
   save_active_attribute(*ob, &existing);
 
-  AttributeOwner owner = AttributeOwner::from_id(&mesh->id);
-  CustomDataLayer *layer = BKE_attribute_find(owner, attr->name, attr->type, attr->domain);
+  bke::MutableAttributeAccessor attributes = mesh->attributes_for_write();
 
   /* Temporary fix for #97408. This is a fundamental
    * bug in the undo stack; the operator code needs to push
@@ -1855,28 +2105,33 @@ static void set_active_layer(bContext *C, const SculptAttrRef *attr)
    * For now, detect if the layer does exist but with a different
    * domain and just unconvert it.
    */
-  if (!layer) {
-    layer = BKE_attribute_search_for_write(
-        owner, attr->name, CD_MASK_PROP_ALL, ATTR_DOMAIN_MASK_ALL);
-    if (layer) {
-      if (ED_geometry_attribute_convert(
-              mesh, attr->name, eCustomDataType(attr->type), attr->domain, nullptr))
+  if (const bke::GAttributeReader attr = attributes.lookup(attr_ref->name)) {
+    if (attr.domain != attr_ref->domain ||
+        bke::cpp_type_to_custom_data_type(attr.varray.type()) != attr_ref->type)
+    {
+      AttributeOwner owner = AttributeOwner::from_id(&mesh->id);
+      if (ed::geometry::convert_attribute(owner,
+                                          mesh->attributes_for_write(),
+                                          attr_ref->name,
+                                          attr_ref->domain,
+                                          *bke::custom_data_type_to_attr_type(attr_ref->type),
+                                          nullptr))
       {
-        layer = BKE_attribute_find(owner, attr->name, attr->type, attr->domain);
       }
     }
   }
 
-  if (!layer) {
+  if (!attributes.contains(attr_ref->name)) {
     /* Memfile undo killed the layer; re-create it. */
-    mesh->attributes_for_write().add(
-        attr->name, attr->domain, attr->type, bke::AttributeInitDefaultValue());
-    layer = BKE_attribute_find(owner, attr->name, attr->type, attr->domain);
+    mesh->attributes_for_write().add(attr_ref->name,
+                                     attr_ref->domain,
+                                     *bke::custom_data_type_to_attr_type(attr_ref->type),
+                                     bke::AttributeInitDefaultValue());
     DEG_id_tag_update(&ob->id, ID_RECALC_GEOMETRY);
   }
 
-  if (layer) {
-    BKE_id_attributes_active_color_set(&mesh->id, layer->name);
+  if (attributes.contains(attr_ref->name)) {
+    BKE_id_attributes_active_color_set(&mesh->id, attr_ref->name);
   }
 }
 
@@ -1893,13 +2148,13 @@ static bool step_encode(bContext * /*C*/, Main *bmain, UndoStep *us_p)
   SculptUndoStep *us = reinterpret_cast<SculptUndoStep *>(us_p);
   us->step.data_size = us->data.undo_size;
 
-  Node *unode = us->data.nodes.is_empty() ? nullptr : us->data.nodes.last().get();
-  if (unode && us->data.type == Type::DyntopoEnd) {
+  if (us->data.type == Type::DyntopoEnd) {
     us->step.use_memfile_step = true;
   }
   us->step.is_applied = true;
 
-  if (!us->data.nodes.is_empty()) {
+  /* We do not flush data when entering sculpt mode - this is currently indicated by Type::None */
+  if (us->data.type != Type::None) {
     bmain->is_memfile_undo_flush_needed = true;
   }
 
@@ -1991,7 +2246,7 @@ static void step_decode(
     BKE_view_layer_synced_ensure(scene, view_layer);
     Object *ob = BKE_view_layer_active_object_get(view_layer);
     if (ob && (ob->type == OB_MESH)) {
-      if (ob->mode & (OB_MODE_SCULPT | OB_MODE_VERTEX_PAINT)) {
+      if (ob->mode & (OB_MODE_SCULPT)) {
         /* Pass. */
       }
       else {
@@ -2010,7 +2265,7 @@ static void step_decode(
       }
 
       if (ob->sculpt) {
-        ob->sculpt->needs_flush_to_id = 1;
+        ob->sculpt->needs_flush_to_id = true;
       }
       bmain->is_memfile_undo_flush_needed = true;
     }
@@ -2058,9 +2313,43 @@ void geometry_begin_ex(const Scene & /*scene*/, Object &ob, const char *name)
   geometry_push(ob);
 }
 
+static size_t calculate_node_geometry_allocated_size(const NodeGeometry &node_geometry)
+{
+  BLI_assert(node_geometry.is_initialized);
+
+  MemoryCount memory;
+  MemoryCounter memory_counter(memory);
+
+  memory_counter.add_shared(node_geometry.face_offsets_sharing_info,
+                            sizeof(int) * (node_geometry.faces_num + 1));
+
+  CustomData_count_memory(node_geometry.corner_data, node_geometry.corners_num, memory_counter);
+  CustomData_count_memory(node_geometry.face_data, node_geometry.faces_num, memory_counter);
+  CustomData_count_memory(node_geometry.vert_data, node_geometry.verts_num, memory_counter);
+  CustomData_count_memory(node_geometry.edge_data, node_geometry.edges_num, memory_counter);
+
+  return memory.total_bytes;
+}
+
+static size_t estimate_geometry_step_size(const StepData &step_data)
+{
+  size_t step_size = 0;
+
+  /* TODO: This calculation is not entirely accurate, as the current amount of memory consumed by
+   * Sculpt Undo is not updated when elements are evicted. Further changes to the overall undo
+   * system would be needed to measure this accurately. */
+  step_size += calculate_node_geometry_allocated_size(step_data.geometry_original);
+  step_size += calculate_node_geometry_allocated_size(step_data.geometry_modified);
+
+  return step_size;
+}
+
 void geometry_end(Object &ob)
 {
   geometry_push(ob);
+
+  StepData *step_data = get_step_data();
+  step_data->undo_size = estimate_geometry_step_size(*step_data);
 
   /* We could remove this and enforce all callers run in an operator using 'OPTYPE_UNDO'. */
   wmWindowManager *wm = static_cast<wmWindowManager *>(G_MAIN->wm.first);

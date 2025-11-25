@@ -12,10 +12,6 @@
 #include "../../BPy_Convert.h"
 #include "../../BPy_IntegrationType.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -38,7 +34,6 @@ PyDoc_STRVAR(
     "\n"
     "   :arg inter: An Interface1D object.\n"
     "   :type inter: :class:`freestyle.types.Interface1D`\n");
-
 static int IncrementChainingTimeStampF1D___init__(BPy_IncrementChainingTimeStampF1D *self,
                                                   PyObject *args,
                                                   PyObject *kwds)
@@ -96,7 +91,3 @@ PyTypeObject IncrementChainingTimeStampF1D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

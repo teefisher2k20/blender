@@ -10,10 +10,6 @@
 
 #include "../../../stroke/AdvancedFunctions0D.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -44,7 +40,6 @@ PyDoc_STRVAR(
     "   :type it: :class:`freestyle.types.Interface0DIterator`\n"
     "   :return: The average depth around the pointed Interface0D.\n"
     "   :rtype: float\n");
-
 static int LocalAverageDepthF0D___init__(BPy_LocalAverageDepthF0D *self,
                                          PyObject *args,
                                          PyObject *kwds)
@@ -104,7 +99,3 @@ PyTypeObject LocalAverageDepthF0D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

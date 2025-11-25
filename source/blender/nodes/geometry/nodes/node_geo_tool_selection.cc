@@ -17,14 +17,14 @@ static void node_declare(NodeDeclarationBuilder &b)
       "The selection of each element as a floating point value");
 }
 
-static const void *true_value(const eCustomDataType data_type)
+static const void *true_value(const bke::AttrType data_type)
 {
   switch (data_type) {
-    case CD_PROP_BOOL: {
+    case bke::AttrType::Bool: {
       static const bool value = true;
       return &value;
     }
-    case CD_PROP_FLOAT: {
+    case bke::AttrType::Float: {
       static const float value = 1.0f;
       return &value;
     }
@@ -35,14 +35,14 @@ static const void *true_value(const eCustomDataType data_type)
   }
 }
 
-static const void *false_value(const eCustomDataType data_type)
+static const void *false_value(const bke::AttrType data_type)
 {
   switch (data_type) {
-    case CD_PROP_BOOL: {
+    case bke::AttrType::Bool: {
       static const bool value = false;
       return &value;
     }
-    case CD_PROP_FLOAT: {
+    case bke::AttrType::Float: {
       static const float value = 0.0f;
       return &value;
     }
@@ -71,21 +71,22 @@ static StringRef mesh_selection_name(const AttrDomain domain)
 
 class EditSelectionFieldInput final : public bke::GeometryFieldInput {
  public:
-  EditSelectionFieldInput(eCustomDataType data_type)
-      : bke::GeometryFieldInput(*bke::custom_data_type_to_cpp_type(data_type), "Edit Selection")
+  EditSelectionFieldInput(bke::AttrType data_type)
+      : bke::GeometryFieldInput(bke::attribute_type_to_cpp_type(data_type), "Edit Selection")
   {
     category_ = Category::NamedAttribute;
   }
 
   GVArray get_varray_for_context(const bke::GeometryFieldContext &context,
-                                 const IndexMask & /*mask*/) const
+                                 const IndexMask & /*mask*/) const override
   {
     const AttrDomain domain = context.domain();
-    const eCustomDataType data_type = bke::cpp_type_to_custom_data_type(*type_);
+    const bke::AttrType data_type = bke::cpp_type_to_attribute_type(*type_);
     const AttributeAccessor attributes = *context.attributes();
     switch (context.type()) {
       case GeometryComponent::Type::Curve:
       case GeometryComponent::Type::PointCloud:
+      case GeometryComponent::Type::GreasePencil:
         return *attributes.lookup_or_default(
             ".selection", domain, data_type, true_value(data_type));
       case GeometryComponent::Type::Mesh:
@@ -99,8 +100,8 @@ class EditSelectionFieldInput final : public bke::GeometryFieldInput {
 
 class SculptSelectionFieldInput final : public bke::GeometryFieldInput {
  public:
-  SculptSelectionFieldInput(eCustomDataType data_type)
-      : bke::GeometryFieldInput(*bke::custom_data_type_to_cpp_type(data_type), "Sculpt Selection")
+  SculptSelectionFieldInput(bke::AttrType data_type)
+      : bke::GeometryFieldInput(bke::attribute_type_to_cpp_type(data_type), "Sculpt Selection")
   {
     category_ = Category::NamedAttribute;
   }
@@ -109,30 +110,31 @@ class SculptSelectionFieldInput final : public bke::GeometryFieldInput {
                                  const IndexMask &mask) const final
   {
     const AttrDomain domain = context.domain();
-    const eCustomDataType data_type = bke::cpp_type_to_custom_data_type(*type_);
+    const bke::AttrType data_type = bke::cpp_type_to_attribute_type(*type_);
     const AttributeAccessor attributes = *context.attributes();
     switch (context.type()) {
       case GeometryComponent::Type::Curve:
       case GeometryComponent::Type::PointCloud:
+      case GeometryComponent::Type::GreasePencil:
         return *attributes.lookup_or_default(
             ".selection", domain, data_type, true_value(data_type));
       case GeometryComponent::Type::Mesh: {
         const VArraySpan<float> attribute = *attributes.lookup<float>(".sculpt_mask", domain);
         if (attribute.is_empty()) {
-          return GVArray::ForSingle(*type_, mask.min_array_size(), true_value(data_type));
+          return GVArray::from_single(*type_, mask.min_array_size(), true_value(data_type));
         }
         switch (data_type) {
-          case CD_PROP_BOOL: {
+          case bke::AttrType::Bool: {
             Array<bool> selection(mask.min_array_size());
             mask.foreach_index_optimized<int>(
                 GrainSize(4096), [&](const int i) { selection[i] = attribute[i] < 1.0f; });
-            return VArray<bool>::ForContainer(std::move(selection));
+            return VArray<bool>::from_container(std::move(selection));
           }
-          case CD_PROP_FLOAT: {
+          case bke::AttrType::Float: {
             Array<float> selection(mask.min_array_size());
             mask.foreach_index_optimized<int>(
                 GrainSize(4096), [&](const int i) { selection[i] = 1.0f - attribute[i]; });
-            return VArray<float>::ForContainer(std::move(selection));
+            return VArray<float>::from_container(std::move(selection));
           }
           default: {
             BLI_assert_unreachable();
@@ -146,18 +148,24 @@ class SculptSelectionFieldInput final : public bke::GeometryFieldInput {
   }
 };
 
-static GField get_selection_field(const eObjectMode object_mode, const eCustomDataType data_type)
+static GField get_selection_field(const eObjectMode object_mode, const bke::AttrType data_type)
 {
   switch (object_mode) {
     case OB_MODE_OBJECT:
-      return fn::make_constant_field<bool>(true);
+      return fn::make_constant_field(bke::attribute_type_to_cpp_type(data_type),
+                                     true_value(data_type));
     case OB_MODE_EDIT:
       return GField(std::make_shared<EditSelectionFieldInput>(data_type));
     case OB_MODE_SCULPT:
     case OB_MODE_SCULPT_CURVES:
+    case OB_MODE_SCULPT_GREASE_PENCIL:
       return GField(std::make_shared<SculptSelectionFieldInput>(data_type));
+    case OB_MODE_PAINT_GREASE_PENCIL:
+      return fn::make_constant_field(bke::attribute_type_to_cpp_type(data_type),
+                                     true_value(data_type));
     default:
-      return fn::make_constant_field<bool>(false);
+      return fn::make_constant_field(bke::attribute_type_to_cpp_type(data_type),
+                                     false_value(data_type));
   }
 }
 
@@ -167,8 +175,8 @@ static void node_geo_exec(GeoNodeExecParams params)
     return;
   }
   const eObjectMode mode = params.user_data()->call_data->operator_data->mode;
-  params.set_output("Selection", get_selection_field(mode, CD_PROP_BOOL));
-  params.set_output("Float", get_selection_field(mode, CD_PROP_FLOAT));
+  params.set_output("Selection", get_selection_field(mode, bke::AttrType::Bool));
+  params.set_output("Float", get_selection_field(mode, bke::AttrType::Float));
 }
 
 static void node_register()
@@ -182,7 +190,7 @@ static void node_register()
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.gather_link_search_ops = search_link_ops_for_tool_node;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

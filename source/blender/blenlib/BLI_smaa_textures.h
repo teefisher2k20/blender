@@ -6,11 +6,11 @@
  *
  * SPDX-License-Identifier: MIT */
 
-#pragma once
+/** \file
+ * \ingroup bli
+ */
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#pragma once
 
 #define AREATEX_WIDTH 160
 #define AREATEX_HEIGHT 560
@@ -20,7 +20,7 @@ extern "C" {
 /**
  * Stored in R8G8 format. Load it in the following format:
  *  - DX10: DXGI_FORMAT_R8G8_UNORM
- *  - GPU: GPU_RG8 texture format and GPU_DATA_UBYTE data format.
+ *  - GPU: blender::gpu::TextureFormat::UNORM_8_8 texture format and GPU_DATA_UBYTE data format.
  */
 extern const unsigned char areaTexBytes[];
 
@@ -32,10 +32,6 @@ extern const unsigned char areaTexBytes[];
 /**
  * Stored in R8 format. Load it in the following format:
  *  - DX10: DXGI_FORMAT_R8_UNORM
- *  - GPU: GPU_R8 texture format and GPU_DATA_UBYTE data format.
+ *  - GPU: blender::gpu::TextureFormat::UNORM_8 texture format and GPU_DATA_UBYTE data format.
  */
 extern const unsigned char searchTexBytes[];
-
-#ifdef __cplusplus
-}
-#endif

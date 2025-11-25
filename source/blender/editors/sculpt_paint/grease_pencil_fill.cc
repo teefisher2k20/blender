@@ -4,6 +4,7 @@
 
 #include "BLI_bounds.hh"
 #include "BLI_color.hh"
+#include "BLI_enum_flags.hh"
 #include "BLI_index_mask.hh"
 #include "BLI_math_base.hh"
 #include "BLI_math_matrix.hh"
@@ -62,7 +63,7 @@ enum ColorFlag {
   Seed = (1 << 3),
   Debug = (1 << 7),
 };
-ENUM_OPERATORS(ColorFlag, ColorFlag::Seed)
+ENUM_OPERATORS(ColorFlag)
 
 /** \} */
 
@@ -601,6 +602,7 @@ static bke::CurvesGeometry boundary_to_curves(const Scene &scene,
   curves.curve_types_for_write().fill(CURVE_TYPE_POLY);
   curves.update_curve_types();
 
+  /* Note: We can assume that the writers here will be valid since we created new curves. */
   bke::SpanAttributeWriter<int> materials = attributes.lookup_or_add_for_write_span<int>(
       "material_index", bke::AttrDomain::Curve);
   bke::SpanAttributeWriter<bool> cyclic = attributes.lookup_or_add_for_write_span<bool>(
@@ -608,19 +610,19 @@ static bke::CurvesGeometry boundary_to_curves(const Scene &scene,
   bke::SpanAttributeWriter<float> hardnesses = attributes.lookup_or_add_for_write_span<float>(
       "hardness",
       bke::AttrDomain::Curve,
-      bke::AttributeInitVArray(VArray<float>::ForSingle(1.0f, curves.curves_num())));
+      bke::AttributeInitVArray(VArray<float>::from_single(1.0f, curves.curves_num())));
   bke::SpanAttributeWriter<float> fill_opacities = attributes.lookup_or_add_for_write_span<float>(
       "fill_opacity",
       bke::AttrDomain::Curve,
-      bke::AttributeInitVArray(VArray<float>::ForSingle(1.0f, curves.curves_num())));
+      bke::AttributeInitVArray(VArray<float>::from_single(1.0f, curves.curves_num())));
   bke::SpanAttributeWriter<float> radii = attributes.lookup_or_add_for_write_span<float>(
       "radius",
       bke::AttrDomain::Point,
-      bke::AttributeInitVArray(VArray<float>::ForSingle(0.01f, curves.points_num())));
+      bke::AttributeInitVArray(VArray<float>::from_single(0.01f, curves.points_num())));
   bke::SpanAttributeWriter<float> opacities = attributes.lookup_or_add_for_write_span<float>(
       "opacity",
       bke::AttrDomain::Point,
-      bke::AttributeInitVArray(VArray<float>::ForSingle(1.0f, curves.points_num())));
+      bke::AttributeInitVArray(VArray<float>::from_single(1.0f, curves.points_num())));
 
   cyclic.span.fill(true);
   materials.span.fill(material_index);
@@ -659,7 +661,7 @@ static bke::CurvesGeometry boundary_to_curves(const Scene &scene,
       scene.toolsettings->gp_paint, &brush);
   if (use_vertex_color) {
     ColorGeometry4f vertex_color;
-    srgb_to_linearrgb_v3_v3(vertex_color, brush.rgb);
+    copy_v3_v3(vertex_color, brush.color);
     vertex_color.a = brush.gpencil_settings->vertex_factor;
 
     if (ELEM(brush.gpencil_settings->vertex_mode, GPPAINT_MODE_FILL, GPPAINT_MODE_BOTH)) {
@@ -769,7 +771,7 @@ static bke::CurvesGeometry process_image(Image &ima,
 /** \} */
 
 constexpr const char *attr_material_index = "material_index";
-constexpr const char *attr_is_boundary = "is_boundary";
+constexpr const char *attr_is_fill_guide = ".is_fill_guide";
 
 static IndexMask get_visible_boundary_strokes(const Object &object,
                                               const DrawingInfo &info,
@@ -778,8 +780,8 @@ static IndexMask get_visible_boundary_strokes(const Object &object,
 {
   const bke::CurvesGeometry &strokes = info.drawing.strokes();
   const bke::AttributeAccessor attributes = strokes.attributes();
-  const VArray<int> materials = *attributes.lookup<int>(attr_material_index,
-                                                        bke::AttrDomain::Curve);
+  const VArray<int> materials = *attributes.lookup_or_default<int>(
+      attr_material_index, bke::AttrDomain::Curve, 0);
 
   auto is_visible_curve = [&](const int curve_i) {
     /* Check if stroke can be drawn. */
@@ -802,15 +804,15 @@ static IndexMask get_visible_boundary_strokes(const Object &object,
 
   /* On boundary layers only boundary strokes are rendered. */
   if (is_boundary_layer) {
-    const VArray<bool> boundary_strokes = *attributes.lookup_or_default<bool>(
-        attr_is_boundary, bke::AttrDomain::Curve, false);
+    const VArray<bool> fill_guides = *attributes.lookup_or_default<bool>(
+        attr_is_fill_guide, bke::AttrDomain::Curve, false);
 
     return IndexMask::from_predicate(
         strokes.curves_range(), GrainSize(512), memory, [&](const int curve_i) {
           if (!is_visible_curve(curve_i)) {
             return false;
           }
-          const bool is_boundary_stroke = boundary_strokes[curve_i];
+          const bool is_boundary_stroke = fill_guides[curve_i];
           return is_boundary_stroke;
         });
   }
@@ -827,7 +829,7 @@ static VArray<ColorGeometry4f> get_stroke_colors(const Object &object,
                                                  const std::optional<float> alpha_threshold)
 {
   if (!alpha_threshold) {
-    return VArray<ColorGeometry4f>::ForSingle(tint_color, curves.points_num());
+    return VArray<ColorGeometry4f>::from_single(tint_color, curves.points_num());
   }
 
   Array<ColorGeometry4f> colors(curves.points_num());
@@ -845,7 +847,7 @@ static VArray<ColorGeometry4f> get_stroke_colors(const Object &object,
       }
     }
   });
-  return VArray<ColorGeometry4f>::ForContainer(colors);
+  return VArray<ColorGeometry4f>::from_container(colors);
 }
 
 static Bounds<float2> get_region_bounds(const ARegion &region)
@@ -879,15 +881,15 @@ static std::optional<Bounds<float2>> get_boundary_bounds(const ARegion &region,
     const float4x4 layer_to_world = layer.to_world_space(object);
     const bke::crazyspace::GeometryDeformation deformation =
         bke::crazyspace::get_evaluated_grease_pencil_drawing_deformation(
-            &object_eval, object, info.layer_index, info.frame_number);
+            &object_eval, object, info.drawing);
     const bool only_boundary_strokes = boundary_layers[info.layer_index];
     const VArray<float> radii = info.drawing.radii();
     const bke::CurvesGeometry &strokes = info.drawing.strokes();
     const bke::AttributeAccessor attributes = strokes.attributes();
-    const VArray<int> materials = *attributes.lookup<int>(attr_material_index,
-                                                          bke::AttrDomain::Curve);
+    const VArray<int> materials = *attributes.lookup_or_default<int>(
+        attr_material_index, bke::AttrDomain::Curve, 0);
     const VArray<bool> is_boundary_stroke = *attributes.lookup_or_default<bool>(
-        "is_boundary", bke::AttrDomain::Curve, false);
+        attr_is_fill_guide, bke::AttrDomain::Curve, false);
 
     IndexMaskMemory curve_mask_memory;
     const IndexMask curve_mask = get_visible_boundary_strokes(
@@ -949,8 +951,7 @@ static auto fit_strokes_to_view(const ViewContext &view_context,
       return std::make_tuple(float2(1.0f), float2(0.0f), min_image_size, float3x3::identity());
 
     case FillToolFitMethod::FitToView: {
-      const Object &object_eval = *DEG_get_evaluated_object(view_context.depsgraph,
-                                                            view_context.obact);
+      const Object &object_eval = *DEG_get_evaluated(view_context.depsgraph, view_context.obact);
       /* Zoom and offset based on bounds, to fit all strokes within the render. */
       const std::optional<Bounds<float2>> boundary_bounds = get_boundary_bounds(
           *view_context.region,
@@ -1064,8 +1065,8 @@ static Image *render_strokes(const ViewContext &view_context,
     const bke::CurvesGeometry &strokes = info.drawing.strokes();
     const bke::AttributeAccessor attributes = strokes.attributes();
     const VArray<float> opacities = info.drawing.opacities();
-    const VArray<int> materials = *attributes.lookup<int>(attr_material_index,
-                                                          bke::AttrDomain::Curve);
+    const VArray<int> materials = *attributes.lookup_or_default<int>(
+        attr_material_index, bke::AttrDomain::Curve, 0);
 
     IndexMaskMemory curve_mask_memory;
     const IndexMask curve_mask = get_visible_boundary_strokes(
@@ -1092,7 +1093,7 @@ static Image *render_strokes(const ViewContext &view_context,
 
     const IndexRange lines_range = extensions.lines.starts.index_range();
     if (!lines_range.is_empty()) {
-      const VArray<ColorGeometry4f> line_colors = VArray<ColorGeometry4f>::ForSingle(
+      const VArray<ColorGeometry4f> line_colors = VArray<ColorGeometry4f>::from_single(
           draw_boundary_color, lines_range.size());
       const float line_width = 1.0f;
 
@@ -1132,7 +1133,7 @@ bke::CurvesGeometry fill_strokes(const ViewContext &view_context,
   Object &object = *view_context.obact;
 
   BLI_assert(object.type == OB_GREASE_PENCIL);
-  const Object &object_eval = *DEG_get_evaluated_object(&depsgraph, &object);
+  const Object &object_eval = *DEG_get_evaluated(&depsgraph, &object);
 
   /* Zoom and offset based on bounds, to fit all strokes within the render. */
   const bool uniform_zoom = true;

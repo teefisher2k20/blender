@@ -14,10 +14,6 @@
 #include "../../Interface1D/BPy_ViewEdge.h"
 #include "../BPy_SVertex.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -37,7 +33,7 @@ PyDoc_STRVAR(
     "\n"
     ".. method:: __init__()\n"
     "\n"
-    "   Default constructor.");
+    "   Default constructor.\n");
 
 /* NOTE: No copy constructor in Python because the C++ copy constructor is 'protected'. */
 
@@ -65,8 +61,7 @@ PyDoc_STRVAR(
     "   :arg fedge: An FEdge object.\n"
     "   :type fedge: :class:`FEdge`\n"
     "   :return: The SVertex belonging to the given FEdge.\n"
-    "   :rtype: :class:`SVertex`");
-
+    "   :rtype: :class:`SVertex`\n");
 static PyObject *TVertex_get_svertex(BPy_TVertex *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"fedge", nullptr};
@@ -94,8 +89,7 @@ PyDoc_STRVAR(
     "   :arg viewedge: A ViewEdge object.\n"
     "   :type viewedge: :class:`ViewEdge`\n"
     "   :return: The mate edge of the given ViewEdge.\n"
-    "   :rtype: :class:`ViewEdge`");
-
+    "   :rtype: :class:`ViewEdge`\n");
 static PyObject *TVertex_get_mate(BPy_TVertex *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"viewedge", nullptr};
@@ -111,6 +105,16 @@ static PyObject *TVertex_get_mate(BPy_TVertex *self, PyObject *args, PyObject *k
   Py_RETURN_NONE;
 }
 
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
+#endif
+
 static PyMethodDef BPy_TVertex_methods[] = {
     {"get_svertex",
      (PyCFunction)TVertex_get_svertex,
@@ -123,6 +127,14 @@ static PyMethodDef BPy_TVertex_methods[] = {
     {nullptr, nullptr, 0, nullptr},
 };
 
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
+#endif
+
 /*----------------------TVertex get/setters ----------------------------*/
 
 PyDoc_STRVAR(
@@ -130,8 +142,7 @@ PyDoc_STRVAR(
     TVertex_front_svertex_doc,
     "The SVertex that is closer to the viewpoint.\n"
     "\n"
-    ":type: :class:`SVertex`");
-
+    ":type: :class:`SVertex`\n");
 static PyObject *TVertex_front_svertex_get(BPy_TVertex *self, void * /*closure*/)
 {
   SVertex *v = self->tv->frontSVertex();
@@ -156,8 +167,7 @@ PyDoc_STRVAR(
     TVertex_back_svertex_doc,
     "The SVertex that is further away from the viewpoint.\n"
     "\n"
-    ":type: :class:`SVertex`");
-
+    ":type: :class:`SVertex`\n");
 static PyObject *TVertex_back_svertex_get(BPy_TVertex *self, void * /*closure*/)
 {
   SVertex *v = self->tv->backSVertex();
@@ -182,8 +192,7 @@ PyDoc_STRVAR(
     TVertex_id_doc,
     "The Id of this TVertex.\n"
     "\n"
-    ":type: :class:`Id`");
-
+    ":type: :class:`Id`\n");
 static PyObject *TVertex_id_get(BPy_TVertex *self, void * /*closure*/)
 {
   Id id(self->tv->getId());
@@ -259,7 +268,3 @@ PyTypeObject TVertex_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

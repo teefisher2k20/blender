@@ -20,7 +20,6 @@ enum {
 
 typedef struct libmv_CameraIntrinsicsOptions {
   // Common settings of all distortion models.
-  int num_threads;
   int distortion_model;
   int image_width, image_height;
   double focal_length;
@@ -35,6 +34,7 @@ typedef struct libmv_CameraIntrinsicsOptions {
 
   // Nuke distortion model.
   double nuke_k1, nuke_k2;
+  double nuke_p1, nuke_p2;
 
   // Brown-Conrady distortion model.
   double brown_k1, brown_k2, brown_k3, brown_k4;
@@ -51,9 +51,6 @@ void libmv_cameraIntrinsicsDestroy(libmv_CameraIntrinsics* libmv_intrinsics);
 void libmv_cameraIntrinsicsUpdate(
     const libmv_CameraIntrinsicsOptions* libmv_camera_intrinsics_options,
     libmv_CameraIntrinsics* libmv_intrinsics);
-
-void libmv_cameraIntrinsicsSetThreads(libmv_CameraIntrinsics* libmv_intrinsics,
-                                      int threads);
 
 void libmv_cameraIntrinsicsExtractOptions(
     const libmv_CameraIntrinsics* libmv_intrinsics,

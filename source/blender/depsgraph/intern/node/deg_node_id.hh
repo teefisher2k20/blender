@@ -8,10 +8,14 @@
 
 #pragma once
 
-#include "BLI_ghash.h"
-#include "BLI_sys_types.h"
-#include "DNA_ID.h"
+#include "BLI_struct_equality_utils.hh"
 #include "intern/node/deg_node.hh"
+
+#include "DNA_ID.h"
+
+#include "BLI_map.hh"
+#include "BLI_string_ref.hh"
+#include "BLI_sys_types.h"
 
 namespace blender::deg {
 
@@ -34,26 +38,30 @@ const char *linkedStateAsString(eDepsNode_LinkedState_Type linked_state);
 /* ID-Block Reference */
 struct IDNode : public Node {
   struct ComponentIDKey {
-    ComponentIDKey(NodeType type, const char *name = "");
-    uint64_t hash() const;
-    bool operator==(const ComponentIDKey &other) const;
 
     NodeType type;
-    const char *name;
+    StringRef name;
+
+    ComponentIDKey(NodeType type, StringRef name = "") : type(type), name(name) {}
+    BLI_STRUCT_EQUALITY_OPERATORS_2(ComponentIDKey, type, name);
+    uint64_t hash() const
+    {
+      return get_default_hash(type, name);
+    }
   };
 
   /** Initialize 'id' node - from pointer data given. */
-  virtual void init(const ID *id, const char *subdata) override;
-  void init_copy_on_write(Depsgraph &depsgraph, ID *id_cow_hint = nullptr);
-  ~IDNode();
+  void init(const ID *id, const char *subdata) override;
+  void init_copy_on_write(ID *id_cow_hint = nullptr);
+  ~IDNode() override;
   void destroy();
 
-  virtual string identifier() const override;
+  std::string identifier() const override;
 
-  ComponentNode *find_component(NodeType type, const char *name = "") const;
-  ComponentNode *add_component(NodeType type, const char *name = "");
+  ComponentNode *find_component(NodeType type, StringRef name = "") const;
+  ComponentNode *add_component(NodeType type, StringRef name = "");
 
-  virtual void tag_update(Depsgraph *graph, eUpdateSource source) override;
+  void tag_update(Depsgraph *graph, eUpdateSource source) override;
 
   void finalize_build(Depsgraph *graph);
 

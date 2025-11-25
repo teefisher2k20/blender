@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "BKE_action.hh"
 
@@ -12,8 +12,6 @@
 #include "DNA_anim_types.h"
 
 #include "BLI_listbase.h"
-
-#include "MEM_guardedalloc.h"
 
 #include "testing/testing.h"
 
@@ -57,10 +55,10 @@ TEST(action_groups, ReconstructGroupsWithReordering)
   bActionGroup groupB = {nullptr};
   bActionGroup groupC = {nullptr};
   bActionGroup groupD = {nullptr};
-  STRNCPY(groupA.name, "groupA");
-  STRNCPY(groupB.name, "groupB");
-  STRNCPY(groupC.name, "groupC");
-  STRNCPY(groupD.name, "groupD");
+  STRNCPY_UTF8(groupA.name, "groupA");
+  STRNCPY_UTF8(groupB.name, "groupB");
+  STRNCPY_UTF8(groupC.name, "groupC");
+  STRNCPY_UTF8(groupD.name, "groupD");
 
   BLI_addtail(&action.groups, &groupA);
   BLI_addtail(&action.groups, &groupB);
@@ -146,8 +144,7 @@ std::unique_ptr<BezTriple[]> allocate_keyframes(FCurve *fcu, const size_t num_ke
 void add_keyframe(FCurve *fcu, float x, float y)
 {
   /* The insert_keyframe functions are in the editors, so we cannot link to those here. */
-  BezTriple the_keyframe;
-  memset(&the_keyframe, 0, sizeof(the_keyframe));
+  BezTriple the_keyframe = {};
 
   /* Copied from insert_vert_fcurve() in `keyframing.cc`. */
   the_keyframe.vec[0][0] = x - 1.0f;

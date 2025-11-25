@@ -7,20 +7,21 @@
  * Computer Graphics Techniques (JCGT), vol. 2, no. 2, 122–141, 2013
  */
 
-#include "infos/workbench_transparent_resolve_info.hh"
+#include "infos/workbench_transparent_resolve_infos.hh"
 
 FRAGMENT_SHADER_CREATE_INFO(workbench_transparent_resolve)
 
 void main()
 {
-  /* Revealage is actually stored in transparentAccum alpha channel.
+  float2 screen_uv = gl_FragCoord.xy / float2(textureSize(transparent_accum, 0).xy);
+  /* Revealage is actually stored in transparent_accum alpha channel.
    * This is a workaround to older hardware not having separate blend equation per render target.
    */
-  vec4 trans_accum = texture(transparentAccum, uvcoordsvar.xy);
-  float trans_weight = texture(transparentRevealage, uvcoordsvar.xy).r;
+  float4 trans_accum = texture(transparent_accum, screen_uv);
+  float trans_weight = texture(transparent_revealage, screen_uv).r;
   float trans_reveal = trans_accum.a;
 
   /* Listing 4 */
-  fragColor.rgb = trans_accum.rgb / clamp(trans_weight, 1e-4, 5e4);
-  fragColor.a = 1.0 - trans_reveal;
+  frag_color.rgb = trans_accum.rgb / clamp(trans_weight, 1e-4f, 5e4f);
+  frag_color.a = 1.0f - trans_reveal;
 }

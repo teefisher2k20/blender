@@ -16,6 +16,8 @@ from bl_ui.properties_data_grease_pencil import (
     GreasePencil_LayerAdjustmentsPanel,
     GreasePencil_LayerDisplayPanel,
 )
+from bl_ui.space_time import playback_controls
+from bl_ui.properties_data_mesh import draw_shape_key_properties
 
 from rna_prop_ui import PropertyPanel
 
@@ -104,7 +106,7 @@ class DopesheetFilterPopoverBase:
             flow.prop(dopesheet, "show_armatures", text="Armatures")
         if bpy.data.cameras:
             flow.prop(dopesheet, "show_cameras", text="Cameras")
-        if bpy.data.grease_pencils_v3:
+        if bpy.data.grease_pencils:
             flow.prop(dopesheet, "show_gpencil", text="Grease Pencil Objects")
         if bpy.data.lights:
             flow.prop(dopesheet, "show_lights", text="Lights")
@@ -122,6 +124,8 @@ class DopesheetFilterPopoverBase:
             flow.prop(dopesheet, "show_pointclouds", text="Point Clouds")
         if bpy.data.volumes:
             flow.prop(dopesheet, "show_volumes", text="Volumes")
+        if bpy.data.lightprobes:
+            flow.prop(dopesheet, "show_lightprobes", text="Light Probes")
 
         # data types
         flow.prop(dopesheet, "show_worlds", text="Worlds")
@@ -202,18 +206,14 @@ class DOPESHEET_HT_header(Header):
 
         layout.template_header()
 
-        if st.mode == 'TIMELINE':
-            from bl_ui.space_time import (
-                TIME_MT_editor_menus,
-                TIME_HT_editor_buttons,
-            )
-            TIME_MT_editor_menus.draw_collapsible(context, layout)
-            TIME_HT_editor_buttons.draw_header(context, layout)
-        else:
+        if st.mode != 'TIMELINE':
+            # Timeline mode is special, as it's presented as a sub-type of the
+            # dope sheet editor, rather than a mode. So this shouldn't show the
+            # mode selector.
             layout.prop(st, "ui_mode", text="")
 
-            DOPESHEET_MT_editor_menus.draw_collapsible(context, layout)
-            DOPESHEET_HT_editor_buttons.draw_header(context, layout)
+        DOPESHEET_MT_editor_menus.draw_collapsible(context, layout)
+        DOPESHEET_HT_editor_buttons.draw_header(context, layout)
 
 
 # Header for "normal" dopesheet editor modes (e.g. Dope Sheet, Action, Shape Keys, etc.)
@@ -222,7 +222,12 @@ class DOPESHEET_HT_editor_buttons:
     @classmethod
     def draw_header(cls, context, layout):
         st = context.space_data
-        tool_settings = context.tool_settings
+
+        if st.mode == 'TIMELINE':
+            playback_controls(layout, context)
+            layout.separator()
+            cls._draw_overlay_selector(context, layout)
+            return
 
         if st.mode in {'ACTION', 'SHAPEKEY'} and context.object:
             layout.separator_spacer()
@@ -267,6 +272,8 @@ class DOPESHEET_HT_editor_buttons:
             icon='FILTER',
         )
 
+        tool_settings = context.tool_settings
+
         # Grease Pencil mode doesn't need snapping, as it's frame-aligned only
         if st.mode != 'GPENCIL':
             row = layout.row(align=True)
@@ -288,6 +295,19 @@ class DOPESHEET_HT_editor_buttons:
             icon_only=True,
             panel="DOPESHEET_PT_proportional_edit",
         )
+
+        cls._draw_overlay_selector(context, layout)
+
+    @classmethod
+    def _draw_overlay_selector(cls, context, layout):
+        st = context.space_data
+
+        overlays = st.overlays
+        row = layout.row(align=True)
+        row.prop(overlays, "show_overlays", text="", icon='OVERLAY')
+        sub = row.row(align=True)
+        sub.popover(panel="DOPESHEET_PT_overlay", text="")
+        sub.active = overlays.show_overlays
 
     @classmethod
     def _draw_action_selector(cls, context, layout):
@@ -328,6 +348,16 @@ class DOPESHEET_HT_editor_buttons:
                 return context.object
 
 
+class DOPESHEET_HT_playback_controls(Header):
+    bl_space_type = 'DOPESHEET_EDITOR'
+    bl_region_type = 'FOOTER'
+
+    def draw(self, context):
+        layout = self.layout
+
+        playback_controls(layout, context)
+
+
 class DOPESHEET_PT_snapping(Panel):
     bl_space_type = 'DOPESHEET_EDITOR'
     bl_region_type = 'HEADER'
@@ -366,20 +396,36 @@ class DOPESHEET_MT_editor_menus(Menu):
     def draw(self, context):
         layout = self.layout
         st = context.space_data
+        active_action = context.active_action
+
+        if st.mode == 'TIMELINE':
+            # Draw the 'timeline' menus, which are simpler. Most importantly, the
+            # 'selected only' toggle is in the menu, and actually stored as a scene
+            # flag instead of the space data.
+            horizontal = (layout.direction == 'VERTICAL')
+            if horizontal:
+                row = layout.row()
+                sub = row.row(align=True)
+            else:
+                sub = layout
+            sub.menu("TIME_MT_view")
+            if st.show_markers:
+                sub.menu("DOPESHEET_MT_marker")
+            return
 
         layout.menu("DOPESHEET_MT_view")
         layout.menu("DOPESHEET_MT_select")
         if st.show_markers:
             layout.menu("DOPESHEET_MT_marker")
 
-        if st.mode == 'DOPESHEET' or (st.mode == 'ACTION' and st.action is not None):
+        if st.mode == 'DOPESHEET' or (st.mode == 'ACTION' and active_action is not None):
             layout.menu("DOPESHEET_MT_channel")
         elif st.mode == 'GPENCIL':
             layout.menu("DOPESHEET_MT_gpencil_channel")
 
         layout.menu("DOPESHEET_MT_key")
 
-        if st.mode in {'ACTION', 'SHAPEKEY'} and st.action is not None:
+        if st.mode in {'ACTION', 'SHAPEKEY'} and active_action is not None:
             layout.menu("DOPESHEET_MT_action")
 
 
@@ -394,6 +440,7 @@ class DOPESHEET_MT_view(Menu):
         layout.prop(st, "show_region_ui")
         layout.prop(st, "show_region_hud")
         layout.prop(st, "show_region_channels")
+        layout.prop(st, "show_region_footer", text="Playback Controls")
         layout.separator()
 
         layout.operator("action.view_selected")
@@ -436,6 +483,9 @@ class DOPESHEET_MT_view(Menu):
         props.value = 'GRAPH_EDITOR'
         layout.separator()
 
+        layout.menu("DOPESHEET_MT_cache")
+        layout.separator()
+
         layout.menu("INFO_MT_area")
 
 
@@ -453,6 +503,29 @@ class DOPESHEET_MT_view_pie(Menu):
             pie.operator("anim.scene_range_frame", text="Frame Preview Range")
         else:
             pie.operator("anim.scene_range_frame", text="Frame Scene Range")
+
+
+class DOPESHEET_MT_cache(Menu):
+    bl_label = "Cache"
+
+    def draw(self, context):
+        layout = self.layout
+
+        st = context.space_data
+
+        layout.prop(st, "show_cache")
+
+        layout.separator()
+
+        col = layout.column()
+        col.enabled = st.show_cache
+        col.prop(st, "cache_softbody")
+        col.prop(st, "cache_particles")
+        col.prop(st, "cache_cloth")
+        col.prop(st, "cache_simulation_nodes")
+        col.prop(st, "cache_smoke")
+        col.prop(st, "cache_dynamicpaint")
+        col.prop(st, "cache_rigidbody")
 
 
 class DOPESHEET_MT_select(Menu):
@@ -507,7 +580,7 @@ class DOPESHEET_MT_marker(Menu):
 
         st = context.space_data
 
-        if st.mode in {'ACTION', 'SHAPEKEY'} and st.action:
+        if st.mode in {'ACTION', 'SHAPEKEY'} and context.active_action:
             layout.separator()
             layout.prop(st, "show_pose_markers")
 
@@ -580,8 +653,9 @@ class DOPESHEET_MT_action(Menu):
 class DOPESHEET_MT_key(Menu):
     bl_label = "Key"
 
-    def draw(self, _context):
+    def draw(self, context):
         layout = self.layout
+        ob = context.active_object
 
         layout.menu("DOPESHEET_MT_key_transform", text="Transform")
 
@@ -600,6 +674,8 @@ class DOPESHEET_MT_key(Menu):
         layout.operator("action.paste", text="Paste Flipped").flipped = True
         layout.operator("action.duplicate_move")
         layout.operator("action.delete")
+        if ob and ob.type == 'GREASEPENCIL':
+            layout.operator("grease_pencil.delete_breakdown")
 
         layout.separator()
         layout.operator_menu_enum("action.keyframe_type", "type", text="Keyframe Type")
@@ -785,6 +861,7 @@ class DOPESHEET_MT_context_menu(Menu):
 
         if st.mode == 'GPENCIL':
             layout.separator()
+            layout.operator("grease_pencil.delete_breakdown")
 
         layout.operator_context = 'EXEC_REGION_WIN'
         layout.operator("action.delete")
@@ -861,26 +938,6 @@ class DOPESHEET_MT_snap_pie(Menu):
         pie.operator("action.snap", text="Selection to Nearest Frame").type = 'NEAREST_FRAME'
         pie.operator("action.snap", text="Selection to Nearest Second").type = 'NEAREST_SECOND'
         pie.operator("action.snap", text="Selection to Nearest Marker").type = 'NEAREST_MARKER'
-
-
-class LayersDopeSheetPanel:
-    bl_space_type = 'DOPESHEET_EDITOR'
-    bl_region_type = 'UI'
-    bl_category = "View"
-
-    @classmethod
-    def poll(cls, context):
-        st = context.space_data
-        ob = context.object
-        if st.mode != 'GPENCIL' or ob is None or ob.type != 'GREASEPENCIL':
-            return False
-
-        gpd = ob.data
-        gpl = gpd.layers.active
-        if gpl:
-            return True
-
-        return False
 
 
 class GreasePencilLayersDopeSheetPanel:
@@ -972,11 +1029,65 @@ class DOPESHEET_PT_grease_pencil_layer_display(
     bl_options = {'DEFAULT_CLOSED'}
 
 
+class DOPESHEET_PT_ShapeKey(Panel):
+    bl_space_type = 'DOPESHEET_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = "Shape Key"
+    bl_label = "Shape Key"
+
+    @classmethod
+    def poll(cls, context):
+        st = context.space_data
+        if st.mode != 'SHAPEKEY':
+            return False
+
+        ob = context.object
+        if ob is None or ob.active_shape_key is None:
+            return False
+
+        if not ob.data.shape_keys.use_relative:
+            return False
+
+        return ob.active_shape_key_index > 0
+
+    def draw(self, context):
+        draw_shape_key_properties(context, self.layout)
+
+
+class DOPESHEET_PT_overlay(Panel):
+    bl_space_type = 'DOPESHEET_EDITOR'
+    bl_region_type = 'HEADER'
+    bl_label = "Overlays"
+    bl_ui_units_x = 13
+
+    def draw(self, _context):
+        pass
+
+
+class DOPESHEET_PT_dopesheet_overlay(Panel):
+    bl_space_type = 'DOPESHEET_EDITOR'
+    bl_region_type = 'HEADER'
+    bl_parent_id = "DOPESHEET_PT_overlay"
+    bl_label = "Dope Sheet Overlays"
+
+    def draw(self, context):
+        st = context.space_data
+        overlay_settings = st.overlays
+        layout = self.layout
+
+        layout.active = overlay_settings.show_overlays
+        row = layout.row()
+        row.active = context.workspace.use_scene_time_sync
+        row.prop(overlay_settings, "show_scene_strip_range")
+
+
 classes = (
     DOPESHEET_HT_header,
+    DOPESHEET_HT_playback_controls,
     DOPESHEET_PT_proportional_edit,
     DOPESHEET_MT_editor_menus,
     DOPESHEET_MT_view,
+    DOPESHEET_MT_cache,
     DOPESHEET_MT_select,
     DOPESHEET_MT_marker,
     DOPESHEET_MT_channel,
@@ -1000,6 +1111,10 @@ classes = (
     DOPESHEET_PT_grease_pencil_layer_adjustments,
     DOPESHEET_PT_grease_pencil_layer_relations,
     DOPESHEET_PT_grease_pencil_layer_display,
+    DOPESHEET_PT_ShapeKey,
+
+    DOPESHEET_PT_overlay,
+    DOPESHEET_PT_dopesheet_overlay,
 )
 
 if __name__ == "__main__":  # only for live edit.

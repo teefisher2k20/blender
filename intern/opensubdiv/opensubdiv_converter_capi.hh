@@ -4,8 +4,6 @@
 
 #pragma once
 
-#include <cstdint>  // for bool
-
 #include "BLI_offset_indices.hh"
 
 #include "opensubdiv_capi_type.hh"
@@ -77,13 +75,13 @@ struct OpenSubdiv_Converter {
 
   // Number of edges which are adjacent to the given vertex.
   int (*getNumVertexEdges)(const OpenSubdiv_Converter *converter, const int vertex_index);
-  // Array fo edge indices which are adjacent to the given vertex.
+  // Array for edge indices which are adjacent to the given vertex.
   void (*getVertexEdges)(const OpenSubdiv_Converter *converter,
                          const int vertex_index,
                          int *vertex_edges);
   // Number of faces which are adjacent to the given vertex.
   int (*getNumVertexFaces)(const OpenSubdiv_Converter *converter, const int vertex_index);
-  // Array fo face indices which are adjacent to the given vertex.
+  // Array for face indices which are adjacent to the given vertex.
   void (*getVertexFaces)(const OpenSubdiv_Converter *converter,
                          const int vertex_index,
                          int *vertex_faces);

@@ -10,10 +10,6 @@
 
 #include "BLI_sys_types.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -44,7 +40,6 @@ PyDoc_STRVAR(
     "   :return: True if Interface1D belongs to the shape of the\n"
     "      user-specified Id.\n"
     "   :rtype: bool\n");
-
 static int ShapeUP1D___init__(BPy_ShapeUP1D *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"first", "second", nullptr};
@@ -101,7 +96,3 @@ PyTypeObject ShapeUP1D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

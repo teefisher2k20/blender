@@ -4,7 +4,9 @@
 
 bl_info = {
     "name": "VR Scene Inspection",
-    "author": "Julian Eisel (Severin), Sebastian Koenig, Peter Kim (muxed-reality)",
+    # This is now displayed as the maintainer, so show the foundation.
+    # "author": "Julian Eisel (Severin), Sebastian Koenig, Peter Kim (muxed-reality)", # Original Authors
+    "author": "Blender Foundation",
     "version": (0, 11, 2),
     "blender": (3, 2, 0),
     "location": "3D View > Sidebar > VR",
@@ -22,8 +24,9 @@ if "bpy" in locals():
     importlib.reload(gui)
     importlib.reload(operators)
     importlib.reload(properties)
+    importlib.reload(preferences)
 else:
-    from . import action_map, gui, operators, properties
+    from . import action_map, gui, operators, properties, preferences
 
 import bpy
 
@@ -37,6 +40,7 @@ def register():
     gui.register()
     operators.register()
     properties.register()
+    preferences.register()
 
 
 def unregister():
@@ -48,3 +52,4 @@ def unregister():
     gui.unregister()
     operators.unregister()
     properties.unregister()
+    preferences.unregister()

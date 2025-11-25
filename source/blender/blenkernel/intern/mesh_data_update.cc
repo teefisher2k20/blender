@@ -6,11 +6,6 @@
  * \ingroup bke
  */
 
-#include <climits>
-#include <cstring>
-
-#include "MEM_guardedalloc.h"
-
 #include "DNA_cloth_types.h"
 #include "DNA_customdata_types.h"
 #include "DNA_key_types.h"
@@ -19,7 +14,6 @@
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 
-#include "BLI_bitmap.h"
 #include "BLI_linklist.h"
 #include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
@@ -47,15 +41,9 @@
 #include "BKE_object_types.hh"
 #include "BKE_paint.hh"
 
-#include "BLI_sys_types.h" /* for intptr_t support */
-
 #include "BKE_shrinkwrap.hh"
 #include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_query.hh"
-
-#ifdef WITH_OPENSUBDIV
-// #  include "DNA_userdef_types.h"
-#endif
 
 namespace blender::bke {
 
@@ -69,9 +57,9 @@ namespace blender::bke {
 // #define USE_MODIFIER_VALIDATE
 
 #ifdef USE_MODIFIER_VALIDATE
-#  define ASSERT_IS_VALID_MESH_INPUT(mesh) (BLI_assert(BKE_mesh_is_valid(mesh) == true))
+#  define ASSERT_IS_VALID_MESH_INPUT(mesh) (BLI_assert(mesh_is_valid(*mesh)))
 #  define ASSERT_IS_VALID_MESH_OUTPUT(mesh) \
-    (BLI_assert((mesh == nullptr) || (BKE_mesh_is_valid(mesh) == true)))
+    (BLI_assert((mesh == nullptr) || (mesh_is_valid(*mesh))))
 #else
 #  define ASSERT_IS_VALID_MESH_INPUT(mesh) \
     { \
@@ -85,20 +73,6 @@ namespace blender::bke {
 #endif
 
 static void mesh_init_origspace(Mesh &mesh);
-
-void mesh_eval_to_meshkey(const Mesh *me_deformed, Mesh *mesh, KeyBlock *kb)
-{
-  /* Just a shallow wrapper around #BKE_keyblock_convert_from_mesh,
-   * that ensures both evaluated mesh and original one has same number of vertices. */
-
-  const int totvert = me_deformed->verts_num;
-
-  if (totvert == 0 || mesh->verts_num == 0 || mesh->verts_num != totvert) {
-    return;
-  }
-
-  BKE_keyblock_convert_from_mesh(me_deformed, mesh->key, kb);
-}
 
 static void mesh_set_only_copy(Mesh *mesh, const CustomData_MeshMasks *mask)
 {
@@ -699,7 +673,7 @@ static void mesh_calc_modifiers(Depsgraph &depsgraph,
 
   /* Remove temporary data layer only needed for modifier evaluation.
    * Save some memory, and ensure GPU subdivision does not need to deal with this. */
-  CustomData_free_layers(&mesh->vert_data, CD_CLOTH_ORCO, mesh->verts_num);
+  CustomData_free_layers(&mesh->vert_data, CD_CLOTH_ORCO);
 
   /* Compute normals. */
   if (is_own_mesh) {
@@ -1039,7 +1013,7 @@ static void mesh_build_data(Depsgraph &depsgraph,
   /* Make sure that drivers can target shapekey properties.
    * Note that this causes a potential inconsistency, as the shapekey may have a
    * different topology than the evaluated mesh. */
-  BLI_assert(mesh->key == nullptr || DEG_is_evaluated_id(&mesh->key->id));
+  BLI_assert(mesh->key == nullptr || DEG_is_evaluated(mesh->key));
   mesh_eval->key = mesh->key;
 
   if ((ob.mode & OB_MODE_ALL_SCULPT) && ob.sculpt) {
@@ -1059,34 +1033,26 @@ static void editbmesh_build_data(Depsgraph &depsgraph,
   Mesh *mesh = static_cast<Mesh *>(obedit.data);
   Mesh *me_cage;
   Mesh *me_final;
-  GeometrySet *non_mesh_components;
+  GeometrySet *geometry_set_eval;
 
   editbmesh_calc_modifiers(
-      depsgraph, scene, obedit, dataMask, &me_cage, &me_final, &non_mesh_components);
-
-  /* Object has edit_mesh but is not in edit mode (object shares mesh datablock with another object
-   * with is in edit mode).
-   * Convert edit mesh to mesh until the draw manager can draw mesh wrapper which is not in the
-   * edit mode. */
-  if (!(obedit.mode & OB_MODE_EDIT)) {
-    BKE_mesh_wrapper_ensure_mdata(me_final);
-    if (me_final != me_cage) {
-      BKE_mesh_wrapper_ensure_mdata(me_cage);
-    }
-  }
+      depsgraph, scene, obedit, dataMask, &me_cage, &me_final, &geometry_set_eval);
 
   const bool is_mesh_eval_owned = (me_final != mesh->runtime->mesh_eval);
   BKE_object_eval_assign_data(&obedit, &me_final->id, is_mesh_eval_owned);
 
+  /* Add the final mesh as a non-owning component to the geometry set. */
+  MeshComponent &mesh_component = geometry_set_eval->get_component_for_write<MeshComponent>();
+  mesh_component.replace(me_final, GeometryOwnershipType::Editable);
+  obedit.runtime->geometry_set_eval = geometry_set_eval;
+
   /* Make sure that drivers can target shapekey properties.
    * Note that this causes a potential inconsistency, as the shapekey may have a
    * different topology than the evaluated mesh. */
-  BLI_assert(mesh->key == nullptr || DEG_is_evaluated_id(&mesh->key->id));
+  BLI_assert(mesh->key == nullptr || DEG_is_evaluated(mesh->key));
   me_final->key = mesh->key;
 
   obedit.runtime->editmesh_eval_cage = me_cage;
-
-  obedit.runtime->geometry_set_eval = non_mesh_components;
 
   obedit.runtime->last_data_mask = dataMask;
 }
@@ -1114,9 +1080,9 @@ static void object_get_datamask(const Depsgraph &depsgraph,
   BKE_view_layer_synced_ensure(scene, view_layer);
   Object *actob = BKE_view_layer_active_object_get(view_layer);
   if (actob) {
-    actob = DEG_get_original_object(actob);
+    actob = DEG_get_original(actob);
   }
-  if (DEG_get_original_object(&ob) == actob) {
+  if (DEG_get_original(&ob) == actob) {
     bool editing = BKE_paint_select_face_test(actob);
 
     /* weight paint and face select need original indices because of selection buffer drawing */
@@ -1192,7 +1158,7 @@ Mesh *mesh_get_eval_deform(Depsgraph *depsgraph,
     /* There is no such a concept as deformed mesh in edit mode.
      * Explicitly disallow this request so that the evaluated result is not modified with evaluated
      * result from the wrong mode. */
-    BLI_assert_msg(0, "Request of derformed mesh of object which is in edit mode");
+    BLI_assert_msg(0, "Request of deformed mesh of object which is in edit mode");
     return nullptr;
   }
 
@@ -1288,16 +1254,15 @@ Mesh *editbmesh_get_eval_cage_from_orig(Depsgraph *depsgraph,
                                         const CustomData_MeshMasks *dataMask)
 {
   BLI_assert((obedit->id.tag & ID_TAG_COPIED_ON_EVAL) == 0);
-  const Scene *scene_eval = (const Scene *)DEG_get_evaluated_id(depsgraph, (ID *)&scene->id);
-  Object *obedit_eval = (Object *)DEG_get_evaluated_id(depsgraph, &obedit->id);
+  const Scene *scene_eval = DEG_get_evaluated(depsgraph, scene);
+  Object *obedit_eval = DEG_get_evaluated(depsgraph, obedit);
   BMEditMesh *em_eval = BKE_editmesh_from_object(obedit_eval);
   return editbmesh_get_eval_cage(depsgraph, scene_eval, obedit_eval, em_eval, dataMask);
 }
 
-/* same as above but for vert coords */
 struct MappedUserData {
-  float (*vertexcos)[3];
-  BLI_bitmap *vertex_visit;
+  MutableSpan<float3> vertexcos;
+  BitVector<> vertex_visit;
 };
 
 static void make_vertexcos__mapFunc(void *user_data,
@@ -1307,12 +1272,9 @@ static void make_vertexcos__mapFunc(void *user_data,
 {
   MappedUserData *mappedData = (MappedUserData *)user_data;
 
-  if (BLI_BITMAP_TEST(mappedData->vertex_visit, index) == 0) {
-    /* we need coord from prototype vertex, not from copies,
-     * assume they stored in the beginning of vertex array stored in DM
-     * (mirror modifier for eg does this) */
-    copy_v3_v3(mappedData->vertexcos[index], co);
-    BLI_BITMAP_ENABLE(mappedData->vertex_visit, index);
+  if (!mappedData->vertex_visit[index]) {
+    mappedData->vertexcos[index] = float3(co);
+    mappedData->vertex_visit[index].set();
   }
 }
 
@@ -1321,10 +1283,9 @@ void mesh_get_mapped_verts_coords(Mesh *mesh_eval, MutableSpan<float3> r_cos)
   if (mesh_eval->runtime->deformed_only == false) {
     MappedUserData user_data;
     r_cos.fill(float3(0));
-    user_data.vertexcos = reinterpret_cast<float(*)[3]>(r_cos.data());
-    user_data.vertex_visit = BLI_BITMAP_NEW(r_cos.size(), "vertexcos flags");
+    user_data.vertexcos = r_cos;
+    user_data.vertex_visit.resize(r_cos.size());
     BKE_mesh_foreach_mapped_vert(mesh_eval, make_vertexcos__mapFunc, &user_data, MESH_FOREACH_NOP);
-    MEM_freeN(user_data.vertex_visit);
   }
   else {
     r_cos.copy_from(BKE_mesh_wrapper_vert_coords(mesh_eval));

@@ -21,7 +21,7 @@
 
 namespace blender::asset_system::tests {
 
-/* UUIDs from tests/data/asset_library/blender_assets.cats.txt */
+/* UUIDs from tests/files/asset_library/blender_assets.cats.txt */
 const bUUID UUID_ID_WITHOUT_PATH("e34dd2c5-5d2e-4668-9794-1db5de2a4f71");
 const bUUID UUID_POSES_ELLIE("df60e1f6-2259-475b-93d9-69a1b4a8db78");
 const bUUID UUID_POSES_ELLIE_WHITESPACE("b06132f6-5687-4751-a6dd-392740eb3c46");
@@ -33,7 +33,7 @@ const bUUID UUID_POSES_RUZENA_FACE("82162c1f-06cc-4d91-a9bf-4f72c104e348");
 const bUUID UUID_WITHOUT_SIMPLENAME("d7916a31-6ca9-4909-955f-182ca2b81fa3");
 const bUUID UUID_ANOTHER_RUZENA("00000000-d9fa-4b91-b704-e6af1f1339ef");
 
-/* UUIDs from tests/data/asset_library/modified_assets.cats.txt */
+/* UUIDs from tests/files/asset_library/modified_assets.cats.txt */
 const bUUID UUID_AGENT_47("c5744ba5-43f5-4f73-8e52-010ad4a61b34");
 
 /* Subclass that adds accessors such that protected fields can be used in tests. */
@@ -179,7 +179,7 @@ TEST_F(AssetCatalogTest, load_single_file)
   EXPECT_EQ("character/Ellie/poselib/white space", poses_whitespace->path.str());
   EXPECT_EQ("POSES_ELLIE WHITESPACE", poses_whitespace->simple_name);
 
-  /* Test getting a UTF-8 catalog ID. */
+  /* Test getting a UTF8 catalog ID. */
   AssetCatalog *poses_ruzena = service.find_catalog(UUID_POSES_RUZENA);
   ASSERT_NE(nullptr, poses_ruzena);
   EXPECT_EQ(UUID_POSES_RUZENA, poses_ruzena->catalog_id);
@@ -341,6 +341,7 @@ TEST_F(AssetCatalogTest, on_blendfile_save__with_existing_cdf)
   TestableAssetCatalogService service(cdf_filename);
   service.load_from_disk();
   const AssetCatalog *cat = service.create_catalog("some/catalog/path");
+  service.tag_has_unsaved_changes();
 
   const CatalogFilePath blendfilename = top_level_dir + "subdir" + SEP_STR + "some_file.blend";
   ASSERT_TRUE(service.write_to_disk(blendfilename));
@@ -458,6 +459,10 @@ TEST_F(AssetCatalogTest, create_first_catalog_from_scratch)
   /* Creating a new catalog should not save anything to disk yet. */
   EXPECT_FALSE(BLI_exists(temp_lib_root.c_str()));
 
+  /* Creating a new catalog should not mark the asset service as 'dirty'; that's
+   * the caller's responsibility. */
+  EXPECT_FALSE(service.has_unsaved_changes());
+
   /* Writing to disk should create the directory + the default file. */
   service.write_to_disk(temp_lib_root + "phony.blend");
   EXPECT_TRUE(BLI_is_dir(temp_lib_root.c_str()));
@@ -498,6 +503,7 @@ TEST_F(AssetCatalogTest, create_catalog_after_loading_file)
   /* This should create a new catalog but not write to disk. */
   const AssetCatalog *new_catalog = service.create_catalog("new/catalog");
   const bUUID new_catalog_id = new_catalog->catalog_id;
+  service.tag_has_unsaved_changes();
 
   /* Reload the on-disk catalog file. */
   TestableAssetCatalogService loaded_service(temp_lib_root);
@@ -887,6 +893,7 @@ TEST_F(AssetCatalogTest, backups)
   TestableAssetCatalogService service(cdf_dir);
   service.load_from_disk();
   service.delete_catalog_by_id_soft(UUID_POSES_ELLIE);
+  service.tag_has_unsaved_changes();
   service.write_to_disk(cdf_dir + "phony.blend");
 
   const CatalogFilePath backup_path = writable_cdf_file + "~";

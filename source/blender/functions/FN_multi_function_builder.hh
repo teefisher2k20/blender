@@ -65,8 +65,8 @@ struct AllSpanOrSingle {
                              const std::tuple<LoadedParams...> &loaded_params) const
   {
     return std::make_tuple([&]() {
-      typedef ParamTags ParamTag;
-      typedef typename ParamTag::base_type T;
+      using ParamTag = ParamTags;
+      using T = typename ParamTag::base_type;
       if constexpr (ParamTag::category == ParamCategory::SingleInput) {
         const GVArrayImpl &varray_impl = *std::get<I>(loaded_params);
         return GVArrayDevirtualizer<T, true, true>{varray_impl};
@@ -97,8 +97,8 @@ template<size_t... Indices> struct SomeSpanOrSingle {
                              const std::tuple<LoadedParams...> &loaded_params) const
   {
     return std::make_tuple([&]() {
-      typedef ParamTags ParamTag;
-      typedef typename ParamTag::base_type T;
+      using ParamTag = ParamTags;
+      using T = typename ParamTag::base_type;
 
       if constexpr (ParamTag::category == ParamCategory::SingleInput) {
         constexpr bool UseSpan = ValueSequence<size_t, Indices...>::template contains<I>();
@@ -131,14 +131,13 @@ template<typename MaskT, typename... Args, typename... ParamTags, size_t... I, t
 #if (defined(__GNUC__) && !defined(__clang__))
 [[gnu::optimize("-funroll-loops")]] [[gnu::optimize("O3")]]
 #endif
-inline void
-execute_array(TypeSequence<ParamTags...> /*param_tags*/,
-              std::index_sequence<I...> /*indices*/,
-              ElementFn element_fn,
-              MaskT mask,
-              /* Use restrict to tell the compiler that pointer inputs do not alias
-               * each other. This is important for some compiler optimizations. */
-              Args &&__restrict... args)
+inline void execute_array(TypeSequence<ParamTags...> /*param_tags*/,
+                          std::index_sequence<I...> /*indices*/,
+                          ElementFn element_fn,
+                          MaskT mask,
+                          /* Use restrict to tell the compiler that pointer inputs do not alias
+                           * each other. This is important for some compiler optimizations. */
+                          Args &&__restrict... args)
 {
   if constexpr (std::is_same_v<std::decay_t<MaskT>, IndexRange>) {
     /* Having this explicit loop is necessary for MSVC to be able to vectorize this. */
@@ -174,11 +173,10 @@ template<typename... ParamTags, typename ElementFn, typename... Chunks>
 #if (defined(__GNUC__) && !defined(__clang__))
 [[gnu::optimize("-funroll-loops")]] [[gnu::optimize("O3")]]
 #endif
-inline void
-execute_materialized_impl(TypeSequence<ParamTags...> /*param_tags*/,
-                          const ElementFn element_fn,
-                          const int64_t size,
-                          Chunks &&__restrict... chunks)
+inline void execute_materialized_impl(TypeSequence<ParamTags...> /*param_tags*/,
+                                      const ElementFn element_fn,
+                                      const int64_t size,
+                                      Chunks &&__restrict... chunks)
 {
   for (int64_t i = 0; i < size; i++) {
     element_fn(chunks[i]...);
@@ -216,8 +214,8 @@ inline void execute_materialized(TypeSequence<ParamTags...> /*param_tags*/,
       /* Setup information for all parameters. */
       [&] {
         /* Use `typedef` instead of `using` to work around a compiler bug. */
-        typedef ParamTags ParamTag;
-        typedef typename ParamTag::base_type T;
+        using ParamTag = ParamTags;
+        using T = typename ParamTag::base_type;
         [[maybe_unused]] MaterializeArgInfo<ParamTags> &arg_info = std::get<I>(args_info);
         if constexpr (ParamTag::category == ParamCategory::SingleInput) {
           const GVArrayImpl &varray_impl = *std::get<I>(loaded_params);
@@ -258,8 +256,8 @@ inline void execute_materialized(TypeSequence<ParamTags...> /*param_tags*/,
       (
           [&] {
             /* Use `typedef` instead of `using` to work around a compiler bug. */
-            typedef ParamTags ParamTag;
-            typedef typename ParamTag::base_type T;
+            using ParamTag = ParamTags;
+            using T = typename ParamTag::base_type;
             if constexpr (ParamTag::category == ParamCategory::SingleMutable) {
               T *tmp_buffer = std::get<I>(temporary_buffers).ptr();
               T *param_buffer = std::get<I>(loaded_params);
@@ -301,7 +299,7 @@ inline void execute_materialized(TypeSequence<ParamTags...> /*param_tags*/,
             }
             /* As a fallback, do a virtual function call to retrieve all elements in the current
              * chunk. The elements are stored in a temporary buffer reused for every chunk. */
-            varray_impl.materialize_compressed_to_uninitialized(*current_segment_mask, tmp_buffer);
+            varray_impl.materialize_compressed(*current_segment_mask, tmp_buffer, true);
             /* Remember that this parameter has been materialized, so that the values are
              * destructed properly when the chunk is done. */
             arg_info.mode = MaterializeArgMode::Materialized;
@@ -317,11 +315,9 @@ inline void execute_materialized(TypeSequence<ParamTags...> /*param_tags*/,
               T *param_buffer = std::get<I>(loaded_params);
               return param_buffer + mask_start;
             }
-            else {
-              /* Use the temporary buffer. The values will have to be copied out of that
-               * buffer into the caller-provided buffer afterwards. */
-              return const_cast<T *>(tmp_buffer);
-            }
+            /* Use the temporary buffer. The values will have to be copied out of that
+             * buffer into the caller-provided buffer afterwards. */
+            return tmp_buffer;
           }
         }()...);
 
@@ -330,8 +326,8 @@ inline void execute_materialized(TypeSequence<ParamTags...> /*param_tags*/,
       (
           [&] {
             /* Use `typedef` instead of `using` to work around a compiler bug. */
-            typedef ParamTags ParamTag;
-            typedef typename ParamTag::base_type T;
+            using ParamTag = ParamTags;
+            using T = typename ParamTag::base_type;
             if constexpr (ELEM(ParamTag::category,
                                ParamCategory::SingleOutput,
                                ParamCategory::SingleMutable))
@@ -351,8 +347,8 @@ inline void execute_materialized(TypeSequence<ParamTags...> /*param_tags*/,
         /* Destruct values that have been materialized before. */
         [&] {
           /* Use `typedef` instead of `using` to work around a compiler bug. */
-          typedef ParamTags ParamTag;
-          typedef typename ParamTag::base_type T;
+          using ParamTag = ParamTags;
+          using T = typename ParamTag::base_type;
           [[maybe_unused]] MaterializeArgInfo<ParamTags> &arg_info = std::get<I>(args_info);
           if constexpr (ParamTag::category == ParamCategory::SingleInput) {
             if (arg_info.mode == MaterializeArgMode::Materialized) {
@@ -368,8 +364,8 @@ inline void execute_materialized(TypeSequence<ParamTags...> /*param_tags*/,
       /* Destruct buffers for single value inputs. */
       [&] {
         /* Use `typedef` instead of `using` to work around a compiler bug. */
-        typedef ParamTags ParamTag;
-        typedef typename ParamTag::base_type T;
+        using ParamTag = ParamTags;
+        using T = typename ParamTag::base_type;
         [[maybe_unused]] MaterializeArgInfo<ParamTags> &arg_info = std::get<I>(args_info);
         if constexpr (ParamTag::category == ParamCategory::SingleInput) {
           if (arg_info.mode == MaterializeArgMode::Single) {
@@ -394,8 +390,8 @@ inline void execute_element_fn_as_multi_function(const ElementFn element_fn,
   /* Contains `const GVArrayImpl *` for inputs and `T *` for outputs. */
   const auto loaded_params = std::make_tuple([&]() {
     /* Use `typedef` instead of `using` to work around a compiler bug. */
-    typedef ParamTags ParamTag;
-    typedef typename ParamTag::base_type T;
+    using ParamTag = ParamTags;
+    using T = typename ParamTag::base_type;
 
     if constexpr (ParamTag::category == ParamCategory::SingleInput) {
       return params.readonly_single_input(I).get_implementation();
@@ -463,8 +459,8 @@ inline void execute_element_fn_as_multi_function(const ElementFn element_fn,
         execute_array(
             TypeSequence<ParamTags...>(), std::index_sequence<I...>(), element_fn, segment, [&]() {
               /* Use `typedef` instead of `using` to work around a compiler bug. */
-              typedef ParamTags ParamTag;
-              typedef typename ParamTag::base_type T;
+              using ParamTag = ParamTags;
+              using T = typename ParamTag::base_type;
               if constexpr (ParamTag::category == ParamCategory::SingleInput) {
                 const GVArrayImpl &varray_impl = *std::get<I>(loaded_params);
                 return GVArray(&varray_impl).typed<T>();
@@ -650,6 +646,26 @@ inline auto SI6_SO(const char *name,
       name, element_fn, exec_preset, TypeSequence<In1, In2, In3, In4, In5, In6>());
 }
 
+/** Build multi-function with 8 single-input and 1 single-output parameter. */
+template<typename In1,
+         typename In2,
+         typename In3,
+         typename In4,
+         typename In5,
+         typename In6,
+         typename In7,
+         typename In8,
+         typename Out1,
+         typename ElementFn,
+         typename ExecPreset = exec_presets::Materialized>
+inline auto SI8_SO(const char *name,
+                   const ElementFn element_fn,
+                   const ExecPreset exec_preset = exec_presets::Materialized())
+{
+  return detail::build_multi_function_with_n_inputs_one_output<Out1>(
+      name, element_fn, exec_preset, TypeSequence<In1, In2, In3, In4, In5, In6, In7, In8>());
+}
+
 /** Build multi-function with 1 single-mutable parameter. */
 template<typename Mut1, typename ElementFn, typename ExecPreset = exec_presets::AllSpanOrSingle>
 inline auto SM(const char *name,
@@ -689,6 +705,57 @@ inline auto SI2_SO2(const char *name,
 {
   return detail::build_multi_function_with_n_inputs_two_outputs<Out1, Out2>(
       name, element_fn, exec_preset, TypeSequence<In1, In2>());
+}
+
+/** Build multi-function with 3 single-input and 2 single-output parameter. */
+template<typename In1,
+         typename In2,
+         typename In3,
+         typename Out1,
+         typename Out2,
+         typename ElementFn,
+         typename ExecPreset = exec_presets::Materialized>
+inline auto SI3_SO2(const char *name,
+                    const ElementFn element_fn,
+                    const ExecPreset exec_preset = exec_presets::Materialized())
+{
+  return detail::build_multi_function_with_n_inputs_two_outputs<Out1, Out2>(
+      name, element_fn, exec_preset, TypeSequence<In1, In2, In3>());
+}
+
+/** Build multi-function with 4 single-input and 2 single-output parameter. */
+template<typename In1,
+         typename In2,
+         typename In3,
+         typename In4,
+         typename Out1,
+         typename Out2,
+         typename ElementFn,
+         typename ExecPreset = exec_presets::Materialized>
+inline auto SI4_SO2(const char *name,
+                    const ElementFn element_fn,
+                    const ExecPreset exec_preset = exec_presets::Materialized())
+{
+  return detail::build_multi_function_with_n_inputs_two_outputs<Out1, Out2>(
+      name, element_fn, exec_preset, TypeSequence<In1, In2, In3, In4>());
+}
+
+/** Build multi-function with 5 single-input and 2 single-output parameter. */
+template<typename In1,
+         typename In2,
+         typename In3,
+         typename In4,
+         typename In5,
+         typename Out1,
+         typename Out2,
+         typename ElementFn,
+         typename ExecPreset = exec_presets::Materialized>
+inline auto SI5_SO2(const char *name,
+                    const ElementFn element_fn,
+                    const ExecPreset exec_preset = exec_presets::Materialized())
+{
+  return detail::build_multi_function_with_n_inputs_two_outputs<Out1, Out2>(
+      name, element_fn, exec_preset, TypeSequence<In1, In2, In3, In4, In5>());
 }
 
 /** Build multi-function with 1 single-input and 3 single output parameter. */
@@ -753,7 +820,7 @@ class CustomMF_GenericConstant : public MultiFunction {
 
  public:
   CustomMF_GenericConstant(const CPPType &type, const void *value, bool make_value_copy);
-  ~CustomMF_GenericConstant();
+  ~CustomMF_GenericConstant() override;
   void call(const IndexMask &mask, Params params, Context context) const override;
   uint64_t hash() const override;
   bool equals(const MultiFunction &other) const override;

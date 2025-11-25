@@ -15,11 +15,14 @@
 #include "BLI_utildefines.h"
 
 #ifdef __cplusplus
-extern "C" {
+#  include <string>
 #endif
 
 /* Buffer size of maximum `uint64` plus commas and terminator. */
 #define BLI_STR_FORMAT_UINT64_GROUPED_SIZE 27
+
+/* Buffer size of maximum `int64` plus commas and terminator. */
+#define BLI_STR_FORMAT_INT64_GROUPED_SIZE 28
 
 /* Buffer size of maximum `int32` with commas and terminator. */
 #define BLI_STR_FORMAT_INT32_GROUPED_SIZE 15
@@ -234,6 +237,12 @@ char *BLI_vsprintfN(const char *__restrict format, va_list args) ATTR_NONNULL(1,
  */
 size_t BLI_str_escape(char *__restrict dst, const char *__restrict src, size_t dst_maxncpy)
     ATTR_NONNULL(1, 2);
+
+#ifdef __cplusplus
+/** Same as above, but returns an std::string. */
+std::string BLI_str_escape(const char *str);
+#endif
+
 /**
  * This roughly matches C and Python's string escaping with double quotes - `"`.
  *
@@ -294,6 +303,8 @@ size_t BLI_str_format_int_grouped(char dst[BLI_STR_FORMAT_INT32_GROUPED_SIZE], i
  * \return The length of \a dst.
  */
 size_t BLI_str_format_uint64_grouped(char dst[BLI_STR_FORMAT_UINT64_GROUPED_SIZE], uint64_t num)
+    ATTR_NONNULL(1);
+size_t BLI_str_format_int64_grouped(char dst[BLI_STR_FORMAT_INT64_GROUPED_SIZE], int64_t num)
     ATTR_NONNULL(1);
 /**
  * Format a size in bytes using binary units.
@@ -589,10 +600,6 @@ bool BLI_string_elem_split_by_delim(const char *haystack,
  * \note `ARRAY_SIZE` allows pointers on some platforms.
  * \{ */
 
-#ifndef __cplusplus
-#  define STRNCPY(dst, src) BLI_strncpy(dst, src, ARRAY_SIZE(dst))
-#endif
-
 #define STRNCPY_RLEN(dst, src) BLI_strncpy_rlen(dst, src, ARRAY_SIZE(dst))
 #define SNPRINTF(dst, format, ...) BLI_snprintf(dst, ARRAY_SIZE(dst), format, __VA_ARGS__)
 #define SNPRINTF_RLEN(dst, format, ...) \
@@ -603,6 +610,7 @@ bool BLI_string_elem_split_by_delim(const char *haystack,
   len += BLI_strncpy_rlen(dst + len, suffix, ARRAY_SIZE(dst) - len)
 #define STR_CONCATF(dst, len, format, ...) \
   len += BLI_snprintf_rlen(dst + len, ARRAY_SIZE(dst) - len, format, __VA_ARGS__)
+#define STRNLEN(str) BLI_strnlen(str, ARRAY_SIZE(str))
 
 /** \} */
 
@@ -674,8 +682,6 @@ void BLI_string_debug_size_after_nil(char *str, size_t str_maxncpy);
 #endif /* !WITH_STRSIZE_DEBUG */
 
 /** \} */
-#ifdef __cplusplus
-}
 
 /**
  * Copy source string str into the destination dst of a size known at a compile time.
@@ -688,5 +694,3 @@ template<size_t N> inline char *STRNCPY(char (&dst)[N], const char *src)
 {
   return BLI_strncpy(dst, src, N);
 }
-
-#endif /* __cplusplus */

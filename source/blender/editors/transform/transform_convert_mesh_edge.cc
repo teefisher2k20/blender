@@ -18,6 +18,8 @@
 #include "transform.hh"
 #include "transform_convert.hh"
 
+namespace blender::ed::transform {
+
 /* -------------------------------------------------------------------- */
 /** \name Edge (for crease) Transform Creation
  * \{ */
@@ -59,8 +61,7 @@ static void createTransEdge(bContext * /*C*/, TransInfo *t)
       tc->data_len = countsel;
     }
 
-    td = tc->data = static_cast<TransData *>(
-        MEM_callocN(tc->data_len * sizeof(TransData), "TransCrease"));
+    td = tc->data = MEM_calloc_arrayN<TransData>(tc->data_len, "TransCrease");
 
     copy_m3_m4(mtx, tc->obedit->object_to_world().ptr());
     pseudoinverse_m3_m3(smtx, mtx, PSEUDOINVERSE_EPSILON);
@@ -103,8 +104,6 @@ static void createTransEdge(bContext * /*C*/, TransInfo *t)
         copy_m3_m3(td->smtx, smtx);
         copy_m3_m3(td->mtx, mtx);
 
-        td->ext = nullptr;
-
         fl_ptr = static_cast<float *>(BM_ELEM_CD_GET_VOID_P(eed, cd_edge_float_offset));
         td->val = fl_ptr;
         td->ival = *fl_ptr;
@@ -130,3 +129,5 @@ TransConvertTypeInfo TransConvertType_MeshEdge = {
     /*recalc_data*/ recalcData_mesh_edge,
     /*special_aftertrans_update*/ nullptr,
 };
+
+}  // namespace blender::ed::transform

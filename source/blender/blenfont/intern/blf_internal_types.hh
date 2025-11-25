@@ -9,21 +9,22 @@
 #pragma once
 
 #include <atomic>
-#include <mutex>
+#include <cmath>
 
 #include "DNA_vec_types.h"
 
 #include "BLF_api.hh"
 
 #include "BLI_map.hh"
+#include "BLI_mutex.hh"
 #include "BLI_vector.hh"
 
+#include "GPU_shader_shared.hh"
+#include "GPU_storage_buffer.hh"
 #include "GPU_texture.hh"
-#include "GPU_vertex_buffer.hh"
 
 #include <ft2build.h>
 
-struct ColorManagedDisplay;
 struct FontBLF;
 struct GlyphCacheBLF;
 struct GlyphBLF;
@@ -34,6 +35,11 @@ class VertBuf;
 }  // namespace blender::gpu
 struct GPUVertBufRaw;
 
+namespace blender::ocio {
+class ColorSpace;
+}  // namespace blender::ocio
+using ColorSpace = blender::ocio::ColorSpace;
+
 #include FT_MULTIPLE_MASTERS_H /* Variable font support. */
 
 /** Maximum variation axes per font. */
@@ -42,11 +48,11 @@ struct GPUVertBufRaw;
 #define MAKE_DVAR_TAG(a, b, c, d) \
   ((uint32_t(a) << 24u) | (uint32_t(b) << 16u) | (uint32_t(c) << 8u) | (uint32_t(d)))
 
-#define BLF_VARIATION_AXIS_WEIGHT MAKE_DVAR_TAG('w', 'g', 'h', 't')  /* 'wght' weight axis. */
-#define BLF_VARIATION_AXIS_SLANT MAKE_DVAR_TAG('s', 'l', 'n', 't')   /* 'slnt' slant axis. */
-#define BLF_VARIATION_AXIS_WIDTH MAKE_DVAR_TAG('w', 'd', 't', 'h')   /* 'wdth' width axis. */
-#define BLF_VARIATION_AXIS_SPACING MAKE_DVAR_TAG('s', 'p', 'a', 'c') /* 'spac' spacing axis. */
-#define BLF_VARIATION_AXIS_OPTSIZE MAKE_DVAR_TAG('o', 'p', 's', 'z') /* 'opsz' optical size. */
+#define BLF_VARIATION_AXIS_WEIGHT MAKE_DVAR_TAG('w', 'g', 'h', 't')  /* `wght` weight axis. */
+#define BLF_VARIATION_AXIS_SLANT MAKE_DVAR_TAG('s', 'l', 'n', 't')   /* `slnt` slant axis. */
+#define BLF_VARIATION_AXIS_WIDTH MAKE_DVAR_TAG('w', 'd', 't', 'h')   /* `wdth` width axis. */
+#define BLF_VARIATION_AXIS_SPACING MAKE_DVAR_TAG('s', 'p', 'a', 'c') /* `spac` spacing axis. */
+#define BLF_VARIATION_AXIS_OPTSIZE MAKE_DVAR_TAG('o', 'p', 's', 'z') /* `opsz` optical size. */
 
 /* -------------------------------------------------------------------- */
 /** \name Sub-Pixel Offset & Utilities
@@ -59,7 +65,7 @@ struct GPUVertBufRaw;
  * This is an internal type that represents sub-pixel positioning,
  * users of this type are to use `ft_pix_*` functions to keep scaling/rounding in one place.
  */
-typedef int32_t ft_pix;
+using ft_pix = int32_t;
 
 /* Macros copied from `include/freetype/internal/ftobjs.h`. */
 
@@ -79,7 +85,7 @@ inline int ft_pix_to_int_floor(ft_pix v)
 
 inline int ft_pix_to_int_ceil(ft_pix v)
 {
-  return int(FT_PIX_CEIL(v) >> 6);
+  return (FT_PIX_CEIL(v) >> 6);
 }
 
 inline ft_pix ft_pix_from_int(int v)
@@ -94,7 +100,7 @@ inline ft_pix ft_pix_from_float(float v)
 
 /** \} */
 
-#define BLF_BATCH_DRAW_LEN_MAX 2048 /* in glyph */
+#define BLF_BATCH_DRAW_LEN_MAX 128 /* in glyph */
 
 /** Number of characters in #KerningCacheBLF.table. */
 #define KERNING_CACHE_TABLE_SIZE 128
@@ -106,23 +112,23 @@ struct BatchBLF {
   /** Can only batch glyph from the same font. */
   FontBLF *font;
   blender::gpu::Batch *batch;
-  blender::gpu::VertBuf *verts;
-  GPUVertBufRaw pos_step, col_step, offset_step, glyph_size_step, glyph_flags_step;
-  unsigned int pos_loc, col_loc, offset_loc, glyph_size_loc, glyph_flags_loc;
-  unsigned int glyph_len;
+  blender::gpu::StorageBuf *glyph_buf;
+  int glyph_len;
   /** Copy of `font->pos`. */
   int ofs[2];
-  /* Previous call `modelmatrix`. */
+  /** Previous call `modelmatrix`. */
   float mat[4][4];
   bool enabled, active, simple_shader;
   GlyphCacheBLF *glyph_cache;
+
+  GlyphQuad glyph_data[BLF_BATCH_DRAW_LEN_MAX];
 };
 
 extern BatchBLF g_batch;
 
 struct KerningCacheBLF {
   /**
-   * Cache a ascii glyph pairs. Only store the x offset we are interested in,
+   * Cache a ASCII glyph pairs. Only store the x offset we are interested in,
    * instead of the full #FT_Vector since it's not used for drawing at the moment.
    */
   int ascii_table[KERNING_CACHE_TABLE_SIZE][KERNING_CACHE_TABLE_SIZE];
@@ -160,7 +166,7 @@ struct GlyphCacheBLF {
   blender::Map<GlyphCacheKey, std::unique_ptr<GlyphBLF>> glyphs;
 
   /** Texture array, to draw the glyphs. */
-  GPUTexture *texture;
+  blender::gpu::Texture *texture;
   char *bitmap_result;
   int bitmap_len;
   int bitmap_len_landed;
@@ -170,7 +176,7 @@ struct GlyphCacheBLF {
 };
 
 struct GlyphBLF {
-  /** The character, as UTF-32. */
+  /** The character, as UTF32. */
   unsigned int c;
 
   /** Freetype2 index, to speed-up the search. */
@@ -225,8 +231,8 @@ struct FontBufInfoBLF {
   /** Buffer size, keep signed so comparisons with negative values work. */
   int dims[2];
 
-  /** Display device used for color management. */
-  ColorManagedDisplay *display;
+  /** Colorspace of the byte buffer (float is scene linear). */
+  const ColorSpace *colorspace;
 
   /** The color, the alphas is get from the glyph! (color is sRGB space). */
   float col_init[4];
@@ -302,10 +308,10 @@ struct FontMetrics {
 };
 
 struct FontBLF {
-  /** Full path to font file or NULL if from memory. */
+  /** The full path to font file or NULL when from memory. */
   char *filepath;
 
-  /** Pointer to in-memory font, or NULL if from file. */
+  /** Pointer to in-memory font, or NULL when from a file. */
   void *mem;
   size_t mem_size;
   /** Handle for in-memory fonts to avoid loading them multiple times. */
@@ -348,6 +354,7 @@ struct FontBLF {
 
   /** The width to wrap the text, see #BLF_WORD_WRAP. */
   int wrap_width;
+  BLFWrapMode wrap_mode;
 
   /** Font size. */
   float size;
@@ -355,21 +362,26 @@ struct FontBLF {
   /** Axes data for Adobe MM, TrueType GX, or OpenType variation fonts. */
   FT_MM_Var *variations;
 
-  /** Character variations. */
-  int char_weight;    /* 100 - 900, 400 = normal. */
-  float char_slant;   /* Slant in clockwise degrees. 0.0 = upright. */
-  float char_width;   /* Factor of normal character width. 1.0 = normal. */
-  float char_spacing; /* Factor of normal character spacing. 0.0 = normal. */
+  /* Character variations. */
+
+  /** Wight in range: 100 - 900, 400 = normal. */
+  int char_weight;
+  /** Slant in clockwise degrees. 0.0 = upright. */
+  float char_slant;
+  /** Factor of normal character width. 1.0 = normal. */
+  float char_width;
+  /** Factor of normal character spacing. 0.0 = normal. */
+  float char_spacing;
 
   /** Max texture size. */
   int tex_size_max;
 
   /** Font options. */
-  int flags;
+  FontFlags flags;
 
   /**
    * List of glyph caches (#GlyphCacheBLF) for this font for size, DPI, bold, italic.
-   * Use blf_glyph_cache_acquire(font) and blf_glyph_cache_release(font) to access cache!
+   * Use `blf_glyph_cache_acquire(font)` and `blf_glyph_cache_release(font)` to access cache!
    */
   blender::Vector<std::unique_ptr<GlyphCacheBLF>> cache;
 
@@ -395,5 +407,5 @@ struct FontBLF {
   FontBufInfoBLF buf_info;
 
   /** Mutex lock for glyph cache. */
-  std::mutex glyph_cache_mutex;
+  blender::Mutex glyph_cache_mutex;
 };

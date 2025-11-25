@@ -7,7 +7,6 @@
 
 #include "BKE_action.hh"
 #include "BKE_anim_data.hh"
-#include "BKE_fcurve.hh"
 #include "BKE_idtype.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_main.hh"
@@ -18,9 +17,6 @@
 #include "DNA_object_types.h"
 
 #include "BLI_listbase.h"
-#include "BLI_string_utf8.h"
-
-#include <limits>
 
 #include "CLG_log.h"
 #include "testing/testing.h"
@@ -50,7 +46,7 @@ class NLASlottedActionTest : public testing::Test {
   void SetUp() override
   {
     bmain = BKE_main_new();
-    action = static_cast<Action *>(BKE_id_new(bmain, ID_AC, "ACÄnimåtië"));
+    action = BKE_id_new<Action>(bmain, "ACÄnimåtië");
     action->id.us = 0; /* Nothing references this yet. */
     cube = BKE_object_add_only_object(bmain, OB_EMPTY, "Küüübus");
     cube->id.us = 0; /* Nothing references this yet. */

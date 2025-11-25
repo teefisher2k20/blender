@@ -79,7 +79,7 @@ class Grid3DFieldContext : public FieldContext {
 
   GVArray get_varray_for_input(const FieldInput &field_input,
                                const IndexMask & /*mask*/,
-                               ResourceScope & /*scope*/) const
+                               ResourceScope & /*scope*/) const override
   {
     const bke::AttributeFieldInput *attribute_field_input =
         dynamic_cast<const bke::AttributeFieldInput *>(&field_input);
@@ -107,7 +107,7 @@ class Grid3DFieldContext : public FieldContext {
         }
       }
     });
-    return VArray<float3>::ForContainer(std::move(positions));
+    return VArray<float3>::from_container(std::move(positions));
   }
 };
 
@@ -136,7 +136,7 @@ static void node_geo_exec(GeoNodeExecParams params)
   }
 
   const double3 scale_fac = double3(bounds_max - bounds_min) / double3(resolution - 1);
-  if (!BKE_volume_grid_determinant_valid(scale_fac.x * scale_fac.y * scale_fac.z)) {
+  if (!BKE_volume_voxel_size_valid(float3(scale_fac))) {
     params.error_message_add(NodeWarningType::Warning,
                              TIP_("Volume scale is lower than permitted by OpenVDB"));
     params.set_default_remaining_outputs();
@@ -162,12 +162,11 @@ static void node_geo_exec(GeoNodeExecParams params)
       densities.data()};
   openvdb::tools::copyFromDense(dense_grid, *grid, 0.0f);
 
-  grid->transform().preTranslate(openvdb::math::Vec3<float>(-0.5f));
   grid->transform().postScale(openvdb::math::Vec3<double>(scale_fac.x, scale_fac.y, scale_fac.z));
   grid->transform().postTranslate(
       openvdb::math::Vec3<float>(bounds_min.x, bounds_min.y, bounds_min.z));
 
-  Volume *volume = reinterpret_cast<Volume *>(BKE_id_new_nomain(ID_VO, nullptr));
+  Volume *volume = BKE_id_new_nomain<Volume>(nullptr);
   BKE_volume_grid_add_vdb(*volume, "density", std::move(grid));
 
   GeometrySet r_geometry_set;
@@ -191,7 +190,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

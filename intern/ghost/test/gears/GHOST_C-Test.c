@@ -32,7 +32,7 @@
 #endif /* defined(WIN32) || defined(__APPLE__) */
 
 static void gearsTimerProc(GHOST_TimerTaskHandle task, uint64_t time);
-bool processEvent(GHOST_EventHandle hEvent, GHOST_TUserDataPtr userData);
+bool processEvent(GHOST_EventHandle hEvent, GHOST_TUserDataPtr user_data);
 
 static GLfloat view_rotx = 20.0, view_roty = 30.0, view_rotz = 0.0;
 static GLfloat fAngle = 0.0;
@@ -41,7 +41,6 @@ static GHOST_SystemHandle shSystem = NULL;
 static GHOST_WindowHandle sMainWindow = NULL;
 static GHOST_WindowHandle sSecondaryWindow = NULL;
 static GHOST_TStandardCursor sCursor = GHOST_kStandardCursorFirstCursor;
-static GHOST_WindowHandle sFullScreenWindow = NULL;
 static GHOST_TimerTaskHandle sTestTimer;
 static GHOST_TimerTaskHandle sGearsTimer;
 
@@ -270,14 +269,13 @@ static void setViewPortGL(GHOST_WindowHandle hWindow)
   GHOST_DisposeRectangle(hRect);
 }
 
-bool processEvent(GHOST_EventHandle hEvent, GHOST_TUserDataPtr userData)
+bool processEvent(GHOST_EventHandle hEvent, GHOST_TUserDataPtr user_data)
 {
   bool handled = true;
   int cursor;
   int visibility;
   GHOST_TEventKeyData *keyData = NULL;
   GHOST_TEventWheelData *wheelData = NULL;
-  GHOST_DisplaySetting setting;
   GHOST_WindowHandle window = GHOST_GetEventWindow(hEvent);
 
   switch (GHOST_GetEventType(hEvent)) {
@@ -291,7 +289,7 @@ bool processEvent(GHOST_EventHandle hEvent, GHOST_TUserDataPtr userData)
 #endif
     case GHOST_kEventWheel: {
       wheelData = (GHOST_TEventWheelData *)GHOST_GetEventData(hEvent);
-      if (wheelData->z > 0) {
+      if (wheelData->value > 0) {
         view_rotz += 5.f;
       }
       else {
@@ -316,41 +314,12 @@ bool processEvent(GHOST_EventHandle hEvent, GHOST_TUserDataPtr userData)
           GHOST_SetCursorShape(window, sCursor);
           break;
         }
-        case GHOST_kKeyF:
-          if (!GHOST_GetFullScreen(shSystem)) {
-            /* Begin full-screen mode. */
-            setting.bpp = 24;
-            setting.frequency = 85;
-            setting.xPixels = 640;
-            setting.yPixels = 480;
-
-            /*
-             * setting.bpp = 16;
-             * setting.frequency = 75;
-             * setting.xPixels = 640;
-             * setting.yPixels = 480;
-             */
-
-            sFullScreenWindow = GHOST_BeginFullScreen(shSystem,
-                                                      &setting,
-
-                                                      FALSE /* stereo flag */);
-          }
-          else {
-            GHOST_EndFullScreen(shSystem);
-            sFullScreenWindow = 0;
-          }
-          break;
         case GHOST_kKeyH: {
           visibility = GHOST_GetCursorVisibility(window);
           GHOST_SetCursorVisibility(window, !visibility);
           break;
         }
         case GHOST_kKeyQ:
-          if (GHOST_GetFullScreen(shSystem)) {
-            GHOST_EndFullScreen(shSystem);
-            sFullScreenWindow = 0;
-          }
           sExitRequested = 1;
         case GHOST_kKeyT:
           if (!sTestTimer) {
@@ -407,8 +376,9 @@ bool processEvent(GHOST_EventHandle hEvent, GHOST_TUserDataPtr userData)
         break;
       }
       setViewPortGL(window2);
+      GHOST_SwapWindowBufferAcquire(window2);
       drawGL();
-      GHOST_SwapWindowBuffers(window2);
+      GHOST_SwapWindowBufferRelease(window2);
       break;
     }
     default:
@@ -420,7 +390,7 @@ bool processEvent(GHOST_EventHandle hEvent, GHOST_TUserDataPtr userData)
 
 int main(int argc, char **argv)
 {
-  GHOST_GPUSettings gpuSettings = {0};
+  GHOST_GPUSettings gpu_settings = {0};
   char *title1 = "gears - main window";
   char *title2 = "gears - secondary window";
   GHOST_EventConsumerHandle consumer = GHOST_CreateEventConsumer(processEvent, NULL);
@@ -441,7 +411,7 @@ int main(int argc, char **argv)
                                      GHOST_kWindowStateNormal,
                                      false,
                                      GHOST_kDrawingContextTypeOpenGL,
-                                     gpuSettings);
+                                     gpu_settings);
     if (!sMainWindow) {
       printf("could not create main window\n");
       exit(-1);
@@ -458,7 +428,7 @@ int main(int argc, char **argv)
                                           GHOST_kWindowStateNormal,
                                           false,
                                           GHOST_kDrawingContextTypeOpenGL,
-                                          gpuSettings);
+                                          gpu_settings);
     if (!sSecondaryWindow) {
       printf("could not create secondary window\n");
       exit(-1);
@@ -499,13 +469,7 @@ static void gearsTimerProc(GHOST_TimerTaskHandle hTask, uint64_t time)
   fAngle += 2.0;
   view_roty += 1.0;
   hWindow = (GHOST_WindowHandle)GHOST_GetTimerTaskUserData(hTask);
-  if (GHOST_GetFullScreen(shSystem)) {
-    /* Running full screen */
-    GHOST_InvalidateWindow(sFullScreenWindow);
-  }
-  else {
-    if (GHOST_ValidWindow(shSystem, hWindow)) {
-      GHOST_InvalidateWindow(hWindow);
-    }
+  if (GHOST_ValidWindow(shSystem, hWindow)) {
+    GHOST_InvalidateWindow(hWindow);
   }
 }

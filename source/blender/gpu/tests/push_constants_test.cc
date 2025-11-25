@@ -7,6 +7,7 @@
 #include "GPU_capabilities.hh"
 #include "GPU_compute.hh"
 #include "GPU_shader.hh"
+#include "GPU_state.hh"
 #include "GPU_storage_buffer.hh"
 
 #include "BLI_math_vector.hh"
@@ -17,7 +18,7 @@
 
 namespace blender::gpu::tests {
 struct CallData {
-  GPUStorageBuf *ssbo = nullptr;
+  StorageBuf *ssbo = nullptr;
   Vector<float> data;
 
   float float_in;
@@ -77,7 +78,7 @@ struct CallData {
 };
 
 struct Shader {
-  GPUShader *shader = nullptr;
+  gpu::Shader *shader = nullptr;
   Vector<CallData> call_datas;
 
   Shader()

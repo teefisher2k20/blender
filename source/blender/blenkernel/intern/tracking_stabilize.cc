@@ -14,8 +14,8 @@
 #include "DNA_scene_types.h"
 #include "RNA_prototypes.hh"
 
-#include "BLI_ghash.h"
 #include "BLI_listbase.h"
+#include "BLI_map.hh"
 #include "BLI_math_geom.h"
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
@@ -89,7 +89,7 @@ struct StabContext {
   MovieClip *clip;
   MovieTracking *tracking;
   MovieTrackingStabilization *stab;
-  GHash *private_track_data;
+  blender::Map<MovieTrackingTrack *, TrackStabilizationBase *> *private_track_data;
   FCurve *locinf;
   FCurve *rotinf;
   FCurve *scaleinf;
@@ -102,17 +102,17 @@ struct StabContext {
 static TrackStabilizationBase *access_stabilization_baseline_data(StabContext *ctx,
                                                                   MovieTrackingTrack *track)
 {
-  return static_cast<TrackStabilizationBase *>(BLI_ghash_lookup(ctx->private_track_data, track));
+  return ctx->private_track_data->lookup_default(track, nullptr);
 }
 
 static void attach_stabilization_baseline_data(StabContext *ctx,
                                                MovieTrackingTrack *track,
                                                TrackStabilizationBase *private_data)
 {
-  BLI_ghash_insert(ctx->private_track_data, track, private_data);
+  ctx->private_track_data->add(track, private_data);
 }
 
-static void discard_stabilization_baseline_data(void *val)
+static void discard_stabilization_baseline_data(TrackStabilizationBase *val)
 {
   if (val != nullptr) {
     MEM_freeN(val);
@@ -202,11 +202,12 @@ static void use_values_from_fcurves(StabContext *ctx, bool toggle)
  */
 static StabContext *init_stabilization_working_context(MovieClip *clip)
 {
-  StabContext *ctx = MEM_cnew<StabContext>("2D stabilization animation runtime data");
+  StabContext *ctx = MEM_callocN<StabContext>("2D stabilization animation runtime data");
   ctx->clip = clip;
   ctx->tracking = &clip->tracking;
   ctx->stab = &clip->tracking.stabilization;
-  ctx->private_track_data = BLI_ghash_ptr_new("2D stabilization per track private working data");
+  ctx->private_track_data = MEM_new<blender::Map<MovieTrackingTrack *, TrackStabilizationBase *>>(
+      "2D stabilization per track private working data");
   ctx->locinf = retrieve_stab_animation(clip, "influence_location", 0);
   ctx->rotinf = retrieve_stab_animation(clip, "influence_rotation", 0);
   ctx->scaleinf = retrieve_stab_animation(clip, "influence_scale", 0);
@@ -229,7 +230,10 @@ static StabContext *init_stabilization_working_context(MovieClip *clip)
 static void discard_stabilization_working_context(StabContext *ctx)
 {
   if (ctx != nullptr) {
-    BLI_ghash_free(ctx->private_track_data, nullptr, discard_stabilization_baseline_data);
+    for (TrackStabilizationBase *data : ctx->private_track_data->values()) {
+      discard_stabilization_baseline_data(data);
+    }
+    MEM_delete(ctx->private_track_data);
     MEM_freeN(ctx);
   }
 }
@@ -869,7 +873,7 @@ static void init_all_tracks(StabContext *ctx, float aspect)
   LISTBASE_FOREACH (MovieTrackingTrack *, track, &tracking_camera_object->tracks) {
     TrackStabilizationBase *local_data = access_stabilization_baseline_data(ctx, track);
     if (!local_data) {
-      local_data = MEM_cnew<TrackStabilizationBase>("2D stabilization per track baseline data");
+      local_data = MEM_callocN<TrackStabilizationBase>("2D stabilization per track baseline data");
       attach_stabilization_baseline_data(ctx, track, local_data);
     }
     BLI_assert(local_data != nullptr);
@@ -882,7 +886,7 @@ static void init_all_tracks(StabContext *ctx, float aspect)
     return;
   }
 
-  order = MEM_cnew_array<TrackInitOrder>(track_len, "stabilization track order");
+  order = MEM_calloc_arrayN<TrackInitOrder>(track_len, "stabilization track order");
   if (!order) {
     return;
   }
@@ -1301,7 +1305,7 @@ static void tracking_stabilize_frame_interpolation_cb(void *__restrict userdata,
       static_cast<TrackingStabilizeFrameInterpolationData *>(userdata);
   ImBuf *ibuf = data->ibuf;
   ImBuf *tmpibuf = data->tmpibuf;
-  float(*mat)[4] = data->mat;
+  float (*mat)[4] = data->mat;
 
   float vec[3] = {0.0f, float(y), 0.0f};
   float rvec[3];
@@ -1324,7 +1328,7 @@ static void tracking_stabilize_frame_interpolation_cb(void *__restrict userdata,
       }
     }
     else {
-      /* Nearest or fallback to nearest. */
+      /* Nearest or fall back to nearest. */
       for (int x = 0; x < tmpibuf->x; x++, dst++) {
         vec[0] = float(x);
         mul_v3_m4v3(rvec, mat, vec);
@@ -1350,7 +1354,7 @@ static void tracking_stabilize_frame_interpolation_cb(void *__restrict userdata,
       }
     }
     else {
-      /* Nearest or fallback to nearest. */
+      /* Nearest or fall back to nearest. */
       for (int x = 0; x < tmpibuf->x; x++, dst++) {
         vec[0] = float(x);
         mul_v3_m4v3(rvec, mat, vec);
@@ -1400,10 +1404,10 @@ ImBuf *BKE_tracking_stabilize_frame(
   /* Allocate frame for stabilization result, copy alpha mode and color-space. */
   ibuf_flags = 0;
   if (ibuf->byte_buffer.data) {
-    ibuf_flags |= IB_rect;
+    ibuf_flags |= IB_byte_data;
   }
   if (ibuf->float_buffer.data) {
-    ibuf_flags |= IB_rectfloat;
+    ibuf_flags |= IB_float_data;
   }
 
   tmpibuf = IMB_allocImBuf(ibuf->x, ibuf->y, ibuf->planes, ibuf_flags);

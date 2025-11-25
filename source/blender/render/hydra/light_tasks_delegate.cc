@@ -16,19 +16,19 @@ LightTasksDelegate::LightTasksDelegate(pxr::HdRenderIndex *parent_index,
   skydome_task_id_ = GetDelegateID().AppendElementString("skydomeTask");
   GetRenderIndex().InsertTask<pxr::HdxSkydomeTask>(this, skydome_task_id_);
 
-  CLOG_INFO(LOG_HYDRA_RENDER, 1, "%s", simple_task_id_.GetText());
-  CLOG_INFO(LOG_HYDRA_RENDER, 1, "%s", skydome_task_id_.GetText());
+  CLOG_DEBUG(LOG_HYDRA_RENDER, "%s", simple_task_id_.GetText());
+  CLOG_DEBUG(LOG_HYDRA_RENDER, "%s", skydome_task_id_.GetText());
 }
 
 pxr::VtValue LightTasksDelegate::Get(pxr::SdfPath const &id, pxr::TfToken const &key)
 {
-  CLOG_INFO(LOG_HYDRA_RENDER, 3, "%s, %s", id.GetText(), key.GetText());
+  CLOG_DEBUG(LOG_HYDRA_RENDER, "%s, %s", id.GetText(), key.GetText());
 
   if (key == pxr::HdTokens->params) {
     if (id == simple_task_id_) {
       return pxr::VtValue(simple_task_params_);
     }
-    else if (id == skydome_task_id_) {
+    if (id == skydome_task_id_) {
       return pxr::VtValue(skydome_task_params_);
     }
   }

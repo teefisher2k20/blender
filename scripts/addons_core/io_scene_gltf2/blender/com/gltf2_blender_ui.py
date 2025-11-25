@@ -28,7 +28,6 @@ class NODE_OT_GLTF_SETTINGS(bpy.types.Operator):
             space is not None
             and space.type == "NODE_EDITOR"
             and context.object and context.object.active_material
-            and context.object.active_material.use_nodes is True
             and bpy.context.preferences.addons['io_scene_gltf2'].preferences.settings_node_ui is True
         )
 
@@ -60,12 +59,7 @@ class gltf2_KHR_materials_variants_variant(bpy.types.PropertyGroup):
 
 class SCENE_UL_gltf2_variants(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-
-        if self.layout_type in {'DEFAULT', 'COMPACT'}:
-            layout.prop(item, "name", text="", emboss=False)
-
-        elif self.layout_type in {'GRID'}:
-            layout.alignment = 'CENTER'
+        layout.prop(item, "name", text="", emboss=False)
 
 
 class SCENE_PT_gltf2_variants(bpy.types.Panel):
@@ -75,14 +69,14 @@ class SCENE_PT_gltf2_variants(bpy.types.Panel):
     bl_category = "glTF Variants"
 
     @classmethod
-    def poll(self, context):
+    def poll(cls, context):
         return bpy.context.preferences.addons['io_scene_gltf2'].preferences.KHR_materials_variants_ui is True
 
     def draw(self, context):
         layout = self.layout
         row = layout.row()
 
-        if bpy.data.scenes[0].get('gltf2_KHR_materials_variants_variants') and len(
+        if bpy.data.scenes[0].gltf2_KHR_materials_variants_variants and len(
                 bpy.data.scenes[0].gltf2_KHR_materials_variants_variants) > 0:
 
             row.template_list(
@@ -115,7 +109,7 @@ class SCENE_OT_gltf2_variant_add(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     @classmethod
-    def poll(self, context):
+    def poll(cls, context):
         return True
 
     def execute(self, context):
@@ -133,7 +127,7 @@ class SCENE_OT_gltf2_variant_remove(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     @classmethod
-    def poll(self, context):
+    def poll(cls, context):
         return len(bpy.data.scenes[0].gltf2_KHR_materials_variants_variants) > 0
 
     def execute(self, context):
@@ -172,7 +166,7 @@ class SCENE_OT_gltf2_display_variant(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     @classmethod
-    def poll(self, context):
+    def poll(cls, context):
         return len(bpy.data.scenes[0].gltf2_KHR_materials_variants_variants) > 0
 
     def execute(self, context):
@@ -200,30 +194,38 @@ class SCENE_OT_gltf2_assign_to_variant(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     @classmethod
-    def poll(self, context):
+    def poll(cls, context):
         return len(bpy.data.scenes[0].gltf2_KHR_materials_variants_variants) > 0 \
             and bpy.context.object and bpy.context.object.type == "MESH"
 
     def execute(self, context):
-        gltf2_active_variant = bpy.data.scenes[0].gltf2_active_variant
         obj = bpy.context.object
 
         # loop on material slots ( primitives )
         for mat_slot_idx, s in enumerate(obj.material_slots):
             # Check if there is already data for this slot
             found = False
+            variant_found = False
             for i in obj.data.gltf2_variant_mesh_data:
                 if i.material_slot_index == mat_slot_idx and i.material == s.material:
                     found = True
                     variant_primitive = i
+                elif i.material_slot_index == mat_slot_idx and bpy.data.scenes[0].gltf2_active_variant in [
+                        v.variant.variant_idx for v in i.variants]:
+                    # User changed the material, so store the new one (replace instead of add)
+                    found = True
+                    variant_found = True
+                    variant_primitive = i
+                    i.material = s.material
 
             if found is False:
                 variant_primitive = obj.data.gltf2_variant_mesh_data.add()
                 variant_primitive.material_slot_index = mat_slot_idx
                 variant_primitive.material = s.material
 
-            vari = variant_primitive.variants.add()
-            vari.variant.variant_idx = bpy.data.scenes[0].gltf2_active_variant
+            if variant_found is False:
+                vari = variant_primitive.variants.add()
+                vari.variant.variant_idx = bpy.data.scenes[0].gltf2_active_variant
 
         return {'FINISHED'}
 
@@ -236,7 +238,7 @@ class SCENE_OT_gltf2_reset_to_original(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     @classmethod
-    def poll(self, context):
+    def poll(cls, context):
         return bpy.context.object and bpy.context.object.type == "MESH" and len(
             context.object.data.gltf2_variant_default_materials) > 0
 
@@ -246,7 +248,6 @@ class SCENE_OT_gltf2_reset_to_original(bpy.types.Operator):
         # loop on material slots ( primitives )
         for mat_slot_idx, s in enumerate(obj.material_slots):
             # Check if there is a default material for this slot
-            found = False
             for i in obj.data.gltf2_variant_default_materials:
                 if i.material_slot_index == mat_slot_idx:
                     s.material = i.default_material
@@ -263,7 +264,7 @@ class SCENE_OT_gltf2_assign_as_original(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     @classmethod
-    def poll(self, context):
+    def poll(cls, context):
         return bpy.context.object and bpy.context.object.type == "MESH"
 
     def execute(self, context):
@@ -311,12 +312,8 @@ class MESH_UL_gltf2_mesh_variants(bpy.types.UIList):
 
         vari = item.variant
         layout.context_pointer_set("id", vari)
-
-        if self.layout_type in {'DEFAULT', 'COMPACT'}:
-            layout.prop(bpy.data.scenes[0].gltf2_KHR_materials_variants_variants[vari.variant_idx],
-                        "name", text="", emboss=False)
-        elif self.layout_type in {'GRID'}:
-            layout.alignment = 'CENTER'
+        layout.prop(bpy.data.scenes[0].gltf2_KHR_materials_variants_variants[vari.variant_idx],
+                    "name", text="", emboss=False)
 
 
 class MESH_PT_gltf2_mesh_variants(bpy.types.Panel):
@@ -326,7 +323,7 @@ class MESH_PT_gltf2_mesh_variants(bpy.types.Panel):
     bl_context = "material"
 
     @classmethod
-    def poll(self, context):
+    def poll(cls, context):
         if not bpy.context.object:
             return False
         return bpy.context.preferences.addons['io_scene_gltf2'].preferences.KHR_materials_variants_ui is True \
@@ -338,12 +335,11 @@ class MESH_PT_gltf2_mesh_variants(bpy.types.Panel):
         active_material_slots = bpy.context.object.active_material_index
 
         found = False
-        if 'gltf2_variant_mesh_data' in bpy.context.object.data.keys():
-            for idx, prim in enumerate(bpy.context.object.data.gltf2_variant_mesh_data):
-                if prim.material_slot_index == active_material_slots and id(prim.material) == id(
-                        bpy.context.object.material_slots[active_material_slots].material):
-                    found = True
-                    break
+        for idx, prim in enumerate(bpy.context.object.data.gltf2_variant_mesh_data):
+            if prim.material_slot_index == active_material_slots and id(prim.material) == id(
+                    bpy.context.object.material_slots[active_material_slots].material):
+                found = True
+                break
 
         row = layout.row()
         if found is True:
@@ -354,8 +350,7 @@ class MESH_PT_gltf2_mesh_variants(bpy.types.Panel):
             row.operator("scene.gltf2_remove_material_variant", icon="REMOVE", text="")
 
             row = layout.row()
-            if 'gltf2_KHR_materials_variants_variants' in bpy.data.scenes[0].keys() and len(
-                    bpy.data.scenes[0].gltf2_KHR_materials_variants_variants) > 0:
+            if bpy.data.scenes[0].gltf2_KHR_materials_variants_variants:
                 row.prop_search(
                     context.object.data,
                     "gltf2_variant_pointer",
@@ -367,8 +362,7 @@ class MESH_PT_gltf2_mesh_variants(bpy.types.Panel):
             else:
                 row.label(text="Please Create a Variant First")
         else:
-            if 'gltf2_KHR_materials_variants_variants' in bpy.data.scenes[0].keys() and len(
-                    bpy.data.scenes[0].gltf2_KHR_materials_variants_variants) > 0:
+            if bpy.data.scenes[0].gltf2_KHR_materials_variants_variants:
                 row.operator("scene.gltf2_variants_slot_add", text="Add a new Variant Slot")
             else:
                 row.label(text="Please Create a Variant First")
@@ -381,7 +375,7 @@ class SCENE_OT_gltf2_variant_slot_add(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     @classmethod
-    def poll(self, context):
+    def poll(cls, context):
         if not bpy.context.object:
             return False
         return len(bpy.context.object.material_slots) > 0
@@ -415,7 +409,7 @@ class SCENE_OT_gltf2_material_to_variant(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     @classmethod
-    def poll(self, context):
+    def poll(cls, context):
         if not bpy.context.object:
             return False
         return len(bpy.context.object.material_slots) > 0 and context.object.data.gltf2_variant_pointer != ""
@@ -457,7 +451,7 @@ class SCENE_OT_gltf2_remove_material_variant(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     @classmethod
-    def poll(self, context):
+    def poll(cls, context):
         if not bpy.context.object:
             return False
         return len(bpy.context.object.material_slots) > 0 and len(bpy.context.object.data.gltf2_variant_mesh_data) > 0
@@ -493,16 +487,11 @@ class gltf2_animation_NLATrackNames(bpy.types.PropertyGroup):
 
 class SCENE_UL_gltf2_animation_track(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-
-        if self.layout_type in {'DEFAULT', 'COMPACT'}:
-            row = layout.row()
-            icon = 'SOLO_ON' if index == bpy.data.scenes[0].gltf2_animation_applied else 'SOLO_OFF'
-            row.prop(item, "name", text="", emboss=False)
-            op = row.operator("scene.gltf2_animation_apply", text='', icon=icon)
-            op.index = index
-
-        elif self.layout_type in {'GRID'}:
-            layout.alignment = 'CENTER'
+        row = layout.row()
+        icon = 'SOLO_ON' if index == bpy.data.scenes[0].gltf2_animation_applied else 'SOLO_OFF'
+        row.prop(item, "name", text="", emboss=False)
+        op = row.operator("scene.gltf2_animation_apply", text='', icon=icon)
+        op.index = index
 
 
 class SCENE_OT_gltf2_animation_apply(bpy.types.Operator):
@@ -514,7 +503,7 @@ class SCENE_OT_gltf2_animation_apply(bpy.types.Operator):
     index: bpy.props.IntProperty()
 
     @classmethod
-    def poll(self, context):
+    def poll(cls, context):
         return True
 
     def execute(self, context):
@@ -577,7 +566,7 @@ class SCENE_PT_gltf2_animation(bpy.types.Panel):
     bl_category = "glTF"
 
     @classmethod
-    def poll(self, context):
+    def poll(cls, context):
         return bpy.context.preferences.addons['io_scene_gltf2'].preferences.animation_ui is True
 
     def draw(self, context):
@@ -609,10 +598,15 @@ class SCENE_OT_gltf2_action_filter_refresh(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     @classmethod
-    def poll(self, context):
+    def poll(cls, context):
         return True
 
     def execute(self, context):
+        # Remove no more existing actions
+        for idx, i in enumerate(bpy.data.scenes[0].gltf_action_filter):
+            if i.action is None:
+                bpy.data.scenes[0].gltf_action_filter.remove(idx)
+
         for action in bpy.data.actions:
             if id(action) in [id(i.action) for i in bpy.data.scenes[0].gltf_action_filter]:
                 continue
@@ -628,13 +622,8 @@ class SCENE_UL_gltf2_filter_action(bpy.types.UIList):
 
         action = item.action
         layout.context_pointer_set("id", action)
-
-        if self.layout_type in {'DEFAULT', 'COMPACT'}:
-            layout.split().prop(item.action, "name", text="", emboss=False)
-            layout.split().prop(item, "keep", text="", emboss=True)
-
-        elif self.layout_type in {'GRID'}:
-            layout.alignment = 'CENTER'
+        layout.split().prop(item.action, "name", text="", emboss=False)
+        layout.split().prop(item, "keep", text="", emboss=True)
 
 
 def export_panel_animation_action_filter(layout, operator):

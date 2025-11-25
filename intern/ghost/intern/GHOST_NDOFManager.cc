@@ -10,7 +10,6 @@
 #include "GHOST_WindowManager.hh"
 #include "GHOST_utildefines.hh"
 
-/* Logging, use `ghost.ndof.*` prefix. */
 #include "CLG_log.h"
 
 #include <algorithm>
@@ -19,6 +18,8 @@
 #include <cmath>
 #include <cstring> /* For memory functions. */
 #include <map>
+
+static CLG_LogRef LOG = {"ghost.ndof"};
 
 /**
  * 3Dconnexion keyboards and keypads use specific keys that have no standard equivalent.
@@ -40,10 +41,7 @@ static const char *ndof_progress_string[] = {
 };
 
 /* Printable values for #NDOF_ButtonT enum (keep aligned) */
-#define MAP_ENTRY(button) \
-  { \
-    GHOST_##button, #button \
-  }
+#define MAP_ENTRY(button) {GHOST_##button, #button}
 static const std::map<GHOST_NDOF_ButtonT, const char *> ndof_button_names = {
     /* Disable wrapping, it makes it difficult to read. */
     /* clang-format off */
@@ -235,9 +233,6 @@ GHOST_NDOFManager::GHOST_NDOFManager(GHOST_System &sys)
 /** \name NDOF Device Setup
  * \{ */
 
-static CLG_LogRef LOG_NDOF_DEVICE = {"ghost.ndof.device"};
-#define LOG (&LOG_NDOF_DEVICE)
-
 bool GHOST_NDOFManager::setDevice(ushort vendor_id, ushort product_id)
 {
   /* Call this function until it returns true
@@ -307,7 +302,7 @@ bool GHOST_NDOFManager::setDevice(ushort vendor_id, ushort product_id)
           break;
         }
         default: {
-          CLOG_INFO(LOG, 2, "unknown Logitech product %04hx", product_id);
+          CLOG_INFO(&LOG, "Unknown Logitech product %04hx", product_id);
         }
       }
       break;
@@ -349,28 +344,26 @@ bool GHOST_NDOFManager::setDevice(ushort vendor_id, ushort product_id)
           break;
         }
         default: {
-          CLOG_INFO(LOG, 2, "unknown 3Dconnexion product %04hx", product_id);
+          CLOG_INFO(&LOG, "Unknown 3Dconnexion product %04hx", product_id);
         }
       }
       break;
     default:
-      CLOG_INFO(LOG, 2, "unknown device %04hx:%04hx", vendor_id, product_id);
+      CLOG_INFO(&LOG, "Unknown device %04hx:%04hx", vendor_id, product_id);
   }
 
   if (device_type_ != NDOF_UnknownDevice) {
-    CLOG_INFO(LOG, 2, "using %s", ndof_device_names[device_type_]);
+    CLOG_INFO(&LOG, "Using %s", ndof_device_names[device_type_]);
   }
 
   if (hid_map_button_mask_ == 0) {
     hid_map_button_mask_ = int(~(UINT_MAX << hid_map_button_num_));
   }
 
-  CLOG_INFO(LOG, 2, "%d buttons -> hex:%X", hid_map_button_num_, uint(hid_map_button_mask_));
+  CLOG_DEBUG(&LOG, "Device %d buttons -> hex:%X", hid_map_button_num_, uint(hid_map_button_mask_));
 
   return device_type_ != NDOF_UnknownDevice;
 }
-
-#undef LOG
 
 /** \} */
 
@@ -398,10 +391,7 @@ void GHOST_NDOFManager::updateRotation(const int r[3], uint64_t time)
 /** \name NDOF Buttons
  * \{ */
 
-static CLG_LogRef LOG_NDOF_BUTTONS = {"ghost.ndof.buttons"};
-#define LOG (&LOG_NDOF_BUTTONS)
-
-static GHOST_TKey ghost_map_keyboard_from_ndof_buttom(const GHOST_NDOF_ButtonT button)
+static GHOST_TKey ghost_map_keyboard_from_ndof_button(const GHOST_NDOF_ButtonT button)
 {
   switch (button) {
     case GHOST_NDOF_BUTTON_ESC: {
@@ -506,29 +496,19 @@ void GHOST_NDOFManager::sendKeyEvent(GHOST_TKey key,
   system_.pushEvent(event);
 }
 
-void GHOST_NDOFManager::updateButton(int button_number, bool press, uint64_t time)
+void GHOST_NDOFManager::updateButton(GHOST_NDOF_ButtonT button, bool press, uint64_t time)
 {
-  GHOST_NDOF_ButtonT button = static_cast<GHOST_NDOF_ButtonT>(button_number);
-
-  /* For bit-mask devices button mapping isn't unified, therefore check the button map. */
-  if (std::find(bitmask_devices_.begin(), bitmask_devices_.end(), device_type_) !=
-      bitmask_devices_.end())
-  {
-    button = hid_map_[button_number];
-  }
-
   if (button == GHOST_NDOF_BUTTON_INVALID) {
-    CLOG_INFO(
-        LOG, 2, "button=%d, press=%d (mapped to none, ignoring!)", button_number, int(press));
+    CLOG_DEBUG(
+        &LOG, "Update button=%d, press=%d (mapped to none, ignoring!)", int(button), int(press));
     return;
   }
 
-  CLOG_INFO(LOG,
-            2,
-            "button=%d, press=%d, name=%s",
-            button_number,
-            int(press),
-            ndof_button_names.at(button));
+  CLOG_DEBUG(&LOG,
+             "Update button=%d, press=%d, name=%s",
+             button,
+             int(press),
+             ndof_button_names.at(button));
 
 #ifndef USE_3DCONNEXION_NONSTANDARD_KEYS
   if (((button >= GHOST_NDOF_BUTTON_KBP_F1) && (button <= GHOST_NDOF_BUTTON_KBP_F12)) ||
@@ -542,7 +522,7 @@ void GHOST_NDOFManager::updateButton(int button_number, bool press, uint64_t tim
 
   /* Delivery will fail, so don't bother sending. */
   if (window != nullptr) {
-    const GHOST_TKey key = ghost_map_keyboard_from_ndof_buttom(button);
+    const GHOST_TKey key = ghost_map_keyboard_from_ndof_button(button);
     if (key != GHOST_kKeyUnknown) {
       sendKeyEvent(key, press, time, window);
     }
@@ -550,6 +530,28 @@ void GHOST_NDOFManager::updateButton(int button_number, bool press, uint64_t tim
       sendButtonEvent(button, press, time, window);
     }
   }
+}
+
+void GHOST_NDOFManager::updateButtonRAW(int button_number, bool press, uint64_t time)
+{
+  GHOST_NDOF_ButtonT button;
+
+  /* For bit-mask devices button mapping isn't unified, therefore check the button map. */
+  if (std::find(bitmask_devices_.begin(), bitmask_devices_.end(), device_type_) !=
+      bitmask_devices_.end())
+  {
+    if (button_number >= hid_map_button_num_) {
+      CLOG_DEBUG(
+          &LOG, "Update button=%d, press=%d (out of range, ignoring!)", button_number, int(press));
+      return;
+    }
+    button = hid_map_[button_number];
+  }
+  else {
+    button = static_cast<GHOST_NDOF_ButtonT>(button_number);
+  }
+
+  GHOST_NDOFManager::updateButton(button, press, time);
 }
 
 void GHOST_NDOFManager::updateButtonsBitmask(int button_bits, uint64_t time)
@@ -578,7 +580,11 @@ void GHOST_NDOFManager::updateButtonsBitmask(int button_bits, uint64_t time)
       else {
         button_depressed_ &= ~mask; /* Clear this button's bit. */
       }
-      updateButton(button_number, press, time);
+
+      /* Bitmask devices don't have unified keymaps, so button numbers needs to be looked up in the
+       * map. */
+      const GHOST_NDOF_ButtonT button = hid_map_[button_number];
+      updateButton(button, press, time);
     }
   }
 }
@@ -600,8 +606,9 @@ void GHOST_NDOFManager::updateButtonsArray(NDOF_Button_Array buttons,
       }
     }
 
-    if (!found)
+    if (!found) {
       updateButton(cached_button, false, time);
+    }
   }
 
   /* Find pressed buttons */
@@ -614,12 +621,12 @@ void GHOST_NDOFManager::updateButtonsArray(NDOF_Button_Array buttons,
       }
     }
 
-    if (!found)
+    if (!found) {
       updateButton(button, true, time);
+    }
   }
   cache = buttons;
 }
-#undef LOG
 
 /** \} */
 
@@ -627,19 +634,14 @@ void GHOST_NDOFManager::updateButtonsArray(NDOF_Button_Array buttons,
 /** \name NDOF Motion
  * \{ */
 
-static CLG_LogRef LOG_NDOF_MOTION = {"ghost.ndof.motion"};
-#define LOG (&LOG_NDOF_MOTION)
-
 void GHOST_NDOFManager::setDeadZone(float dz)
 {
-  if (dz < 0.0f) {
-    /* Negative values don't make sense, so clamp at zero. */
-    dz = 0.0f;
-  }
+  /* Negative values don't make sense, so clamp at zero. */
+  dz = std::max(dz, 0.0f);
   motion_dead_zone_ = dz;
 
   /* Warn the rogue user/developer about high dead-zone, but allow it. */
-  CLOG_INFO(LOG, 2, "dead zone set to %.2f%s", dz, (dz > 0.5f) ? " (unexpectedly high)" : "");
+  CLOG_INFO(&LOG, "Dead zone set to %.2f%s", dz, (dz > 0.5f) ? " (unexpectedly high)" : "");
 }
 
 static bool atHomePosition(const GHOST_TEventNDOFMotionData *ndof)
@@ -662,6 +664,17 @@ static bool nearHomePosition(const GHOST_TEventNDOFMotionData *ndof, float thres
 bool GHOST_NDOFManager::sendMotionEvent()
 {
   if (!motion_event_pending_) {
+    if (motion_state_ != GHOST_kNotStarted) {
+      /* Detect window de-activation and change the `motion_state_` even when no motion is pending.
+       * Without this check it's possible the window is de-activated before the NDOF
+       * motion callbacks have run, while the `motion_state_` is active.
+       * In this case, activating the window again would create an event
+       * with a large time-delta, see: #134733. */
+      if (system_.getWindowManager()->getActiveWindow() == nullptr) {
+        /* Avoid large `dt` times when changing windows. */
+        motion_state_ = GHOST_kNotStarted;
+      }
+    }
     return false;
   }
 
@@ -705,11 +718,11 @@ bool GHOST_NDOFManager::sendMotionEvent()
         data->progress = GHOST_kStarting;
         motion_state_ = GHOST_kInProgress;
         /* Previous motion time will be ancient, so just make up a reasonable time delta. */
-        data->dt = 0.0125f;
+        data->dt = NDOF_TIME_DELTA_STARTING;
       }
       else {
         /* Send no event and keep current state. */
-        CLOG_INFO(LOG, 2, "motion ignored");
+        CLOG_DEBUG(&LOG, "Motion ignored");
         delete event;
         return false;
       }
@@ -733,29 +746,27 @@ bool GHOST_NDOFManager::sendMotionEvent()
   }
 
 #if 1
-  CLOG_INFO(LOG,
-            2,
-            "motion sent, T=(%.2f,%.2f,%.2f), R=(%.2f,%.2f,%.2f) dt=%.3f, status=%s",
-            data->tx,
-            data->ty,
-            data->tz,
-            data->rx,
-            data->ry,
-            data->rz,
-            data->dt,
-            ndof_progress_string[data->progress]);
+  CLOG_DEBUG(&LOG,
+             "Motion sent, T=(%.2f,%.2f,%.2f), R=(%.2f,%.2f,%.2f) dt=%.3f, status=%s",
+             data->tx,
+             data->ty,
+             data->tz,
+             data->rx,
+             data->ry,
+             data->rz,
+             data->dt,
+             ndof_progress_string[data->progress]);
 #else
   /* Raw values, may be useful for debugging. */
-  CLOG_INFO(LOG,
-            2,
-            "motion sent, T=(%d,%d,%d) R=(%d,%d,%d) status=%s",
-            translation_[0],
-            translation_[1],
-            translation_[2],
-            rotation_[0],
-            rotation_[1],
-            rotation_[2],
-            ndof_progress_string[data->progress]);
+  CLOG_DEBUG(&LOG,
+             "Motion sent, T=(%d,%d,%d) R=(%d,%d,%d) status=%s",
+             translation_[0],
+             translation_[1],
+             translation_[2],
+             rotation_[0],
+             rotation_[1],
+             rotation_[2],
+             ndof_progress_string[data->progress]);
 #endif
   system_.pushEvent(event);
 

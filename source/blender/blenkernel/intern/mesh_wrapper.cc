@@ -43,7 +43,7 @@ Mesh *BKE_mesh_wrapper_from_editmesh(std::shared_ptr<BMEditMesh> em,
                                      const CustomData_MeshMasks *cd_mask_extra,
                                      const Mesh *me_settings)
 {
-  Mesh *mesh = static_cast<Mesh *>(BKE_id_new_nomain(ID_ME, nullptr));
+  Mesh *mesh = BKE_id_new_nomain<Mesh>(nullptr);
   BKE_mesh_copy_parameters_for_eval(mesh, me_settings);
   BKE_mesh_runtime_ensure_edit_data(mesh);
 
@@ -78,6 +78,11 @@ Mesh *BKE_mesh_wrapper_from_editmesh(std::shared_ptr<BMEditMesh> em,
 
 void BKE_mesh_wrapper_ensure_mdata(Mesh *mesh)
 {
+  if (mesh->runtime->wrapper_type == ME_WRAPPER_TYPE_MDATA) {
+    return;
+  }
+
+  /* Double checked lock. */
   std::lock_guard lock{mesh->runtime->eval_mutex};
   if (mesh->runtime->wrapper_type == ME_WRAPPER_TYPE_MDATA) {
     return;
@@ -85,42 +90,38 @@ void BKE_mesh_wrapper_ensure_mdata(Mesh *mesh)
 
   /* Must isolate multithreaded tasks while holding a mutex lock. */
   blender::threading::isolate_task([&]() {
-    switch (static_cast<eMeshWrapperType>(mesh->runtime->wrapper_type)) {
-      case ME_WRAPPER_TYPE_MDATA:
-      case ME_WRAPPER_TYPE_SUBD: {
-        break; /* Quiet warning. */
+    if (mesh->runtime->wrapper_type == ME_WRAPPER_TYPE_BMESH) {
+      mesh->verts_num = 0;
+      mesh->edges_num = 0;
+      mesh->faces_num = 0;
+      mesh->corners_num = 0;
+
+      BLI_assert(mesh->runtime->edit_mesh != nullptr);
+      BLI_assert(mesh->runtime->edit_data != nullptr);
+
+      BMEditMesh *em = mesh->runtime->edit_mesh.get();
+      BM_mesh_bm_to_me_for_eval(*em->bm, *mesh, &mesh->runtime->cd_mask_extra);
+
+      /* Adding original index layers here assumes that all BMesh Mesh wrappers are created from
+       * original edit mode meshes (the only case where adding original indices makes sense).
+       * If that assumption is broken, the layers might be incorrect because they might not
+       * actually be "original".
+       *
+       * There is also a performance aspect, where this also assumes that original indices are
+       * always needed when converting a BMesh to a mesh with the mesh wrapper system. That might
+       * be wrong, but it's not harmful. */
+      BKE_mesh_ensure_default_orig_index_customdata_no_check(mesh);
+
+      blender::bke::EditMeshData &edit_data = *mesh->runtime->edit_data;
+      if (!edit_data.vert_positions.is_empty()) {
+        mesh->vert_positions_for_write().copy_from(edit_data.vert_positions);
+        mesh->runtime->is_original_bmesh = false;
       }
-      case ME_WRAPPER_TYPE_BMESH: {
-        mesh->verts_num = 0;
-        mesh->edges_num = 0;
-        mesh->faces_num = 0;
-        mesh->corners_num = 0;
 
-        BLI_assert(mesh->runtime->edit_mesh != nullptr);
-        BLI_assert(mesh->runtime->edit_data != nullptr);
-
-        BMEditMesh *em = mesh->runtime->edit_mesh.get();
-        BM_mesh_bm_to_me_for_eval(*em->bm, *mesh, &mesh->runtime->cd_mask_extra);
-
-        /* Adding original index layers here assumes that all BMesh Mesh wrappers are created from
-         * original edit mode meshes (the only case where adding original indices makes sense).
-         * If that assumption is broken, the layers might be incorrect because they might not
-         * actually be "original".
-         *
-         * There is also a performance aspect, where this also assumes that original indices are
-         * always needed when converting a BMesh to a mesh with the mesh wrapper system. That might
-         * be wrong, but it's not harmful. */
-        BKE_mesh_ensure_default_orig_index_customdata_no_check(mesh);
-
-        blender::bke::EditMeshData &edit_data = *mesh->runtime->edit_data;
-        if (!edit_data.vert_positions.is_empty()) {
-          mesh->vert_positions_for_write().copy_from(edit_data.vert_positions);
-          mesh->runtime->is_original_bmesh = false;
-        }
-
-        mesh->runtime->edit_data.reset();
-        break;
-      }
+      mesh->runtime->edit_data.reset();
+    }
+    else if (mesh->runtime->wrapper_type == ME_WRAPPER_TYPE_SUBD) {
+      BLI_assert(!"Should not be converting subd wrapper to mdata wrapper");
     }
 
     /* Keep type assignment last, so that read-only access only uses the mdata code paths after all
@@ -310,8 +311,9 @@ int BKE_mesh_wrapper_face_len(const Mesh *mesh)
 static Mesh *mesh_wrapper_ensure_subdivision(Mesh *mesh)
 {
   using namespace blender::bke;
-  SubsurfRuntimeData *runtime_data = (SubsurfRuntimeData *)mesh->runtime->subsurf_runtime_data;
-  if (runtime_data == nullptr || runtime_data->settings.level == 0) {
+  SubsurfRuntimeData *runtime_data = mesh->runtime->subsurf_runtime_data;
+  if (runtime_data->settings.level == 0) {
+    mesh->runtime->wrapper_type = ME_WRAPPER_TYPE_SUBD;
     return mesh;
   }
 
@@ -323,6 +325,7 @@ static Mesh *mesh_wrapper_ensure_subdivision(Mesh *mesh)
   mesh_settings.use_optimal_display = runtime_data->use_optimal_display;
 
   if (mesh_settings.resolution < 3) {
+    mesh->runtime->wrapper_type = ME_WRAPPER_TYPE_SUBD;
     return mesh;
   }
 
@@ -330,6 +333,7 @@ static Mesh *mesh_wrapper_ensure_subdivision(Mesh *mesh)
       runtime_data, mesh, false);
   if (subdiv == nullptr) {
     /* Happens on bad topology, but also on empty input mesh. */
+    mesh->runtime->wrapper_type = ME_WRAPPER_TYPE_SUBD;
     return mesh;
   }
   const bool use_clnors = runtime_data->use_loop_normals;
@@ -349,7 +353,7 @@ static Mesh *mesh_wrapper_ensure_subdivision(Mesh *mesh)
         {static_cast<float3 *>(CustomData_get_layer_for_write(
              &subdiv_mesh->corner_data, CD_NORMAL, subdiv_mesh->corners_num)),
          subdiv_mesh->corners_num});
-    CustomData_free_layers(&subdiv_mesh->corner_data, CD_NORMAL, mesh->corners_num);
+    CustomData_free_layers(&subdiv_mesh->corner_data, CD_NORMAL);
   }
 
   if (!ELEM(subdiv, runtime_data->subdiv_cpu, runtime_data->subdiv_gpu)) {
@@ -357,11 +361,15 @@ static Mesh *mesh_wrapper_ensure_subdivision(Mesh *mesh)
   }
 
   if (subdiv_mesh != mesh) {
+    /* Make sure that drivers can target shapekey properties. See #mesh_build_data for details. */
+    subdiv_mesh->key = mesh->key;
+
     if (mesh->runtime->mesh_eval != nullptr) {
       BKE_id_free(nullptr, mesh->runtime->mesh_eval);
     }
     mesh->runtime->mesh_eval = subdiv_mesh;
     mesh->runtime->wrapper_type = ME_WRAPPER_TYPE_SUBD;
+    BLI_assert(mesh->runtime->mesh_eval != nullptr);
   }
 
   return mesh->runtime->mesh_eval;
@@ -369,18 +377,32 @@ static Mesh *mesh_wrapper_ensure_subdivision(Mesh *mesh)
 
 Mesh *BKE_mesh_wrapper_ensure_subdivision(Mesh *mesh)
 {
-  std::lock_guard lock{mesh->runtime->eval_mutex};
-
-  if (mesh->runtime->wrapper_type == ME_WRAPPER_TYPE_SUBD) {
-    return mesh->runtime->mesh_eval;
+  if (mesh->runtime->subsurf_runtime_data == nullptr) {
+    return mesh;
   }
 
-  Mesh *result;
+  if (mesh->runtime->wrapper_type == ME_WRAPPER_TYPE_SUBD) {
+    /* Subdiv evaluation might have been skipped, in which case the original mesh is ok. */
+    return (mesh->runtime->mesh_eval) ? mesh->runtime->mesh_eval : mesh;
+  }
+
+  /* Double checked lock. */
+  std::lock_guard lock{mesh->runtime->eval_mutex};
+  if (mesh->runtime->wrapper_type == ME_WRAPPER_TYPE_SUBD) {
+    return (mesh->runtime->mesh_eval) ? mesh->runtime->mesh_eval : mesh;
+  }
 
   /* Must isolate multithreaded tasks while holding a mutex lock. */
+  Mesh *result;
   blender::threading::isolate_task([&]() { result = mesh_wrapper_ensure_subdivision(mesh); });
-
   return result;
+}
+
+const Mesh *BKE_mesh_wrapper_ensure_subdivision(const Mesh *mesh)
+{
+  /* This modifies the mesh, but it's lazy initialization protected by mutex lock
+   * so still read-only access in a sense. */
+  return BKE_mesh_wrapper_ensure_subdivision(const_cast<Mesh *>(mesh));
 }
 
 /** \} */

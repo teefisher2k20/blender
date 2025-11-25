@@ -99,11 +99,20 @@ class DeviceQueue {
    * value. */
   virtual int num_concurrent_busy_states(const size_t state_size) const = 0;
 
-  /* Number of elements in a partition of sorted shaders, that improves memory locality of
+  /* Number of partitions of sorted shaders, that improves memory locality of
    * integrator state fetch at the cost of decreased coherence for shader kernel execution. */
-  virtual int num_sort_partition_elements() const
+  virtual int num_sort_partitions(int max_num_paths, uint max_scene_shaders) const
   {
-    return 65536;
+    /* Sort partitioning becomes less effective when more shaders are in the wavefront. In lieu of
+     * a more sophisticated heuristic we simply disable sort partitioning if the shader count is
+     * high.
+     */
+    if (max_scene_shaders < 300) {
+      return max(max_num_paths / 65536, 1);
+    }
+    else {
+      return 1;
+    }
   }
 
   /* Does device support local atomic sorting kernels (INTEGRATOR_SORT_BUCKET_PASS and
@@ -150,12 +159,12 @@ class DeviceQueue {
    * resource as a buffer writable by kernels of this device. */
   virtual unique_ptr<DeviceGraphicsInterop> graphics_interop_create()
   {
-    LOG(FATAL) << "Request of GPU interop of a device which does not support it.";
+    LOG_FATAL << "Request of GPU interop of a device which does not support it.";
     return nullptr;
   }
 
   /* Device this queue has been created for. */
-  Device *device;
+  Device *device = nullptr;
 
   virtual void *native_queue()
   {
@@ -174,14 +183,14 @@ class DeviceQueue {
   string debug_active_kernels();
 
   /* Combination of kernels enqueued together sync last synchronize. */
-  DeviceKernelMask last_kernels_enqueued_;
+  DeviceKernelMask last_kernels_enqueued_ = {false};
   /* Time of synchronize call. */
-  double last_sync_time_;
+  double last_sync_time_ = 0.0;
   /* Accumulated execution time for combinations of kernels launched together. */
   map<DeviceKernelMask, double> stats_kernel_time_;
   /* If it is true, then a performance statistics in the debugging logs will have focus on kernels
    * and an explicit queue synchronization will be added after each kernel execution. */
-  bool is_per_kernel_performance_;
+  bool is_per_kernel_performance_ = false;
 };
 
 CCL_NAMESPACE_END

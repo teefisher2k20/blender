@@ -69,7 +69,7 @@ size_t malloc_usable_size(void *ptr);
 #  define MEM_INLINE static inline
 #endif
 
-#define IS_POW2(a) (((a) & ((a)-1)) == 0)
+#define IS_POW2(a) (((a) & ((a) - 1)) == 0)
 
 /* Extra padding which needs to be applied on MemHead to make it aligned. */
 #define MEMHEAD_ALIGN_PADDING(alignment) \
@@ -93,6 +93,15 @@ void memory_usage_block_alloc(size_t size);
 void memory_usage_block_free(size_t size);
 size_t memory_usage_block_num(void);
 size_t memory_usage_current(void);
+/**
+ * Get the approximate peak memory usage since the last call to #memory_usage_peak_reset.
+ * This is approximate, because the peak usage is not updated after every allocation (see
+ * #peak_update_threshold).
+ *
+ * In the worst case, the peak memory usage is underestimated by
+ * `peak_update_threshold * #threads`. After large allocations (larger than the threshold), the
+ * peak usage is always updated so those allocations will always be taken into account.
+ */
 size_t memory_usage_peak(void);
 void memory_usage_peak_reset(void);
 
@@ -135,6 +144,11 @@ void *MEM_lockfree_mallocN_aligned(size_t len,
                                    const char *str,
                                    mem_guarded::internal::AllocationType allocation_type)
     ATTR_MALLOC ATTR_WARN_UNUSED_RESULT ATTR_ALLOC_SIZE(1) ATTR_NONNULL(3);
+void *MEM_lockfree_malloc_arrayN_aligned(size_t len,
+                                         size_t size,
+                                         size_t alignment,
+                                         const char *str) ATTR_MALLOC ATTR_WARN_UNUSED_RESULT
+    ATTR_ALLOC_SIZE(1, 2) ATTR_NONNULL(4);
 void *MEM_lockfree_calloc_arrayN_aligned(size_t len,
                                          size_t size,
                                          size_t alignment,
@@ -188,6 +202,8 @@ void *MEM_guarded_mallocN_aligned(size_t len,
                                   const char *str,
                                   mem_guarded::internal::AllocationType allocation_type)
     ATTR_MALLOC ATTR_WARN_UNUSED_RESULT ATTR_ALLOC_SIZE(1) ATTR_NONNULL(3);
+void *MEM_guarded_malloc_arrayN_aligned(size_t len, size_t size, size_t alignment, const char *str)
+    ATTR_MALLOC ATTR_WARN_UNUSED_RESULT ATTR_ALLOC_SIZE(1, 2) ATTR_NONNULL(4);
 void *MEM_guarded_calloc_arrayN_aligned(size_t len, size_t size, size_t alignment, const char *str)
     ATTR_MALLOC ATTR_WARN_UNUSED_RESULT ATTR_ALLOC_SIZE(1, 2) ATTR_NONNULL(4);
 void MEM_guarded_printmemlist_pydict(void);

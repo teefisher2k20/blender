@@ -6,7 +6,7 @@
 
 #include "DNA_customdata_types.h"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 namespace blender::nodes::node_shader_tex_coord_cc {
@@ -24,8 +24,8 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_shader_buts_tex_coord(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "object", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
-  uiItemR(layout, ptr, "from_instancer", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "object", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
+  layout->prop(ptr, "from_instancer", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
 }
 
 static int node_shader_gpu_tex_coord(GPUMaterial *mat,
@@ -76,7 +76,7 @@ NODE_SHADER_MATERIALX_BEGIN
 {
   /* NOTE: Some outputs aren't supported by MaterialX. */
   NodeItem res = empty();
-  std::string name = socket_out_->name;
+  std::string name = socket_out_->identifier;
 
   if (ELEM(name, "Generated", "UV")) {
     res = texcoord_node();
@@ -118,5 +118,5 @@ void register_node_type_sh_tex_coord()
   ntype.gpu_fn = file_ns::node_shader_gpu_tex_coord;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

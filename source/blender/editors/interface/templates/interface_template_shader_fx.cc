@@ -8,8 +8,10 @@
  * Template for building the panel layout for the active object's grease pencil shader effects.
  */
 
+#include "BLI_listbase.h"
+
 #include "BKE_screen.hh"
-#include "BKE_shader_fx.h"
+#include "BKE_shader_fx.hh"
 
 #include "ED_object.hh"
 
@@ -17,6 +19,7 @@
 #include "RNA_prototypes.hh"
 
 #include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 
 /**
  * Function with void * argument for #uiListPanelIDFromDataFunc.

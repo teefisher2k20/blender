@@ -6,13 +6,13 @@
  * \ingroup spuserpref
  */
 
-#include <cstdio>
 #include <cstring>
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
-#include "BLI_utildefines.h"
+#include "BLI_listbase.h"
+#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "BKE_context.hh"
 #include "BKE_screen.hh"
@@ -36,7 +36,7 @@ static SpaceLink *userpref_create(const ScrArea *area, const Scene * /*scene*/)
   ARegion *region;
   SpaceUserPref *spref;
 
-  spref = static_cast<SpaceUserPref *>(MEM_callocN(sizeof(SpaceUserPref), "inituserpref"));
+  spref = MEM_callocN<SpaceUserPref>("inituserpref");
   spref->spacetype = SPACE_USERPREF;
 
   /* header */
@@ -51,8 +51,9 @@ static SpaceLink *userpref_create(const ScrArea *area, const Scene * /*scene*/)
   region = BKE_area_region_new();
 
   BLI_addtail(&spref->regionbase, region);
-  region->regiontype = RGN_TYPE_NAV_BAR;
+  region->regiontype = RGN_TYPE_UI;
   region->alignment = RGN_ALIGN_LEFT;
+  region->flag &= ~RGN_FLAG_HIDDEN;
 
   /* Use smaller size when opened in area like properties editor. */
   if (area->winx && area->winx < 3.0f * UI_NAVIGATION_REGION_WIDTH * UI_SCALE_FAC) {
@@ -111,6 +112,8 @@ static void userpref_main_region_layout(const bContext *C, ARegion *region)
   char id_lower[64];
   const char *contexts[2] = {id_lower, nullptr};
 
+  region->flag |= RGN_FLAG_INDICATE_OVERFLOW;
+
   /* Avoid duplicating identifiers, use existing RNA enum. */
   {
     const EnumPropertyItem *items = rna_enum_preference_section_items;
@@ -121,12 +124,16 @@ static void userpref_main_region_layout(const bContext *C, ARegion *region)
     }
     const char *id = items[i].identifier;
     BLI_assert(strlen(id) < sizeof(id_lower));
-    STRNCPY(id_lower, id);
+    STRNCPY_UTF8(id_lower, id);
     BLI_str_tolower_ascii(id_lower, strlen(id_lower));
   }
 
-  ED_region_panels_layout_ex(
-      C, region, &region->runtime->type->paneltypes, WM_OP_INVOKE_REGION_WIN, contexts, nullptr);
+  ED_region_panels_layout_ex(C,
+                             region,
+                             &region->runtime->type->paneltypes,
+                             blender::wm::OpCallContext::InvokeRegionWin,
+                             contexts,
+                             nullptr);
 }
 
 static void userpref_operatortypes() {}
@@ -148,6 +155,7 @@ static void userpref_header_region_draw(const bContext *C, ARegion *region)
 static void userpref_navigation_region_init(wmWindowManager *wm, ARegion *region)
 {
   region->v2d.scroll = V2D_SCROLL_RIGHT | V2D_SCROLL_VERTICAL_HIDE;
+  region->flag |= RGN_FLAG_INDICATE_OVERFLOW;
 
   ED_region_panels_init(wm, region);
 }
@@ -189,7 +197,7 @@ void ED_spacetype_userpref()
   ARegionType *art;
 
   st->spaceid = SPACE_USERPREF;
-  STRNCPY(st->name, "Userpref");
+  STRNCPY_UTF8(st->name, "Userpref");
 
   st->create = userpref_create;
   st->free = userpref_free;
@@ -200,7 +208,7 @@ void ED_spacetype_userpref()
   st->blend_write = userpref_space_blend_write;
 
   /* regions: main window */
-  art = static_cast<ARegionType *>(MEM_callocN(sizeof(ARegionType), "spacetype userpref region"));
+  art = MEM_callocN<ARegionType>("spacetype userpref region");
   art->regionid = RGN_TYPE_WINDOW;
   art->init = userpref_main_region_init;
   art->layout = userpref_main_region_layout;
@@ -211,7 +219,7 @@ void ED_spacetype_userpref()
   BLI_addhead(&st->regiontypes, art);
 
   /* regions: header */
-  art = static_cast<ARegionType *>(MEM_callocN(sizeof(ARegionType), "spacetype userpref region"));
+  art = MEM_callocN<ARegionType>("spacetype userpref region");
   art->regionid = RGN_TYPE_HEADER;
   art->prefsizey = HEADERY;
   art->keymapflag = ED_KEYMAP_UI | ED_KEYMAP_VIEW2D | ED_KEYMAP_HEADER;
@@ -222,8 +230,8 @@ void ED_spacetype_userpref()
   BLI_addhead(&st->regiontypes, art);
 
   /* regions: navigation window */
-  art = static_cast<ARegionType *>(MEM_callocN(sizeof(ARegionType), "spacetype userpref region"));
-  art->regionid = RGN_TYPE_NAV_BAR;
+  art = MEM_callocN<ARegionType>("spacetype userpref region");
+  art->regionid = RGN_TYPE_UI;
   art->prefsizex = UI_NAVIGATION_REGION_WIDTH;
   art->init = userpref_navigation_region_init;
   art->draw = userpref_navigation_region_draw;
@@ -233,7 +241,7 @@ void ED_spacetype_userpref()
   BLI_addhead(&st->regiontypes, art);
 
   /* regions: execution window */
-  art = static_cast<ARegionType *>(MEM_callocN(sizeof(ARegionType), "spacetype userpref region"));
+  art = MEM_callocN<ARegionType>("spacetype userpref region");
   art->regionid = RGN_TYPE_EXECUTE;
   art->prefsizey = HEADERY;
   art->poll = userpref_execute_region_poll;

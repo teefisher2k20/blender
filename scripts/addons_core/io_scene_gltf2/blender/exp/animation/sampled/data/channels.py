@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import bpy
 import typing
 from ......io.com import gltf2_io
 from ......blender.com.conversion import get_gltf_interpolation
@@ -10,7 +9,7 @@ from .channel_target import gather_data_sampled_channel_target
 from .sampler import gather_data_sampled_animation_sampler
 
 
-def gather_data_sampled_channels(blender_type_data, blender_id, blender_action_name, slot_handle,
+def gather_data_sampled_channels(blender_type_data, blender_id, blender_action_name, slot_identifier,
                                  additional_key, export_settings) -> typing.List[gltf2_io.AnimationChannel]:
     channels = []
 
@@ -29,7 +28,7 @@ def gather_data_sampled_channels(blender_type_data, blender_id, blender_action_n
             blender_id,
             path,
             blender_action_name,
-            slot_handle,
+            slot_identifier,
             path in list_of_animated_data_channels.keys(),
             list_of_animated_data_channels[path] if path in list_of_animated_data_channels.keys() else get_gltf_interpolation(export_settings['gltf_sampling_interpolation_fallback'], export_settings),
             additional_key,
@@ -48,7 +47,7 @@ def gather_sampled_data_channel(
         blender_id: str,
         channel: str,
         action_name: str,
-        slot_handle: int,
+        slot_identifier: str,
         node_channel_is_animated: bool,
         node_channel_interpolation: str,
         additional_key: str,  # Used to differentiate between material / material node_tree
@@ -57,12 +56,12 @@ def gather_sampled_data_channel(
 
     __target = __gather_target(blender_type_data, blender_id, channel, additional_key, export_settings)
     if __target.path is not None:
-        sampler = __gather_sampler(
+        sampler, alpha_cst = __gather_sampler(
             blender_type_data,
             blender_id,
             channel,
             action_name,
-            slot_handle,
+            slot_identifier,
             node_channel_is_animated,
             node_channel_interpolation,
             additional_key,
@@ -71,6 +70,9 @@ def gather_sampled_data_channel(
         if sampler is None:
             # After check, no need to animate this node for this channel
             return None
+
+        # Add temporatory data for alpha, in target object
+        __target.tmp_alpha_cst = alpha_cst
 
         animation_channel = gltf2_io.AnimationChannel(
             extensions=None,
@@ -100,7 +102,7 @@ def __gather_sampler(
         blender_id,
         channel,
         action_name,
-        slot_handle,
+        slot_identifier,
         node_channel_is_animated,
         node_channel_interpolation,
         additional_key,
@@ -110,7 +112,7 @@ def __gather_sampler(
         blender_id,
         channel,
         action_name,
-        slot_handle,
+        slot_identifier,
         node_channel_is_animated,
         node_channel_interpolation,
         additional_key,

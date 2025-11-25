@@ -17,7 +17,7 @@
 #include "util/debug.h"
 
 #include "util/guiding.h"
-#include "util/md5.h"
+#include "util/log.h"
 #include "util/openimagedenoise.h"
 #include "util/path.h"
 #include "util/string.h"
@@ -26,12 +26,7 @@
 
 #include "GPU_state.hh"
 
-#ifdef WITH_OSL
-#  include "scene/osl.h"
-
-#  include <OSL/oslconfig.h>
-#  include <OSL/oslquery.h>
-#endif
+#include "scene/osl.h"
 
 #ifdef WITH_METAL
 #  include "device/metal/device.h"
@@ -54,7 +49,7 @@ void *pylong_as_voidptr_typesafe(PyObject *object)
 
 PyObject *pyunicode_from_string(const char *str)
 {
-  /* Ignore errors if device API returns invalid UTF-8 strings. */
+  /* Ignore errors if device API returns invalid UTF8 strings. */
   return PyUnicode_DecodeUTF8(str, strlen(str), "ignore");
 }
 
@@ -152,7 +147,8 @@ static PyObject *exit_func(PyObject * /*self*/, PyObject * /*args*/)
   device_metal_exit();
 #endif
 
-  ShaderManager::free_memory();
+  ColorSpaceManager::free_memory();
+  OSLManager::free_memory();
   TaskScheduler::free_memory();
   Device::free_memory();
   Py_RETURN_NONE;
@@ -444,7 +440,7 @@ static PyObject *available_devices_func(PyObject * /*self*/, PyObject *args)
   for (size_t i = 0; i < devices.size(); i++) {
     const DeviceInfo &device = devices[i];
     const string type_name = Device::string_from_type(device.type);
-    PyObject *device_tuple = PyTuple_New(7);
+    PyObject *device_tuple = PyTuple_New(8);
     PyTuple_SET_ITEM(device_tuple, 0, pyunicode_from_string(device.description.c_str()));
     PyTuple_SET_ITEM(device_tuple, 1, pyunicode_from_string(type_name.c_str()));
     PyTuple_SET_ITEM(device_tuple, 2, pyunicode_from_string(device.id.c_str()));
@@ -453,6 +449,7 @@ static PyObject *available_devices_func(PyObject * /*self*/, PyObject *args)
     PyTuple_SET_ITEM(
         device_tuple, 5, PyBool_FromLong(device.denoisers & DENOISER_OPENIMAGEDENOISE));
     PyTuple_SET_ITEM(device_tuple, 6, PyBool_FromLong(device.denoisers & DENOISER_OPTIX));
+    PyTuple_SET_ITEM(device_tuple, 7, PyBool_FromLong(device.has_execution_optimization));
     PyTuple_SET_ITEM(ret, i, device_tuple);
   }
 
@@ -460,257 +457,6 @@ static PyObject *available_devices_func(PyObject * /*self*/, PyObject *args)
 }
 
 #ifdef WITH_OSL
-
-static PyObject *osl_update_node_func(PyObject * /*self*/, PyObject *args)
-{
-  PyObject *pydata;
-  PyObject *pynodegroup;
-  PyObject *pynode;
-  const char *filepath = nullptr;
-
-  if (!PyArg_ParseTuple(args, "OOOs", &pydata, &pynodegroup, &pynode, &filepath)) {
-    return nullptr;
-  }
-
-  /* RNA */
-  const PointerRNA dataptr = RNA_main_pointer_create((Main *)PyLong_AsVoidPtr(pydata));
-  BL::BlendData b_data(dataptr);
-
-  const PointerRNA nodeptr = RNA_pointer_create_discrete(
-      (ID *)PyLong_AsVoidPtr(pynodegroup), &RNA_ShaderNodeScript, PyLong_AsVoidPtr(pynode));
-  BL::ShaderNodeScript b_node(nodeptr);
-
-  /* update bytecode hash */
-  const string bytecode = b_node.bytecode();
-
-  if (!bytecode.empty()) {
-    MD5Hash md5;
-    md5.append((const uint8_t *)bytecode.c_str(), bytecode.size());
-    b_node.bytecode_hash(md5.get_hex());
-  }
-  else {
-    b_node.bytecode_hash("");
-  }
-
-  /* query from file path */
-  OSL::OSLQuery query;
-
-  if (!OSLShaderManager::osl_query(query, filepath)) {
-    Py_RETURN_FALSE;
-  }
-
-  /* add new sockets from parameters */
-  set<void *> used_sockets;
-
-  for (int i = 0; i < query.nparams(); i++) {
-    const OSL::OSLQuery::Parameter *param = query.getparam(i);
-
-    /* skip unsupported types */
-    if (param->varlenarray || param->isstruct || param->type.arraylen > 1) {
-      continue;
-    }
-
-    /* Read metadata. */
-    bool is_bool_param = false;
-    bool hide_value = !param->validdefault;
-    ustring param_label = param->name;
-
-    for (const OSL::OSLQuery::Parameter &metadata : param->metadata) {
-      if (metadata.type == TypeDesc::STRING) {
-        if (metadata.name == "widget") {
-          /* Boolean socket. */
-          if (metadata.sdefault[0] == "boolean" || metadata.sdefault[0] == "checkBox") {
-            is_bool_param = true;
-          }
-          else if (metadata.sdefault[0] == "null") {
-            hide_value = true;
-          }
-        }
-        else if (metadata.name == "label") {
-          /* Socket label. */
-          param_label = metadata.sdefault[0];
-        }
-      }
-    }
-    /* determine socket type */
-    string socket_type;
-    BL::NodeSocket::type_enum data_type = BL::NodeSocket::type_VALUE;
-    float4 default_float4 = make_float4(0.0f, 0.0f, 0.0f, 1.0f);
-    float default_float = 0.0f;
-    int default_int = 0;
-    string default_string;
-    bool default_boolean = false;
-
-    if (param->isclosure) {
-      socket_type = "NodeSocketShader";
-      data_type = BL::NodeSocket::type_SHADER;
-    }
-    else if (param->type.vecsemantics == TypeDesc::COLOR) {
-      socket_type = "NodeSocketColor";
-      data_type = BL::NodeSocket::type_RGBA;
-
-      if (param->validdefault) {
-        default_float4[0] = param->fdefault[0];
-        default_float4[1] = param->fdefault[1];
-        default_float4[2] = param->fdefault[2];
-      }
-    }
-    else if (param->type.vecsemantics == TypeDesc::POINT ||
-             param->type.vecsemantics == TypeDesc::VECTOR ||
-             param->type.vecsemantics == TypeDesc::NORMAL)
-    {
-      socket_type = "NodeSocketVector";
-      data_type = BL::NodeSocket::type_VECTOR;
-
-      if (param->validdefault) {
-        default_float4[0] = param->fdefault[0];
-        default_float4[1] = param->fdefault[1];
-        default_float4[2] = param->fdefault[2];
-      }
-    }
-    else if (param->type.aggregate == TypeDesc::SCALAR) {
-      if (param->type.basetype == TypeDesc::INT) {
-        if (is_bool_param) {
-          socket_type = "NodeSocketBool";
-          data_type = BL::NodeSocket::type_BOOLEAN;
-          if (param->validdefault) {
-            default_boolean = bool(param->idefault[0]);
-          }
-        }
-        else {
-          socket_type = "NodeSocketInt";
-          data_type = BL::NodeSocket::type_INT;
-          if (param->validdefault) {
-            default_int = param->idefault[0];
-          }
-        }
-      }
-      else if (param->type.basetype == TypeDesc::FLOAT) {
-        socket_type = "NodeSocketFloat";
-        data_type = BL::NodeSocket::type_VALUE;
-        if (param->validdefault) {
-          default_float = param->fdefault[0];
-        }
-      }
-      else if (param->type.basetype == TypeDesc::STRING) {
-        socket_type = "NodeSocketString";
-        data_type = BL::NodeSocket::type_STRING;
-        if (param->validdefault) {
-          default_string = param->sdefault[0].string();
-        }
-      }
-      else {
-        continue;
-      }
-    }
-    else {
-      continue;
-    }
-
-    /* Update existing socket. */
-    bool found_existing = false;
-    if (param->isoutput) {
-      for (BL::NodeSocket &b_sock : b_node.outputs) {
-        if (b_sock.identifier() == param->name) {
-          if (b_sock.bl_idname() != socket_type) {
-            /* Remove if type no longer matches. */
-            b_node.outputs.remove(b_data, b_sock);
-          }
-          else {
-            /* Reuse and update label. */
-            if (b_sock.name() != param_label) {
-              b_sock.name(param_label.string());
-            }
-            used_sockets.insert(b_sock.ptr.data);
-            found_existing = true;
-          }
-          break;
-        }
-      }
-    }
-    else {
-      for (BL::NodeSocket &b_sock : b_node.inputs) {
-        if (b_sock.identifier() == param->name) {
-          if (b_sock.bl_idname() != socket_type) {
-            /* Remove if type no longer matches. */
-            b_node.inputs.remove(b_data, b_sock);
-          }
-          else {
-            /* Reuse and update label. */
-            if (b_sock.name() != param_label) {
-              b_sock.name(param_label.string());
-            }
-            if (b_sock.hide_value() != hide_value) {
-              b_sock.hide_value(hide_value);
-            }
-            used_sockets.insert(b_sock.ptr.data);
-            found_existing = true;
-          }
-          break;
-        }
-      }
-    }
-
-    if (!found_existing) {
-      /* Create new socket. */
-      BL::NodeSocket b_sock =
-          (param->isoutput) ?
-              b_node.outputs.create(
-                  b_data, socket_type.c_str(), param_label.c_str(), param->name.c_str(), false) :
-              b_node.inputs.create(
-                  b_data, socket_type.c_str(), param_label.c_str(), param->name.c_str(), false);
-
-      /* set default value */
-      if (data_type == BL::NodeSocket::type_VALUE) {
-        set_float(b_sock.ptr, "default_value", default_float);
-      }
-      else if (data_type == BL::NodeSocket::type_INT) {
-        set_int(b_sock.ptr, "default_value", default_int);
-      }
-      else if (data_type == BL::NodeSocket::type_RGBA) {
-        set_float4(b_sock.ptr, "default_value", default_float4);
-      }
-      else if (data_type == BL::NodeSocket::type_VECTOR) {
-        set_float3(b_sock.ptr, "default_value", make_float3(default_float4));
-      }
-      else if (data_type == BL::NodeSocket::type_STRING) {
-        set_string(b_sock.ptr, "default_value", default_string);
-      }
-      else if (data_type == BL::NodeSocket::type_BOOLEAN) {
-        set_boolean(b_sock.ptr, "default_value", default_boolean);
-      }
-
-      b_sock.hide_value(hide_value);
-
-      used_sockets.insert(b_sock.ptr.data);
-    }
-  }
-
-  /* remove unused parameters */
-  bool removed;
-
-  do {
-    removed = false;
-
-    for (BL::NodeSocket &b_input : b_node.inputs) {
-      if (used_sockets.find(b_input.ptr.data) == used_sockets.end()) {
-        b_node.inputs.remove(b_data, b_input);
-        removed = true;
-        break;
-      }
-    }
-
-    for (BL::NodeSocket &b_output : b_node.outputs) {
-      if (used_sockets.find(b_output.ptr.data) == used_sockets.end()) {
-        b_node.outputs.remove(b_data, b_output);
-        removed = true;
-        break;
-      }
-    }
-  } while (removed);
-
-  Py_RETURN_TRUE;
-}
 
 static PyObject *osl_compile_func(PyObject * /*self*/, PyObject *args)
 {
@@ -722,7 +468,7 @@ static PyObject *osl_compile_func(PyObject * /*self*/, PyObject *args)
   }
 
   /* return */
-  if (!OSLShaderManager::osl_compile(inputfile, outputfile)) {
+  if (!OSLManager::osl_compile(inputfile, outputfile)) {
     Py_RETURN_FALSE;
   }
 
@@ -981,7 +727,7 @@ static PyObject *set_device_override_func(PyObject * /*self*/, PyObject *arg)
     BlenderSession::device_override = DEVICE_MASK_ONEAPI;
   }
   else {
-    printf("\nError: %s is not a valid Cycles device.\n", override.c_str());
+    LOG_ERROR << override << " is not a valid Cycles device.";
     Py_RETURN_FALSE;
   }
 
@@ -992,6 +738,16 @@ static PyObject *set_device_override_func(PyObject * /*self*/, PyObject *arg)
 
   Py_RETURN_TRUE;
 }
+
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
+#endif
 
 static PyMethodDef methods[] = {
     {"init", init_func, METH_VARARGS, ""},
@@ -1006,7 +762,6 @@ static PyMethodDef methods[] = {
     {"sync", sync_func, METH_VARARGS, ""},
     {"reset", reset_func, METH_VARARGS, ""},
 #ifdef WITH_OSL
-    {"osl_update_node", osl_update_node_func, METH_VARARGS, ""},
     {"osl_compile", osl_compile_func, METH_VARARGS, ""},
 #endif
     {"available_devices", available_devices_func, METH_VARARGS, ""},
@@ -1029,6 +784,14 @@ static PyMethodDef methods[] = {
 
     {nullptr, nullptr, 0, nullptr},
 };
+
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
+#endif
 
 static struct PyModuleDef module = {
     /*m_base*/ PyModuleDef_HEAD_INIT,

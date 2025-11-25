@@ -17,9 +17,6 @@
 #include "scene/shader.h"
 #include "scene/shader_nodes.h"
 
-#include "subd/split.h"
-
-#include "util/log.h"
 #include "util/progress.h"
 
 CCL_NAMESPACE_BEGIN
@@ -112,15 +109,13 @@ static void emit_attribute_map_entry(AttributeMap *attr_map,
   else {
     attr_map[index].type = NODE_ATTR_FLOAT3;
   }
-
-  attr_map[index].flags = desc.flags;
 }
 
 /* Generate an attribute map end marker, optionally including a link to another map.
  * Links are used to connect object attribute maps to mesh attribute maps. */
 static void emit_attribute_map_terminator(AttributeMap *attr_map,
                                           const size_t index,
-                                          bool chain,
+                                          const bool chain,
                                           const uint chain_link)
 {
   for (int j = 0; j < ATTR_PRIM_TYPES; j++) {
@@ -128,7 +123,6 @@ static void emit_attribute_map_terminator(AttributeMap *attr_map,
     attr_map[index + j].element = chain;                     /* link is valid flag */
     attr_map[index + j].offset = chain ? chain_link + j : 0; /* link to the correct sub-entry */
     attr_map[index + j].type = 0;
-    attr_map[index + j].flags = 0;
   }
 }
 
@@ -136,17 +130,9 @@ static void emit_attribute_map_terminator(AttributeMap *attr_map,
 static void emit_attribute_mapping(AttributeMap *attr_map,
                                    const size_t index,
                                    const uint64_t id,
-                                   AttributeRequest &req,
-                                   Geometry *geom)
+                                   AttributeRequest &req)
 {
   emit_attribute_map_entry(attr_map, index, id, req.type, req.desc);
-
-  if (geom->is_mesh()) {
-    Mesh *mesh = static_cast<Mesh *>(geom);
-    if (mesh->get_num_subd_faces()) {
-      emit_attribute_map_entry(attr_map, index + 1, id, req.subd_type, req.subd_desc);
-    }
-  }
 }
 
 void GeometryManager::update_svm_attributes(Device * /*unused*/,
@@ -157,6 +143,7 @@ void GeometryManager::update_svm_attributes(Device * /*unused*/,
 {
   /* for SVM, the attributes_map table is used to lookup the offset of an
    * attribute, based on a unique shader attribute id. */
+  const bool use_osl = scene->shader_manager->use_osl();
 
   /* compute array stride */
   size_t attr_map_size = 0;
@@ -165,21 +152,22 @@ void GeometryManager::update_svm_attributes(Device * /*unused*/,
     Geometry *geom = scene->geometry[i];
     geom->attr_map_offset = attr_map_size;
 
-#ifdef WITH_OSL
     size_t attr_count = 0;
-    for (const AttributeRequest &req : geom_attributes[i].requests) {
-      if (req.std != ATTR_STD_NONE &&
-          scene->shader_manager->get_attribute_id(req.std) != (uint64_t)req.std)
-      {
-        attr_count += 2;
-      }
-      else {
-        attr_count += 1;
+    if (use_osl) {
+      for (const AttributeRequest &req : geom_attributes[i].requests) {
+        if (req.std != ATTR_STD_NONE &&
+            scene->shader_manager->get_attribute_id(req.std) != (uint64_t)req.std)
+        {
+          attr_count += 2;
+        }
+        else {
+          attr_count += 1;
+        }
       }
     }
-#else
-    const size_t attr_count = geom_attributes[i].size();
-#endif
+    else {
+      attr_count = geom_attributes[i].size();
+    }
 
     attr_map_size += (attr_count + 1) * ATTR_PRIM_TYPES;
   }
@@ -201,7 +189,7 @@ void GeometryManager::update_svm_attributes(Device * /*unused*/,
     return;
   }
 
-  if (!dscene->attributes_map.need_realloc()) {
+  if ((attr_map_size == dscene->attributes_map.size()) && !dscene->attributes_map.need_realloc()) {
     return;
   }
 
@@ -225,17 +213,17 @@ void GeometryManager::update_svm_attributes(Device * /*unused*/,
         id = scene->shader_manager->get_attribute_id(req.std);
       }
 
-      emit_attribute_mapping(attr_map, index, id, req, geom);
+      emit_attribute_mapping(attr_map, index, id, req);
       index += ATTR_PRIM_TYPES;
 
-#ifdef WITH_OSL
-      /* Some standard attributes are explicitly referenced via their standard ID, so add those
-       * again in case they were added under a different attribute ID. */
-      if (req.std != ATTR_STD_NONE && id != (uint64_t)req.std) {
-        emit_attribute_mapping(attr_map, index, (uint64_t)req.std, req, geom);
-        index += ATTR_PRIM_TYPES;
+      if (use_osl) {
+        /* Some standard attributes are explicitly referenced via their standard ID, so add those
+         * again in case they were added under a different attribute ID. */
+        if (req.std != ATTR_STD_NONE && id != (uint64_t)req.std) {
+          emit_attribute_mapping(attr_map, index, (uint64_t)req.std, req);
+          index += ATTR_PRIM_TYPES;
+        }
       }
-#endif
     }
 
     emit_attribute_map_terminator(attr_map, index, false, 0);
@@ -258,7 +246,7 @@ void GeometryManager::update_svm_attributes(Device * /*unused*/,
           id = scene->shader_manager->get_attribute_id(req.std);
         }
 
-        emit_attribute_mapping(attr_map, index, id, req, object->geometry);
+        emit_attribute_mapping(attr_map, index, id, req);
         index += ATTR_PRIM_TYPES;
       }
 
@@ -270,26 +258,69 @@ void GeometryManager::update_svm_attributes(Device * /*unused*/,
   dscene->attributes_map.copy_to_device();
 }
 
-void GeometryManager::update_attribute_element_offset(Geometry *geom,
-                                                      device_vector<float> &attr_float,
-                                                      size_t &attr_float_offset,
-                                                      device_vector<float2> &attr_float2,
-                                                      size_t &attr_float2_offset,
-                                                      device_vector<packed_float3> &attr_float3,
-                                                      size_t &attr_float3_offset,
-                                                      device_vector<float4> &attr_float4,
-                                                      size_t &attr_float4_offset,
-                                                      device_vector<uchar4> &attr_uchar4,
-                                                      size_t &attr_uchar4_offset,
-                                                      Attribute *mattr,
-                                                      AttributePrimitive prim,
-                                                      TypeDesc &type,
-                                                      AttributeDescriptor &desc)
-{
-  if (mattr) {
+template<typename T> struct AttributeTableEntry {
+  device_vector<T> &data;
+  size_t offset;
+  size_t size;
+
+  void reserve(const size_t attr_size)
+  {
+    size += attr_size;
+  }
+
+  /* Templated on U since we'll want to assign float3 values to a packed_float3 device_vector. */
+  template<typename U> size_t add(const U *attr_data, const size_t attr_size, const bool modified)
+  {
+    assert(data.size() >= offset + attr_size);
+    size_t start_offset = offset;
+    if (modified) {
+      for (size_t k = 0; k < attr_size; k++) {
+        data[offset + k] = attr_data[k];
+      }
+      data.tag_modified();
+    }
+    offset += attr_size;
+    return start_offset;
+  }
+
+  void alloc()
+  {
+    data.alloc(size);
+  }
+};
+
+class AttributeTableBuilder {
+ public:
+  AttributeTableBuilder(DeviceScene *dscene)
+      : attr_float{dscene->attributes_float, 0, 0},
+        attr_float2{dscene->attributes_float2, 0, 0},
+        attr_float3{dscene->attributes_float3, 0, 0},
+        attr_float4{dscene->attributes_float4, 0, 0},
+        attr_uchar4{dscene->attributes_uchar4, 0, 0}
+  {
+  }
+
+  AttributeTableEntry<float> attr_float;
+  AttributeTableEntry<float2> attr_float2;
+  AttributeTableEntry<packed_float3> attr_float3;
+  AttributeTableEntry<float4> attr_float4;
+  AttributeTableEntry<uchar4> attr_uchar4;
+
+  void add(Geometry *geom,
+           Attribute *mattr,
+           AttributePrimitive prim,
+           TypeDesc &type,
+           AttributeDescriptor &desc)
+  {
+    if (mattr == nullptr) {
+      /* attribute not found */
+      desc.element = ATTR_ELEMENT_NONE;
+      desc.offset = 0;
+      return;
+    }
+
     /* store element and type */
     desc.element = mattr->element;
-    desc.flags = mattr->flags;
     type = mattr->type;
 
     /* store attribute data in arrays */
@@ -304,115 +335,39 @@ void GeometryManager::update_attribute_element_offset(Geometry *geom,
       offset = handle.svm_slot();
     }
     else if (mattr->element == ATTR_ELEMENT_CORNER_BYTE) {
-      uchar4 *data = mattr->data_uchar4();
-      offset = attr_uchar4_offset;
-
-      assert(attr_uchar4.size() >= offset + size);
-      if (mattr->modified) {
-        for (size_t k = 0; k < size; k++) {
-          attr_uchar4[offset + k] = data[k];
-        }
-        attr_uchar4.tag_modified();
-      }
-      attr_uchar4_offset += size;
+      offset = attr_uchar4.add(mattr->data_uchar4(), size, mattr->modified);
     }
     else if (mattr->type == TypeFloat) {
-      float *data = mattr->data_float();
-      offset = attr_float_offset;
-
-      assert(attr_float.size() >= offset + size);
-      if (mattr->modified) {
-        for (size_t k = 0; k < size; k++) {
-          attr_float[offset + k] = data[k];
-        }
-        attr_float.tag_modified();
-      }
-      attr_float_offset += size;
+      offset = attr_float.add(mattr->data_float(), size, mattr->modified);
     }
     else if (mattr->type == TypeFloat2) {
-      float2 *data = mattr->data_float2();
-      offset = attr_float2_offset;
-
-      assert(attr_float2.size() >= offset + size);
-      if (mattr->modified) {
-        for (size_t k = 0; k < size; k++) {
-          attr_float2[offset + k] = data[k];
-        }
-        attr_float2.tag_modified();
-      }
-      attr_float2_offset += size;
+      offset = attr_float2.add(mattr->data_float2(), size, mattr->modified);
     }
     else if (mattr->type == TypeMatrix) {
-      Transform *tfm = mattr->data_transform();
-      offset = attr_float4_offset;
-
-      assert(attr_float4.size() >= offset + size * 3);
-      if (mattr->modified) {
-        for (size_t k = 0; k < size * 3; k++) {
-          attr_float4[offset + k] = (&tfm->x)[k];
-        }
-        attr_float4.tag_modified();
-      }
-      attr_float4_offset += size * 3;
+      offset = attr_float4.add((float4 *)mattr->data_transform(), size * 3, mattr->modified);
     }
     else if (mattr->type == TypeFloat4 || mattr->type == TypeRGBA) {
-      float4 *data = mattr->data_float4();
-      offset = attr_float4_offset;
-
-      assert(attr_float4.size() >= offset + size);
-      if (mattr->modified) {
-        for (size_t k = 0; k < size; k++) {
-          attr_float4[offset + k] = data[k];
-        }
-        attr_float4.tag_modified();
-      }
-      attr_float4_offset += size;
+      offset = attr_float4.add(mattr->data_float4(), size, mattr->modified);
     }
     else {
-      float3 *data = mattr->data_float3();
-      offset = attr_float3_offset;
-
-      assert(attr_float3.size() >= offset + size);
-      if (mattr->modified) {
-        for (size_t k = 0; k < size; k++) {
-          attr_float3[offset + k] = data[k];
-        }
-        attr_float3.tag_modified();
-      }
-      attr_float3_offset += size;
+      offset = attr_float3.add(mattr->data_float3(), size, mattr->modified);
     }
 
     /* mesh vertex/curve index is global, not per object, so we sneak
      * a correction for that in here */
     if (geom->is_mesh()) {
       Mesh *mesh = static_cast<Mesh *>(geom);
-      if (mesh->subdivision_type == Mesh::SUBDIVISION_CATMULL_CLARK &&
-          desc.flags & ATTR_SUBDIVIDED)
-      {
-        /* Indices for subdivided attributes are retrieved
-         * from patch table so no need for correction here. */
-      }
-      else if (element == ATTR_ELEMENT_VERTEX) {
+      if (element == ATTR_ELEMENT_VERTEX) {
         offset -= mesh->vert_offset;
       }
       else if (element == ATTR_ELEMENT_VERTEX_MOTION) {
         offset -= mesh->vert_offset;
       }
       else if (element == ATTR_ELEMENT_FACE) {
-        if (prim == ATTR_PRIM_GEOMETRY) {
-          offset -= mesh->prim_offset;
-        }
-        else {
-          offset -= mesh->face_offset;
-        }
+        offset -= mesh->prim_offset;
       }
       else if (element == ATTR_ELEMENT_CORNER || element == ATTR_ELEMENT_CORNER_BYTE) {
-        if (prim == ATTR_PRIM_GEOMETRY) {
-          offset -= 3 * mesh->prim_offset;
-        }
-        else {
-          offset -= mesh->corner_offset;
-        }
+        offset -= 3 * mesh->prim_offset;
       }
     }
     else if (geom->is_hair()) {
@@ -436,48 +391,56 @@ void GeometryManager::update_attribute_element_offset(Geometry *geom,
       }
     }
   }
-  else {
-    /* attribute not found */
-    desc.element = ATTR_ELEMENT_NONE;
-    desc.offset = 0;
-  }
-}
 
-static void update_attribute_element_size(Geometry *geom,
-                                          Attribute *mattr,
-                                          AttributePrimitive prim,
-                                          size_t *attr_float_size,
-                                          size_t *attr_float2_size,
-                                          size_t *attr_float3_size,
-                                          size_t *attr_float4_size,
-                                          size_t *attr_uchar4_size)
-{
-  if (mattr) {
+  void reserve(Geometry *geom, Attribute *mattr, AttributePrimitive prim)
+  {
+    if (mattr == nullptr) {
+      return;
+    }
+
     const size_t size = mattr->element_size(geom, prim);
 
     if (mattr->element == ATTR_ELEMENT_VOXEL) {
       /* pass */
     }
     else if (mattr->element == ATTR_ELEMENT_CORNER_BYTE) {
-      *attr_uchar4_size += size;
+      attr_uchar4.reserve(size);
     }
     else if (mattr->type == TypeFloat) {
-      *attr_float_size += size;
+      attr_float.reserve(size);
     }
     else if (mattr->type == TypeFloat2) {
-      *attr_float2_size += size;
+      attr_float2.reserve(size);
     }
     else if (mattr->type == TypeMatrix) {
-      *attr_float4_size += size * 4;
+      attr_float4.reserve(size * 3);
     }
     else if (mattr->type == TypeFloat4 || mattr->type == TypeRGBA) {
-      *attr_float4_size += size;
+      attr_float4.reserve(size);
     }
     else {
-      *attr_float3_size += size;
+      attr_float3.reserve(size);
     }
   }
-}
+
+  void alloc()
+  {
+    attr_float.alloc();
+    attr_float2.alloc();
+    attr_float3.alloc();
+    attr_float4.alloc();
+    attr_uchar4.alloc();
+  }
+
+  void copy_to_device_if_modified()
+  {
+    attr_float.data.copy_to_device_if_modified();
+    attr_float2.data.copy_to_device_if_modified();
+    attr_float3.data.copy_to_device_if_modified();
+    attr_float4.data.copy_to_device_if_modified();
+    attr_uchar4.data.copy_to_device_if_modified();
+  }
+};
 
 void GeometryManager::device_update_attributes(Device *device,
                                                DeviceScene *dscene,
@@ -502,7 +465,7 @@ void GeometryManager::device_update_attributes(Device *device,
       geom_attributes[i].add(shader->attributes);
     }
 
-    if (geom->is_hair() && static_cast<Hair *>(geom)->need_shadow_transparency()) {
+    if (geom->attributes.find(ATTR_STD_SHADOW_TRANSPARENCY)) {
       geom_attributes[i].add(ATTR_STD_SHADOW_TRANSPARENCY);
     }
   }
@@ -547,40 +510,14 @@ void GeometryManager::device_update_attributes(Device *device,
   /* Pre-allocate attributes to avoid arrays re-allocation which would
    * take 2x of overall attribute memory usage.
    */
-  size_t attr_float_size = 0;
-  size_t attr_float2_size = 0;
-  size_t attr_float3_size = 0;
-  size_t attr_float4_size = 0;
-  size_t attr_uchar4_size = 0;
+  AttributeTableBuilder builder(dscene);
 
   for (size_t i = 0; i < scene->geometry.size(); i++) {
     Geometry *geom = scene->geometry[i];
     AttributeRequestSet &attributes = geom_attributes[i];
     for (AttributeRequest &req : attributes.requests) {
       Attribute *attr = geom->attributes.find(req);
-
-      update_attribute_element_size(geom,
-                                    attr,
-                                    ATTR_PRIM_GEOMETRY,
-                                    &attr_float_size,
-                                    &attr_float2_size,
-                                    &attr_float3_size,
-                                    &attr_float4_size,
-                                    &attr_uchar4_size);
-
-      if (geom->is_mesh()) {
-        Mesh *mesh = static_cast<Mesh *>(geom);
-        Attribute *subd_attr = mesh->subd_attributes.find(req);
-
-        update_attribute_element_size(mesh,
-                                      subd_attr,
-                                      ATTR_PRIM_SUBD,
-                                      &attr_float_size,
-                                      &attr_float2_size,
-                                      &attr_float3_size,
-                                      &attr_float4_size,
-                                      &attr_uchar4_size);
-      }
+      builder.reserve(geom, attr, ATTR_PRIM_GEOMETRY);
     }
   }
 
@@ -588,22 +525,11 @@ void GeometryManager::device_update_attributes(Device *device,
     Object *object = scene->objects[i];
 
     for (Attribute &attr : object_attribute_values[i].attributes) {
-      update_attribute_element_size(object->geometry,
-                                    &attr,
-                                    ATTR_PRIM_GEOMETRY,
-                                    &attr_float_size,
-                                    &attr_float2_size,
-                                    &attr_float3_size,
-                                    &attr_float4_size,
-                                    &attr_uchar4_size);
+      builder.reserve(object->geometry, &attr, ATTR_PRIM_GEOMETRY);
     }
   }
 
-  dscene->attributes_float.alloc(attr_float_size);
-  dscene->attributes_float2.alloc(attr_float2_size);
-  dscene->attributes_float3.alloc(attr_float3_size);
-  dscene->attributes_float4.alloc(attr_float4_size);
-  dscene->attributes_uchar4.alloc(attr_uchar4_size);
+  builder.alloc();
 
   /* The order of those flags needs to match that of AttrKernelDataType. */
   const bool attributes_need_realloc[AttrKernelDataType::NUM] = {
@@ -613,12 +539,6 @@ void GeometryManager::device_update_attributes(Device *device,
       dscene->attributes_float4.need_realloc(),
       dscene->attributes_uchar4.need_realloc(),
   };
-
-  size_t attr_float_offset = 0;
-  size_t attr_float2_offset = 0;
-  size_t attr_float3_offset = 0;
-  size_t attr_float4_offset = 0;
-  size_t attr_uchar4_offset = 0;
 
   /* Fill in attributes. */
   for (size_t i = 0; i < scene->geometry.size(); i++) {
@@ -635,47 +555,7 @@ void GeometryManager::device_update_attributes(Device *device,
         attr->modified |= attributes_need_realloc[Attribute::kernel_type(*attr)];
       }
 
-      update_attribute_element_offset(geom,
-                                      dscene->attributes_float,
-                                      attr_float_offset,
-                                      dscene->attributes_float2,
-                                      attr_float2_offset,
-                                      dscene->attributes_float3,
-                                      attr_float3_offset,
-                                      dscene->attributes_float4,
-                                      attr_float4_offset,
-                                      dscene->attributes_uchar4,
-                                      attr_uchar4_offset,
-                                      attr,
-                                      ATTR_PRIM_GEOMETRY,
-                                      req.type,
-                                      req.desc);
-
-      if (geom->is_mesh()) {
-        Mesh *mesh = static_cast<Mesh *>(geom);
-        Attribute *subd_attr = mesh->subd_attributes.find(req);
-
-        if (subd_attr) {
-          /* force a copy if we need to reallocate all the data */
-          subd_attr->modified |= attributes_need_realloc[Attribute::kernel_type(*subd_attr)];
-        }
-
-        update_attribute_element_offset(mesh,
-                                        dscene->attributes_float,
-                                        attr_float_offset,
-                                        dscene->attributes_float2,
-                                        attr_float2_offset,
-                                        dscene->attributes_float3,
-                                        attr_float3_offset,
-                                        dscene->attributes_float4,
-                                        attr_float4_offset,
-                                        dscene->attributes_uchar4,
-                                        attr_uchar4_offset,
-                                        subd_attr,
-                                        ATTR_PRIM_SUBD,
-                                        req.subd_type,
-                                        req.subd_desc);
-      }
+      builder.add(geom, attr, ATTR_PRIM_GEOMETRY, req.type, req.desc);
 
       if (progress.get_cancel()) {
         return;
@@ -695,25 +575,7 @@ void GeometryManager::device_update_attributes(Device *device,
         attr->modified |= attributes_need_realloc[Attribute::kernel_type(*attr)];
       }
 
-      update_attribute_element_offset(object->geometry,
-                                      dscene->attributes_float,
-                                      attr_float_offset,
-                                      dscene->attributes_float2,
-                                      attr_float2_offset,
-                                      dscene->attributes_float3,
-                                      attr_float3_offset,
-                                      dscene->attributes_float4,
-                                      attr_float4_offset,
-                                      dscene->attributes_uchar4,
-                                      attr_uchar4_offset,
-                                      attr,
-                                      ATTR_PRIM_GEOMETRY,
-                                      req.type,
-                                      req.desc);
-
-      /* object attributes don't care about subdivision */
-      req.subd_type = req.type;
-      req.subd_desc = req.desc;
+      builder.add(object->geometry, attr, ATTR_PRIM_GEOMETRY, req.type, req.desc);
 
       if (progress.get_cancel()) {
         return;
@@ -735,11 +597,7 @@ void GeometryManager::device_update_attributes(Device *device,
   /* copy to device */
   progress.set_status("Updating Mesh", "Copying Attributes to device");
 
-  dscene->attributes_float.copy_to_device_if_modified();
-  dscene->attributes_float2.copy_to_device_if_modified();
-  dscene->attributes_float3.copy_to_device_if_modified();
-  dscene->attributes_float4.copy_to_device_if_modified();
-  dscene->attributes_uchar4.copy_to_device_if_modified();
+  builder.copy_to_device_if_modified();
 
   if (progress.get_cancel()) {
     return;

@@ -9,7 +9,7 @@
 #include "MEM_guardedalloc.h"
 
 #include "BLI_math_base.h"
-#include "BLI_threads.h"
+#include "BLI_mutex.hh"
 #include "BLI_utildefines.h"
 
 #include "BLT_translation.hh"
@@ -22,7 +22,7 @@
 #include "BKE_mesh_remesh_voxel.hh"
 #include "BKE_mesh_runtime.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "RNA_access.hh"
@@ -86,9 +86,9 @@ struct DualConOutput {
 /* allocate and initialize a DualConOutput */
 static void *dualcon_alloc_output(int totvert, int totquad)
 {
-  DualConOutput *output;
+  DualConOutput *output = MEM_callocN<DualConOutput>(__func__);
 
-  if (!(output = MEM_cnew<DualConOutput>(__func__))) {
+  if (!output) {
     return nullptr;
   }
 
@@ -139,7 +139,7 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
       BKE_modifier_set_error(ctx->object, md, "Zero voxel size cannot be solved");
       return nullptr;
     }
-    result = BKE_mesh_remesh_voxel(mesh, rmd->voxel_size, rmd->adaptivity, 0.0f);
+    result = BKE_mesh_remesh_voxel(mesh, rmd->voxel_size, rmd->adaptivity, 0.0f, ctx->object, md);
     if (result == nullptr) {
       return nullptr;
     }
@@ -180,19 +180,20 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
     /* TODO(jbakker): Dualcon crashes when run in parallel. Could be related to incorrect
      * input data or that the library isn't thread safe.
      * This was identified when changing the task isolation's during #76553. */
-    static ThreadMutex dualcon_mutex = BLI_MUTEX_INITIALIZER;
-    BLI_mutex_lock(&dualcon_mutex);
-    output = static_cast<DualConOutput *>(dualcon(&input,
-                                                  dualcon_alloc_output,
-                                                  dualcon_add_vert,
-                                                  dualcon_add_quad,
-                                                  flags,
-                                                  mode,
-                                                  rmd->threshold,
-                                                  rmd->hermite_num,
-                                                  rmd->scale,
-                                                  rmd->depth));
-    BLI_mutex_unlock(&dualcon_mutex);
+    static blender::Mutex dualcon_mutex;
+    {
+      std::scoped_lock lock(dualcon_mutex);
+      output = static_cast<DualConOutput *>(dualcon(&input,
+                                                    dualcon_alloc_output,
+                                                    dualcon_add_vert,
+                                                    dualcon_add_quad,
+                                                    flags,
+                                                    mode,
+                                                    rmd->threshold,
+                                                    rmd->hermite_num,
+                                                    rmd->scale,
+                                                    rmd->depth));
+    }
     result = output->mesh;
     MEM_freeN(output);
   }
@@ -227,34 +228,34 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
 
   int mode = RNA_enum_get(ptr, "mode");
 
-  uiItemR(layout, ptr, "mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  col = uiLayoutColumn(layout, false);
+  col = &layout->column(false);
   if (mode == MOD_REMESH_VOXEL) {
-    uiItemR(col, ptr, "voxel_size", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "adaptivity", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col->prop(ptr, "voxel_size", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col->prop(ptr, "adaptivity", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
   else {
-    uiItemR(col, ptr, "octree_depth", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "scale", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col->prop(ptr, "octree_depth", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col->prop(ptr, "scale", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
     if (mode == MOD_REMESH_SHARP_FEATURES) {
-      uiItemR(col, ptr, "sharpness", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+      col->prop(ptr, "sharpness", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     }
 
-    uiItemR(layout, ptr, "use_remove_disconnected", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    row = uiLayoutRow(layout, false);
-    uiLayoutSetActive(row, RNA_boolean_get(ptr, "use_remove_disconnected"));
-    uiItemR(layout, ptr, "threshold", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    layout->prop(ptr, "use_remove_disconnected", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    row = &layout->row(false);
+    row->active_set(RNA_boolean_get(ptr, "use_remove_disconnected"));
+    layout->prop(ptr, "threshold", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
-  uiItemR(layout, ptr, "use_smooth_shade", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "use_smooth_shade", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 
 #else  /* WITH_MOD_REMESH */
-  uiItemL(layout, RPT_("Built without Remesh modifier"), ICON_NONE);
+  layout->label(RPT_("Built without Remesh modifier"), ICON_NONE);
 #endif /* WITH_MOD_REMESH */
 }
 
@@ -297,4 +298,5 @@ ModifierTypeInfo modifierType_Remesh = {
     /*blend_write*/ nullptr,
     /*blend_read*/ nullptr,
     /*foreach_cache*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
 };

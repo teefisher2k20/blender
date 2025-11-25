@@ -38,7 +38,6 @@
 #include "bmesh.hh"
 
 #include <cmath>
-#include <cstdlib>
 
 namespace blender::ed::sculpt_paint::pose {
 
@@ -467,7 +466,7 @@ static void grow_factors_bmesh(const ePaintSymmetryFlags symm,
 {
   const Set<BMVert *, 0> &verts = BKE_pbvh_bmesh_node_unique_verts(&node);
 
-  Vector<BMVert *, 64> neighbors;
+  BMeshNeighborVerts neighbors;
 
   for (BMVert *bm_vert : verts) {
     const int vert = BM_elem_index_get(bm_vert);
@@ -483,7 +482,7 @@ static void grow_factors_bmesh(const ePaintSymmetryFlags symm,
     }
 
     if (max > prev_mask[vert]) {
-      const float3 &position = bm_vert->co;
+      const float3 position = bm_vert->co;
       pose_factor[vert] = max;
       if (SCULPT_check_vertex_pivot_symmetry(position, pose_initial_position, symm)) {
         gftd.pos_avg += position;
@@ -648,7 +647,7 @@ static bool vert_inside_brush_radius(const float3 &vertex,
                                      char symm)
 {
   for (char i = 0; i <= symm; ++i) {
-    if (SCULPT_is_symmetry_iteration_valid(i, symm)) {
+    if (is_symmetry_iteration_valid(i, symm)) {
       const float3 location = symmetry_flip(br_co, ePaintSymmetryFlags(i));
       if (math::distance(location, vertex) < radius) {
         return true;
@@ -780,7 +779,7 @@ static void calc_pose_origin_and_factor_bmesh(Object &object,
                                               MutableSpan<float> r_pose_factor)
 {
   BLI_assert(!r_pose_factor.is_empty());
-  SCULPT_vertex_random_access_ensure(object);
+  vert_random_access_ensure(object);
 
   /* Calculate the pose rotation point based on the boundaries of the brush factor. */
   flood_fill::FillDataBMesh flood(BM_mesh_elem_count(ss.bm, BM_VERT),
@@ -902,7 +901,7 @@ static int brush_num_effective_segments(const Brush &brush)
    * changes in the segment's length. It will also required a better weight distribution to avoid
    * artifacts in the areas affected by multiple segments. */
   if (ELEM(brush.pose_deform_type,
-           BRUSH_POSE_DEFORM_SCALE_TRASLATE,
+           BRUSH_POSE_DEFORM_SCALE_TRANSLATE,
            BRUSH_POSE_DEFORM_SQUASH_STRETCH))
   {
     return 1;
@@ -1370,7 +1369,7 @@ static std::unique_ptr<IKChain> ik_chain_init_face_sets_bmesh(Object &object,
   SegmentData current_data = {std::get<BMVert *>(ss.active_vert()), SCULPT_FACE_SET_NONE};
 
   const int symm = SCULPT_mesh_symmetry_xyz_get(object);
-  Vector<BMVert *, 64> neighbors;
+  BMeshNeighborVerts neighbors;
   for (const int i : ik_chain->segments.index_range()) {
     const bool is_first_iteration = i == 0;
 
@@ -1568,7 +1567,7 @@ static std::optional<float3> calc_average_face_set_center(const Depsgraph &depsg
       break;
     }
     case bke::pbvh::Type::BMesh: {
-      SCULPT_vertex_random_access_ensure(object);
+      vert_random_access_ensure(object);
       BMesh &bm = *object.sculpt->bm;
       const int face_set_offset = CustomData_get_offset_named(
           &bm.pdata, CD_PROP_INT32, ".sculpt_face_set");
@@ -1781,7 +1780,7 @@ static std::unique_ptr<IKChain> ik_chain_init_face_sets_fk_bmesh(const Depsgraph
                                                                  const float radius,
                                                                  const float3 &initial_location)
 {
-  SCULPT_vertex_random_access_ensure(object);
+  vert_random_access_ensure(object);
 
   BMesh &bm = *ss.bm;
   const int face_set_offset = CustomData_get_offset_named(
@@ -1912,7 +1911,10 @@ static std::unique_ptr<IKChain> ik_chain_init(const Depsgraph &depsgraph,
   return ik_chain;
 }
 
-void pose_brush_init(const Depsgraph &depsgraph, Object &ob, SculptSession &ss, const Brush &brush)
+static void pose_brush_init(const Depsgraph &depsgraph,
+                            Object &ob,
+                            SculptSession &ss,
+                            const Brush &brush)
 {
   /* Init the IK chain that is going to be used to deform the vertices. */
   ss.cache->pose_ik_chain = ik_chain_init(
@@ -1947,7 +1949,7 @@ std::unique_ptr<SculptPoseIKChainPreview> preview_ik_chain_init(const Depsgraph 
 static void sculpt_pose_do_translate_deform(SculptSession &ss, const Brush &brush)
 {
   IKChain &ik_chain = *ss.cache->pose_ik_chain;
-  BKE_curvemapping_init(brush.curve);
+  BKE_curvemapping_init(brush.curve_distance_falloff);
   solve_translate_chain(ik_chain, ss.cache->grab_delta);
 }
 
@@ -1986,7 +1988,7 @@ static void calc_twist_deform(SculptSession &ss, const Brush &brush)
 
   /* Calculate the maximum roll. 0.02 radians per pixel works fine. */
   float roll = (ss.cache->initial_mouse[0] - ss.cache->mouse[0]) * ss.cache->bstrength * 0.02f;
-  BKE_curvemapping_init(brush.curve);
+  BKE_curvemapping_init(brush.curve_distance_falloff);
   solve_roll_chain(ik_chain, brush, roll);
 }
 
@@ -2028,8 +2030,18 @@ static void calc_squash_stretch_deform(SculptSession &ss, const Brush & /*brush*
   float3 ik_target = ss.cache->location + ss.cache->grab_delta;
 
   float3 scale;
-  scale[2] = calc_scale_from_grab_delta(ss, ik_target);
-  scale[0] = scale[1] = sqrtf(1.0f / scale[2]);
+  scale.z = calc_scale_from_grab_delta(ss, ik_target);
+  if (math::abs(scale.z) < 1e-5f) {
+    scale = float3(0.0f);
+  }
+  else {
+    const float signed_scale = math::sqrt(1.0f / math::abs(scale.z)) * math::sign(scale.z);
+
+    scale.x = signed_scale;
+    scale.y = signed_scale;
+  }
+
+  BLI_assert(std::isfinite(scale.x) && std::isfinite(scale.y) && std::isfinite(scale.z));
 
   /* Write the scale into the segments. */
   solve_scale_chain(ik_chain, scale);
@@ -2062,6 +2074,10 @@ void do_pose_brush(const Depsgraph &depsgraph,
   const Brush &brush = *BKE_paint_brush_for_read(&sd.paint);
   const ePaintSymmetryFlags symm = SCULPT_mesh_symmetry_xyz_get(ob);
 
+  if (!ss.cache->pose_ik_chain) {
+    pose_brush_init(depsgraph, ob, ss, brush);
+  }
+
   /* The pose brush applies all enabled symmetry axis in a single iteration, so the rest can be
    * ignored. */
   if (ss.cache->mirror_symmetry_pass != 0) {
@@ -2074,7 +2090,7 @@ void do_pose_brush(const Depsgraph &depsgraph,
     case BRUSH_POSE_DEFORM_ROTATE_TWIST:
       calc_rotate_twist_deform(ss, brush);
       break;
-    case BRUSH_POSE_DEFORM_SCALE_TRASLATE:
+    case BRUSH_POSE_DEFORM_SCALE_TRANSLATE:
       calc_scale_translate_deform(ss, brush);
       break;
     case BRUSH_POSE_DEFORM_SQUASH_STRETCH:
@@ -2173,7 +2189,7 @@ void do_pose_brush(const Depsgraph &depsgraph,
     }
   }
   pbvh.tag_positions_changed(node_mask);
-  bke::pbvh::flush_bounds_to_parents(pbvh);
+  pbvh.flush_bounds_to_parents();
 }
 
 }  // namespace blender::ed::sculpt_paint::pose

@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "infos/gpu_shader_2D_image_overlays_stereo_merge_info.hh"
+#include "infos/gpu_shader_2D_image_overlays_stereo_merge_infos.hh"
 
 FRAGMENT_SHADER_CREATE_INFO(gpu_shader_2D_image_overlays_stereo_merge)
 
@@ -17,7 +17,7 @@ FRAGMENT_SHADER_CREATE_INFO(gpu_shader_2D_image_overlays_stereo_merge)
 #define stereo_interlace_mode ((stereoDisplaySettings >> 3) & ((1 << 3) - 1))
 #define stereo_interlace_swap bool(stereoDisplaySettings >> 6)
 
-bool interlace(ivec2 texel)
+bool interlace(int2 texel)
 {
   int interlace_mode = stereo_interlace_mode;
   switch (interlace_mode) {
@@ -33,11 +33,11 @@ bool interlace(ivec2 texel)
 
 void main()
 {
-  ivec2 texel = ivec2(gl_FragCoord.xy);
+  int2 texel = int2(gl_FragCoord.xy);
 
   if (stereo_display_mode == S3D_DISPLAY_INTERLACE && (interlace(texel) == stereo_interlace_swap))
   {
-    discard;
+    gpu_discard_fragment();
   }
 
   imageColor = texelFetch(imageTexture, texel, 0);

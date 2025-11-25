@@ -10,10 +10,6 @@
 
 #include "../../../stroke/AdvancedFunctions0D.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -44,7 +40,6 @@ PyDoc_STRVAR(
     "   :return: The norm of the gradient of the global viewmap density\n"
     "      image.\n"
     "   :rtype: float\n");
-
 static int GetViewMapGradientNormF0D___init__(BPy_GetViewMapGradientNormF0D *self,
                                               PyObject *args,
                                               PyObject *kwds)
@@ -104,7 +99,3 @@ PyTypeObject GetViewMapGradientNormF0D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

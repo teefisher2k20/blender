@@ -6,6 +6,7 @@
 #include "usd_armature_utils.hh"
 #include "usd_attribute_utils.hh"
 #include "usd_blend_shape_utils.hh"
+#include "usd_hierarchy_iterator.hh"
 #include "usd_skel_convert.hh"
 #include "usd_utils.hh"
 
@@ -25,9 +26,11 @@
 #include "BKE_lib_id.hh"
 #include "BKE_material.hh"
 #include "BKE_mesh.hh"
+#include "BKE_mesh_mapping.hh"
 #include "BKE_mesh_wrapper.hh"
 #include "BKE_object.hh"
 #include "BKE_report.hh"
+#include "BKE_subdiv.hh"
 
 #include "bmesh.hh"
 #include "bmesh_tools.hh"
@@ -41,10 +44,6 @@
 #include "CLG_log.h"
 static CLG_LogRef LOG = {"io.usd"};
 
-namespace usdtokens {
-static const pxr::TfToken Anim("Anim", pxr::TfToken::Immortal);
-}  // namespace usdtokens
-
 namespace blender::io::usd {
 
 USDGenericMeshWriter::USDGenericMeshWriter(const USDExporterContext &ctx) : USDAbstractWriter(ctx)
@@ -53,10 +52,7 @@ USDGenericMeshWriter::USDGenericMeshWriter(const USDExporterContext &ctx) : USDA
 
 bool USDGenericMeshWriter::is_supported(const HierarchyContext *context) const
 {
-  if (usd_export_context_.export_params.visible_objects_only) {
-    return context->is_object_visible(usd_export_context_.export_params.evaluation_mode);
-  }
-  return true;
+  return context->is_object_visible(usd_export_context_.export_params.evaluation_mode);
 }
 
 /* Get the last subdiv modifier, regardless of enable/disable status */
@@ -131,6 +127,7 @@ void USDGenericMeshWriter::do_write(HierarchyContext &context)
     auto prim = usd_export_context_.stage->GetPrimAtPath(usd_export_context_.usd_path);
     if (prim.IsValid() && object_eval) {
       prim.SetActive((object_eval->duplicator_visibility_flag & OB_DUPLI_FLAG_RENDER) != 0);
+      add_to_prim_map(prim.GetPath(), &mesh->id);
       write_id_properties(prim, mesh->id, get_export_time_code());
     }
 
@@ -152,15 +149,20 @@ void USDGenericMeshWriter::write_custom_data(const Object *obj,
 {
   const bke::AttributeAccessor attributes = mesh->attributes();
 
-  const StringRef active_uvmap_name = CustomData_get_render_layer_name(&mesh->corner_data,
-                                                                       CD_PROP_FLOAT2);
+  const StringRef active_uvmap_name = mesh->default_uv_map_name();
 
   attributes.foreach_attribute([&](const bke::AttributeIter &iter) {
     /* Skip "internal" Blender properties and attributes processed elsewhere.
      * Skip edge domain because USD doesn't have a good conversion for them. */
     if (iter.name[0] == '.' || bke::attribute_name_is_anonymous(iter.name) ||
         iter.domain == bke::AttrDomain::Edge ||
-        ELEM(iter.name, "position", "material_index", "velocity", "crease_vert"))
+        ELEM(iter.name,
+             "position",
+             "material_index",
+             "velocity",
+             "crease_vert",
+             "custom_normal",
+             "sharp_face"))
     {
       return;
     }
@@ -187,9 +189,9 @@ void USDGenericMeshWriter::write_custom_data(const Object *obj,
     }
 
     /* UV Data. */
-    if (iter.domain == bke::AttrDomain::Corner && iter.data_type == CD_PROP_FLOAT2) {
+    if (iter.domain == bke::AttrDomain::Corner && iter.data_type == bke::AttrType::Float2) {
       if (usd_export_context_.export_params.export_uvmaps) {
-        this->write_uv_data(usd_mesh, iter, active_uvmap_name);
+        this->write_uv_data(mesh, usd_mesh, iter, active_uvmap_name);
       }
     }
 
@@ -234,7 +236,7 @@ void USDGenericMeshWriter::write_generic_data(const Mesh *mesh,
                 BKE_id_name(mesh->id),
                 attr.name.c_str(),
                 int8_t(attr.domain),
-                attr.data_type);
+                int(attr.data_type));
     return;
   }
 
@@ -243,16 +245,16 @@ void USDGenericMeshWriter::write_generic_data(const Mesh *mesh,
     return;
   }
 
-  const pxr::UsdTimeCode timecode = get_export_time_code();
+  const pxr::UsdTimeCode time = get_export_time_code();
   const pxr::UsdGeomPrimvarsAPI pv_api = pxr::UsdGeomPrimvarsAPI(usd_mesh);
 
   pxr::UsdGeomPrimvar pv_attr = pv_api.CreatePrimvar(pv_name, *pv_type, *pv_interp);
 
-  copy_blender_attribute_to_primvar(
-      attribute, attr.data_type, timecode, pv_attr, usd_value_writer_);
+  copy_blender_attribute_to_primvar(attribute, attr.data_type, time, pv_attr, usd_value_writer_);
 }
 
-void USDGenericMeshWriter::write_uv_data(const pxr::UsdGeomMesh &usd_mesh,
+void USDGenericMeshWriter::write_uv_data(const Mesh *mesh,
+                                         const pxr::UsdGeomMesh &usd_mesh,
                                          const bke::AttributeIter &attr,
                                          const StringRef active_uvmap_name)
 {
@@ -268,15 +270,59 @@ void USDGenericMeshWriter::write_uv_data(const pxr::UsdGeomMesh &usd_mesh,
                              "st" :
                              attr.name;
 
-  const pxr::UsdTimeCode timecode = get_export_time_code();
+  /* Construct the UvVertMap containing the connectivity data for the UVs. */
+  const OffsetIndices<int> faces = mesh->faces();
+  const Span<int> corner_verts = mesh->corner_verts();
+  const VArraySpan<float2> uv_data(buffer);
+  UvVertMap *uv_vert_map = BKE_mesh_uv_vert_map_create(
+      faces, corner_verts, uv_data, mesh->verts_num, float2(STD_UV_CONNECT_LIMIT), false);
+
+  /* This will only be a nullptr if the `faces` are empty OR allocating space for
+   * the VertMap fails. */
+  if (!uv_vert_map) {
+    CLOG_WARN(&LOG,
+              "Couldn't resolve UV connectivity for mesh %s",
+              usd_export_context_.usd_path.GetAsString().c_str());
+    return;
+  }
+
+  /* From the connectivity data, extract the unique uvs and a mapping of corner index
+   * to the index of the corresponding unique uv for that corner. */
+  pxr::VtArray<pxr::GfVec2f> unique_uvs;
+  unique_uvs.reserve(mesh->verts_num);
+  Array<int> corner_to_uv_index(corner_verts.size(), -1);
+  for (int vertex_index = 0; vertex_index < mesh->verts_num; vertex_index++) {
+    const UvMapVert *uv_vert = BKE_mesh_uv_vert_map_get_vert(uv_vert_map, vertex_index);
+
+    /* Loop over all of the face vertices connected to this mesh vertex and accumulate the
+     * unique UVs. */
+    for (; uv_vert; uv_vert = uv_vert->next) {
+      const int corner_index = faces[uv_vert->face_index].start() + uv_vert->loop_of_face_index;
+      const float2 uv = uv_data[corner_index];
+      if (uv_vert->separate) {
+        unique_uvs.push_back(pxr::GfVec2f(uv.x, uv.y));
+      }
+      corner_to_uv_index[corner_index] = unique_uvs.size() - 1;
+    }
+  }
+  BKE_mesh_uv_vert_map_free(uv_vert_map);
+
+  /* Finally, build the USD indices array. */
+  pxr::VtIntArray indices;
+  indices.reserve(corner_verts.size());
+  for (const int corner_idx : corner_verts.index_range()) {
+    indices.push_back(corner_to_uv_index[corner_idx]);
+  }
+
+  const pxr::UsdTimeCode time = get_export_time_code();
   const pxr::TfToken pv_name(
       make_safe_name(name, usd_export_context_.export_params.allow_unicode));
   const pxr::UsdGeomPrimvarsAPI pv_api = pxr::UsdGeomPrimvarsAPI(usd_mesh);
 
   pxr::UsdGeomPrimvar pv_uv = pv_api.CreatePrimvar(
       pv_name, pxr::SdfValueTypeNames->TexCoord2fArray, pxr::UsdGeomTokens->faceVarying);
-
-  copy_blender_buffer_to_primvar<float2, pxr::GfVec2f>(buffer, timecode, pv_uv, usd_value_writer_);
+  set_attribute(pv_uv, unique_uvs, time, usd_value_writer_);
+  pv_uv.SetIndices(indices, time);
 }
 
 void USDGenericMeshWriter::free_export_mesh(Mesh *mesh)
@@ -300,8 +346,8 @@ struct USDMeshData {
   pxr::VtIntArray crease_vertex_indices;
   /* The per-crease or per-edge sharpness for all creases (Usd.Mesh.SHARPNESS_INFINITE for a
    * perfectly sharp crease). Since 'creaseLengths' encodes the number of vertices in each crease,
-   * the number of elements in this array will be either 'len(creaseLengths)' or the sum over all X
-   * of '(creaseLengths[X] - 1)'. Note that while the RI spec allows each crease to have either a
+   * the number of elements in this array will be either `len(creaseLengths)` or the sum over all X
+   * of `(creaseLengths[X] - 1)`. Note that while the RI spec allows each crease to have either a
    * single sharpness or a value per-edge, USD will encode either a single sharpness per crease on
    * a mesh, or sharpness's for all edges making up the creases on a mesh. */
   pxr::VtFloatArray crease_sharpnesses;
@@ -317,12 +363,12 @@ void USDGenericMeshWriter::write_mesh(HierarchyContext &context,
                                       Mesh *mesh,
                                       const SubsurfModifierData *subsurfData)
 {
-  pxr::UsdTimeCode timecode = get_export_time_code();
+  pxr::UsdTimeCode time = get_export_time_code();
   pxr::UsdStageRefPtr stage = usd_export_context_.stage;
   const pxr::SdfPath &usd_path = usd_export_context_.usd_path;
 
   pxr::UsdGeomMesh usd_mesh = pxr::UsdGeomMesh::Define(stage, usd_path);
-  write_visibility(context, timecode, usd_mesh);
+  write_visibility(context, time, usd_mesh);
 
   USDMeshData usd_mesh_data;
   /* Ensure data exists if currently in edit mode. */
@@ -343,11 +389,11 @@ void USDGenericMeshWriter::write_mesh(HierarchyContext &context,
     attr_face_vertex_indices.Set(usd_mesh_data.face_indices, pxr::UsdTimeCode::Default());
   }
 
-  usd_value_writer_.SetAttribute(attr_points, pxr::VtValue(usd_mesh_data.points), timecode);
+  usd_value_writer_.SetAttribute(attr_points, pxr::VtValue(usd_mesh_data.points), time);
   usd_value_writer_.SetAttribute(
-      attr_face_vertex_counts, pxr::VtValue(usd_mesh_data.face_vertex_counts), timecode);
+      attr_face_vertex_counts, pxr::VtValue(usd_mesh_data.face_vertex_counts), time);
   usd_value_writer_.SetAttribute(
-      attr_face_vertex_indices, pxr::VtValue(usd_mesh_data.face_indices), timecode);
+      attr_face_vertex_indices, pxr::VtValue(usd_mesh_data.face_indices), time);
 
   if (!usd_mesh_data.crease_lengths.empty()) {
     pxr::UsdAttribute attr_crease_lengths = usd_mesh.CreateCreaseLengthsAttr(pxr::VtValue(), true);
@@ -362,11 +408,11 @@ void USDGenericMeshWriter::write_mesh(HierarchyContext &context,
     }
 
     usd_value_writer_.SetAttribute(
-        attr_crease_lengths, pxr::VtValue(usd_mesh_data.crease_lengths), timecode);
+        attr_crease_lengths, pxr::VtValue(usd_mesh_data.crease_lengths), time);
     usd_value_writer_.SetAttribute(
-        attr_crease_indices, pxr::VtValue(usd_mesh_data.crease_vertex_indices), timecode);
+        attr_crease_indices, pxr::VtValue(usd_mesh_data.crease_vertex_indices), time);
     usd_value_writer_.SetAttribute(
-        attr_crease_sharpness, pxr::VtValue(usd_mesh_data.crease_sharpnesses), timecode);
+        attr_crease_sharpness, pxr::VtValue(usd_mesh_data.crease_sharpnesses), time);
   }
 
   if (!usd_mesh_data.corner_indices.empty() &&
@@ -382,9 +428,9 @@ void USDGenericMeshWriter::write_mesh(HierarchyContext &context,
     }
 
     usd_value_writer_.SetAttribute(
-        attr_corner_indices, pxr::VtValue(usd_mesh_data.corner_indices), timecode);
+        attr_corner_indices, pxr::VtValue(usd_mesh_data.corner_indices), time);
     usd_value_writer_.SetAttribute(
-        attr_corner_sharpnesses, pxr::VtValue(usd_mesh_data.corner_sharpnesses), timecode);
+        attr_corner_sharpnesses, pxr::VtValue(usd_mesh_data.corner_sharpnesses), time);
   }
 
   write_custom_data(context.object, mesh, usd_mesh);
@@ -401,7 +447,7 @@ void USDGenericMeshWriter::write_mesh(HierarchyContext &context,
     write_normals(mesh, usd_mesh);
   }
 
-  this->author_extent(usd_mesh, mesh->bounds_min_max(), timecode);
+  this->author_extent(usd_mesh, mesh->bounds_min_max(), time);
 
   /* TODO(Sybren): figure out what happens when the face groups change. */
   if (frame_has_been_written_) {
@@ -533,17 +579,14 @@ static void get_edge_creases(const Mesh *mesh, USDMeshData &usd_mesh_data)
   const VArraySpan creases(*attribute);
   const Span<int2> edges = mesh->edges();
   for (const int i : edges.index_range()) {
-    const float crease = creases[i];
-    if (crease == 0.0f) {
-      continue;
+    const float crease = std::clamp(creases[i], 0.0f, 1.0f);
+
+    if (crease != 0.0f) {
+      usd_mesh_data.crease_vertex_indices.push_back(edges[i][0]);
+      usd_mesh_data.crease_vertex_indices.push_back(edges[i][1]);
+      usd_mesh_data.crease_lengths.push_back(2);
+      usd_mesh_data.crease_sharpnesses.push_back(bke::subdiv::crease_to_sharpness(crease));
     }
-
-    const float sharpness = crease >= 1.0f ? pxr::UsdGeomMesh::SHARPNESS_INFINITE : crease;
-
-    usd_mesh_data.crease_vertex_indices.push_back(edges[i][0]);
-    usd_mesh_data.crease_vertex_indices.push_back(edges[i][1]);
-    usd_mesh_data.crease_lengths.push_back(2);
-    usd_mesh_data.crease_sharpnesses.push_back(sharpness);
   }
 }
 
@@ -557,12 +600,11 @@ static void get_vert_creases(const Mesh *mesh, USDMeshData &usd_mesh_data)
   }
   const VArraySpan creases(*attribute);
   for (const int i : creases.index_range()) {
-    const float crease = creases[i];
+    const float crease = std::clamp(creases[i], 0.0f, 1.0f);
 
-    if (crease > 0.0f) {
-      const float sharpness = crease >= 1.0f ? pxr::UsdGeomMesh::SHARPNESS_INFINITE : crease;
+    if (crease != 0.0f) {
       usd_mesh_data.corner_indices.push_back(i);
-      usd_mesh_data.corner_sharpnesses.push_back(sharpness);
+      usd_mesh_data.corner_sharpnesses.push_back(bke::subdiv::crease_to_sharpness(crease));
     }
   }
 }
@@ -650,7 +692,7 @@ void USDGenericMeshWriter::assign_materials(const HierarchyContext &context,
 
 void USDGenericMeshWriter::write_normals(const Mesh *mesh, pxr::UsdGeomMesh &usd_mesh)
 {
-  pxr::UsdTimeCode timecode = get_export_time_code();
+  pxr::UsdTimeCode time = get_export_time_code();
 
   pxr::VtVec3fArray loop_normals;
   loop_normals.resize(mesh->corners_num);
@@ -680,7 +722,7 @@ void USDGenericMeshWriter::write_normals(const Mesh *mesh, pxr::UsdGeomMesh &usd
   if (!attr_normals.HasValue()) {
     attr_normals.Set(loop_normals, pxr::UsdTimeCode::Default());
   }
-  usd_value_writer_.SetAttribute(attr_normals, pxr::VtValue(loop_normals), timecode);
+  usd_value_writer_.SetAttribute(attr_normals, pxr::VtValue(loop_normals), time);
   usd_mesh.SetNormalsInterpolation(pxr::UsdGeomTokens->faceVarying);
 }
 
@@ -700,13 +742,13 @@ void USDGenericMeshWriter::write_surface_velocity(const Mesh *mesh,
   pxr::VtVec3fArray usd_velocities;
   usd_velocities.assign(data.begin(), data.end());
 
-  pxr::UsdTimeCode timecode = get_export_time_code();
+  pxr::UsdTimeCode time = get_export_time_code();
   pxr::UsdAttribute attr_vel = usd_mesh.CreateVelocitiesAttr(pxr::VtValue(), true);
   if (!attr_vel.HasValue()) {
     attr_vel.Set(usd_velocities, pxr::UsdTimeCode::Default());
   }
 
-  usd_value_writer_.SetAttribute(attr_vel, usd_velocities, timecode);
+  usd_value_writer_.SetAttribute(attr_vel, usd_velocities, time);
 }
 
 USDMeshWriter::USDMeshWriter(const USDExporterContext &ctx)
@@ -763,7 +805,7 @@ void USDMeshWriter::init_skinned_mesh(const HierarchyContext &context)
     return;
   }
 
-  Vector<std::string> bone_names;
+  Vector<StringRef> bone_names;
   get_armature_bone_names(
       arm_obj, usd_export_context_.export_params.only_deform_bones, bone_names);
 
@@ -887,7 +929,7 @@ void USDMeshWriter::add_shape_key_weights_sample(const Object *obj)
   }
 
   pxr::VtFloatArray weights = get_blendshape_weights(key);
-  pxr::UsdTimeCode timecode = get_export_time_code();
+  pxr::UsdTimeCode time = get_export_time_code();
 
   /* Save the weights samples to a temporary privar which will be copied to
    * a skeleton animation later. */
@@ -902,7 +944,7 @@ void USDMeshWriter::add_shape_key_weights_sample(const Object *obj)
     return;
   }
 
-  temp_weights_attr.Set(weights, timecode);
+  temp_weights_attr.Set(weights, time);
 }
 
 }  // namespace blender::io::usd

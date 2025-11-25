@@ -74,11 +74,7 @@ bool BLI_change_working_dir(const char *dir)
   }
   return _wchdir(wdir) == 0;
 #  else
-  int result = chdir(dir);
-  if (result == 0) {
-    BLI_setenv("PWD", dir);
-  }
-  return result == 0;
+  return chdir(dir) == 0;
 #  endif
 }
 
@@ -91,17 +87,8 @@ char *BLI_current_working_dir(char *dir, const size_t maxncpy)
       return dir;
     }
   }
-  return NULL;
+  return nullptr;
 #  else
-  const char *pwd = BLI_getenv("PWD");
-  if (pwd) {
-    size_t srclen = BLI_strnlen(pwd, maxncpy);
-    if (srclen != maxncpy) {
-      memcpy(dir, pwd, srclen + 1);
-      return dir;
-    }
-    return nullptr;
-  }
   return getcwd(dir, maxncpy);
 #  endif
 }
@@ -315,27 +302,26 @@ eFileAttributes BLI_file_attributes(const char *path)
 }
 #endif
 
-/* Return alias/shortcut file target. Apple version is defined in storage_apple.mm */
-#ifndef __APPLE__
+#ifndef __APPLE__ /* Apple version is defined in `storage_apple.mm`. */
 bool BLI_file_alias_target(const char *filepath,
                            /* This parameter can only be `const` on Linux since
                             * redirection is not supported there.
                             * NOLINTNEXTLINE: readability-non-const-parameter. */
-                           char r_targetpath[/*FILE_MAXDIR*/])
+                           char r_targetpath[FILE_MAXDIR])
 {
 #  ifdef WIN32
   if (!BLI_path_extension_check(filepath, ".lnk")) {
     return false;
   }
 
-  HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+  HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   if (FAILED(hr)) {
     return false;
   }
 
-  IShellLinkW *Shortcut = NULL;
+  IShellLinkW *Shortcut = nullptr;
   hr = CoCreateInstance(
-      CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, IID_IShellLinkW, (LPVOID *)&Shortcut);
+      CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLinkW, (LPVOID *)&Shortcut);
 
   bool success = false;
   if (SUCCEEDED(hr)) {
@@ -349,7 +335,7 @@ bool BLI_file_alias_target(const char *filepath,
           hr = Shortcut->Resolve(0, SLR_NO_UI | SLR_UPDATE | SLR_NOSEARCH);
           if (SUCCEEDED(hr)) {
             wchar_t target_utf16[FILE_MAXDIR] = {0};
-            hr = Shortcut->GetPath(target_utf16, FILE_MAXDIR, NULL, 0);
+            hr = Shortcut->GetPath(target_utf16, FILE_MAXDIR, nullptr, 0);
             if (SUCCEEDED(hr)) {
               success = (conv_utf_16_to_8(target_utf16, r_targetpath, FILE_MAXDIR) == 0);
             }
@@ -594,7 +580,7 @@ LinkNode *BLI_file_read_as_lines(const char *filepath)
     return nullptr;
   }
 
-  buf = MEM_cnew_array<char>(size, "file_as_lines");
+  buf = MEM_calloc_arrayN<char>(size, "file_as_lines");
   if (buf) {
     size_t i, last = 0;
 

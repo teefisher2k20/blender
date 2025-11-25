@@ -11,6 +11,7 @@
 #include <optional>
 
 #include "BLI_function_ref.hh"
+#include "BLI_string_ref.hh"
 
 struct AnimData;
 struct BlendDataReader;
@@ -74,11 +75,6 @@ AnimData *BKE_animdata_ensure_id(ID *id);
  */
 bool BKE_animdata_set_action(ReportList *reports, ID *id, bAction *act);
 
-/**
- * Same as BKE_animdata_set_action(), except sets `tmpact` instead of `action`.
- */
-bool BKE_animdata_set_tmpact(ReportList *reports, ID *id, bAction *act);
-
 bool BKE_animdata_action_editable(const AnimData *adt);
 
 /**
@@ -94,6 +90,8 @@ void BKE_animdata_free(ID *id, bool do_id_user);
 
 /**
  * Return true if the ID-block has non-empty AnimData.
+ *
+ * \see blender::bke::animdata::prop_is_animated().
  */
 bool BKE_animdata_id_is_animated(const ID *id);
 
@@ -143,7 +141,7 @@ void BKE_animdata_copy_id_action(Main *bmain, ID *id);
 void BKE_animdata_duplicate_id_action(Main *bmain, ID *id, uint duplicate_flags);
 
 /* Merge copies of data from source AnimData block */
-typedef enum eAnimData_MergeCopy_Modes {
+enum eAnimData_MergeCopy_Modes {
   /* Keep destination action */
   ADT_MERGECOPY_KEEP_DST = 0,
 
@@ -152,7 +150,7 @@ typedef enum eAnimData_MergeCopy_Modes {
 
   /* Use src action (but just reference the existing version) */
   ADT_MERGECOPY_SRC_REF = 2,
-} eAnimData_MergeCopy_Modes;
+};
 
 /**
  * Merge copies of the data from the src AnimData into the destination AnimData.
@@ -204,5 +202,17 @@ namespace blender::bke::animdata {
  * \see #blender::animrig::internal::rebuild_slot_user_cache()
  */
 void action_slots_user_cache_invalidate(Main &bmain);
+
+/**
+ * Return whether there is any animation on the given property.
+ *
+ * This covers animation by direct Action assignment, the NLA, and drivers.
+ *
+ * \note This performs a full scan of all Actions (direct assignment and each
+ * NLA Action strip), as well as all drivers.
+ *
+ * \param adt: can be nullptr, in which case the function will return false.
+ */
+bool prop_is_animated(const AnimData *adt, StringRefNull rna_path, int array_index);
 
 }  // namespace blender::bke::animdata

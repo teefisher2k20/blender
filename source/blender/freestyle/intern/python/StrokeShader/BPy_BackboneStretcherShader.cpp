@@ -10,10 +10,6 @@
 
 #include "../../stroke/BasicStrokeShaders.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -41,7 +37,6 @@ PyDoc_STRVAR(
     "\n"
     "   :arg stroke: A Stroke object.\n"
     "   :type stroke: :class:`freestyle.types.Stroke`\n");
-
 static int BackboneStretcherShader___init__(BPy_BackboneStretcherShader *self,
                                             PyObject *args,
                                             PyObject *kwds)
@@ -100,7 +95,3 @@ PyTypeObject BackboneStretcherShader_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

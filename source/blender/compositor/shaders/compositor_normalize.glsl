@@ -2,13 +2,17 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "infos/compositor_normalize_infos.hh"
+
+COMPUTE_SHADER_CREATE_INFO(compositor_normalize)
+
 #include "gpu_shader_compositor_texture_utilities.glsl"
 
 void main()
 {
-  ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+  int2 texel = int2(gl_GlobalInvocationID.xy);
   float value = texture_load(input_tx, texel).x;
   float normalized_value = (value - minimum) * scale;
-  float clamped_value = clamp(normalized_value, 0.0, 1.0);
-  imageStore(output_img, texel, vec4(clamped_value));
+  float clamped_value = clamp(normalized_value, 0.0f, 1.0f);
+  imageStore(output_img, texel, float4(clamped_value));
 }

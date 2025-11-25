@@ -6,8 +6,6 @@
  * \ingroup modifiers
  */
 
-#include "MEM_guardedalloc.h"
-
 #include "BLI_utildefines.h"
 
 #include "BLI_array_utils.hh"
@@ -24,13 +22,14 @@
 #include "DNA_screen_types.h"
 
 #include "BKE_action.hh" /* BKE_pose_channel_find_name */
+#include "BKE_attribute_legacy_convert.hh"
 #include "BKE_customdata.hh"
 #include "BKE_deform.hh"
 #include "BKE_lib_query.hh"
 #include "BKE_mesh.hh"
 #include "BKE_modifier.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "RNA_access.hh"
@@ -98,7 +97,7 @@ static void compute_vertex_mask__armature_mode(const MDeformVert *dvert,
 
   LISTBASE_FOREACH (bDeformGroup *, def, &mesh->vertex_group_names) {
     bPoseChannel *pchan = BKE_pose_channel_find_name(armature_ob->pose, def->name);
-    bool bone_for_group_exists = pchan && pchan->bone && (pchan->bone->flag & BONE_SELECTED);
+    bool bone_for_group_exists = pchan && pchan->bone && (pchan->flag & POSE_SELECTED);
     selected_bone_uses_group.append(bone_for_group_exists);
   }
   const int64_t total_size = selected_bone_uses_group.size();
@@ -359,10 +358,14 @@ static void add_interp_verts_copy_edges_to_new_mesh(const Mesh &src_mesh,
                                                     uint verts_add_num,
                                                     MutableSpan<int> r_edge_map)
 {
+  using namespace blender;
   BLI_assert(src_mesh.verts_num == vertex_mask.size());
   BLI_assert(src_mesh.edges_num == r_edge_map.size());
   const Span<int2> src_edges = src_mesh.edges();
   MutableSpan<int2> dst_edges = dst_mesh.edges_for_write();
+
+  bke::LegacyMeshInterpolator vert_interp(src_mesh, dst_mesh, bke::AttrDomain::Point);
+  bke::LegacyMeshInterpolator edge_interp(src_mesh, dst_mesh, bke::AttrDomain::Edge);
 
   uint vert_index = dst_mesh.verts_num - verts_add_num;
   uint edge_index = edges_masked_num - verts_add_num;
@@ -375,7 +378,7 @@ static void add_interp_verts_copy_edges_to_new_mesh(const Mesh &src_mesh,
       const int2 &e_src = src_edges[i_src];
       int2 &e_dst = dst_edges[i_dst];
 
-      CustomData_copy_data(&src_mesh.edge_data, &dst_mesh.edge_data, i_src, i_dst, 1);
+      edge_interp.copy(i_src, i_dst, 1);
       e_dst = e_src;
       e_dst[0] = vertex_map[e_src[0]];
       e_dst[1] = vertex_map[e_src[1]];
@@ -398,14 +401,7 @@ static void add_interp_verts_copy_edges_to_new_mesh(const Mesh &src_mesh,
       float fac = get_interp_factor_from_vgroup(
           dvert, defgrp_index, threshold, e_src[0], e_src[1]);
 
-      float weights[2] = {1.0f - fac, fac};
-      CustomData_interp(&src_mesh.vert_data,
-                        &dst_mesh.vert_data,
-                        (int *)&e_src[0],
-                        weights,
-                        nullptr,
-                        2,
-                        vert_index);
+      vert_interp.mix({e_src[0], e_src[1]}, Span{1.0f - fac, fac}, vert_index);
       vert_index++;
     }
   }
@@ -418,8 +414,10 @@ static void copy_masked_edges_to_new_mesh(const Mesh &src_mesh,
                                           Span<int> vertex_map,
                                           Span<int> edge_map)
 {
+  using namespace blender;
   const Span<int2> src_edges = src_mesh.edges();
   MutableSpan<int2> dst_edges = dst_mesh.edges_for_write();
+  bke::LegacyMeshInterpolator edge_interp(src_mesh, dst_mesh, bke::AttrDomain::Edge);
 
   BLI_assert(src_mesh.verts_num == vertex_map.size());
   BLI_assert(src_mesh.edges_num == edge_map.size());
@@ -429,7 +427,7 @@ static void copy_masked_edges_to_new_mesh(const Mesh &src_mesh,
       continue;
     }
 
-    CustomData_copy_data(&src_mesh.edge_data, &dst_mesh.edge_data, i_src, i_dst, 1);
+    edge_interp.copy(i_src, i_dst, 1);
     dst_edges[i_dst][0] = vertex_map[src_edges[i_src][0]];
     dst_edges[i_dst][1] = vertex_map[src_edges[i_src][1]];
   }
@@ -443,6 +441,7 @@ static void copy_masked_faces_to_new_mesh(const Mesh &src_mesh,
                                           Span<int> new_loop_starts,
                                           int faces_masked_num)
 {
+  using namespace blender;
   const blender::OffsetIndices src_faces = src_mesh.faces();
   MutableSpan<int> dst_face_offsets = dst_mesh.face_offsets_for_write();
   const Span<int> src_corner_verts = src_mesh.corner_verts();
@@ -450,18 +449,17 @@ static void copy_masked_faces_to_new_mesh(const Mesh &src_mesh,
   MutableSpan<int> dst_corner_verts = dst_mesh.corner_verts_for_write();
   MutableSpan<int> dst_corner_edges = dst_mesh.corner_edges_for_write();
 
+  bke::LegacyMeshInterpolator face_interp(src_mesh, dst_mesh, bke::AttrDomain::Face);
+  bke::LegacyMeshInterpolator corner_interp(src_mesh, dst_mesh, bke::AttrDomain::Corner);
+
   for (const int i_dst : IndexRange(faces_masked_num)) {
     const int i_src = masked_face_indices[i_dst];
     const blender::IndexRange src_face = src_faces[i_src];
 
     dst_face_offsets[i_dst] = new_loop_starts[i_dst];
 
-    CustomData_copy_data(&src_mesh.face_data, &dst_mesh.face_data, i_src, i_dst, 1);
-    CustomData_copy_data(&src_mesh.corner_data,
-                         &dst_mesh.corner_data,
-                         src_face.start(),
-                         dst_face_offsets[i_dst],
-                         src_face.size());
+    face_interp.copy(i_src, i_dst, 1);
+    corner_interp.copy(src_face.start(), dst_face_offsets[i_dst], src_face.size());
 
     for (int i : IndexRange(src_face.size())) {
       dst_corner_verts[new_loop_starts[i_dst] + i] = vertex_map[src_corner_verts[src_face[i]]];
@@ -483,6 +481,7 @@ static void add_interpolated_faces_to_new_mesh(const Mesh &src_mesh,
                                                int faces_masked_num,
                                                int edges_add_num)
 {
+  using namespace blender;
   const blender::OffsetIndices src_faces = src_mesh.faces();
   MutableSpan<int> dst_face_offsets = dst_mesh.face_offsets_for_write();
   MutableSpan<int2> dst_edges = dst_mesh.edges_for_write();
@@ -490,6 +489,9 @@ static void add_interpolated_faces_to_new_mesh(const Mesh &src_mesh,
   const Span<int> src_corner_edges = src_mesh.corner_edges();
   MutableSpan<int> dst_corner_verts = dst_mesh.corner_verts_for_write();
   MutableSpan<int> dst_corner_edges = dst_mesh.corner_edges_for_write();
+
+  bke::LegacyMeshInterpolator face_interp(src_mesh, dst_mesh, bke::AttrDomain::Face);
+  bke::LegacyMeshInterpolator corner_interp(src_mesh, dst_mesh, bke::AttrDomain::Corner);
 
   int edge_index = dst_mesh.edges_num - edges_add_num;
   int sub_face_index = 0;
@@ -509,7 +511,7 @@ static void add_interpolated_faces_to_new_mesh(const Mesh &src_mesh,
     const blender::IndexRange src_face = src_faces[i_src];
     const int i_ml_src = src_face.start();
     int i_ml_dst = new_loop_starts[i_dst];
-    CustomData_copy_data(&src_mesh.face_data, &dst_mesh.face_data, i_src, i_dst, 1);
+    face_interp.copy(i_src, i_dst, 1);
 
     dst_face_offsets[i_dst] = i_ml_dst;
 
@@ -546,16 +548,13 @@ static void add_interpolated_faces_to_new_mesh(const Mesh &src_mesh,
         /* Start new cut. */
         float fac = get_interp_factor_from_vgroup(
             dvert, defgrp_index, threshold, face_verts_src[last_index], face_verts_src[index]);
-        float weights[2] = {1.0f - fac, fac};
-        int indices[2] = {i_ml_src + last_index, i_ml_src + index};
-        CustomData_interp(
-            &src_mesh.corner_data, &dst_mesh.corner_data, indices, weights, nullptr, 2, i_ml_dst);
+        corner_interp.mix(
+            {i_ml_src + last_index, i_ml_src + index}, Span{1.0f - fac, fac}, i_ml_dst);
         dst_corner_edges[i_ml_dst] = edge_map[face_edges_src[last_index]];
         dst_corner_verts[i_ml_dst] = dst_edges[dst_corner_edges[i_ml_dst]][0];
         i_ml_dst++;
 
-        CustomData_copy_data(
-            &src_mesh.corner_data, &dst_mesh.corner_data, i_ml_src + index, i_ml_dst, 1);
+        corner_interp.copy(i_ml_src + index, i_ml_dst, 1);
         dst_corner_verts[i_ml_dst] = vertex_map[face_verts_src[index]];
         dst_corner_edges[i_ml_dst] = edge_map[face_edges_src[index]];
         i_ml_dst++;
@@ -565,10 +564,8 @@ static void add_interpolated_faces_to_new_mesh(const Mesh &src_mesh,
         /* End active cut. */
         float fac = get_interp_factor_from_vgroup(
             dvert, defgrp_index, threshold, face_verts_src[last_index], face_verts_src[index]);
-        float weights[2] = {1.0f - fac, fac};
-        int indices[2] = {i_ml_src + last_index, i_ml_src + index};
-        CustomData_interp(
-            &src_mesh.corner_data, &dst_mesh.corner_data, indices, weights, nullptr, 2, i_ml_dst);
+        corner_interp.mix(
+            {i_ml_src + last_index, i_ml_src + index}, Span{1.0f - fac, fac}, i_ml_dst);
         dst_corner_edges[i_ml_dst] = edge_index;
         dst_corner_verts[i_ml_dst] = dst_edges[edge_map[face_edges_src[last_index]]][0];
 
@@ -586,8 +583,7 @@ static void add_interpolated_faces_to_new_mesh(const Mesh &src_mesh,
       else if (v_loop_in_mask && v_loop_in_mask_last) {
         BLI_assert(i_ml_dst != dst_face_offsets[i_dst]);
         /* Extend active face. */
-        CustomData_copy_data(
-            &src_mesh.corner_data, &dst_mesh.corner_data, i_ml_src + index, i_ml_dst, 1);
+        corner_interp.copy(i_ml_src + index, i_ml_dst, 1);
         dst_corner_verts[i_ml_dst] = vertex_map[face_verts_src[index]];
         dst_corner_edges[i_ml_dst] = edge_map[face_edges_src[index]];
         i_ml_dst++;
@@ -767,25 +763,25 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
 
   int mode = RNA_enum_get(ptr, "mode");
 
-  uiItemR(layout, ptr, "mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
   if (mode == MOD_MASK_MODE_ARM) {
-    row = uiLayoutRow(layout, true);
-    uiItemR(row, ptr, "armature", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    sub = uiLayoutRow(row, true);
-    uiLayoutSetPropDecorate(sub, false);
-    uiItemR(sub, ptr, "invert_vertex_group", UI_ITEM_NONE, "", ICON_ARROW_LEFTRIGHT);
+    row = &layout->row(true);
+    row->prop(ptr, "armature", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    sub = &row->row(true);
+    sub->use_property_decorate_set(false);
+    sub->prop(ptr, "invert_vertex_group", UI_ITEM_NONE, "", ICON_ARROW_LEFTRIGHT);
   }
   else if (mode == MOD_MASK_MODE_VGROUP) {
     modifier_vgroup_ui(layout, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", std::nullopt);
-    uiItemR(layout, ptr, "use_smooth", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    layout->prop(ptr, "use_smooth", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 
-  uiItemR(layout, ptr, "threshold", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "threshold", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void panel_register(ARegionType *region_type)
@@ -801,8 +797,8 @@ ModifierTypeInfo modifierType_Mask = {
     /*srna*/ &RNA_MaskModifier,
     /*type*/ ModifierTypeType::Nonconstructive,
     /*flags*/
-    (ModifierTypeFlag)(eModifierTypeFlag_AcceptsMesh | eModifierTypeFlag_SupportsMapping |
-                       eModifierTypeFlag_SupportsEditmode),
+    (eModifierTypeFlag_AcceptsMesh | eModifierTypeFlag_SupportsMapping |
+     eModifierTypeFlag_SupportsEditmode),
     /*icon*/ ICON_MOD_MASK,
 
     /*copy_data*/ BKE_modifier_copydata_generic,
@@ -828,4 +824,5 @@ ModifierTypeInfo modifierType_Mask = {
     /*blend_write*/ nullptr,
     /*blend_read*/ nullptr,
     /*foreach_cache*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
 };

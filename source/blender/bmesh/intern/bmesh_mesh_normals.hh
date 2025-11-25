@@ -52,7 +52,7 @@ void BM_verts_calc_normal_vcos(BMesh *bm,
 /**
  * \brief BMesh Compute Loop Normals from/to external data.
  *
- * Compute split normals, i.e. vertex normals associated with each poly (hence 'loop normals').
+ * Compute custom normals, i.e. vertex normals associated with each poly (hence 'loop normals').
  * Useful to materialize sharp edges (or non-smooth faces) without actually modifying the geometry
  * (splitting edges).
  */
@@ -87,6 +87,15 @@ void BM_lnorspace_err(BMesh *bm);
 #endif
 
 /* Loop Generics */
+
+/**
+ * Initialize loop data based on a type, overriding the #BMesh::selectmode of `bm`.
+ * This can be useful if a single types selection is preferred,
+ * instead of using mixed modes and the selection history.
+ */
+BMLoopNorEditDataArray *BM_loop_normal_editdata_array_init_with_htype(BMesh *bm,
+                                                                      bool do_all_loops_of_vert,
+                                                                      char htype_override);
 BMLoopNorEditDataArray *BM_loop_normal_editdata_array_init(BMesh *bm, bool do_all_loops_of_vert);
 void BM_loop_normal_editdata_array_free(BMLoopNorEditDataArray *lnors_ed_arr);
 
@@ -98,7 +107,7 @@ bool BM_custom_loop_normals_to_vector_layer(BMesh *bm);
 void BM_custom_loop_normals_from_vector_layer(BMesh *bm, bool add_sharp_edges);
 
 /**
- * Define sharp edges as needed to mimic 'autosmooth' from angle threshold.
+ * Define sharp edges as needed to mimic auto-smooth from angle threshold.
  *
  * Used when defining an empty custom loop normals data layer,
  * to keep same shading as with auto-smooth!

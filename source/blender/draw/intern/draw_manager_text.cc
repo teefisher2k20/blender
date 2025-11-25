@@ -31,6 +31,7 @@
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 #include "DNA_screen_types.h"
+#include "DNA_userdef_types.h"
 #include "DNA_view3d_types.h"
 
 #include "GPU_matrix.hh"
@@ -73,13 +74,16 @@ struct DRWTextStore {
 
 DRWTextStore *DRW_text_cache_create()
 {
-  DRWTextStore *dt = MEM_cnew<DRWTextStore>(__func__);
+  DRWTextStore *dt = MEM_callocN<DRWTextStore>(__func__);
   dt->cache_strings = BLI_memiter_create(1 << 14); /* 16kb */
   return dt;
 }
 
 void DRW_text_cache_destroy(DRWTextStore *dt)
 {
+  if (dt == nullptr) {
+    return;
+  }
   BLI_memiter_destroy(dt->cache_strings);
   MEM_freeN(dt);
 }
@@ -127,7 +131,7 @@ void DRW_text_cache_add(DRWTextStore *dt,
   }
 }
 
-static void drw_text_cache_draw_ex(DRWTextStore *dt, ARegion *region)
+static void drw_text_cache_draw_ex(const DRWTextStore *dt, const ARegion *region)
 {
   ViewCachedString *vos;
   BLI_memiter_handle it;
@@ -194,7 +198,7 @@ static void drw_text_cache_draw_ex(DRWTextStore *dt, ARegion *region)
   GPU_matrix_projection_set(original_proj);
 }
 
-void DRW_text_cache_draw(DRWTextStore *dt, ARegion *region, View3D *v3d)
+void DRW_text_cache_draw(const DRWTextStore *dt, const ARegion *region, const View3D *v3d)
 {
   ViewCachedString *vos;
   if (v3d) {
@@ -238,7 +242,7 @@ void DRW_text_cache_draw(DRWTextStore *dt, ARegion *region, View3D *v3d)
     /* project first */
     BLI_memiter_handle it;
     BLI_memiter_iter_init(dt->cache_strings, &it);
-    View2D *v2d = &region->v2d;
+    const View2D *v2d = &region->v2d;
     float viewmat[4][4];
     rctf region_space = {0.0f, float(region->winx), 0.0f, float(region->winy)};
     BLI_rctf_transform_calc_m4_pivot_min(&v2d->cur, &region_space, viewmat);
@@ -262,9 +266,8 @@ void DRW_text_edit_mesh_measure_stats(const ARegion *region,
                                       const UnitSettings &unit,
                                       DRWTextStore *dt)
 {
-  /* Do not use ascii when using non-default unit system, some unit chars are utf8 (micro, square,
-   * etc.). See bug #36090.
-   */
+  /* Do not use ASCII when using non-default unit system, some unit chars are UTF8
+   * (micro, square, etc.). See #36090. */
   const short txt_flag = DRW_TEXT_CACHE_GLOBALSPACE;
   const Mesh *mesh = BKE_object_get_editmesh_eval_cage(ob);
   if (!mesh) {
@@ -584,8 +587,7 @@ void DRW_text_edit_mesh_measure_stats(const ARegion *region,
   if (v3d->overlay.edit_flag & V3D_OVERLAY_EDIT_INDICES) {
     int i;
 
-    /* For now, reuse an appropriate theme color */
-    UI_GetThemeColor3ubv(TH_DRAWEXTRA_FACEANG, col);
+    UI_GetThemeColor4ubv(TH_TEXT_HI, col);
 
     if (em->selectmode & SCE_SELECT_VERTEX) {
       BMVert *v;
@@ -599,7 +601,7 @@ void DRW_text_edit_mesh_measure_stats(const ARegion *region,
               ob->object_to_world(), use_coords ? vert_positions[BM_elem_index_get(v)] : v->co);
 
           const size_t numstr_len = SNPRINTF_RLEN(numstr, "%d", i);
-          DRW_text_cache_add(dt, co, numstr, numstr_len, 0, 0, txt_flag, col);
+          DRW_text_cache_add(dt, co, numstr, numstr_len, 0, 0, txt_flag, col, true, false);
         }
       }
     }
@@ -637,7 +639,9 @@ void DRW_text_edit_mesh_measure_stats(const ARegion *region,
                 0,
                 (use_edge_tex_sep) ? (use_edge_tex_len) ? -edge_tex_sep : edge_tex_sep : 0,
                 txt_flag,
-                col);
+                col,
+                true,
+                false);
           }
         }
       }
@@ -664,7 +668,7 @@ void DRW_text_edit_mesh_measure_stats(const ARegion *region,
           co = blender::math::transform_point(ob->object_to_world(), co);
 
           const size_t numstr_len = SNPRINTF_RLEN(numstr, "%d", i);
-          DRW_text_cache_add(dt, co, numstr, numstr_len, 0, 0, txt_flag, col);
+          DRW_text_cache_add(dt, co, numstr, numstr_len, 0, 0, txt_flag, col, true, false);
         }
       }
     }

@@ -8,10 +8,6 @@
 
 #include "GHOST_System.hh"
 
-#include <chrono>
-#include <cstdio> /* Just for #printf. */
-
-#include "GHOST_DisplayManager.hh"
 #include "GHOST_EventManager.hh"
 #include "GHOST_TimerManager.hh"
 #include "GHOST_TimerTask.hh"
@@ -22,20 +18,18 @@
 #endif
 
 GHOST_System::GHOST_System()
-    : m_nativePixel(false),
-      m_windowFocus(true),
-      m_autoFocus(true),
-      m_displayManager(nullptr),
-      m_timerManager(nullptr),
-      m_windowManager(nullptr),
-      m_eventManager(nullptr),
+    : native_pixel_(false),
+      window_focus_(true),
+      auto_focus_(true),
+      timer_manager_(nullptr),
+      window_manager_(nullptr),
+      event_manager_(nullptr),
 #ifdef WITH_INPUT_NDOF
-      m_ndofManager(nullptr),
+      ndof_manager_(nullptr),
 #endif
-      m_preFullScreenSetting{0},
-      m_multitouchGestures(true),
-      m_tabletAPI(GHOST_kTabletAutomatic),
-      m_is_debug_enabled(false)
+      multitouch_gestures_(true),
+      tablet_api_(GHOST_kTabletAutomatic),
+      is_debug_enabled_(false)
 {
 }
 
@@ -44,7 +38,7 @@ GHOST_System::~GHOST_System()
   exit();
 }
 
-GHOST_TSuccess GHOST_System::hasClipboardImage(void) const
+GHOST_TSuccess GHOST_System::hasClipboardImage() const
 {
   return GHOST_kFailure;
 }
@@ -63,15 +57,15 @@ GHOST_TSuccess GHOST_System::putClipboardImage(uint * /*rgba*/,
 
 GHOST_ITimerTask *GHOST_System::installTimer(uint64_t delay,
                                              uint64_t interval,
-                                             GHOST_TimerProcPtr timerProc,
-                                             GHOST_TUserDataPtr userData)
+                                             GHOST_TimerProcPtr timer_proc,
+                                             GHOST_TUserDataPtr user_data)
 {
   uint64_t millis = getMilliSeconds();
-  GHOST_TimerTask *timer = new GHOST_TimerTask(millis + delay, interval, timerProc, userData);
+  GHOST_TimerTask *timer = new GHOST_TimerTask(millis + delay, interval, timer_proc, user_data);
   if (timer) {
-    if (m_timerManager->addTimer(timer) == GHOST_kSuccess) {
+    if (timer_manager_->addTimer(timer) == GHOST_kSuccess) {
       /* Check to see whether we need to fire the timer right away. */
-      m_timerManager->fireTimers(millis);
+      timer_manager_->fireTimers(millis);
     }
     else {
       delete timer;
@@ -85,7 +79,7 @@ GHOST_TSuccess GHOST_System::removeTimer(GHOST_ITimerTask *timerTask)
 {
   GHOST_TSuccess success = GHOST_kFailure;
   if (timerTask) {
-    success = m_timerManager->removeTimer((GHOST_TimerTask *)timerTask);
+    success = timer_manager_->removeTimer((GHOST_TimerTask *)timerTask);
   }
   return success;
 }
@@ -97,106 +91,22 @@ GHOST_TSuccess GHOST_System::disposeWindow(GHOST_IWindow *window)
   /*
    * Remove all pending events for the window.
    */
-  if (m_windowManager->getWindowFound(window)) {
-    m_eventManager->removeWindowEvents(window);
-  }
-  if (window == m_windowManager->getFullScreenWindow()) {
-    success = endFullScreen();
+  if (window_manager_->getWindowFound(window)) {
+    event_manager_->removeWindowEvents(window);
+    success = window_manager_->removeWindow(window);
+    if (success) {
+      delete window;
+    }
   }
   else {
-    if (m_windowManager->getWindowFound(window)) {
-      success = m_windowManager->removeWindow(window);
-      if (success) {
-        delete window;
-      }
-    }
-    else {
-      success = GHOST_kFailure;
-    }
+    success = GHOST_kFailure;
   }
   return success;
 }
 
 bool GHOST_System::validWindow(GHOST_IWindow *window)
 {
-  return m_windowManager->getWindowFound(window);
-}
-
-GHOST_TSuccess GHOST_System::beginFullScreen(const GHOST_DisplaySetting &setting,
-                                             GHOST_IWindow **window,
-                                             const bool stereoVisual)
-{
-  GHOST_TSuccess success = GHOST_kFailure;
-  GHOST_ASSERT(m_windowManager, "GHOST_System::beginFullScreen(): invalid window manager");
-  if (m_displayManager) {
-    if (!m_windowManager->getFullScreen()) {
-      m_displayManager->getCurrentDisplaySetting(GHOST_DisplayManager::kMainDisplay,
-                                                 m_preFullScreenSetting);
-
-      // GHOST_PRINT("GHOST_System::beginFullScreen(): activating new display settings\n");
-      success = m_displayManager->setCurrentDisplaySetting(GHOST_DisplayManager::kMainDisplay,
-                                                           setting);
-      if (success == GHOST_kSuccess) {
-        // GHOST_PRINT("GHOST_System::beginFullScreen(): creating full-screen window\n");
-        success = createFullScreenWindow((GHOST_Window **)window, setting, stereoVisual);
-        if (success == GHOST_kSuccess) {
-          m_windowManager->beginFullScreen(*window, stereoVisual);
-        }
-        else {
-          m_displayManager->setCurrentDisplaySetting(GHOST_DisplayManager::kMainDisplay,
-                                                     m_preFullScreenSetting);
-        }
-      }
-    }
-  }
-  if (success == GHOST_kFailure) {
-    GHOST_PRINT("GHOST_System::beginFullScreen(): could not enter full-screen mode\n");
-  }
-  return success;
-}
-
-GHOST_TSuccess GHOST_System::updateFullScreen(const GHOST_DisplaySetting &setting,
-                                              GHOST_IWindow ** /*window*/)
-{
-  GHOST_TSuccess success = GHOST_kFailure;
-  GHOST_ASSERT(m_windowManager, "GHOST_System::updateFullScreen(): invalid window manager");
-  if (m_displayManager) {
-    if (m_windowManager->getFullScreen()) {
-      success = m_displayManager->setCurrentDisplaySetting(GHOST_DisplayManager::kMainDisplay,
-                                                           setting);
-    }
-  }
-
-  return success;
-}
-
-GHOST_TSuccess GHOST_System::endFullScreen()
-{
-  GHOST_TSuccess success = GHOST_kFailure;
-  GHOST_ASSERT(m_windowManager, "GHOST_System::endFullScreen(): invalid window manager");
-  if (m_windowManager->getFullScreen()) {
-    // GHOST_IWindow* window = m_windowManager->getFullScreenWindow();
-    // GHOST_PRINT("GHOST_System::endFullScreen(): leaving window manager full-screen mode\n");
-    if (m_windowManager->endFullScreen() == GHOST_kSuccess) {
-      GHOST_ASSERT(m_displayManager, "GHOST_System::endFullScreen(): invalid display manager");
-      // GHOST_PRINT("GHOST_System::endFullScreen(): leaving full-screen mode\n");
-      success = m_displayManager->setCurrentDisplaySetting(GHOST_DisplayManager::kMainDisplay,
-                                                           m_preFullScreenSetting);
-    }
-  }
-  return success;
-}
-
-bool GHOST_System::getFullScreen()
-{
-  bool fullScreen;
-  if (m_windowManager) {
-    fullScreen = m_windowManager->getFullScreen();
-  }
-  else {
-    fullScreen = false;
-  }
-  return fullScreen;
+  return window_manager_->getWindowFound(window);
 }
 
 GHOST_IWindow *GHOST_System::getWindowUnderCursor(int32_t x, int32_t y)
@@ -205,7 +115,7 @@ GHOST_IWindow *GHOST_System::getWindowUnderCursor(int32_t x, int32_t y)
    * It is imperfect but usable in most cases. Ideally each platform should provide
    * a custom version of this function that properly considers z-order. */
 
-  std::vector<GHOST_IWindow *> windows = m_windowManager->getWindows();
+  std::vector<GHOST_IWindow *> windows = window_manager_->getWindows();
   std::vector<GHOST_IWindow *>::reverse_iterator iwindow_iter;
 
   /* Search through the windows in reverse order because in most cases
@@ -233,23 +143,23 @@ void GHOST_System::dispatchEvents()
 {
 #ifdef WITH_INPUT_NDOF
   /* NDOF Motion event is sent only once per dispatch, so do it now: */
-  if (m_ndofManager) {
-    m_ndofManager->sendMotionEvent();
+  if (ndof_manager_) {
+    ndof_manager_->sendMotionEvent();
   }
 #endif
 
-  if (m_eventManager) {
-    m_eventManager->dispatchEvents();
+  if (event_manager_) {
+    event_manager_->dispatchEvents();
   }
 
-  m_timerManager->fireTimers(getMilliSeconds());
+  timer_manager_->fireTimers(getMilliSeconds());
 }
 
 GHOST_TSuccess GHOST_System::addEventConsumer(GHOST_IEventConsumer *consumer)
 {
   GHOST_TSuccess success;
-  if (m_eventManager) {
-    success = m_eventManager->addConsumer(consumer);
+  if (event_manager_) {
+    success = event_manager_->addConsumer(consumer);
   }
   else {
     success = GHOST_kFailure;
@@ -260,8 +170,8 @@ GHOST_TSuccess GHOST_System::addEventConsumer(GHOST_IEventConsumer *consumer)
 GHOST_TSuccess GHOST_System::removeEventConsumer(GHOST_IEventConsumer *consumer)
 {
   GHOST_TSuccess success;
-  if (m_eventManager) {
-    success = m_eventManager->removeConsumer(consumer);
+  if (event_manager_) {
+    success = event_manager_->removeConsumer(consumer);
   }
   else {
     success = GHOST_kFailure;
@@ -272,8 +182,8 @@ GHOST_TSuccess GHOST_System::removeEventConsumer(GHOST_IEventConsumer *consumer)
 GHOST_TSuccess GHOST_System::pushEvent(const GHOST_IEvent *event)
 {
   GHOST_TSuccess success;
-  if (m_eventManager) {
-    success = m_eventManager->pushEvent(event);
+  if (event_manager_) {
+    success = event_manager_->pushEvent(event);
   }
   else {
     success = GHOST_kFailure;
@@ -304,46 +214,51 @@ GHOST_TSuccess GHOST_System::setCursorPositionClientRelative(GHOST_IWindow *wind
   return setCursorPosition(screen_x, screen_y);
 }
 
-GHOST_TSuccess GHOST_System::getModifierKeyState(GHOST_TModifierKey mask, bool &isDown) const
+uint32_t GHOST_System::getCursorPreferredLogicalSize() const
+{
+  return uint32_t(24);
+}
+
+GHOST_TSuccess GHOST_System::getModifierKeyState(GHOST_TModifierKey mask, bool &is_down) const
 {
   GHOST_ModifierKeys keys;
   /* Get the state of all modifier keys. */
   GHOST_TSuccess success = getModifierKeys(keys);
   if (success) {
     /* Isolate the state of the key requested. */
-    isDown = keys.get(mask);
+    is_down = keys.get(mask);
   }
   return success;
 }
 
-GHOST_TSuccess GHOST_System::getButtonState(GHOST_TButton mask, bool &isDown) const
+GHOST_TSuccess GHOST_System::getButtonState(GHOST_TButton mask, bool &is_down) const
 {
   GHOST_Buttons buttons;
   /* Get the state of all mouse buttons. */
   GHOST_TSuccess success = getButtons(buttons);
   if (success) {
     /* Isolate the state of the mouse button requested. */
-    isDown = buttons.get(mask);
+    is_down = buttons.get(mask);
   }
   return success;
 }
 
 void GHOST_System::setMultitouchGestures(const bool use)
 {
-  m_multitouchGestures = use;
+  multitouch_gestures_ = use;
 }
 
 void GHOST_System::setTabletAPI(GHOST_TTabletAPI api)
 {
-  m_tabletAPI = api;
+  tablet_api_ = api;
 }
 
 GHOST_TTabletAPI GHOST_System::getTabletAPI()
 {
-  return m_tabletAPI;
+  return tablet_api_;
 }
 
-GHOST_TSuccess GHOST_System::getPixelAtCursor(float[3] /*r_color*/) const
+GHOST_TSuccess GHOST_System::getPixelAtCursor(float /*r_color*/[3]) const
 {
   return GHOST_kFailure;
 }
@@ -351,26 +266,26 @@ GHOST_TSuccess GHOST_System::getPixelAtCursor(float[3] /*r_color*/) const
 #ifdef WITH_INPUT_NDOF
 void GHOST_System::setNDOFDeadZone(float deadzone)
 {
-  if (this->m_ndofManager) {
-    this->m_ndofManager->setDeadZone(deadzone);
+  if (this->ndof_manager_) {
+    this->ndof_manager_->setDeadZone(deadzone);
   }
 }
 #endif
 
 GHOST_TSuccess GHOST_System::init()
 {
-  m_timerManager = new GHOST_TimerManager();
-  m_windowManager = new GHOST_WindowManager();
-  m_eventManager = new GHOST_EventManager();
+  timer_manager_ = new GHOST_TimerManager();
+  window_manager_ = new GHOST_WindowManager();
+  event_manager_ = new GHOST_EventManager();
 
 #ifdef WITH_GHOST_DEBUG
-  if (m_eventManager) {
-    m_eventPrinter = new GHOST_EventPrinter();
-    m_eventManager->addConsumer(m_eventPrinter);
+  if (event_manager_) {
+    event_printer_ = new GHOST_EventPrinter();
+    event_manager_->addConsumer(event_printer_);
   }
 #endif /* WITH_GHOST_DEBUG */
 
-  if (m_timerManager && m_windowManager && m_eventManager) {
+  if (timer_manager_ && window_manager_ && event_manager_) {
     return GHOST_kSuccess;
   }
   return GHOST_kFailure;
@@ -378,86 +293,48 @@ GHOST_TSuccess GHOST_System::init()
 
 GHOST_TSuccess GHOST_System::exit()
 {
-  if (getFullScreen()) {
-    endFullScreen();
-  }
+  /** WARNING: exit() may run more than once, since it may need to be called from a derived class
+   * destructor. Take it into account when modifying this function. */
 
-  delete m_displayManager;
-  m_displayManager = nullptr;
+  delete window_manager_;
+  window_manager_ = nullptr;
 
-  delete m_windowManager;
-  m_windowManager = nullptr;
+  delete timer_manager_;
+  timer_manager_ = nullptr;
 
-  delete m_timerManager;
-  m_timerManager = nullptr;
-
-  delete m_eventManager;
-  m_eventManager = nullptr;
+  delete event_manager_;
+  event_manager_ = nullptr;
 
 #ifdef WITH_INPUT_NDOF
-  delete m_ndofManager;
-  m_ndofManager = nullptr;
+  delete ndof_manager_;
+  ndof_manager_ = nullptr;
 #endif
 
   return GHOST_kSuccess;
 }
 
-GHOST_TSuccess GHOST_System::createFullScreenWindow(GHOST_Window **window,
-                                                    const GHOST_DisplaySetting &settings,
-                                                    const bool stereoVisual)
-{
-  GHOST_GPUSettings gpuSettings = {0};
-
-  if (stereoVisual) {
-    gpuSettings.flags |= GHOST_gpuStereoVisual;
-  }
-#if defined(WITH_OPENGL_BACKEND)
-  gpuSettings.context_type = GHOST_kDrawingContextTypeOpenGL;
-#elif defined(WITH_METAL_BACKEND)
-  gpuSettings.context_type = GHOST_kDrawingContextTypeMetal;
-#elif defined(WITH_VULKAN_BACKEND)
-  gpuSettings.context_type = GHOST_kDrawingContextTypeVulkan;
-#else
-#  error
-#endif
-  /* NOTE: don't use #getCurrentDisplaySetting() because on X11 we may
-   * be zoomed in and the desktop may be bigger than the viewport. */
-  GHOST_ASSERT(m_displayManager,
-               "GHOST_System::createFullScreenWindow(): invalid display manager");
-  // GHOST_PRINT("GHOST_System::createFullScreenWindow(): creating full-screen window\n");
-  *window = (GHOST_Window *)createWindow("",
-                                         0,
-                                         0,
-                                         settings.xPixels,
-                                         settings.yPixels,
-                                         GHOST_kWindowStateNormal,
-                                         gpuSettings,
-                                         true /*exclusive*/);
-  return (*window == nullptr) ? GHOST_kFailure : GHOST_kSuccess;
-}
-
 bool GHOST_System::useNativePixel()
 {
-  m_nativePixel = true;
+  native_pixel_ = true;
   return true;
 }
 
 void GHOST_System::useWindowFocus(const bool use_focus)
 {
-  m_windowFocus = use_focus;
+  window_focus_ = use_focus;
 }
 
 void GHOST_System::setAutoFocus(const bool auto_focus)
 {
-  m_autoFocus = auto_focus;
+  auto_focus_ = auto_focus;
 }
 
 void GHOST_System::initDebug(GHOST_Debug debug)
 {
-  m_is_debug_enabled = debug.flags & GHOST_kDebugDefault;
+  is_debug_enabled_ = debug.flags & GHOST_kDebugDefault;
 }
 
 bool GHOST_System::isDebugEnabled()
 {
-  return m_is_debug_enabled;
+  return is_debug_enabled_;
 }

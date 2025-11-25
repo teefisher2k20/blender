@@ -21,7 +21,7 @@ from bpy.props import (
 )
 
 from bpy.app.translations import (
-    pgettext_tip as tip_,
+    pgettext_rpt as rpt_,
     contexts as i18n_contexts,
 )
 from mathutils import Vector
@@ -37,7 +37,7 @@ from bpy_extras.io_utils import ImportHelper
 # -----------------------------------------------------------------------------
 # Constants
 
-COMPATIBLE_ENGINES = {'CYCLES', 'BLENDER_EEVEE_NEXT', 'BLENDER_WORKBENCH'}
+COMPATIBLE_ENGINES = {'CYCLES', 'BLENDER_EEVEE', 'BLENDER_WORKBENCH'}
 
 # -----------------------------------------------------------------------------
 # Image loading
@@ -297,7 +297,9 @@ class MaterialProperties_MixIn:
             ('BLENDED',
              "Blended",
              "Allows for colored transparency, but incompatible with render passes and ray-tracing. "
-             "Also known as forward rendering.")))
+             "Also known as forward rendering."),
+        ),
+    )
 
     use_backface_culling: BoolProperty(
         name="Backface Culling",
@@ -336,7 +338,7 @@ class MaterialProperties_MixIn:
 
             engine = context.scene.render.engine
             if engine not in COMPATIBLE_ENGINES:
-                body.label(text=tip_("{:s} is not supported").format(engine), icon='ERROR')
+                body.label(text=rpt_("{:s} is not supported").format(engine), icon='ERROR')
 
             body.prop(self, "overwrite_material")
 
@@ -366,19 +368,11 @@ class TextureProperties_MixIn:
         description="How the image is extrapolated past its original bounds",
     )
 
-    t = bpy.types.Image.bl_rna.properties["alpha_mode"]
-    alpha_mode: EnumProperty(
-        name=t.name,
-        items=tuple((e.identifier, e.name, e.description) for e in t.enum_items),
-        default=t.default,
-        description=t.description,
-    )
-
-    t = bpy.types.ImageUser.bl_rna.properties["use_auto_refresh"]
+    _ImageUser_use_auto_refresh = bpy.types.ImageUser.bl_rna.properties["use_auto_refresh"]
     use_auto_refresh: BoolProperty(
-        name=t.name,
+        name=_ImageUser_use_auto_refresh.name,
         default=True,
-        description=t.description,
+        description=_ImageUser_use_auto_refresh.description,
     )
 
     relative: BoolProperty(
@@ -399,9 +393,6 @@ class TextureProperties_MixIn:
 
             row = body.row(align=False, heading="Alpha")
             row.prop(self, "use_transparency", text="")
-            sub = row.row(align=True)
-            sub.active = self.use_transparency
-            sub.prop(self, "alpha_mode", text="")
 
             body.prop(self, "use_auto_refresh")
 
@@ -435,15 +426,14 @@ def create_cycles_material(self, context, img_spec, name):
         material = bpy.data.materials.get((name, None))
     if material is None:
         material = bpy.data.materials.new(name=name)
-
-    material.use_nodes = True
+        material.node_tree.nodes.clear()
 
     material.surface_render_method = self.render_method
     material.use_backface_culling = self.use_backface_culling
     material.use_transparency_overlap = self.show_transparent_back
 
     node_tree = material.node_tree
-    out_node = clean_node_tree(node_tree)
+    out_node = node_tree.nodes.new("ShaderNodeOutputMaterial")
 
     tex_image = create_cycles_texnode(self, node_tree, img_spec)
 
@@ -852,13 +842,13 @@ class IMAGE_OT_import_as_mesh_planes(
     def invoke(self, context, _event):
         engine = context.scene.render.engine
         if engine not in COMPATIBLE_ENGINES:
-            self.report({'ERROR'}, tip_("Cannot generate materials for unknown {:s} render engine").format(engine))
+            self.report({'ERROR'}, rpt_("Cannot generate materials for unknown {:s} render engine").format(engine))
             return {'CANCELLED'}
 
         if engine == 'BLENDER_WORKBENCH':
             self.report(
                 {'WARNING'},
-                tip_("Generating Cycles/EEVEE compatible material, but won't be visible with {:s} engine").format(
+                rpt_("Generating Cycles/EEVEE compatible material, but won't be visible with {:s} engine").format(
                     engine,
                 ))
 
@@ -917,7 +907,7 @@ class IMAGE_OT_import_as_mesh_planes(
             plane.select_set(True)
 
         # All done!
-        self.report({'INFO'}, tip_("Added {:d} Image Plane(s)").format(len(planes)))
+        self.report({'INFO'}, rpt_("Added {:d} Image Plane(s)").format(len(planes)))
         return {'FINISHED'}
 
     # Operate on a single image.
@@ -943,8 +933,6 @@ class IMAGE_OT_import_as_mesh_planes(
     def apply_image_options(self, image):
         if not self.use_transparency:
             image.alpha_mode = 'NONE'
-        else:
-            image.alpha_mode = self.alpha_mode
 
         if self.relative:
             try:  # Can't always find the relative path (between drive letters on windows).
@@ -1130,13 +1118,13 @@ class IMAGE_OT_convert_to_mesh_plane(MaterialProperties_MixIn, TextureProperties
         engine = scene.render.engine
 
         if engine not in COMPATIBLE_ENGINES:
-            self.report({'ERROR'}, tip_("Cannot generate materials for unknown {:s} render engine").format(engine))
+            self.report({'ERROR'}, rpt_("Cannot generate materials for unknown {:s} render engine").format(engine))
             return {'CANCELLED'}
 
         if engine == 'BLENDER_WORKBENCH':
             self.report(
                 {'WARNING'},
-                tip_("Generating Cycles/EEVEE compatible material, but won't be visible with {:s} engine").format(
+                rpt_("Generating Cycles/EEVEE compatible material, but won't be visible with {:s} engine").format(
                     engine,
                 ))
 
@@ -1206,7 +1194,7 @@ class IMAGE_OT_convert_to_mesh_plane(MaterialProperties_MixIn, TextureProperties
             self.report({'ERROR'}, "No images converted")
             return {'CANCELLED'}
 
-        self.report({'INFO'}, "{:d} image(s) converted to mesh plane(s)".format(converted))
+        self.report({'INFO'}, rpt_("{:d} image(s) converted to mesh plane(s)").format(converted))
         return {'FINISHED'}
 
     def draw(self, context):

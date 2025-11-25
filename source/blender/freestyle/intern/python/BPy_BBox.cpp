@@ -8,10 +8,6 @@
 
 #include "BPy_BBox.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 using namespace Freestyle::Geometry;
 
@@ -41,8 +37,7 @@ PyDoc_STRVAR(
     "\n"
     ".. method:: __init__()\n"
     "\n"
-    "   Default constructor.");
-
+    "   Default constructor.\n");
 static int BBox_init(BPy_BBox *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {nullptr};
@@ -109,7 +104,3 @@ PyTypeObject BBox_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

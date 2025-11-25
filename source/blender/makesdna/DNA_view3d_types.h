@@ -75,7 +75,13 @@ typedef struct RegionView3D {
 
   /** View rotation, must be kept normalized. */
   float viewquat[4];
-  /** Distance from 'ofs' along -viewinv[2] vector, where result is negative as is 'ofs'. */
+  /**
+   * Distance from `ofs` along `-viewinv[2]` vector, where result is negative as is `ofs`.
+   *
+   * \note Besides being above zero, the range of this value is not strictly defined,
+   * see #ED_view3d_dist_soft_range_get to calculate a working range
+   * viewport "zoom" functions to use.
+   */
   float dist;
   /** Camera view offsets, 1.0 = viewplane moves entire width/height. */
   float camdx, camdy;
@@ -111,15 +117,23 @@ typedef struct RegionView3D {
 
   /** Last view (use when switching out of camera view). */
   float lviewquat[4];
-  /** Lpersp can never be set to 'RV3D_CAMOB'. */
+  /** The last perspective can never be set to #RV3D_CAMOB. */
   char lpersp;
   char lview;
   char lview_axis_roll;
-  char _pad8[1];
+  char _pad8[4];
 
-  /** Active rotation from NDOF or elsewhere. */
-  float rot_angle;
-  float rot_axis[3];
+  char ndof_flag;
+  /**
+   * Rotation center used for "Auto Orbit" (see #NDOF_ORBIT_CENTER_AUTO).
+   * Any modification should be followed by adjusting #RegionView3D::dist
+   * to prevent problems zooming in after navigation. See: #134732.
+   */
+  float ndof_ofs[3];
+
+  /** Active rotation from NDOF (run-time only). */
+  float ndof_rot_angle;
+  float ndof_rot_axis[3];
 } RegionView3D;
 
 typedef struct View3DCursor {
@@ -163,12 +177,9 @@ typedef struct View3DShading {
 
   char _pad;
 
-  /** FILE_MAXFILE. */
-  char studio_light[256];
-  /** FILE_MAXFILE. */
-  char lookdev_light[256];
-  /** FILE_MAXFILE. */
-  char matcap[256];
+  char studio_light[/*FILE_MAXFILE*/ 256];
+  char lookdev_light[/*FILE_MAXFILE*/ 256];
+  char matcap[/*FILE_MAXFILE*/ 256];
 
   float shadow_intensity;
   float single_color[3];
@@ -270,9 +281,18 @@ typedef struct View3D_Runtime {
   /** Runtime only flags. */
   int flag;
 
-  char _pad1[4];
+  /**
+   * The previously calculated selection center.
+   * Only use when `flag` #V3D_RUNTIME_OFS_LAST_IS_VALID is set.
+   */
+  float ofs_last_center[3];
+
   /* Only used for overlay stats while in local-view. */
   struct SceneStats *local_stats;
+
+  /* Times recorded for performance overlay. */
+  float last_sync_time;
+  float last_submission_time;
 } View3D_Runtime;
 
 /** 3D ViewPort Struct. */
@@ -314,8 +334,8 @@ typedef struct View3D {
   /** Allocated backup of itself while in local-view. */
   struct View3D *localvd;
 
-  /** Optional string for armature bone to define center, MAXBONENAME. */
-  char ob_center_bone[64];
+  /** Optional string for armature bone to define center. */
+  char ob_center_bone[/*MAXBONENAME*/ 64];
 
   unsigned short local_view_uid;
   char _pad6[2];
@@ -334,7 +354,8 @@ typedef struct View3D {
 
   float lens, grid;
   float clip_start, clip_end;
-  float ofs[3] DNA_DEPRECATED;
+  float vignette_aperture;
+  float ofs[2] DNA_DEPRECATED;
 
   char _pad[1];
 
@@ -411,6 +432,9 @@ enum {
   V3D_RUNTIME_DEPTHBUF_OVERRIDDEN = (1 << 1),
   /** Local view may have become empty, and may need to be exited. */
   V3D_RUNTIME_LOCAL_MAYBE_EMPTY = (1 << 2),
+  /** Last offset is valid. */
+  V3D_RUNTIME_OFS_LAST_CENTER_IS_VALID = (1 << 3),
+
 };
 
 /** #RegionView3D::persp */
@@ -426,16 +450,22 @@ enum {
   RV3D_NAVIGATING = 1 << 3,
   RV3D_GPULIGHT_UPDATE = 1 << 4,
   RV3D_PAINTING = 1 << 5,
-  // RV3D_IS_GAME_ENGINE = 1 << 5, /* UNUSED */
   /**
    * Disable Z-buffer offset, skip calls to #ED_view3d_polygon_offset.
    * Use when precise surface depth is needed and picking bias isn't, see #45434).
    */
   RV3D_ZOFFSET_DISABLED = 1 << 6,
+  RV3D_WAS_CAMOB = 1 << 7,
 };
 
 /** #RegionView3D.viewlock */
 enum {
+  /**
+   * Used to lock axis views when quad-view is enabled.
+   *
+   * \note this implies locking the perspective as these views
+   * should use an orthographic projection.
+   */
   RV3D_LOCK_ROTATION = (1 << 0),
   RV3D_BOXVIEW = (1 << 1),
   RV3D_BOXCLIP = (1 << 2),
@@ -477,6 +507,25 @@ enum {
   RV3D_VIEW_AXIS_ROLL_90 = 1,
   RV3D_VIEW_AXIS_ROLL_180 = 2,
   RV3D_VIEW_AXIS_ROLL_270 = 3,
+};
+
+/** #RegionView3D::ndof_flag */
+enum {
+  /**
+   * When set, #RegionView3D::ndof_ofs may be used instead of #RegionView3D::ofs,
+   *
+   * This value will be recalculated when starting NDOF motion,
+   * however if the center can *not* be calculated, the previous value may be used.
+   *
+   * To prevent strange behavior some checks should be used
+   * to ensure the previously calculated value makes sense.
+   *
+   * The most common case is for perspective views, where orbiting around a point behind
+   * the view (while possible) often seems like a bug from a user perspective.
+   * We could consider other cases invalid too (e.g. values beyond the clipping plane),
+   * although in practice these cases should be fairly rare.
+   */
+  RV3D_NDOF_OFS_IS_VALID = (1 << 0),
 };
 
 #define RV3D_CLIPPING_ENABLED(v3d, rv3d) \
@@ -528,6 +577,8 @@ enum {
   V3D_GP_SHOW_GRID_XRAY = 1 << 9,
   /** Force 3D depth rendering and ignore per-object stroke depth mode. */
   V3D_GP_FORCE_STROKE_ORDER_3D = 1 << 10,
+  /** Onion skin for active object only. */
+  V3D_GP_ONION_SKIN_ACTIVE_OBJECT = 1 << 11,
 };
 
 /** #View3DShading.flag */
@@ -601,6 +652,7 @@ enum {
   V3D_OVERLAY_SCULPT_CURVES_CAGE = (1 << 16),
   V3D_OVERLAY_SHOW_LIGHT_COLORS = (1 << 17),
   V3D_OVERLAY_VIEWER_ATTRIBUTE_TEXT = (1 << 18),
+  V3D_OVERLAY_PERFORMANCE = (1 << 19),
 };
 
 /** #View3DOverlay.edit_flag */

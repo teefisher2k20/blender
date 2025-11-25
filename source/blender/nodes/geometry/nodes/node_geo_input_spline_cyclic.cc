@@ -13,7 +13,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_geo_exec(GeoNodeExecParams params)
 {
-  Field<bool> cyclic_field = AttributeFieldInput::Create<bool>("cyclic");
+  Field<bool> cyclic_field = AttributeFieldInput::from<bool>("cyclic");
   params.set_output("Cyclic", std::move(cyclic_field));
 }
 
@@ -28,7 +28,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_INPUT;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

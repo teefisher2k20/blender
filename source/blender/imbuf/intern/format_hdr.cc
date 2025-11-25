@@ -19,7 +19,7 @@ bool imb_is_a_hdr(const uchar *mem, size_t size)
   return imb_oiio_check(mem, size, "hdr");
 }
 
-ImBuf *imb_load_hdr(const uchar *mem, size_t size, int flags, char colorspace[IM_MAX_SPACE])
+ImBuf *imb_load_hdr(const uchar *mem, size_t size, int flags, ImFileColorSpace &r_colorspace)
 {
   ImageSpec config, spec;
 
@@ -28,13 +28,13 @@ ImBuf *imb_load_hdr(const uchar *mem, size_t size, int flags, char colorspace[IM
   /* Always create ImBufs with a 4th alpha channel despite the format only supporting 3. */
   ctx.use_all_planes = true;
 
-  ImBuf *ibuf = imb_oiio_read(ctx, config, colorspace, spec);
+  ImBuf *ibuf = imb_oiio_read(ctx, config, r_colorspace, spec);
   if (ibuf) {
     if (flags & IB_alphamode_detect) {
       ibuf->flags |= IB_alphamode_premul;
     }
-    if (flags & IB_rect) {
-      IMB_rect_from_float(ibuf);
+    if (flags & IB_byte_data) {
+      IMB_byte_from_float(ibuf);
     }
   }
 

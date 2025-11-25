@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bli
+ */
+
 #pragma once
 
 #include <limits>
@@ -54,14 +58,14 @@ inline void bits_to_index_ranges(const BitSpan bits, IndexRangesBuilder<IntT> &b
     const int64_t bit_i_to_output_offset = start - start_bit;
 
     /* Iterate over ranges of 1s. For example, if the bits are 0b000111110001111000, the loop
-     * below requires two iterations. The worst case for this is when the there are very many small
+     * below requires two iterations. The worst case for this is when there are very many small
      * ranges of 1s (e.g. 0b10101010101). So far it seems like the overhead of detecting such
      * cases is higher than the potential benefit of using another algorithm. */
     BitInt current_value = masked_value;
     while (current_value != 0) {
       /* Find start of next range of 1s. */
       const int64_t first_set_bit_i = int64_t(bitscan_forward_uint64(current_value));
-      /* This mask is used to find the end of the 1s range.  */
+      /* This mask is used to find the end of the 1s range. */
       const BitInt find_unset_value = ~(current_value | mask_first_n_bits(first_set_bit_i) |
                                         ~mask);
       if (find_unset_value == 0) {

@@ -25,9 +25,17 @@ inline bool operator==(const SpreadsheetColumnID &a, const SpreadsheetColumnID &
 
 namespace blender::ed::spreadsheet {
 
+struct SpreadsheetColumnRuntime {
+  /** Coordinates of the left and right edges of the column in view space. */
+  int left_x = 0;
+  int right_x = 0;
+};
+
 SpreadsheetColumnID *spreadsheet_column_id_new();
 SpreadsheetColumnID *spreadsheet_column_id_copy(const SpreadsheetColumnID *src_column_id);
 void spreadsheet_column_id_free(SpreadsheetColumnID *column_id);
+void spreadsheet_column_id_blend_write(BlendWriter *writer, const SpreadsheetColumnID *column_id);
+void spreadsheet_column_id_blend_read(BlendDataReader *reader, SpreadsheetColumnID *column_id);
 
 SpreadsheetColumn *spreadsheet_column_new(SpreadsheetColumnID *column_id);
 SpreadsheetColumn *spreadsheet_column_copy(const SpreadsheetColumn *src_column);
@@ -35,5 +43,7 @@ void spreadsheet_column_assign_runtime_data(SpreadsheetColumn *column,
                                             eSpreadsheetColumnValueType data_type,
                                             const StringRefNull display_name);
 void spreadsheet_column_free(SpreadsheetColumn *column);
+void spreadsheet_column_blend_write(BlendWriter *writer, const SpreadsheetColumn *column);
+void spreadsheet_column_blend_read(BlendDataReader *reader, SpreadsheetColumn *column);
 
 }  // namespace blender::ed::spreadsheet

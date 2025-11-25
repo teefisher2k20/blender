@@ -13,8 +13,9 @@ namespace blender::nodes::node_geo_curve_topology_points_of_curve_cc {
 static void node_declare(NodeDeclarationBuilder &b)
 {
   b.add_input<decl::Int>("Curve Index")
-      .implicit_field(implicit_field_inputs::index)
-      .description("The curve to retrieve data from. Defaults to the curve from the context");
+      .implicit_field(NODE_DEFAULT_INPUT_INDEX_FIELD)
+      .description("The curve to retrieve data from. Defaults to the curve from the context")
+      .structure_type(StructureType::Field);
   b.add_input<decl::Float>("Weights").supports_field().hide_value().description(
       "Values used to sort the curve's points. Uses indices by default");
   b.add_input<decl::Int>("Sort Index")
@@ -26,6 +27,24 @@ static void node_declare(NodeDeclarationBuilder &b)
       .description("A point of the curve, chosen by the sort index");
   b.add_output<decl::Int>("Total").field_source().reference_pass({0}).description(
       "The number of points in the curve");
+}
+
+/**
+ * The node is often used to retrieve the root point of the curve. If the curve indices are in
+ * order, the sort weights have no effect, and the sort index is the first point, then we can just
+ * return the curve offsets as a span directly.
+ */
+static bool use_start_point_special_case(const Field<int> &curve_index,
+                                         const Field<int> &sort_index,
+                                         const Field<float> &sort_weights)
+{
+  if (!dynamic_cast<const fn::IndexFieldInput *>(&curve_index.node())) {
+    return false;
+  }
+  if (sort_index.node().depends_on_input() || sort_weights.node().depends_on_input()) {
+    return false;
+  }
+  return fn::evaluate_constant_field(sort_index) == 0;
 }
 
 class PointsOfCurveInput final : public bke::GeometryFieldInput {
@@ -51,8 +70,13 @@ class PointsOfCurveInput final : public bke::GeometryFieldInput {
       return {};
     }
     const bke::CurvesGeometry &curves = *curves_ptr;
-
     const OffsetIndices points_by_curve = curves.points_by_curve();
+
+    if (context.domain() == AttrDomain::Curve) {
+      if (use_start_point_special_case(curve_index_, sort_index_, sort_weight_)) {
+        return VArray<int>::from_span(points_by_curve.data());
+      }
+    }
 
     fn::FieldEvaluator evaluator{context, &mask};
     evaluator.add(curve_index_);
@@ -107,7 +131,7 @@ class PointsOfCurveInput final : public bke::GeometryFieldInput {
       }
     });
 
-    return VArray<int>::ForContainer(std::move(point_of_curve));
+    return VArray<int>::from_container(std::move(point_of_curve));
   }
 
   void for_each_field_input_recursive(FunctionRef<void(const FieldInput &)> fn) const override
@@ -152,7 +176,7 @@ class CurvePointCountInput final : public bke::CurvesFieldInput {
       return {};
     }
     const OffsetIndices points_by_curve = curves.points_by_curve();
-    return VArray<int>::ForFunc(curves.curves_num(), [points_by_curve](const int64_t curve_i) {
+    return VArray<int>::from_func(curves.curves_num(), [points_by_curve](const int64_t curve_i) {
       return points_by_curve[curve_i].size();
     });
   }
@@ -173,54 +197,6 @@ class CurvePointCountInput final : public bke::CurvesFieldInput {
   }
 };
 
-/**
- * The node is often used to retrieve the root point of the curve. If the curve indices are in
- * order, the sort weights have no effect, and the sort index is the first point, then we can just
- * return the curve offsets as a span directly.
- */
-static bool use_start_point_special_case(const Field<int> &curve_index,
-                                         const Field<int> &sort_index,
-                                         const Field<float> &sort_weights)
-{
-  if (!dynamic_cast<const fn::IndexFieldInput *>(&curve_index.node())) {
-    return false;
-  }
-  if (sort_index.node().depends_on_input() || sort_weights.node().depends_on_input()) {
-    return false;
-  }
-  return fn::evaluate_constant_field(sort_index) == 0;
-}
-
-class CurveStartPointInput final : public bke::CurvesFieldInput {
- public:
-  CurveStartPointInput() : bke::CurvesFieldInput(CPPType::get<int>(), "Point of Curve")
-  {
-    category_ = Category::Generated;
-  }
-
-  GVArray get_varray_for_context(const bke::CurvesGeometry &curves,
-                                 const AttrDomain domain,
-                                 const IndexMask & /*mask*/) const final
-  {
-    return curves.adapt_domain(VArray<int>::ForSpan(curves.offsets()), AttrDomain::Curve, domain);
-  }
-
-  uint64_t hash() const final
-  {
-    return 2938459815345;
-  }
-
-  bool is_equal_to(const fn::FieldNode &other) const final
-  {
-    return dynamic_cast<const CurveStartPointInput *>(&other) != nullptr;
-  }
-
-  std::optional<AttrDomain> preferred_domain(const bke::CurvesGeometry & /*curves*/) const final
-  {
-    return AttrDomain::Curve;
-  }
-};
-
 static void node_geo_exec(GeoNodeExecParams params)
 {
   const Field<int> curve_index = params.extract_input<Field<int>>("Curve Index");
@@ -232,16 +208,11 @@ static void node_geo_exec(GeoNodeExecParams params)
                           AttrDomain::Curve)));
   }
   if (params.output_is_required("Point Index")) {
-    Field<int> sort_index = params.extract_input<Field<int>>("Sort Index");
-    Field<float> sort_weight = params.extract_input<Field<float>>("Weights");
-    if (use_start_point_special_case(curve_index, sort_index, sort_weight)) {
-      params.set_output("Point Index", Field<int>(std::make_shared<CurveStartPointInput>()));
-    }
-    else {
-      params.set_output("Point Index",
-                        Field<int>(std::make_shared<PointsOfCurveInput>(
-                            curve_index, std::move(sort_index), std::move(sort_weight))));
-    }
+    params.set_output("Point Index",
+                      Field<int>(std::make_shared<PointsOfCurveInput>(
+                          curve_index,
+                          params.extract_input<Field<int>>("Sort Index"),
+                          params.extract_input<Field<float>>("Weights"))));
   }
 }
 
@@ -255,7 +226,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_INPUT;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

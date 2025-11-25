@@ -323,16 +323,18 @@ class BONE_PT_display(BoneButtonsPanel, Panel):
         bone = context.bone
 
         col = layout.column()
-        col.prop(bone, "hide", text="Hide", toggle=False)
-        hide_select_sub = col.column()
-        hide_select_sub.active = not bone.hide
-        hide_select_sub.prop(bone, "hide_select", invert_checkbox=True)
-
         # Figure out the pose bone.
         ob = context.object
-        if not ob:
+        pose_bone = ob and ob.pose.bones[bone.name]
+        hide_select_sub = col.column()
+        if pose_bone:
+            col.prop(pose_bone, "hide", text="Hide", toggle=False)
+            hide_select_sub.active = not pose_bone.hide
+        hide_select_sub.prop(bone, "hide_select", invert_checkbox=True)
+        col.prop(bone, "display_type", text="Display As")
+
+        if not pose_bone:
             return
-        pose_bone = ob.pose.bones[bone.name]
 
         # Allow the layout to use the space normally occupied by the 'set a key' diamond.
         layout.use_property_decorate = False
@@ -359,6 +361,7 @@ class BONE_PT_display(BoneButtonsPanel, Panel):
         hide_select_sub = col.column()
         hide_select_sub.active = not bone.hide
         hide_select_sub.prop(bone, "hide_select", invert_checkbox=True)
+        col.prop(bone, "display_type", text="Display As")
         layout.prop(bone.color, "palette", text="Bone Color")
         self.draw_bone_color_ui(layout, bone.color)
 
@@ -390,7 +393,6 @@ class BONE_PT_display_custom_shape(BoneButtonsPanel, Panel):
         return context.bone
 
     def draw(self, context):
-        import platform
         layout = self.layout
         layout.use_property_split = True
 
@@ -411,25 +413,22 @@ class BONE_PT_display_custom_shape(BoneButtonsPanel, Panel):
             sub.active = bool(pchan and pchan.custom_shape)
             sub.separator()
 
-            sub.prop(pchan, "custom_shape_scale_xyz", text="Scale")
             sub.prop(pchan, "custom_shape_translation", text="Translation")
             sub.prop(pchan, "custom_shape_rotation_euler", text="Rotation")
+            sub.prop(pchan, "custom_shape_scale_xyz", text="Scale")
 
             sub.prop_search(pchan, "custom_shape_transform", ob.pose, "bones", text="Override Transform")
+            subsub = sub.column()
+            subsub.active = bool(pchan and pchan.custom_shape and pchan.custom_shape_transform)
+            subsub.prop(pchan, "use_transform_at_custom_shape")
+            subsubsub = subsub.column()
+            subsubsub.active = subsub.active and pchan.use_transform_at_custom_shape
+            subsubsub.prop(pchan, "use_transform_around_custom_shape")
             sub.prop(pchan, "use_custom_shape_bone_size")
 
             sub.separator()
             sub.prop(bone, "show_wire", text="Wireframe")
-
-            # Disabled on Mac due to drawing issues with lacking geometry shader support. See #124691.
-            is_darwin = platform.system() == "Darwin"
-
-            width_sub = sub.column()
-            width_sub.active = not is_darwin
-            width_sub.prop(pchan, "custom_shape_wire_width")
-
-            if is_darwin:
-                sub.label(text="Custom wire width not available on MacOS", icon='INFO')
+            sub.prop(pchan, "custom_shape_wire_width")
 
 
 class BONE_PT_inverse_kinematics(BoneButtonsPanel, Panel):

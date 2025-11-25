@@ -6,7 +6,6 @@
  * \ingroup spinfo
  */
 
-#include <cstdio>
 #include <cstring>
 #include <fmt/format.h>
 
@@ -15,9 +14,6 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
-#include "BLI_utildefines.h"
-
 #include "BLT_translation.hh"
 
 #include "BKE_bpath.hh"
@@ -25,6 +21,7 @@
 #include "BKE_global.hh"
 #include "BKE_image.hh"
 #include "BKE_lib_id.hh"
+#include "BKE_library.hh"
 #include "BKE_main.hh"
 #include "BKE_packedFile.hh"
 #include "BKE_report.hh"
@@ -34,6 +31,7 @@
 #include "WM_types.hh"
 
 #include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 
 #include "RNA_access.hh"
 #include "RNA_define.hh"
@@ -44,7 +42,7 @@
 /** \name Pack Blend File Libraries Operator
  * \{ */
 
-static int pack_libraries_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus pack_libraries_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
 
@@ -62,14 +60,14 @@ void FILE_OT_pack_libraries(wmOperatorType *ot)
       "Store all data-blocks linked from other .blend files in the current .blend file. "
       "Library references are preserved so the linked data-blocks can be unpacked again";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = pack_libraries_exec;
 
   /* flags */
   ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
 }
 
-static int unpack_libraries_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus unpack_libraries_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
 
@@ -86,14 +84,16 @@ static int unpack_libraries_exec(bContext *C, wmOperator *op)
 /** \name Unpack Blend File Libraries Operator
  * \{ */
 
-static int unpack_libraries_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus unpack_libraries_invoke(bContext *C,
+                                                wmOperator *op,
+                                                const wmEvent * /*event*/)
 {
   return WM_operator_confirm_ex(C,
                                 op,
                                 IFACE_("Restore Packed Linked Data to Their Original Locations"),
                                 IFACE_("Will create directories so that all paths are valid."),
                                 IFACE_("Unpack"),
-                                ALERT_ICON_INFO,
+                                blender::ui::AlertIcon::Info,
                                 false);
 }
 
@@ -104,7 +104,7 @@ void FILE_OT_unpack_libraries(wmOperatorType *ot)
   ot->idname = "FILE_OT_unpack_libraries";
   ot->description = "Restore all packed linked data-blocks to their original locations";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = unpack_libraries_invoke;
   ot->exec = unpack_libraries_exec;
 
@@ -118,7 +118,7 @@ void FILE_OT_unpack_libraries(wmOperatorType *ot)
 /** \name Toggle Auto-Pack Operator
  * \{ */
 
-static int autopack_toggle_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus autopack_toggle_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
 
@@ -140,7 +140,7 @@ void FILE_OT_autopack_toggle(wmOperatorType *ot)
   ot->idname = "FILE_OT_autopack_toggle";
   ot->description = "Automatically pack all external files into the .blend file";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = autopack_toggle_exec;
 
   /* flags */
@@ -153,7 +153,7 @@ void FILE_OT_autopack_toggle(wmOperatorType *ot)
 /** \name Pack All Operator
  * \{ */
 
-static int pack_all_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus pack_all_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
 
@@ -164,7 +164,7 @@ static int pack_all_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int pack_all_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus pack_all_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
 {
   Main *bmain = CTX_data_main(C);
   Image *ima;
@@ -185,7 +185,7 @@ static int pack_all_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*
         IFACE_("Pack all used external files into this .blend file"),
         IFACE_("Warning: Some images are modified and these changes will be lost."),
         IFACE_("Pack"),
-        ALERT_ICON_WARNING,
+        blender::ui::AlertIcon::Warning,
         false);
   }
 
@@ -199,7 +199,7 @@ void FILE_OT_pack_all(wmOperatorType *ot)
   ot->idname = "FILE_OT_pack_all";
   ot->description = "Pack all used external files into this .blend";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = pack_all_exec;
   ot->invoke = pack_all_invoke;
 
@@ -236,7 +236,7 @@ static const EnumPropertyItem unpack_all_method_items[] = {
     {0, nullptr, 0, nullptr, nullptr},
 };
 
-static int unpack_all_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus unpack_all_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
   ePF_FileStatus method = ePF_FileStatus(RNA_enum_get(op->ptr, "method"));
@@ -252,7 +252,7 @@ static int unpack_all_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int unpack_all_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus unpack_all_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
 {
   Main *bmain = CTX_data_main(C);
   uiPopupMenu *pup;
@@ -272,8 +272,8 @@ static int unpack_all_invoke(bContext *C, wmOperator *op, const wmEvent * /*even
   pup = UI_popup_menu_begin(C, title.c_str(), ICON_NONE);
   layout = UI_popup_menu_layout(pup);
 
-  uiLayoutSetOperatorContext(layout, WM_OP_EXEC_DEFAULT);
-  uiItemsEnumO(layout, "FILE_OT_unpack_all", "method");
+  layout->operator_context_set(blender::wm::OpCallContext::ExecDefault);
+  layout->op_enum("FILE_OT_unpack_all", "method");
 
   UI_popup_menu_end(C, pup);
 
@@ -287,7 +287,7 @@ void FILE_OT_unpack_all(wmOperatorType *ot)
   ot->idname = "FILE_OT_unpack_all";
   ot->description = "Unpack all files packed into this .blend to external ones";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = unpack_all_exec;
   ot->invoke = unpack_all_invoke;
 
@@ -326,7 +326,7 @@ static const EnumPropertyItem unpack_item_method_items[] = {
     {0, nullptr, 0, nullptr, nullptr},
 };
 
-static int unpack_item_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus unpack_item_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
   ID *id;
@@ -342,6 +342,11 @@ static int unpack_item_exec(bContext *C, wmOperator *op)
     return OPERATOR_CANCELLED;
   }
 
+  if (!ID_IS_EDITABLE(id)) {
+    BKE_report(op->reports, RPT_WARNING, "Data-block using this packed file is not editable");
+    return OPERATOR_CANCELLED;
+  }
+
   if (method != PF_KEEP) {
     WM_cursor_wait(true);
     BKE_packedfile_id_unpack(bmain, id, op->reports, method); /* XXX PF_ASK can't work here */
@@ -353,7 +358,7 @@ static int unpack_item_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int unpack_item_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus unpack_item_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
 {
   uiPopupMenu *pup;
   uiLayout *layout;
@@ -361,13 +366,12 @@ static int unpack_item_invoke(bContext *C, wmOperator *op, const wmEvent * /*eve
   pup = UI_popup_menu_begin(C, IFACE_("Unpack"), ICON_NONE);
   layout = UI_popup_menu_layout(pup);
 
-  uiLayoutSetOperatorContext(layout, WM_OP_EXEC_DEFAULT);
-  uiItemsFullEnumO(layout,
-                   op->type->idname,
-                   "method",
-                   static_cast<IDProperty *>(op->ptr->data),
-                   WM_OP_EXEC_REGION_WIN,
-                   UI_ITEM_NONE);
+  layout->operator_context_set(blender::wm::OpCallContext::ExecDefault);
+  layout->op_enum(op->type->idname,
+                  "method",
+                  static_cast<IDProperty *>(op->ptr->data),
+                  blender::wm::OpCallContext::ExecRegionWin,
+                  UI_ITEM_NONE);
 
   UI_popup_menu_end(C, pup);
 
@@ -381,7 +385,7 @@ void FILE_OT_unpack_item(wmOperatorType *ot)
   ot->idname = "FILE_OT_unpack_item";
   ot->description = "Unpack this file to an external file";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = unpack_item_exec;
   ot->invoke = unpack_item_invoke;
 
@@ -410,7 +414,7 @@ void FILE_OT_unpack_item(wmOperatorType *ot)
 /** \name Make Paths Relative Operator
  * \{ */
 
-static int make_paths_relative_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus make_paths_relative_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
   const char *blendfile_path = BKE_main_blendfile_path(bmain);
@@ -437,7 +441,7 @@ void FILE_OT_make_paths_relative(wmOperatorType *ot)
   ot->idname = "FILE_OT_make_paths_relative";
   ot->description = "Make all paths to external files relative to current .blend";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = make_paths_relative_exec;
 
   /* flags */
@@ -450,7 +454,7 @@ void FILE_OT_make_paths_relative(wmOperatorType *ot)
 /** \name Make Paths Absolute Operator
  * \{ */
 
-static int make_paths_absolute_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus make_paths_absolute_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
   const char *blendfile_path = BKE_main_blendfile_path(bmain);
@@ -477,7 +481,7 @@ void FILE_OT_make_paths_absolute(wmOperatorType *ot)
   ot->idname = "FILE_OT_make_paths_absolute";
   ot->description = "Make all paths to external files absolute";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = make_paths_absolute_exec;
 
   /* flags */
@@ -490,7 +494,7 @@ void FILE_OT_make_paths_absolute(wmOperatorType *ot)
 /** \name Report Missing Files Operator
  * \{ */
 
-static int report_missing_files_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus report_missing_files_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
 
@@ -509,7 +513,7 @@ void FILE_OT_report_missing_files(wmOperatorType *ot)
   ot->idname = "FILE_OT_report_missing_files";
   ot->description = "Report all missing external files";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = report_missing_files_exec;
 
   /* flags */
@@ -522,21 +526,22 @@ void FILE_OT_report_missing_files(wmOperatorType *ot)
 /** \name Find Missing Files Operator
  * \{ */
 
-static int find_missing_files_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus find_missing_files_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
-  const char *searchpath = RNA_string_get_alloc(op->ptr, "directory", nullptr, 0, nullptr);
+  const std::string searchpath = RNA_string_get(op->ptr, "directory");
   const bool find_all = RNA_boolean_get(op->ptr, "find_all");
 
-  BKE_bpath_missing_files_find(bmain, searchpath, op->reports, find_all);
-  MEM_freeN((void *)searchpath);
+  BKE_bpath_missing_files_find(bmain, searchpath.c_str(), op->reports, find_all);
   /* Redraw sequencer since media presence cache might have changed. */
   WM_main_add_notifier(NC_SCENE | ND_SEQUENCER, nullptr);
 
   return OPERATOR_FINISHED;
 }
 
-static int find_missing_files_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus find_missing_files_invoke(bContext *C,
+                                                  wmOperator *op,
+                                                  const wmEvent * /*event*/)
 {
   /* XXX file open button text "Find Missing Files" */
   WM_event_add_fileselect(C, op);
@@ -550,7 +555,7 @@ void FILE_OT_find_missing_files(wmOperatorType *ot)
   ot->idname = "FILE_OT_find_missing_files";
   ot->description = "Try to find missing external files";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = find_missing_files_exec;
   ot->invoke = find_missing_files_invoke;
 
@@ -590,7 +595,9 @@ void FILE_OT_find_missing_files(wmOperatorType *ot)
 #define FLASH_TIMEOUT 1.0f
 #define COLLAPSE_TIMEOUT 0.25f
 
-static int update_reports_display_invoke(bContext *C, wmOperator * /*op*/, const wmEvent *event)
+static wmOperatorStatus update_reports_display_invoke(bContext *C,
+                                                      wmOperator * /*op*/,
+                                                      const wmEvent *event)
 {
   ReportList *reports = CTX_wm_reports(C);
   Report *report;
@@ -656,7 +663,7 @@ void INFO_OT_reports_display_update(wmOperatorType *ot)
   ot->idname = "INFO_OT_reports_display_update";
   ot->description = "Update the display of reports in Blender UI (internal use)";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = update_reports_display_invoke;
 
   /* flags */

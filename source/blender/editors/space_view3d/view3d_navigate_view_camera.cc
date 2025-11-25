@@ -21,7 +21,7 @@
 /** \name View Camera Operator
  * \{ */
 
-static int view_camera_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus view_camera_exec(bContext *C, wmOperator *op)
 {
   View3D *v3d;
   ARegion *region;
@@ -120,7 +120,7 @@ void VIEW3D_OT_view_camera(wmOperatorType *ot)
   ot->description = "Toggle the camera view";
   ot->idname = "VIEW3D_OT_view_camera";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = view_camera_exec;
   ot->poll = ED_operator_rv3d_user_region_poll;
 

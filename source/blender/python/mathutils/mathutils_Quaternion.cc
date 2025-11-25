@@ -104,32 +104,32 @@ static PyObject *Quaternion_to_tuple_ext(QuaternionObject *self, int ndigits)
 /** \name Quaternion Type: `__new__` / `mathutils.Quaternion()`
  * \{ */
 
-static PyObject *Quaternion_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
+static PyObject *Quaternion_vectorcall(PyObject *type,
+                                       PyObject *const *args,
+                                       const size_t nargsf,
+                                       PyObject *kwnames)
 {
-  PyObject *seq = nullptr;
-  double angle = 0.0f;
-  float quat[QUAT_SIZE];
-  unit_qt(quat);
-
-  if (kwds && PyDict_Size(kwds)) {
+  if (UNLIKELY(kwnames && PyTuple_GET_SIZE(kwnames))) {
     PyErr_SetString(PyExc_TypeError,
                     "mathutils.Quaternion(): "
                     "takes no keyword args");
     return nullptr;
   }
 
-  if (!PyArg_ParseTuple(args, "|Od:mathutils.Quaternion", &seq, &angle)) {
-    return nullptr;
-  }
+  double angle = 0.0f;
+  float quat[QUAT_SIZE];
+  unit_qt(quat);
 
-  switch (PyTuple_GET_SIZE(args)) {
-    case 0:
+  const size_t nargs = PyVectorcall_NARGS(nargsf);
+  switch (nargs) {
+    case 0: {
       break;
+    }
     case 1: {
-      int size;
+      const int size = mathutils_array_parse(
+          quat, 3, QUAT_SIZE, args[0], "mathutils.Quaternion()");
 
-      if ((size = mathutils_array_parse(quat, 3, QUAT_SIZE, seq, "mathutils.Quaternion()")) == -1)
-      {
+      if (UNLIKELY(size == -1)) {
         return nullptr;
       }
 
@@ -146,16 +146,45 @@ static PyObject *Quaternion_new(PyTypeObject *type, PyObject *args, PyObject *kw
     }
     case 2: {
       float axis[3];
-      if (mathutils_array_parse(axis, 3, 3, seq, "mathutils.Quaternion()") == -1) {
+      if (mathutils_array_parse(axis, 3, 3, args[0], "mathutils.Quaternion()") == -1) {
+        return nullptr;
+      }
+      angle = PyFloat_AsDouble(args[1]);
+      if (UNLIKELY(angle == -1.0 && PyErr_Occurred())) {
+        PyErr_Format(PyExc_TypeError,
+                     "mathutils.Quaternion(): "
+                     "angle must be a real number, not '%.200s'",
+                     Py_TYPE(args[1])->tp_name);
         return nullptr;
       }
       angle = angle_wrap_rad(angle); /* clamp because of precision issues */
       axis_angle_to_quat(quat, axis, angle);
       break;
-      /* PyArg_ParseTuple assures no more than 2 */
+    }
+    default: {
+      PyErr_Format(PyExc_TypeError,
+                   "mathutils.Quaternion() "
+                   "takes at most 2 arguments (%zd given)",
+                   nargs);
+      return nullptr;
     }
   }
-  return Quaternion_CreatePyObject(quat, type);
+  return Quaternion_CreatePyObject(quat, (PyTypeObject *)type);
+}
+
+static PyObject *Quaternion_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
+{
+  /* Only called on sub-classes. */
+  if (UNLIKELY(kwds && PyDict_GET_SIZE(kwds))) {
+    PyErr_SetString(PyExc_TypeError,
+                    "mathutils.Quaternion(): "
+                    "takes no keyword args");
+    return nullptr;
+  }
+  PyObject *const *args_array = &PyTuple_GET_ITEM(args, 0);
+  const size_t args_array_num = PyTuple_GET_SIZE(args);
+  return Quaternion_vectorcall(
+      reinterpret_cast<PyObject *>(type), args_array, args_array_num, nullptr);
 }
 
 /** \} */
@@ -167,13 +196,12 @@ static PyObject *Quaternion_new(PyTypeObject *type, PyObject *args, PyObject *kw
 PyDoc_STRVAR(
     /* Wrap. */
     Quaternion_to_euler_doc,
-    ".. method:: to_euler(order, euler_compat)\n"
+    ".. method:: to_euler(order='XYZ', euler_compat=None, /)\n"
     "\n"
     "   Return Euler representation of the quaternion.\n"
     "\n"
-    "   :arg order: Optional rotation order argument in\n"
-    "      ['XYZ', 'XZY', 'YXZ', 'YZX', 'ZXY', 'ZYX'].\n"
-    "   :type order: str\n"
+    "   :arg order: Rotation order.\n"
+    "   :type order: Literal['XYZ', 'XZY', 'YXZ', 'YZX', 'ZXY', 'ZYX']\n"
     "   :arg euler_compat: Optional euler argument the new euler will be made\n"
     "      compatible with (no axis flipping between them).\n"
     "      Useful for converting a series of matrices to animation curves.\n"
@@ -253,7 +281,7 @@ static PyObject *Quaternion_to_matrix(QuaternionObject *self)
     return nullptr;
   }
 
-  quat_to_mat3((float(*)[3])mat, self->quat);
+  quat_to_mat3((float (*)[3])mat, self->quat);
   return Matrix_CreatePyObject(mat, 3, 3, nullptr);
 }
 
@@ -304,13 +332,13 @@ static PyObject *Quaternion_to_axis_angle(QuaternionObject *self)
 PyDoc_STRVAR(
     /* Wrap. */
     Quaternion_to_swing_twist_doc,
-    ".. method:: to_swing_twist(axis)\n"
+    ".. method:: to_swing_twist(axis, /)\n"
     "\n"
     "   Split the rotation into a swing quaternion with the specified\n"
     "   axis fixed at zero, and the remaining twist rotation angle.\n"
     "\n"
-    "   :arg axis: Twist axis as a string in ['X', 'Y', 'Z'].\n"
-    "   :type axis: str\n"
+    "   :arg axis: Twist axis as a string.\n"
+    "   :type axis: Literal['X', 'Y', 'Z']\n"
     "   :return: Swing, twist angle.\n"
     "   :rtype: tuple[:class:`Quaternion`, float]\n");
 static PyObject *Quaternion_to_swing_twist(QuaternionObject *self, PyObject *axis_arg)
@@ -389,7 +417,7 @@ static PyObject *Quaternion_to_exponential_map(QuaternionObject *self)
 PyDoc_STRVAR(
     /* Wrap. */
     Quaternion_cross_doc,
-    ".. method:: cross(other)\n"
+    ".. method:: cross(other, /)\n"
     "\n"
     "   Return the cross product of this quaternion and another.\n"
     "\n"
@@ -425,7 +453,7 @@ static PyObject *Quaternion_cross(QuaternionObject *self, PyObject *value)
 PyDoc_STRVAR(
     /* Wrap. */
     Quaternion_dot_doc,
-    ".. method:: dot(other)\n"
+    ".. method:: dot(other, /)\n"
     "\n"
     "   Return the dot product of this quaternion and another.\n"
     "\n"
@@ -459,7 +487,7 @@ static PyObject *Quaternion_dot(QuaternionObject *self, PyObject *value)
 PyDoc_STRVAR(
     /* Wrap. */
     Quaternion_rotation_difference_doc,
-    ".. function:: rotation_difference(other)\n"
+    ".. function:: rotation_difference(other, /)\n"
     "\n"
     "   Returns a quaternion representing the rotational difference.\n"
     "\n"
@@ -498,7 +526,7 @@ static PyObject *Quaternion_rotation_difference(QuaternionObject *self, PyObject
 PyDoc_STRVAR(
     /* Wrap. */
     Quaternion_slerp_doc,
-    ".. function:: slerp(other, factor)\n"
+    ".. function:: slerp(other, factor, /)\n"
     "\n"
     "   Returns the interpolation of two quaternions.\n"
     "\n"
@@ -552,7 +580,7 @@ static PyObject *Quaternion_slerp(QuaternionObject *self, PyObject *args)
 PyDoc_STRVAR(
     /* Wrap. */
     Quaternion_rotate_doc,
-    ".. method:: rotate(other)\n"
+    ".. method:: rotate(other, /)\n"
     "\n"
     "   Rotates the quaternion by another mathutils value.\n"
     "\n"
@@ -584,10 +612,13 @@ static PyObject *Quaternion_rotate(QuaternionObject *self, PyObject *value)
 PyDoc_STRVAR(
     /* Wrap. */
     Quaternion_make_compatible_doc,
-    ".. method:: make_compatible(other)\n"
+    ".. method:: make_compatible(other, /)\n"
     "\n"
     "   Make this quaternion compatible with another,\n"
-    "   so interpolating between them works as intended.\n");
+    "   so interpolating between them works as intended.\n"
+    "\n"
+    "   :arg other: The other quaternion to make compatible with.\n"
+    "   :type other: :class:`Quaternion`\n");
 static PyObject *Quaternion_make_compatible(QuaternionObject *self, PyObject *value)
 {
   float quat[QUAT_SIZE];
@@ -862,6 +893,59 @@ static PyObject *Quaternion_str(QuaternionObject *self)
 /** \} */
 
 /* -------------------------------------------------------------------- */
+/** \name Quaternion Type: Buffer Protocol
+ * \{ */
+
+static int Quaternion_getbuffer(PyObject *obj, Py_buffer *view, int flags)
+{
+  QuaternionObject *self = (QuaternionObject *)obj;
+  if (UNLIKELY(BaseMath_Prepare_ForBufferAccess(self, view, flags) == -1)) {
+    return -1;
+  }
+  if (UNLIKELY(BaseMath_ReadCallback(self) == -1)) {
+    return -1;
+  }
+
+  memset(view, 0, sizeof(*view));
+
+  view->obj = (PyObject *)self;
+  view->buf = (void *)self->quat;
+  view->len = Py_ssize_t(QUAT_SIZE * sizeof(float));
+  view->itemsize = sizeof(float);
+  view->ndim = 1;
+  if ((flags & PyBUF_WRITABLE) == 0) {
+    view->readonly = 1;
+  }
+  if (flags & PyBUF_FORMAT) {
+    view->format = (char *)"f";
+  }
+
+  self->flag |= BASE_MATH_FLAG_HAS_BUFFER_VIEW;
+
+  Py_INCREF(self);
+  return 0;
+}
+
+static void Quaternion_releasebuffer(PyObject * /*exporter*/, Py_buffer *view)
+{
+  QuaternionObject *self = (QuaternionObject *)view->obj;
+  self->flag &= ~BASE_MATH_FLAG_HAS_BUFFER_VIEW;
+
+  if (view->readonly == 0) {
+    if (UNLIKELY(BaseMath_WriteCallback(self) == -1)) {
+      PyErr_Print();
+    }
+  }
+}
+
+static PyBufferProcs Quaternion_as_buffer = {
+    (getbufferproc)Quaternion_getbuffer,
+    (releasebufferproc)Quaternion_releasebuffer,
+};
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
 /** \name Quaternion Type: Rich Compare
  * \{ */
 
@@ -882,22 +966,25 @@ static PyObject *Quaternion_richcmpr(PyObject *a, PyObject *b, int op)
   }
 
   switch (op) {
-    case Py_NE:
+    case Py_NE: {
       ok = !ok;
       ATTR_FALLTHROUGH;
-    case Py_EQ:
+    }
+    case Py_EQ: {
       res = ok ? Py_False : Py_True;
       break;
-
+    }
     case Py_LT:
     case Py_LE:
     case Py_GT:
-    case Py_GE:
+    case Py_GE: {
       res = Py_NotImplemented;
       break;
-    default:
+    }
+    default: {
       PyErr_BadArgument();
       return nullptr;
+    }
   }
 
   return Py_NewRef(res);
@@ -1459,7 +1546,7 @@ PyDoc_STRVAR(
     Quaternion_axis_doc,
     "Quaternion axis value.\n"
     "\n"
-    ":type: float");
+    ":type: float\n");
 static PyObject *Quaternion_axis_get(QuaternionObject *self, void *type)
 {
   return Quaternion_item(self, POINTER_AS_INT(type));
@@ -1475,7 +1562,7 @@ PyDoc_STRVAR(
     Quaternion_magnitude_doc,
     "Size of the quaternion (read-only).\n"
     "\n"
-    ":type: float");
+    ":type: float\n");
 static PyObject *Quaternion_magnitude_get(QuaternionObject *self, void * /*closure*/)
 {
   if (BaseMath_ReadCallback(self) == -1) {
@@ -1490,7 +1577,7 @@ PyDoc_STRVAR(
     Quaternion_angle_doc,
     "Angle of the quaternion.\n"
     "\n"
-    ":type: float");
+    ":type: float\n");
 static PyObject *Quaternion_angle_get(QuaternionObject *self, void * /*closure*/)
 {
   float tquat[4];
@@ -1550,7 +1637,7 @@ PyDoc_STRVAR(
     Quaternion_axis_vector_doc,
     "Quaternion axis as a vector.\n"
     "\n"
-    ":type: :class:`Vector`");
+    ":type: :class:`Vector`\n");
 static PyObject *Quaternion_axis_vector_get(QuaternionObject *self, void * /*closure*/)
 {
   float tquat[4];
@@ -1672,9 +1759,14 @@ static PyGetSetDef Quaternion_getseters[] = {
 /** \name Quaternion Type: Method Definitions
  * \{ */
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic push
-#  pragma GCC diagnostic ignored "-Wcast-function-type"
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
 #endif
 
 static PyMethodDef Quaternion_methods[] = {
@@ -1731,8 +1823,12 @@ static PyMethodDef Quaternion_methods[] = {
     {nullptr, nullptr, 0, nullptr},
 };
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic pop
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
 #endif
 
 /** \} */
@@ -1748,7 +1844,7 @@ static PyMethodDef Quaternion_methods[] = {
 PyDoc_STRVAR(
     /* Wrap. */
     quaternion_doc,
-    ".. class:: Quaternion([seq, [angle]])\n"
+    ".. class:: Quaternion(seq=(1.0, 0.0, 0.0, 0.0), angle=0.0, /)\n"
     "\n"
     "   This object gives access to Quaternions in Blender.\n"
     "\n"
@@ -1790,7 +1886,7 @@ PyTypeObject quaternion_Type = {
     /*tp_str*/ (reprfunc)Quaternion_str,
     /*tp_getattro*/ nullptr,
     /*tp_setattro*/ nullptr,
-    /*tp_as_buffer*/ nullptr,
+    /*tp_as_buffer*/ &Quaternion_as_buffer,
     /*tp_flags*/ Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
     /*tp_doc*/ quaternion_doc,
     /*tp_traverse*/ (traverseproc)BaseMathObject_traverse,
@@ -1820,7 +1916,7 @@ PyTypeObject quaternion_Type = {
     /*tp_del*/ nullptr,
     /*tp_version_tag*/ 0,
     /*tp_finalize*/ nullptr,
-    /*tp_vectorcall*/ nullptr,
+    /*tp_vectorcall*/ Quaternion_vectorcall,
 };
 
 #ifdef MATH_STANDALONE

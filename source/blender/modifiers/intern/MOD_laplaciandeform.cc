@@ -25,7 +25,7 @@
 #include "BKE_deform.hh"
 #include "BKE_mesh_mapping.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "BLO_read_write.hh"
@@ -49,6 +49,8 @@ enum {
   LAPDEFORM_SYSTEM_CHANGE_NOT_VALID_GROUP,
 };
 
+namespace {
+
 struct LaplacianSystem {
   bool is_matrix_computed;
   bool has_solution;
@@ -58,7 +60,7 @@ struct LaplacianSystem {
   int anchors_num;
   int repeat;
   /** Vertex Group name */
-  char anchor_grp_name[64];
+  char anchor_grp_name[/*MAX_VGROUP_NAME*/ 64];
   /** Original vertex coordinates. */
   float (*co)[3];
   /** Original vertex normal. */
@@ -87,9 +89,11 @@ struct LaplacianSystem {
   MeshElemMap *ringv_map;
 };
 
+};  // namespace
+
 static LaplacianSystem *newLaplacianSystem()
 {
-  LaplacianSystem *sys = MEM_cnew<LaplacianSystem>(__func__);
+  LaplacianSystem *sys = MEM_callocN<LaplacianSystem>(__func__);
 
   sys->is_matrix_computed = false;
   sys->has_solution = false;
@@ -120,12 +124,12 @@ static LaplacianSystem *initLaplacianSystem(int verts_num,
   sys->anchors_num = anchors_num;
   sys->repeat = iterations;
   STRNCPY(sys->anchor_grp_name, defgrpName);
-  sys->co = static_cast<float(*)[3]>(MEM_malloc_arrayN(verts_num, sizeof(float[3]), __func__));
-  sys->no = static_cast<float(*)[3]>(MEM_calloc_arrayN(verts_num, sizeof(float[3]), __func__));
-  sys->delta = static_cast<float(*)[3]>(MEM_calloc_arrayN(verts_num, sizeof(float[3]), __func__));
-  sys->tris = static_cast<uint(*)[3]>(MEM_malloc_arrayN(tris_num, sizeof(int[3]), __func__));
-  sys->index_anchors = static_cast<int *>(MEM_malloc_arrayN((anchors_num), sizeof(int), __func__));
-  sys->unit_verts = static_cast<int *>(MEM_calloc_arrayN(verts_num, sizeof(int), __func__));
+  sys->co = MEM_malloc_arrayN<float[3]>(size_t(verts_num), __func__);
+  sys->no = MEM_calloc_arrayN<float[3]>(verts_num, __func__);
+  sys->delta = MEM_calloc_arrayN<float[3]>(verts_num, __func__);
+  sys->tris = MEM_malloc_arrayN<uint[3]>(size_t(tris_num), __func__);
+  sys->index_anchors = MEM_malloc_arrayN<int>(size_t(anchors_num), __func__);
+  sys->unit_verts = MEM_calloc_arrayN<int>(verts_num, __func__);
   return sys;
 }
 
@@ -156,7 +160,7 @@ static void createFaceRingMap(const int mvert_tot,
 {
   int indices_num = 0;
   int *indices, *index_iter;
-  MeshElemMap *map = MEM_cnew_array<MeshElemMap>(mvert_tot, __func__);
+  MeshElemMap *map = MEM_calloc_arrayN<MeshElemMap>(mvert_tot, __func__);
 
   for (const int i : corner_tris.index_range()) {
     const blender::int3 &tri = corner_tris[i];
@@ -166,7 +170,7 @@ static void createFaceRingMap(const int mvert_tot,
       indices_num++;
     }
   }
-  indices = MEM_cnew_array<int>(indices_num, __func__);
+  indices = MEM_calloc_arrayN<int>(indices_num, __func__);
   index_iter = indices;
   for (int i = 0; i < mvert_tot; i++) {
     map[i].indices = index_iter;
@@ -190,7 +194,7 @@ static void createVertRingMap(const int mvert_tot,
                               MeshElemMap **r_map,
                               int **r_indices)
 {
-  MeshElemMap *map = MEM_cnew_array<MeshElemMap>(mvert_tot, __func__);
+  MeshElemMap *map = MEM_calloc_arrayN<MeshElemMap>(mvert_tot, __func__);
   int i, vid[2], indices_num = 0;
   int *indices, *index_iter;
 
@@ -201,7 +205,7 @@ static void createVertRingMap(const int mvert_tot,
     map[vid[1]].count++;
     indices_num += 2;
   }
-  indices = MEM_cnew_array<int>(indices_num, __func__);
+  indices = MEM_calloc_arrayN<int>(indices_num, __func__);
   index_iter = indices;
   for (i = 0; i < mvert_tot; i++) {
     map[i].indices = index_iter;
@@ -538,8 +542,7 @@ static void initSystem(
   const bool invert_vgroup = (lmd->flag & MOD_LAPLACIANDEFORM_INVERT_VGROUP) != 0;
 
   if (isValidVertexGroup(lmd, ob, mesh)) {
-    int *index_anchors = static_cast<int *>(
-        MEM_malloc_arrayN(verts_num, sizeof(int), __func__)); /* Over-allocate. */
+    int *index_anchors = MEM_malloc_arrayN<int>(size_t(verts_num), __func__); /* Over-allocate. */
 
     STACK_DECLARE(index_anchors);
 
@@ -572,7 +575,8 @@ static void initSystem(
     memcpy(sys->index_anchors, index_anchors, sizeof(int) * anchors_num);
     memcpy(sys->co, vertexCos, sizeof(float[3]) * verts_num);
     MEM_freeN(index_anchors);
-    lmd->vertexco = static_cast<float *>(MEM_malloc_arrayN(verts_num, sizeof(float[3]), __func__));
+    lmd->vertexco = MEM_malloc_arrayN<float>(3 * size_t(verts_num), __func__);
+    lmd->vertexco_sharing_info = blender::implicit_sharing::info_for_mem_free(lmd->vertexco);
     memcpy(lmd->vertexco, vertexCos, sizeof(float[3]) * verts_num);
     lmd->verts_num = verts_num;
 
@@ -634,7 +638,7 @@ static int isSystemDifferent(LaplacianDeformModifierData *lmd,
 static void LaplacianDeformModifier_do(
     LaplacianDeformModifierData *lmd, Object *ob, Mesh *mesh, float (*vertexCos)[3], int verts_num)
 {
-  float(*filevertexCos)[3];
+  float (*filevertexCos)[3];
   int sysdif;
   LaplacianSystem *sys = nullptr;
   filevertexCos = nullptr;
@@ -653,8 +657,7 @@ static void LaplacianDeformModifier_do(
     sys = static_cast<LaplacianSystem *>(lmd->cache_system);
     if (sysdif) {
       if (ELEM(sysdif, LAPDEFORM_SYSTEM_ONLY_CHANGE_ANCHORS, LAPDEFORM_SYSTEM_ONLY_CHANGE_GROUP)) {
-        filevertexCos = static_cast<float(*)[3]>(
-            MEM_malloc_arrayN(verts_num, sizeof(float[3]), __func__));
+        filevertexCos = MEM_malloc_arrayN<float[3]>(size_t(verts_num), __func__);
         memcpy(filevertexCos, lmd->vertexco, sizeof(float[3]) * verts_num);
         MEM_SAFE_FREE(lmd->vertexco);
         lmd->verts_num = 0;
@@ -698,10 +701,9 @@ static void LaplacianDeformModifier_do(
       lmd->flag &= ~MOD_LAPLACIANDEFORM_BIND;
     }
     else if (lmd->verts_num > 0 && lmd->verts_num == verts_num) {
-      filevertexCos = static_cast<float(*)[3]>(
-          MEM_malloc_arrayN(verts_num, sizeof(float[3]), "TempDeformCoordinates"));
+      filevertexCos = MEM_malloc_arrayN<float[3]>(size_t(verts_num), "TempDeformCoordinates");
       memcpy(filevertexCos, lmd->vertexco, sizeof(float[3]) * verts_num);
-      MEM_SAFE_FREE(lmd->vertexco);
+      blender::implicit_sharing::free_shared_data(&lmd->vertexco, &lmd->vertexco_sharing_info);
       lmd->verts_num = 0;
       initSystem(lmd, ob, mesh, filevertexCos, verts_num);
       sys = static_cast<LaplacianSystem *>(lmd->cache_system);
@@ -735,7 +737,8 @@ static void copy_data(const ModifierData *md, ModifierData *target, const int fl
 
   BKE_modifier_copydata_generic(md, target, flag);
 
-  tlmd->vertexco = static_cast<float *>(MEM_dupallocN(lmd->vertexco));
+  blender::implicit_sharing::copy_shared_pointer(
+      lmd->vertexco, lmd->vertexco_sharing_info, &tlmd->vertexco, &tlmd->vertexco_sharing_info);
   tlmd->cache_system = nullptr;
 }
 
@@ -765,7 +768,7 @@ static void deform_verts(ModifierData *md,
   LaplacianDeformModifier_do((LaplacianDeformModifierData *)md,
                              ctx->object,
                              mesh,
-                             reinterpret_cast<float(*)[3]>(positions.data()),
+                             reinterpret_cast<float (*)[3]>(positions.data()),
                              positions.size());
 }
 
@@ -776,7 +779,7 @@ static void free_data(ModifierData *md)
   if (sys) {
     deleteLaplacianSystem(sys);
   }
-  MEM_SAFE_FREE(lmd->vertexco);
+  blender::implicit_sharing::free_shared_data(&lmd->vertexco, &lmd->vertexco_sharing_info);
   lmd->verts_num = 0;
 }
 
@@ -791,22 +794,20 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   bool is_bind = RNA_boolean_get(ptr, "is_bind");
   bool has_vertex_group = RNA_string_length(ptr, "vertex_group") != 0;
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiItemR(layout, ptr, "iterations", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "iterations", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   modifier_vgroup_ui(layout, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", std::nullopt);
 
-  uiItemS(layout);
+  layout->separator();
 
-  row = uiLayoutRow(layout, true);
-  uiLayoutSetEnabled(row, has_vertex_group);
-  uiItemO(row,
-          is_bind ? IFACE_("Unbind") : IFACE_("Bind"),
-          ICON_NONE,
-          "OBJECT_OT_laplaciandeform_bind");
+  row = &layout->row(true);
+  row->enabled_set(has_vertex_group);
+  row->op(
+      "OBJECT_OT_laplaciandeform_bind", is_bind ? IFACE_("Unbind") : IFACE_("Bind"), ICON_NONE);
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void panel_register(ARegionType *region_type)
@@ -827,21 +828,30 @@ static void blend_write(BlendWriter *writer, const ID *id_owner, const ModifierD
        * binding data, can save a significant amount of memory. */
       lmd.verts_num = 0;
       lmd.vertexco = nullptr;
+      lmd.vertexco_sharing_info = nullptr;
     }
   }
 
-  BLO_write_struct_at_address(writer, LaplacianDeformModifierData, md, &lmd);
-
   if (lmd.vertexco != nullptr) {
-    BLO_write_float3_array(writer, lmd.verts_num, lmd.vertexco);
+    BLO_write_shared(
+        writer, lmd.vertexco, sizeof(float[3]) * lmd.verts_num, lmd.vertexco_sharing_info, [&]() {
+          BLO_write_float3_array(writer, lmd.verts_num, lmd.vertexco);
+        });
   }
+
+  BLO_write_struct_at_address(writer, LaplacianDeformModifierData, md, &lmd);
 }
 
 static void blend_read(BlendDataReader *reader, ModifierData *md)
 {
   LaplacianDeformModifierData *lmd = (LaplacianDeformModifierData *)md;
 
-  BLO_read_float3_array(reader, lmd->verts_num, &lmd->vertexco);
+  if (lmd->vertexco) {
+    lmd->vertexco_sharing_info = BLO_read_shared(reader, &lmd->vertexco, [&]() {
+      BLO_read_float3_array(reader, lmd->verts_num, &lmd->vertexco);
+      return blender::implicit_sharing::info_for_mem_free(lmd->vertexco);
+    });
+  }
   lmd->cache_system = nullptr;
 }
 
@@ -877,4 +887,5 @@ ModifierTypeInfo modifierType_LaplacianDeform = {
     /*blend_write*/ blend_write,
     /*blend_read*/ blend_read,
     /*foreach_cache*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
 };

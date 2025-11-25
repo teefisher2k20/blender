@@ -10,8 +10,8 @@
 
 #include "BKE_nla.hh"
 
+#include "BLI_enum_flags.hh"
 #include "BLI_sys_types.h"
-#include "BLI_utildefines.h"
 
 #include "DNA_screen_types.h"
 #include "DNA_space_types.h"
@@ -54,6 +54,11 @@ struct PointerRNA;
 struct PropertyRNA;
 
 struct MPathTarget;
+
+namespace blender::animrig {
+class Action;
+class Slot;
+}  // namespace blender::animrig
 
 /* ************************************************ */
 /* ANIMATION CHANNEL FILTERING */
@@ -103,6 +108,16 @@ struct bAnimContext {
   eAnimEdit_Context dopesheet_mode;
   eGraphEdit_Mode grapheditor_mode;
 
+  /**
+   * Filters from the dopesheet/graph editor settings. These may reflect the corresponding bits in
+   * ads->filterflag and ads->filterflag2, but can also be overriden by the dopesheet mode to force
+   * certain filters (without having to write to ads->filterflag/flag2).
+   */
+  struct {
+    eDopeSheet_FilterFlag flag;
+    eDopeSheet_FilterFlag2 flag2;
+  } filters;
+
   /** area->spacetype */
   eSpace_Type spacetype;
   /** active region -> type (channels or main) */
@@ -128,6 +143,15 @@ struct bAnimContext {
   Depsgraph *depsgraph;
   /** active object */
   Object *obact;
+
+  /**
+   * Active Action, only set when the Dope Sheet shows a single Action (in its
+   * Action and Shape Key modes).
+   */
+  bAction *active_action;
+  /** The ID that is animated by `active_action`, and that was used to obtain the pointer. */
+  ID *active_action_user;
+
   /** active set of markers */
   ListBase *markers;
 
@@ -189,10 +213,10 @@ enum eAnim_ChannelType {
   ANIMTYPE_DSHAIR,
   ANIMTYPE_DSPOINTCLOUD,
   ANIMTYPE_DSVOLUME,
+  ANIMTYPE_DSLIGHTPROBE,
 
   ANIMTYPE_SHAPEKEY,
 
-  ANIMTYPE_GPDATABLOCK,
   ANIMTYPE_GPLAYER,
 
   ANIMTYPE_GREASE_PENCIL_DATABLOCK,
@@ -245,7 +269,7 @@ enum eAnim_Update_Flags {
   /** Recalculate handles. */
   ANIM_UPDATE_HANDLES = (1 << 2),
 };
-ENUM_OPERATORS(eAnim_Update_Flags, ANIM_UPDATE_HANDLES);
+ENUM_OPERATORS(eAnim_Update_Flags);
 
 /* used for most tools which change keyframes (flushed by ANIM_animdata_update) */
 #define ANIM_UPDATE_DEFAULT (ANIM_UPDATE_DEPS | ANIM_UPDATE_ORDER | ANIM_UPDATE_HANDLES)
@@ -397,7 +421,7 @@ enum eAnimFilter_Flags {
   ANIMFILTER_TMP_IGNORE_ONLYSEL = (1u << 31),
 
 };
-ENUM_OPERATORS(eAnimFilter_Flags, ANIMFILTER_TMP_IGNORE_ONLYSEL);
+ENUM_OPERATORS(eAnimFilter_Flags);
 
 /** \} */
 
@@ -407,7 +431,7 @@ ENUM_OPERATORS(eAnimFilter_Flags, ANIMFILTER_TMP_IGNORE_ONLYSEL);
 
 /* XXX check on all of these flags again. */
 
-/* Dopesheet only */
+/* Dope-sheet only. */
 /* 'Scene' channels */
 #define SEL_SCEC(sce) (CHECK_TYPE_INLINE(sce, Scene *), ((sce->flag & SCE_DS_SELECTED)))
 #define EXPANDED_SCEC(sce) (CHECK_TYPE_INLINE(sce, Scene *), ((sce->flag & SCE_DS_COLLAPSED) == 0))
@@ -436,6 +460,8 @@ ENUM_OPERATORS(eAnimFilter_Flags, ANIMFILTER_TMP_IGNORE_ONLYSEL);
 #define FILTER_CURVES_OBJD(ha) (CHECK_TYPE_INLINE(ha, Curves *), ((ha->flag & HA_DS_EXPAND)))
 #define FILTER_POINTS_OBJD(pt) (CHECK_TYPE_INLINE(pt, PointCloud *), ((pt->flag & PT_DS_EXPAND)))
 #define FILTER_VOLUME_OBJD(vo) (CHECK_TYPE_INLINE(vo, Volume *), ((vo->flag & VO_DS_EXPAND)))
+#define FILTER_LIGHTPROBE_OBJD(probe) \
+  (CHECK_TYPE_INLINE(probe, LightProbe *), ((probe->flag & LIGHTPROBE_DS_EXPAND)))
 /* Variable use expanders */
 #define FILTER_NTREE_DATA(ntree) \
   (CHECK_TYPE_INLINE(ntree, bNodeTree *), (((ntree)->flag & NTREE_DS_EXPAND)))
@@ -448,7 +474,7 @@ ENUM_OPERATORS(eAnimFilter_Flags, ANIMFILTER_TMP_IGNORE_ONLYSEL);
 #define EXPANDED_DRVD(adt) ((adt->flag & ADT_DRIVERS_COLLAPSED) == 0)
 #define EXPANDED_ADT(adt) ((adt->flag & ADT_UI_EXPANDED) != 0)
 
-/* Actions (also used for Dopesheet) */
+/* Actions (also used for Dope-sheet). */
 /** Action Channel Group. */
 #define EDITABLE_AGRP(agrp) (((agrp)->flag & AGRP_PROTECTED) == 0)
 #define EXPANDED_AGRP(ac, agrp) \
@@ -518,6 +544,33 @@ ENUM_OPERATORS(eAnimFilter_Flags, ANIMFILTER_TMP_IGNORE_ONLYSEL);
  * \{ */
 
 /**
+ * Add the channel and sub-channels for an Action Slot to `anim_data`, filtered
+ * according to `filter_mode`.
+ *
+ * \param action: the action containing the slot to generate the channels for.
+ *
+ * \param slot: the slot to generate the channels for.
+ *
+ * \param filter_mode: the filters to use for deciding what channels get
+ * included.
+ *
+ * \param animated_id: the particular animated ID that the slot channels are
+ * being generated for. This is needed for filtering channels based on bone
+ * selection, and also for resolving the names of animated properties. This
+ * should never be null, but it's okay(ish) if it's an ID not actually animated
+ * by the slot, in which case it will act as a fallback in case an ID actually
+ * animated by the slot can't be found.
+ *
+ * \return The number of items added to `anim_data`.
+ */
+size_t ANIM_animfilter_action_slot(bAnimContext *ac,
+                                   ListBase * /* bAnimListElem */ anim_data,
+                                   blender::animrig::Action &action,
+                                   blender::animrig::Slot &slot,
+                                   eAnimFilter_Flags filter_mode,
+                                   ID *animated_id);
+
+/**
  * This function filters the active data source to leave only animation channels suitable for
  * usage by the caller. It will return the length of the list
  *
@@ -563,6 +616,11 @@ void ANIM_animdata_freelist(ListBase *anim_data);
  * Check if the given animation container can contain grease pencil layer keyframes.
  */
 bool ANIM_animdata_can_have_greasepencil(const eAnimCont_Types type);
+
+bAction *ANIM_active_action_from_area(Scene *scene,
+                                      ViewLayer *view_layer,
+                                      const ScrArea *area,
+                                      ID **r_action_user = nullptr);
 
 /* ************************************************ */
 /* ANIMATION CHANNELS LIST */
@@ -658,6 +716,18 @@ struct bAnimChannelType {
    * - assume that setting has been checked to be valid for current context.
    */
   void *(*setting_ptr)(bAnimListElem *ale, eAnimChannel_Settings setting, short *r_type);
+
+  /**
+   * Called after a setting was changed via ANIM_channel_setting_set().
+   *
+   * \param ale: is marked as `const`, as it could have been duplicated and taken out of context.
+   * This means that any hypothetical changes to `ale->update`, for example, will not be seen by
+   * any `ANIM_animdata_update()` call. So better to keep this `const` and avoid any manipulation.
+   * Also, because of the duplications, the ale's `prev` and `next` pointers will be dangling.
+   */
+  void (*setting_post_update)(Main &bmain,
+                              const bAnimListElem &ale,
+                              eAnimChannel_Settings setting);
 };
 
 /** \} */
@@ -683,12 +753,12 @@ float ANIM_UI_get_channel_button_width();
 /**
  * Get type info from given channel type.
  */
-const bAnimChannelType *ANIM_channel_get_typeinfo(bAnimListElem *ale);
+const bAnimChannelType *ANIM_channel_get_typeinfo(const bAnimListElem *ale);
 
 /**
  * Print debug info string for the given channel.
  */
-void ANIM_channel_debug_print_info(bAnimListElem *ale, short indent_level);
+void ANIM_channel_debug_print_info(bAnimContext &ac, bAnimListElem *ale, short indent_level);
 
 /**
  * Retrieves the Action associated with this animation channel.
@@ -819,7 +889,12 @@ void ANIM_draw_cfra(const bContext *C, View2D *v2d, short flag);
 /**
  * Draw preview range 'curtains' for highlighting where the animation data is.
  */
-void ANIM_draw_previewrange(const bContext *C, View2D *v2d, int end_frame_width);
+void ANIM_draw_previewrange(const Scene *scene, View2D *v2d, int end_frame_width);
+
+/**
+ * Draw range of the current sequencer scene strip when using scene time syncing.
+ */
+void ANIM_draw_scene_strip_range(const bContext *C, View2D *v2d);
 
 /** \} */
 
@@ -831,8 +906,6 @@ void ANIM_draw_previewrange(const bContext *C, View2D *v2d, int end_frame_width)
 
 /**
  * Draw frame range guides (for scene frame range) in background.
- *
- * TODO: Should we still show these when preview range is enabled?
  */
 void ANIM_draw_framerange(Scene *scene, View2D *v2d);
 
@@ -1172,6 +1245,14 @@ void ED_animedit_unlink_action(
  * \note Currently called from window-manager.
  */
 void ED_drivers_editor_init(bContext *C, ScrArea *area);
+
+/**
+ * Delete an F-Curve from its owner.
+ *
+ * This can delete an F-Curve from an Action (both directly assigned and via an
+ * NLA strip), Drivers, and NLA control curves.
+ */
+void ED_anim_ale_fcurve_delete(bAnimContext &ac, bAnimListElem &ale);
 
 /* ************************************************ */
 

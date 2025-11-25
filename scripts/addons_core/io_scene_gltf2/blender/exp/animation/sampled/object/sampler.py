@@ -8,7 +8,6 @@ from ......io.com import gltf2_io
 from ......io.com import constants as gltf2_io_constants
 from ......io.exp import binary_data as gltf2_io_binary_data
 from ......io.exp.user_extensions import export_user_extensions
-from .....com.data_path import get_target_object_path
 from .....com import gltf2_blender_math
 from ....tree import VExportNode
 from ....cache import cached
@@ -21,7 +20,7 @@ def gather_object_sampled_animation_sampler(
         obj_uuid: str,
         channel: str,
         action_name: str,
-        slot_handle: int,
+        slot_identifier: str,
         node_channel_is_animated: bool,
         node_channel_interpolation: str,
         export_settings
@@ -31,7 +30,7 @@ def gather_object_sampled_animation_sampler(
         obj_uuid,
         channel,
         action_name,
-        slot_handle,
+        slot_identifier,
         node_channel_is_animated,
         export_settings)
 
@@ -63,7 +62,7 @@ def __gather_keyframes(
         obj_uuid: str,
         channel: str,
         action_name: str,
-        slot_handle: int,
+        slot_identifier: int,
         node_channel_is_animated: bool,
         export_settings
 ):
@@ -72,7 +71,7 @@ def __gather_keyframes(
         obj_uuid,
         channel,
         action_name,
-        slot_handle,
+        slot_identifier,
         node_channel_is_animated,
         export_settings
     )
@@ -102,7 +101,6 @@ def __convert_keyframes(obj_uuid: str, channel: str, keyframes, action_name: str
 
     is_yup = export_settings['gltf_yup']
 
-    object_path = get_target_object_path(channel)
     transform = mathutils.Matrix.Identity(4)
 
     need_rotation_correction = (
@@ -110,7 +108,6 @@ def __convert_keyframes(obj_uuid: str, channel: str, keyframes, action_name: str
         export_settings['gltf_lights'] and export_settings['vtree'].nodes[obj_uuid].blender_type == VExportNode.LIGHT)
 
     values = []
-    fps = (bpy.context.scene.render.fps * bpy.context.scene.render.fps_base)
     for keyframe in keyframes:
 
         # Transform the data and build gltf control points
@@ -127,19 +124,15 @@ def __convert_keyframes(obj_uuid: str, channel: str, keyframes, action_name: str
     component_type = gltf2_io_constants.ComponentType.Float
     data_type = gltf2_io_constants.DataType.vec_type_from_num(len(keyframes[0].value))
 
-    output = gltf2_io.Accessor(
-        buffer_view=gltf2_io_binary_data.BinaryData.from_list(values, component_type),
-        byte_offset=None,
-        component_type=component_type,
-        count=len(values) // gltf2_io_constants.DataType.num_elements(data_type),
-        extensions=None,
-        extras=None,
-        max=None,
-        min=None,
-        name=None,
-        normalized=None,
-        sparse=None,
-        type=data_type
+
+    output = gather_accessor(
+        gltf2_io_binary_data.BinaryData.from_list(values, component_type),
+        component_type,
+        len(values) // gltf2_io_constants.DataType.num_elements(data_type),
+        None,
+        None,
+        data_type,
+        export_settings
     )
 
     return input, output
@@ -152,7 +145,7 @@ def __gather_interpolation(
         export_settings):
 
     if len(keyframes) > 2:
-        # keep STEP as STEP, other become the interpolation choosen by the user
+        # keep STEP as STEP, other become the interpolation chosen by the user
         return {
             "STEP": "STEP"
         }.get(node_channel_interpolation, export_settings['gltf_sampling_interpolation_fallback'])

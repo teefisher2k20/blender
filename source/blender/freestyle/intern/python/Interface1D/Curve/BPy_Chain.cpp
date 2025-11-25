@@ -12,10 +12,6 @@
 #include "../../BPy_Id.h"
 #include "../BPy_ViewEdge.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -41,8 +37,7 @@ PyDoc_STRVAR(
     "   :arg brother: A Chain object.\n"
     "   :type brother: :class:`Chain`\n"
     "   :arg id: An Id object.\n"
-    "   :type id: :class:`Id`");
-
+    "   :type id: :class:`Id`\n");
 static int Chain_init(BPy_Chain *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist_1[] = {"brother", nullptr};
@@ -81,10 +76,8 @@ PyDoc_STRVAR(
     "\n"
     "   :arg viewedge: The ViewEdge that must be added.\n"
     "   :type viewedge: :class:`ViewEdge`\n"
-    "   :arg orientation: The orientation with which the ViewEdge must be\n"
-    "      processed.\n"
-    "   :type orientation: bool");
-
+    "   :arg orientation: The orientation with which the ViewEdge must be processed.\n"
+    "   :type orientation: bool\n");
 static PyObject *Chain_push_viewedge_back(BPy_Chain *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"viewedge", "orientation", nullptr};
@@ -112,8 +105,7 @@ PyDoc_STRVAR(
     "   :type viewedge: :class:`ViewEdge`\n"
     "   :arg orientation: The orientation with which the ViewEdge must be\n"
     "      processed.\n"
-    "   :type orientation: bool");
-
+    "   :type orientation: bool\n");
 static PyObject *Chain_push_viewedge_front(BPy_Chain *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"viewedge", "orientation", nullptr};
@@ -130,6 +122,16 @@ static PyObject *Chain_push_viewedge_front(BPy_Chain *self, PyObject *args, PyOb
   Py_RETURN_NONE;
 }
 
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
+#endif
+
 static PyMethodDef BPy_Chain_methods[] = {
     {"push_viewedge_back",
      (PyCFunction)Chain_push_viewedge_back,
@@ -141,6 +143,14 @@ static PyMethodDef BPy_Chain_methods[] = {
      Chain_push_viewedge_front_doc},
     {nullptr, nullptr, 0, nullptr},
 };
+
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
+#endif
 
 /*-----------------------BPy_Chain type definition ------------------------------*/
 
@@ -186,7 +196,3 @@ PyTypeObject Chain_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

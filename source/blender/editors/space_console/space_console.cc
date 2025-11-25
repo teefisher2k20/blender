@@ -11,8 +11,9 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
-#include "BLI_utildefines.h"
+#include "BLI_listbase.h"
+#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "BKE_context.hh"
 #include "BKE_screen.hh"
@@ -40,7 +41,7 @@ static SpaceLink *console_create(const ScrArea * /*area*/, const Scene * /*scene
   ARegion *region;
   SpaceConsole *sconsole;
 
-  sconsole = static_cast<SpaceConsole *>(MEM_callocN(sizeof(SpaceConsole), "initconsole"));
+  sconsole = MEM_callocN<SpaceConsole>("initconsole");
   sconsole->spacetype = SPACE_CONSOLE;
 
   sconsole->lheight = 14;
@@ -59,7 +60,7 @@ static SpaceLink *console_create(const ScrArea * /*area*/, const Scene * /*scene
   region->regiontype = RGN_TYPE_WINDOW;
 
   /* keep in sync with info */
-  region->v2d.scroll |= V2D_SCROLL_RIGHT;
+  region->v2d.scroll |= V2D_SCROLL_RIGHT | V2D_SCROLL_VERTICAL_HIDE;
   region->v2d.align |= V2D_ALIGN_NO_NEG_X | V2D_ALIGN_NO_NEG_Y; /* align bottom left */
   region->v2d.keepofs |= V2D_LOCKOFS_X;
   region->v2d.keepzoom = (V2D_LOCKZOOM_X | V2D_LOCKZOOM_Y | V2D_LIMITZOOM | V2D_KEEPASPECT);
@@ -110,9 +111,6 @@ static void console_main_region_init(wmWindowManager *wm, ARegion *region)
 
   const float prev_y_min = region->v2d.cur.ymin; /* so re-sizing keeps the cursor visible */
 
-  /* force it on init, for old files, until it becomes config */
-  region->v2d.scroll = (V2D_SCROLL_RIGHT);
-
   UI_view2d_region_reinit(&region->v2d, V2D_COMMONVIEW_CUSTOM, region->winx, region->winy);
 
   /* always keep the bottom part of the view aligned, less annoying */
@@ -123,11 +121,12 @@ static void console_main_region_init(wmWindowManager *wm, ARegion *region)
   }
 
   /* own keymap */
-  keymap = WM_keymap_ensure(wm->defaultconf, "Console", SPACE_CONSOLE, RGN_TYPE_WINDOW);
+  keymap = WM_keymap_ensure(wm->runtime->defaultconf, "Console", SPACE_CONSOLE, RGN_TYPE_WINDOW);
   WM_event_add_keymap_handler_v2d_mask(&region->runtime->handlers, keymap);
 
   /* Include after "Console" so cursor motion keys such as "Home" isn't overridden. */
-  keymap = WM_keymap_ensure(wm->defaultconf, "View2D Buttons List", SPACE_EMPTY, RGN_TYPE_WINDOW);
+  keymap = WM_keymap_ensure(
+      wm->runtime->defaultconf, "View2D Buttons List", SPACE_EMPTY, RGN_TYPE_WINDOW);
   WM_event_add_keymap_handler(&region->runtime->handlers, keymap);
 
   /* add drop boxes */
@@ -216,8 +215,11 @@ static void console_main_region_draw(const bContext *C, ARegion *region)
   View2D *v2d = &region->v2d;
 
   if (BLI_listbase_is_empty(&sc->scrollback)) {
-    WM_operator_name_call(
-        (bContext *)C, "CONSOLE_OT_banner", WM_OP_EXEC_DEFAULT, nullptr, nullptr);
+    WM_operator_name_call((bContext *)C,
+                          "CONSOLE_OT_banner",
+                          blender::wm::OpCallContext::ExecDefault,
+                          nullptr,
+                          nullptr);
   }
 
   /* clear and setup matrix */
@@ -349,7 +351,7 @@ void ED_spacetype_console()
   ARegionType *art;
 
   st->spaceid = SPACE_CONSOLE;
-  STRNCPY(st->name, "Console");
+  STRNCPY_UTF8(st->name, "Console");
 
   st->create = console_create;
   st->free = console_free;
@@ -362,7 +364,7 @@ void ED_spacetype_console()
   st->blend_write = console_space_blend_write;
 
   /* regions: main window */
-  art = static_cast<ARegionType *>(MEM_callocN(sizeof(ARegionType), "spacetype console region"));
+  art = MEM_callocN<ARegionType>("spacetype console region");
   art->regionid = RGN_TYPE_WINDOW;
   art->keymapflag = ED_KEYMAP_UI | ED_KEYMAP_VIEW2D;
 
@@ -375,7 +377,7 @@ void ED_spacetype_console()
   BLI_addhead(&st->regiontypes, art);
 
   /* regions: header */
-  art = static_cast<ARegionType *>(MEM_callocN(sizeof(ARegionType), "spacetype console region"));
+  art = MEM_callocN<ARegionType>("spacetype console region");
   art->regionid = RGN_TYPE_HEADER;
   art->prefsizey = HEADERY;
   art->keymapflag = ED_KEYMAP_UI | ED_KEYMAP_VIEW2D | ED_KEYMAP_HEADER;

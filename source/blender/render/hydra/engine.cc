@@ -34,13 +34,26 @@ Engine::Engine(RenderEngine *bl_engine, const std::string &render_delegate_name)
 
   pxr::TF_PY_ALLOW_THREADS_IN_SCOPE();
 
-  if (GPU_backend_get_type() == GPU_BACKEND_VULKAN) {
-    BLI_setenv("HGI_ENABLE_VULKAN", "1");
-  }
-
   pxr::HdDriverVector hd_drivers;
   if (bl_engine->type->flag & RE_USE_GPU_CONTEXT) {
-    hgi_ = pxr::Hgi::CreatePlatformDefaultHgi();
+    pxr::TfToken hgi_token;
+    switch (GPU_backend_get_type()) {
+      case GPU_BACKEND_METAL:
+        hgi_token = pxr::TfToken("Metal");
+        break;
+      case GPU_BACKEND_OPENGL:
+        hgi_token = pxr::TfToken("OpenGL");
+        break;
+      case GPU_BACKEND_VULKAN:
+        hgi_token = pxr::TfToken("Vulkan");
+        break;
+      case GPU_BACKEND_NONE:
+      case GPU_BACKEND_ANY:
+        /* When pxr::Hgi::CreateNamedHgi is called with an empty token it will select the default
+         * platform Hgi. */
+        break;
+    }
+    hgi_ = pxr::Hgi::CreateNamedHgi(hgi_token);
     hgi_driver_.name = pxr::HgiTokens->renderDriver;
     hgi_driver_.driver = pxr::VtValue(hgi_.get());
 
@@ -53,7 +66,7 @@ Engine::Engine(RenderEngine *bl_engine, const std::string &render_delegate_name)
   }
 
   render_index_.reset(pxr::HdRenderIndex::New(render_delegate_.Get(), hd_drivers));
-  free_camera_delegate_ = std::make_unique<pxr::HdxFreeCameraSceneDelegate>(
+  free_camera_delegate_ = std::make_unique<io::hydra::CameraDelegate>(
       render_index_.get(), pxr::SdfPath::AbsoluteRootPath().AppendElementString("freeCamera"));
 
   if (bl_engine->type->flag & RE_USE_GPU_CONTEXT && GPU_backend_get_type() == GPU_BACKEND_OPENGL) {
@@ -90,7 +103,7 @@ void Engine::sync(Depsgraph *depsgraph, bContext *context)
     if (!hydra_scene_delegate_) {
       pxr::SdfPath scene_path = pxr::SdfPath::AbsoluteRootPath().AppendElementString("scene");
       hydra_scene_delegate_ = std::make_unique<io::hydra::HydraSceneDelegate>(
-          render_index_.get(), scene_path, use_materialx);
+          render_index_.get(), scene_path, free_camera_delegate_.get(), use_materialx);
     }
     hydra_scene_delegate_->populate(depsgraph, context ? CTX_wm_view3d(context) : nullptr);
   }
@@ -109,6 +122,7 @@ void Engine::sync(Depsgraph *depsgraph, bContext *context)
     }
     usd_scene_delegate_->populate(depsgraph);
   }
+  free_camera_delegate_->sync(scene_);
 }
 
 void Engine::set_render_setting(const std::string &key, const pxr::VtValue &val)
@@ -133,7 +147,7 @@ pxr::HdTaskSharedPtrVector Engine::tasks()
     if (scene_->r.alphamode != R_ALPHAPREMUL) {
 #ifndef __APPLE__
       /* TODO: Temporary disable skydome task for MacOS due to crash with error:
-       * Failed to created pipeline state, error depthAttachmentPixelFormat is not valid
+       * Failed to create pipeline state, error depthAttachmentPixelFormat is not valid
        * and shader writes to depth */
       res.push_back(light_tasks_delegate_->skydome_task());
 #endif

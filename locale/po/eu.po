@@ -1,10 +1,10 @@
 
 msgid ""
 msgstr ""
-"Project-Id-Version: Blender 4.4.0 Alpha (b'efff379ea583')\n"
+"Project-Id-Version: Blender 5.1.0 Alpha (b'ef4e8fa75057')\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2025-01-27 10:58+0000\n"
-"PO-Revision-Date: 2024-04-29 13:54+0000\n"
+"POT-Creation-Date: 2025-11-24 08:35+0000\n"
+"PO-Revision-Date: 2025-07-23 15:13+0000\n"
 "Last-Translator: Anonymous <noreply@weblate.org>\n"
 "Language-Team: Basque <https://translate.blender.org/projects/blender-ui/ui/eu/>\n"
 "Language: eu\n"
@@ -12,7 +12,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
-"X-Generator: Weblate 5.0.1"
+"X-Generator: Weblate 5.12.1"
 
 
 msgid "Name"
@@ -167,6 +167,14 @@ msgid "Expanded"
 msgstr "Hedatua"
 
 
+msgid "Active"
+msgstr "Aktibo"
+
+
+msgid "Action"
+msgstr "Akzioa"
+
+
 msgid "Replace"
 msgstr "Ordezkatu"
 
@@ -179,20 +187,24 @@ msgid "Multiply"
 msgstr "Biderkatu"
 
 
-msgid "Active"
-msgstr "Aktibo"
-
-
-msgid "Action"
-msgstr "Akzioa"
-
-
 msgid "Heads"
 msgstr "Buruak"
 
 
 msgid "Tails"
 msgstr "Isatsak"
+
+
+msgid "Info"
+msgstr "Informazioa"
+
+
+msgid "Onion Skinning"
+msgstr "Tipula-azapa"
+
+
+msgid "Default"
+msgstr "Lehenetsia"
 
 
 msgid "Height"
@@ -219,10 +231,6 @@ msgid "Text Editor"
 msgstr "Testu Editorea"
 
 
-msgid "Info"
-msgstr "Informazioa"
-
-
 msgid "Outliner"
 msgstr "Laburpena"
 
@@ -247,6 +255,10 @@ msgid "Layer"
 msgstr "Geruza"
 
 
+msgid "Object"
+msgstr "Objektua"
+
+
 msgid "+X"
 msgstr "+X"
 
@@ -261,10 +273,6 @@ msgstr "-X"
 
 msgid "-Y"
 msgstr "-Y"
-
-
-msgid "Object"
-msgstr "Objektua"
 
 
 msgid "Emit"
@@ -335,20 +343,12 @@ msgid "Z"
 msgstr "Z"
 
 
-msgid "Default"
-msgstr "Lehenetsia"
-
-
 msgid "Camera"
 msgstr "Kamera"
 
 
 msgid "Bone"
 msgstr "Hezurra"
-
-
-msgid "Script"
-msgstr "Script"
 
 
 msgid "Method"
@@ -415,10 +415,6 @@ msgid "Normal"
 msgstr "Normala"
 
 
-msgid "Onion Skinning"
-msgstr "Tipula-azapa"
-
-
 msgid "Grid"
 msgstr "Sarea"
 
@@ -431,10 +427,6 @@ msgid "Tools"
 msgstr "Tresnak"
 
 
-msgid "Groups"
-msgstr "Taldeak"
-
-
 msgid "Local"
 msgstr "Lokala"
 
@@ -442,10 +434,6 @@ msgstr "Lokala"
 msgctxt "Curve"
 msgid "Sphere"
 msgstr "Esfera"
-
-
-msgid "Direction"
-msgstr "Norabidea"
 
 
 msgid "Sequence"
@@ -470,6 +458,10 @@ msgstr "Kuboa"
 
 msgid "Filter"
 msgstr "Filtroa"
+
+
+msgid "Script"
+msgstr "Script"
 
 
 msgid "Edit"
@@ -498,10 +490,6 @@ msgstr "Irudiaren ehundura"
 
 msgid "Filter Size"
 msgstr "Filtroaren tamaina"
-
-
-msgid "Area"
-msgstr "Azalera"
 
 
 msgid "Repeat X"
@@ -536,6 +524,10 @@ msgid "Owner"
 msgstr "Jabea"
 
 
+msgid "Direction"
+msgstr "Norabidea"
+
+
 msgctxt "UI_Events_KeyMaps"
 msgid "Delete"
 msgstr "Ezabatu"
@@ -543,6 +535,10 @@ msgstr "Ezabatu"
 
 msgid "Mouse"
 msgstr "Sagua"
+
+
+msgid "Groups"
+msgstr "Taldeak"
 
 
 msgid "Selected Objects"
@@ -561,24 +557,24 @@ msgid "Show/Hide"
 msgstr "Erakutsi/Ezkutatu"
 
 
-msgid "Relations"
-msgstr "Loturak"
-
-
 msgid "Text"
 msgstr "Testua"
+
+
+msgid "Import"
+msgstr "Inportatu"
 
 
 msgid "UV"
 msgstr "UV"
 
 
+msgid "Relations"
+msgstr "Loturak"
+
+
 msgid "Show/Hide Faces"
 msgstr "Aurpegiak erakutsi/ezkutatu"
-
-
-msgid "Import"
-msgstr "Inportatu"
 
 
 msgid "Physics"
@@ -623,24 +619,12 @@ msgid "Random"
 msgstr "Ausaz"
 
 
-msgid "Shadow"
-msgstr "Itzala"
-
-
-msgid "Combined"
-msgstr "Konbinatuak"
+msgid "Starting"
+msgstr "Hasten"
 
 
 msgid "Translate"
 msgstr "Mugitu"
-
-
-msgid "X Axis"
-msgstr "X Ardatza"
-
-
-msgid "Y Axis"
-msgstr "Y Ardatza"
 
 
 msgid "Original"
@@ -671,8 +655,20 @@ msgid "Z axis"
 msgstr "Z ardatza"
 
 
+msgid "X Axis"
+msgstr "X Ardatza"
+
+
+msgid "Y Axis"
+msgstr "Y Ardatza"
+
+
 msgid "Z Axis"
 msgstr "Z Ardatza"
+
+
+msgid "Shadow"
+msgstr "Itzala"
 
 
 msgctxt "Operator"
@@ -888,6 +884,18 @@ msgid "Reset Original Length"
 msgstr "Jatorrizko Luzera Berrasieratu"
 
 
+msgid "Remove from selection"
+msgstr "Hautaketatik ezabatu"
+
+
+msgid "Toggle Selection"
+msgstr "Hautaketa txandakatu"
+
+
+msgid "Toggle the selection"
+msgstr "Hautaketa txandakatu"
+
+
 msgctxt "Operator"
 msgid "(De)select First"
 msgstr "(Ez)hautatu Lehena"
@@ -908,18 +916,6 @@ msgid "Add Duplicate"
 msgstr "Bikoizketa Gehitu"
 
 
-msgid "Remove from selection"
-msgstr "Hautaketatik ezabatu"
-
-
-msgid "Toggle Selection"
-msgstr "Hautaketa txandakatu"
-
-
-msgid "Toggle the selection"
-msgstr "Hautaketa txandakatu"
-
-
 msgid "Object Types"
 msgstr "Objektu mota"
 
@@ -938,10 +934,6 @@ msgstr "Besteak"
 
 msgid "Always write absolute paths"
 msgstr "Beti helbide absolutuak idatzi"
-
-
-msgid "Always write relative paths (where possible)"
-msgstr "Beti helbide erlatiboak idatzi (posible denean)"
 
 
 msgid "Filename only"
@@ -1447,13 +1439,12 @@ msgid "Duplicate Linked"
 msgstr "Bikoiztu Estekatua"
 
 
-msgctxt "Operator"
-msgid "Hide"
-msgstr "Ezkutatu"
-
-
 msgid "Mouse location"
 msgstr "Arratoiaren lokalizazioa"
+
+
+msgid "Combined"
+msgstr "Konbinatuak"
 
 
 msgctxt "Operator"
@@ -1467,6 +1458,11 @@ msgstr "Umea"
 
 msgid "Hierarchy"
 msgstr "Hierarkia"
+
+
+msgctxt "Operator"
+msgid "Hide"
+msgstr "Ezkutatu"
 
 
 msgid "Reset"
@@ -1738,11 +1734,6 @@ msgid "Sound"
 msgstr "Soinua"
 
 
-msgctxt "Sequence"
-msgid "Cross"
-msgstr "Gurutzatu"
-
-
 msgctxt "WindowManager"
 msgid "Window"
 msgstr "Leihoa"
@@ -1863,11 +1854,6 @@ msgid "Text"
 msgstr "Testua"
 
 
-msgctxt "Operator"
-msgid "Scene..."
-msgstr "Eszena"
-
-
 msgctxt "Text"
 msgid "New"
 msgstr "Berria"
@@ -1964,6 +1950,10 @@ msgstr "Kamera"
 msgctxt "Operator"
 msgid "Speaker"
 msgstr "Bozgorailua"
+
+
+msgid "True Normal"
+msgstr "Geometria zuzena"
 
 
 msgid "Path is empty, cannot save"
@@ -2113,14 +2103,6 @@ msgid "Sphere"
 msgstr "Esfera"
 
 
-msgid "ON"
-msgstr "GAITUTA"
-
-
-msgid "OFF"
-msgstr "DESGAITUTA"
-
-
 msgid "normal"
 msgstr "Normala"
 
@@ -2163,10 +2145,6 @@ msgstr "Z sakonera bista"
 
 msgid "View Distance"
 msgstr "Distantzia-bista"
-
-
-msgid "True Normal"
-msgstr "Geometria zuzena"
 
 
 msgid "Backfacing"
@@ -2289,6 +2267,14 @@ msgid "dbl-"
 msgstr "dbl-"
 
 
+msgid "ON"
+msgstr "GAITUTA"
+
+
+msgid "OFF"
+msgstr "DESGAITUTA"
+
+
 msgid "unsupported format"
 msgstr "Euskarri gabeko formatua"
 
@@ -2299,144 +2285,4 @@ msgstr "Ezin da irakurri %s '%s': %s"
 
 msgid "Import-Export"
 msgstr "Inportatu-Esportatu"
-
-
-msgid "English (English)"
-msgstr "Ingelesa (English)"
-
-
-msgid "Japanese (日本語)"
-msgstr "Japoniera (日本語)"
-
-
-msgid "Italian (Italiano)"
-msgstr "Italiera (Italiano)"
-
-
-msgid "German (Deutsch)"
-msgstr "Alemaniera (Deutsch)"
-
-
-msgid "Finnish (Suomi)"
-msgstr "Finlandiera (Suomi)"
-
-
-msgid "Swedish (Svenska)"
-msgstr "Suediera (Svenska)"
-
-
-msgid "French (Français)"
-msgstr "Frantsesa (Français)"
-
-
-msgid "Spanish (Español)"
-msgstr "Gaztelania (Español)"
-
-
-msgid "Catalan (Català)"
-msgstr "Katalana (Català)"
-
-
-msgid "Portuguese (Português)"
-msgstr "Portugesa (Português)"
-
-
-msgid "Simplified Chinese (简体中文)"
-msgstr "Txinera laburtua (简体中文)"
-
-
-msgid "Traditional Chinese (繁體中文)"
-msgstr "Txinera tradizionala (繁體中文)"
-
-
-msgid "Russian (Русский)"
-msgstr "Errusiera (Русский)"
-
-
-msgid "Croatian (Hrvatski)"
-msgstr "Kroaziera (Hrvatski)"
-
-
-msgid "Serbian (Српски)"
-msgstr "Serbiera (Српски)"
-
-
-msgid "Polish (Polski)"
-msgstr "Poloniera (Polski)"
-
-
-msgid "Romanian (Român)"
-msgstr "Errumaniera (Român)"
-
-
-msgid "Arabic (ﺔﻴﺑﺮﻌﻟﺍ)"
-msgstr "Arabiera (ﺔﻴﺑﺮﻌﻟﺩ"
-
-
-msgid "Bulgarian (Български)"
-msgstr "Bulgariera (Български)"
-
-
-msgid "Greek (Ελληνικά)"
-msgstr "Greziera (Ελληνικά)"
-
-
-msgid "Nepali (नेपाली)"
-msgstr "Nepalera (नेपाली)"
-
-
-msgid "Persian (ﯽﺳﺭﺎﻓ)"
-msgstr "Persiera (ﯽﺳﺭﺎﻓ)"
-
-
-msgid "Indonesian (Bahasa indonesia)"
-msgstr "Indonesiera (Bahasa indonesia)"
-
-
-msgid "Kyrgyz (Кыргыз тили)"
-msgstr "Kirgizera (Кыргыз тили)"
-
-
-msgid "Turkish (Türkçe)"
-msgstr "Turkiera (Türkçe)"
-
-
-msgid "Hungarian (Magyar)"
-msgstr "Hungariera (Magyar)"
-
-
-msgid "Brazilian Portuguese (Português do Brasil)"
-msgstr "Brazilgo Portugesa (Português do Brasil)"
-
-
-msgid "Hebrew (תירִבְעִ)"
-msgstr "Hebreera (תירִבְעִ)"
-
-
-msgid "Esperanto (Esperanto)"
-msgstr "Esperantoa (Esperanto)"
-
-
-msgid "Amharic (አማርኛ)"
-msgstr "Amharera (አማርኛ)\""
-
-
-msgid "Uzbek (Oʻzbek)"
-msgstr "Uzbekera (Oʻzbek)"
-
-
-msgid "Uzbek Cyrillic (Ўзбек)"
-msgstr "Uzbekera Zirilikoa (Ўзбек)"
-
-
-msgid "Complete"
-msgstr "Bukatuta"
-
-
-msgid "In Progress"
-msgstr "Abian"
-
-
-msgid "Starting"
-msgstr "Hasten"
 

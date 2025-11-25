@@ -8,20 +8,20 @@
 
 #include "opensubdiv_evaluator.hh"
 
+#include "gpu_patch_table.hh"
+
 using OpenSubdiv::Osd::PatchArray;
 using OpenSubdiv::Osd::PatchArrayVector;
 
 namespace blender::opensubdiv {
 
-static void buildPatchArraysBufferFromVector(const PatchArrayVector &patch_arrays,
-                                             OpenSubdiv_Buffer *patch_arrays_buffer)
+static gpu::StorageBuf *create_patch_array_buffer(const PatchArrayVector &patch_arrays)
 {
   const size_t patch_array_size = sizeof(PatchArray);
-  const size_t patch_array_byte_site = patch_array_size * patch_arrays.size();
-  patch_arrays_buffer->device_alloc(patch_arrays_buffer, patch_arrays.size());
-  patch_arrays_buffer->bind_gpu(patch_arrays_buffer);
-  patch_arrays_buffer->device_update(
-      patch_arrays_buffer, 0, patch_array_byte_site, &patch_arrays[0]);
+  const size_t patch_array_byte_size = patch_array_size * patch_arrays.size();
+  gpu::StorageBuf *storage_buf = GPU_storagebuf_create_ex(
+      patch_array_byte_size, patch_arrays.data(), GPU_USAGE_STATIC, "osd_patch_array");
+  return storage_buf;
 }
 
 GpuEvalOutput::GpuEvalOutput(const StencilTable *vertex_stencils,
@@ -30,79 +30,29 @@ GpuEvalOutput::GpuEvalOutput(const StencilTable *vertex_stencils,
                              const int face_varying_width,
                              const PatchTable *patch_table,
                              VolatileEvalOutput::EvaluatorCache *evaluator_cache)
-    : VolatileEvalOutput<GLVertexBuffer,
-                         GLVertexBuffer,
-                         GLStencilTableSSBO,
-                         GLPatchTable,
-                         GLComputeEvaluator>(vertex_stencils,
-                                             varying_stencils,
-                                             all_face_varying_stencils,
-                                             face_varying_width,
-                                             patch_table,
-                                             evaluator_cache)
+    : VolatileEvalOutput<GPUVertexBuffer,
+                         GPUVertexBuffer,
+                         GPUStencilTableSSBO,
+                         GPUPatchTable,
+                         GPUComputeEvaluator>(vertex_stencils,
+                                              varying_stencils,
+                                              all_face_varying_stencils,
+                                              face_varying_width,
+                                              patch_table,
+                                              evaluator_cache)
 {
 }
 
-void GpuEvalOutput::fillPatchArraysBuffer(OpenSubdiv_Buffer *patch_arrays_buffer)
+gpu::StorageBuf *GpuEvalOutput::create_patch_arrays_buf()
 {
-  GLPatchTable *patch_table = getPatchTable();
-  buildPatchArraysBufferFromVector(patch_table->GetPatchArrays(), patch_arrays_buffer);
+  GPUPatchTable *patch_table = getPatchTable();
+  return create_patch_array_buffer(patch_table->GetPatchArrays());
 }
 
-void GpuEvalOutput::wrapPatchIndexBuffer(OpenSubdiv_Buffer *patch_index_buffer)
+gpu::StorageBuf *GpuEvalOutput::create_face_varying_patch_array_buf(const int face_varying_channel)
 {
-  GLPatchTable *patch_table = getPatchTable();
-  patch_index_buffer->wrap_device_handle(patch_index_buffer, patch_table->GetPatchIndexBuffer());
-}
-
-void GpuEvalOutput::wrapPatchParamBuffer(OpenSubdiv_Buffer *patch_param_buffer)
-{
-  GLPatchTable *patch_table = getPatchTable();
-  patch_param_buffer->wrap_device_handle(patch_param_buffer, patch_table->GetPatchParamBuffer());
-}
-
-void GpuEvalOutput::wrapSrcBuffer(OpenSubdiv_Buffer *src_buffer)
-{
-  GLVertexBuffer *vertex_buffer = getSrcBuffer();
-  src_buffer->wrap_device_handle(src_buffer, vertex_buffer->BindVBO());
-}
-
-void GpuEvalOutput::wrapSrcVertexDataBuffer(OpenSubdiv_Buffer *src_buffer)
-{
-  GLVertexBuffer *vertex_buffer = getSrcVertexDataBuffer();
-  src_buffer->wrap_device_handle(src_buffer, vertex_buffer->BindVBO());
-}
-
-void GpuEvalOutput::fillFVarPatchArraysBuffer(const int face_varying_channel,
-                                              OpenSubdiv_Buffer *patch_arrays_buffer)
-{
-  GLPatchTable *patch_table = getFVarPatchTable(face_varying_channel);
-  buildPatchArraysBufferFromVector(patch_table->GetFVarPatchArrays(face_varying_channel),
-                                   patch_arrays_buffer);
-}
-
-void GpuEvalOutput::wrapFVarPatchIndexBuffer(const int face_varying_channel,
-                                             OpenSubdiv_Buffer *patch_index_buffer)
-{
-  GLPatchTable *patch_table = getFVarPatchTable(face_varying_channel);
-  patch_index_buffer->wrap_device_handle(
-      patch_index_buffer, patch_table->GetFVarPatchIndexBuffer(face_varying_channel));
-}
-
-void GpuEvalOutput::wrapFVarPatchParamBuffer(const int face_varying_channel,
-                                             OpenSubdiv_Buffer *patch_param_buffer)
-{
-  GLPatchTable *patch_table = getFVarPatchTable(face_varying_channel);
-  patch_param_buffer->wrap_device_handle(
-      patch_param_buffer, patch_table->GetFVarPatchParamBuffer(face_varying_channel));
-}
-
-void GpuEvalOutput::wrapFVarSrcBuffer(const int face_varying_channel,
-                                      OpenSubdiv_Buffer *src_buffer)
-{
-  GLVertexBuffer *vertex_buffer = getFVarSrcBuffer(face_varying_channel);
-  src_buffer->buffer_offset = getFVarSrcBufferOffset(face_varying_channel);
-  src_buffer->wrap_device_handle(src_buffer, vertex_buffer->BindVBO());
+  GPUPatchTable *patch_table = getFVarPatchTable(face_varying_channel);
+  return create_patch_array_buffer(patch_table->GetFVarPatchArrays(face_varying_channel));
 }
 
 }  // namespace blender::opensubdiv

@@ -32,7 +32,7 @@ namespace blender::ed::object {
  * \{ */
 
 template<LightLinkingType link_type>
-static int light_linking_collection_new_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus light_linking_collection_new_exec(bContext *C, wmOperator * /*op*/)
 {
   Main *bmain = CTX_data_main(C);
   Object *object = context_active_object(C);
@@ -49,7 +49,7 @@ void OBJECT_OT_light_linking_receiver_collection_new(wmOperatorType *ot)
   ot->description = "Create new light linking collection used by the active emitter";
   ot->idname = "OBJECT_OT_light_linking_receiver_collection_new";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = light_linking_collection_new_exec<LIGHT_LINKING_RECEIVER>;
   ot->poll = ED_operator_object_active_editable;
 
@@ -64,7 +64,7 @@ void OBJECT_OT_light_linking_blocker_collection_new(wmOperatorType *ot)
   ot->description = "Create new light linking collection used by the active emitter";
   ot->idname = "OBJECT_OT_light_linking_blocker_collection_new";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = light_linking_collection_new_exec<LIGHT_LINKING_BLOCKER>;
   ot->poll = ED_operator_object_active_editable;
 
@@ -79,7 +79,7 @@ void OBJECT_OT_light_linking_blocker_collection_new(wmOperatorType *ot)
  * \{ */
 
 template<LightLinkingType link_type>
-static int light_linking_select_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus light_linking_select_exec(bContext *C, wmOperator * /*op*/)
 {
   Scene *scene = CTX_data_scene(C);
   ViewLayer *view_layer = CTX_data_view_layer(C);
@@ -99,7 +99,7 @@ void OBJECT_OT_light_linking_receivers_select(wmOperatorType *ot)
   ot->description = "Select all objects which receive light from this emitter";
   ot->idname = "OBJECT_OT_light_linking_receivers_select";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = light_linking_select_exec<LIGHT_LINKING_RECEIVER>;
   ot->poll = ED_operator_object_active;
 
@@ -114,7 +114,7 @@ void OBJECT_OT_light_linking_blockers_select(wmOperatorType *ot)
   ot->description = "Select all objects which block light from this emitter";
   ot->idname = "OBJECT_OT_light_linking_blockers_select";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = light_linking_select_exec<LIGHT_LINKING_BLOCKER>;
   ot->poll = ED_operator_object_active;
 
@@ -129,7 +129,7 @@ void OBJECT_OT_light_linking_blockers_select(wmOperatorType *ot)
  * \{ */
 
 template<LightLinkingType link_type>
-static int light_linking_link_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus light_linking_link_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
   Scene *scene = CTX_data_scene(C);
@@ -176,7 +176,7 @@ void OBJECT_OT_light_linking_receivers_link(wmOperatorType *ot)
   ot->description = "Light link selected receivers to the active emitter object";
   ot->idname = "OBJECT_OT_light_linking_receivers_link";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = light_linking_link_exec<LIGHT_LINKING_RECEIVER>;
   ot->poll = ED_operator_object_active_editable;
 
@@ -212,7 +212,7 @@ void OBJECT_OT_light_linking_blockers_link(wmOperatorType *ot)
   ot->description = "Light link selected blockers to the active emitter object";
   ot->idname = "OBJECT_OT_light_linking_blockers_link";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = light_linking_link_exec<LIGHT_LINKING_BLOCKER>;
   ot->poll = ED_operator_object_active_editable;
 
@@ -233,7 +233,7 @@ void OBJECT_OT_light_linking_blockers_link(wmOperatorType *ot)
 /** \name Unlink from the Light Linking Collection Operator
  * \{ */
 
-static int light_linking_unlink_from_collection_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus light_linking_unlink_from_collection_exec(bContext *C, wmOperator *op)
 {
   Main *bmain = CTX_data_main(C);
 
@@ -264,7 +264,7 @@ void OBJECT_OT_light_linking_unlink_from_collection(wmOperatorType *ot)
   ot->description = "Remove this object or collection from the light linking collection";
   ot->idname = "OBJECT_OT_light_linking_unlink_from_collection";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = light_linking_unlink_from_collection_exec;
   ot->poll = ED_operator_object_active_editable;
 

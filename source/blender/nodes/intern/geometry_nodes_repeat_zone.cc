@@ -16,6 +16,8 @@
 
 #include "DEG_depsgraph_query.hh"
 
+#include "FN_lazy_function_graph_executor.hh"
+
 namespace blender::nodes {
 
 using bke::SocketValueVariant;
@@ -33,9 +35,9 @@ class RepeatBodyNodeExecuteWrapper : public lf::GraphExecutorNodeExecuteWrapper 
 
   void execute_node(const lf::FunctionNode &node,
                     lf::Params &params,
-                    const lf::Context &context) const
+                    const lf::Context &context) const override
   {
-    GeoNodesLFUserData &user_data = *static_cast<GeoNodesLFUserData *>(context.user_data);
+    GeoNodesUserData &user_data = *static_cast<GeoNodesUserData *>(context.user_data);
     const int iteration = lf_body_nodes_->index_of_try(const_cast<lf::FunctionNode *>(&node));
     const LazyFunction &fn = node.function();
     if (iteration == -1) {
@@ -47,12 +49,12 @@ class RepeatBodyNodeExecuteWrapper : public lf::GraphExecutorNodeExecuteWrapper 
     /* Setup context for the loop body evaluation. */
     bke::RepeatZoneComputeContext body_compute_context{
         user_data.compute_context, *repeat_output_bnode_, iteration};
-    GeoNodesLFUserData body_user_data = user_data;
+    GeoNodesUserData body_user_data = user_data;
     body_user_data.compute_context = &body_compute_context;
     body_user_data.log_socket_values = should_log_socket_values_for_context(
         user_data, body_compute_context.hash());
 
-    GeoNodesLFLocalUserData body_local_user_data{body_user_data};
+    GeoNodesLocalUserData body_local_user_data{body_user_data};
     lf::Context body_context{context.storage, &body_user_data, &body_local_user_data};
     fn.execute(params, body_context);
   }
@@ -69,7 +71,7 @@ class RepeatZoneSideEffectProvider : public lf::GraphExecutorSideEffectProvider 
   Vector<const lf::FunctionNode *> get_nodes_with_side_effects(
       const lf::Context &context) const override
   {
-    GeoNodesLFUserData &user_data = *static_cast<GeoNodesLFUserData *>(context.user_data);
+    GeoNodesUserData &user_data = *static_cast<GeoNodesUserData *>(context.user_data);
     const GeoNodesCallData &call_data = *user_data.call_data;
     if (!call_data.side_effect_nodes) {
       return {};
@@ -119,13 +121,13 @@ class LazyFunctionForRepeatZone : public LazyFunction {
                             const ZoneBodyFunction &body_fn)
       : btree_(btree),
         zone_(zone),
-        repeat_output_bnode_(*zone.output_node),
+        repeat_output_bnode_(*zone.output_node()),
         zone_info_(zone_info),
         body_fn_(body_fn)
   {
     debug_name_ = "Repeat Zone";
 
-    initialize_zone_wrapper(zone, zone_info, body_fn, inputs_, outputs_);
+    initialize_zone_wrapper(zone, zone_info, body_fn, true, inputs_, outputs_);
     /* Iterations input is always used. */
     inputs_[zone_info.indices.inputs.main[0]].usage = lf::ValueUsage::Used;
   }
@@ -148,8 +150,8 @@ class LazyFunctionForRepeatZone : public LazyFunction {
   {
     const ScopedNodeTimer node_timer{context, repeat_output_bnode_};
 
-    auto &user_data = *static_cast<GeoNodesLFUserData *>(context.user_data);
-    auto &local_user_data = *static_cast<GeoNodesLFLocalUserData *>(context.local_user_data);
+    auto &user_data = *static_cast<GeoNodesUserData *>(context.user_data);
+    auto &local_user_data = *static_cast<GeoNodesLocalUserData *>(context.local_user_data);
 
     const NodeGeometryRepeatOutput &node_storage = *static_cast<const NodeGeometryRepeatOutput *>(
         repeat_output_bnode_.storage);
@@ -189,8 +191,8 @@ class LazyFunctionForRepeatZone : public LazyFunction {
   void initialize_execution_graph(lf::Params &params,
                                   RepeatEvalStorage &eval_storage,
                                   const NodeGeometryRepeatOutput &node_storage,
-                                  GeoNodesLFUserData &user_data,
-                                  GeoNodesLFLocalUserData &local_user_data) const
+                                  GeoNodesUserData &user_data,
+                                  GeoNodesLocalUserData &local_user_data) const
   {
     const int num_repeat_items = node_storage.items_num;
     const int num_border_links = body_fn_.indices.inputs.border_links.size();
@@ -198,6 +200,12 @@ class LazyFunctionForRepeatZone : public LazyFunction {
     /* Number of iterations to evaluate. */
     const int iterations = std::max<int>(
         0, params.get_input<SocketValueVariant>(zone_info_.indices.inputs.main[0]).get<int>());
+
+    if (iterations >= 10) {
+      /* Constructing and running the repeat zone has some overhead so that it's probably worth
+       * trying to do something else in the meantime already. */
+      lazy_threading::send_hint();
+    }
 
     /* Show a warning when the inspection index is out of range. */
     if (node_storage.inspection_index > 0) {
@@ -208,7 +216,7 @@ class LazyFunctionForRepeatZone : public LazyFunction {
           tree_logger->node_warnings.append(
               *tree_logger->allocator,
               {repeat_output_bnode_.identifier,
-               {geo_eval_log::NodeWarningType::Info, N_("Inspection index is out of range")}});
+               {NodeWarningType::Info, N_("Inspection index is out of range")}});
         }
       }
     }
@@ -247,7 +255,7 @@ class LazyFunctionForRepeatZone : public LazyFunction {
       lf_border_link_usage_or_nodes[i] = &lf_node;
     }
 
-    const bool use_index_values = zone_.input_node->output_socket(0).is_directly_linked();
+    const bool use_index_values = zone_.input_node()->output_socket(0).is_directly_linked();
 
     if (use_index_values) {
       eval_storage.index_values.reinitialize(iterations);
@@ -388,8 +396,7 @@ class LazyFunctionForRepeatZone : public LazyFunction {
         eval_storage.allocator);
 
     /* Log graph for debugging purposes. */
-    bNodeTree &btree_orig = *reinterpret_cast<bNodeTree *>(
-        DEG_get_original_id(const_cast<ID *>(&btree_.id)));
+    const bNodeTree &btree_orig = *DEG_get_original(&btree_);
     if (btree_orig.runtime->logged_zone_graphs) {
       std::lock_guard lock{btree_orig.runtime->logged_zone_graphs->mutex};
       btree_orig.runtime->logged_zone_graphs->graph_by_zone_id.lookup_or_add_cb(

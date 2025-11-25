@@ -14,12 +14,16 @@ namespace blender::nodes::node_geo_rotate_instances_cc {
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Geometry>("Instances").only_instances();
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
+  b.add_input<decl::Geometry>("Instances")
+      .only_instances()
+      .description("Instances to rotate individually");
+  b.add_output<decl::Geometry>("Instances").propagate_all().align_with_previous();
   b.add_input<decl::Bool>("Selection").default_value(true).hide_value().field_on_all();
   b.add_input<decl::Rotation>("Rotation").field_on_all();
   b.add_input<decl::Vector>("Pivot Point").subtype(PROP_TRANSLATION).field_on_all();
   b.add_input<decl::Bool>("Local Space").default_value(true).field_on_all();
-  b.add_output<decl::Geometry>("Instances").propagate_all();
 }
 
 static void rotate_instances(GeoNodeExecParams &params, bke::Instances &instances)
@@ -100,7 +104,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

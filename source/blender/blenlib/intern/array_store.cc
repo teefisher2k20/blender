@@ -93,13 +93,16 @@
 
 #include "MEM_guardedalloc.h"
 
+#include "BLI_assert.h"
 #include "BLI_listbase.h"
+#include "BLI_map.hh"
 #include "BLI_mempool.h"
+#include "BLI_utildefines.h"
 
 #include "BLI_array_store.h" /* Own include. */
 #include "BLI_ghash.h"       /* Only for #BLI_array_store_is_valid. */
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 struct BChunkList;
 
@@ -178,13 +181,13 @@ struct BChunkList;
  */
 #define USE_HASH_TABLE_KEY_CACHE
 #ifdef USE_HASH_TABLE_KEY_CACHE
-#  define HASH_TABLE_KEY_UNSET ((hash_key)-1)
-#  define HASH_TABLE_KEY_FALLBACK ((hash_key)-2)
+#  define HASH_TABLE_KEY_UNSET ((hash_key) - 1)
+#  define HASH_TABLE_KEY_FALLBACK ((hash_key) - 2)
 #endif
 
 /**
  * Ensure duplicate entries aren't added to temporary hash table
- * needed for arrays where many values match (an array of booleans all true/false for e.g.).
+ * needed for arrays where many values match (e.g. an array of booleans all true/false).
  *
  * Without this, a huge number of duplicates are added a single bucket, making hash lookups slow.
  * While de-duplication adds some cost, it's only performed with other chunks in the same bucket
@@ -365,7 +368,7 @@ static BChunk *bchunk_new(BArrayMemory *bs_mem, const uchar *data, const size_t 
 
 static BChunk *bchunk_new_copydata(BArrayMemory *bs_mem, const uchar *data, const size_t data_len)
 {
-  uchar *data_copy = static_cast<uchar *>(MEM_mallocN(data_len, __func__));
+  uchar *data_copy = MEM_malloc_arrayN<uchar>(data_len, __func__);
   memcpy(data_copy, data, data_len);
   return bchunk_new(bs_mem, data_copy, data_len);
 }
@@ -374,7 +377,7 @@ static void bchunk_decref(BArrayMemory *bs_mem, BChunk *chunk)
 {
   BLI_assert(chunk->users > 0);
   if (chunk->users == 1) {
-    MEM_freeN((void *)chunk->data);
+    MEM_freeN(chunk->data);
     BLI_mempool_free(bs_mem->chunk, chunk);
   }
   else {
@@ -490,7 +493,7 @@ static void bchunk_list_ensure_min_size_last(const BArrayInfo *info,
         chunk_list->chunk_refs.last = cref->prev;
         chunk_list->chunk_refs_len -= 1;
 
-        uchar *data_merge = static_cast<uchar *>(MEM_mallocN(data_merge_len, __func__));
+        uchar *data_merge = MEM_malloc_arrayN<uchar>(data_merge_len, __func__);
         memcpy(data_merge, chunk_prev->data, chunk_prev->data_len);
         memcpy(&data_merge[chunk_prev->data_len], chunk_curr->data, chunk_curr->data_len);
 
@@ -512,8 +515,8 @@ static void bchunk_list_ensure_min_size_last(const BArrayInfo *info,
         /* Merge and split. */
         const size_t data_prev_len = split;
         const size_t data_curr_len = data_merge_len - split;
-        uchar *data_prev = static_cast<uchar *>(MEM_mallocN(data_prev_len, __func__));
-        uchar *data_curr = static_cast<uchar *>(MEM_mallocN(data_curr_len, __func__));
+        uchar *data_prev = MEM_malloc_arrayN<uchar>(data_prev_len, __func__);
+        uchar *data_curr = MEM_malloc_arrayN<uchar>(data_curr_len, __func__);
 
         if (data_prev_len <= chunk_prev->data_len) {
           const size_t data_curr_shrink_len = chunk_prev->data_len - data_prev_len;
@@ -642,7 +645,7 @@ static void bchunk_list_append_data(const BArrayInfo *info,
         cref->link->data_len = data_merge_len;
       }
       else {
-        uchar *data_merge = static_cast<uchar *>(MEM_mallocN(data_merge_len, __func__));
+        uchar *data_merge = MEM_malloc_arrayN<uchar>(data_merge_len, __func__);
         memcpy(data_merge, chunk_prev->data, chunk_prev->data_len);
         memcpy(&data_merge[chunk_prev->data_len], data, data_len);
         cref->link = bchunk_new(bs_mem, data_merge, data_merge_len);
@@ -1262,8 +1265,7 @@ static BChunkList *bchunk_list_from_data_merge(const BArrayInfo *info,
 #ifdef USE_HASH_TABLE_ACCUMULATE
     size_t i_table_start = i_prev;
     const size_t table_hash_array_len = (data_len - i_prev) / info->chunk_stride;
-    hash_key *table_hash_array = static_cast<hash_key *>(
-        MEM_mallocN(sizeof(*table_hash_array) * table_hash_array_len, __func__));
+    hash_key *table_hash_array = MEM_malloc_arrayN<hash_key>(table_hash_array_len, __func__);
     hash_array_from_data(info, &data[i_prev], data_len - i_prev, table_hash_array);
 
     hash_accum(table_hash_array, table_hash_array_len, info->accum_steps);
@@ -1276,21 +1278,19 @@ static BChunkList *bchunk_list_from_data_merge(const BArrayInfo *info,
     const uint chunk_list_reference_remaining_len = (chunk_list_reference->chunk_refs_len -
                                                      chunk_list_reference_skip_len) +
                                                     1;
-    BTableRef *table_ref_stack = static_cast<BTableRef *>(
-        MEM_mallocN(chunk_list_reference_remaining_len * sizeof(BTableRef), __func__));
+    BTableRef *table_ref_stack = MEM_malloc_arrayN<BTableRef>(chunk_list_reference_remaining_len,
+                                                              __func__);
     uint table_ref_stack_n = 0;
 
     const size_t table_len = chunk_list_reference_remaining_len * BCHUNK_HASH_TABLE_MUL;
-    BTableRef **table = static_cast<BTableRef **>(
-        MEM_callocN(table_len * sizeof(*table), __func__));
+    BTableRef **table = MEM_calloc_arrayN<BTableRef *>(table_len, __func__);
 
     /* Table_make - inline
      * include one matching chunk, to allow for repeating values. */
     {
 #ifdef USE_HASH_TABLE_ACCUMULATE
       const size_t hash_store_len = info->accum_read_ahead_len;
-      hash_key *hash_store = static_cast<hash_key *>(
-          MEM_mallocN(sizeof(hash_key) * hash_store_len, __func__));
+      hash_key *hash_store = MEM_malloc_arrayN<hash_key>(hash_store_len, __func__);
 #endif
 
       const BChunkRef *cref;
@@ -1495,7 +1495,7 @@ BArrayStore *BLI_array_store_create(uint stride, uint chunk_count)
 {
   BLI_assert(stride > 0 && chunk_count > 0);
 
-  BArrayStore *bs = MEM_cnew<BArrayStore>(__func__);
+  BArrayStore *bs = MEM_callocN<BArrayStore>(__func__);
 
   bs->info.chunk_stride = stride;
   // bs->info.chunk_count = chunk_count;
@@ -1555,7 +1555,7 @@ static void array_store_free_data(BArrayStore *bs)
     BLI_mempool_iternew(bs->memory.chunk, &iter);
     while ((chunk = static_cast<BChunk *>(BLI_mempool_iterstep(&iter)))) {
       BLI_assert(chunk->users > 0);
-      MEM_freeN((void *)chunk->data);
+      MEM_freeN(chunk->data);
     }
   }
 
@@ -1654,7 +1654,7 @@ BArrayState *BLI_array_store_state_add(BArrayStore *bs,
 
   chunk_list->users += 1;
 
-  BArrayState *state = MEM_cnew<BArrayState>(__func__);
+  BArrayState *state = MEM_callocN<BArrayState>(__func__);
   state->chunk_list = chunk_list;
 
   BLI_addtail(&bs->states, state);
@@ -1684,7 +1684,7 @@ void BLI_array_store_state_remove(BArrayStore *bs, BArrayState *state)
   MEM_freeN(state);
 }
 
-size_t BLI_array_store_state_size_get(BArrayState *state)
+size_t BLI_array_store_state_size_get(const BArrayState *state)
 {
   return state->chunk_list->total_expanded_size;
 }
@@ -1707,7 +1707,7 @@ void BLI_array_store_state_data_get(const BArrayState *state, void *data)
   }
 }
 
-void *BLI_array_store_state_data_get_alloc(BArrayState *state, size_t *r_data_len)
+void *BLI_array_store_state_data_get_alloc(const BArrayState *state, size_t *r_data_len)
 {
   void *data = MEM_mallocN(state->chunk_list->total_expanded_size, __func__);
   BLI_array_store_state_data_get(state, data);
@@ -1774,52 +1774,35 @@ bool BLI_array_store_is_valid(BArrayStore *bs)
   /* Check User Count & Lost References
    * ---------------------------------- */
   {
-    GHashIterator gh_iter;
-
-#define GHASH_PTR_ADD_USER(gh, pt) \
-  { \
-    void **val; \
-    if (BLI_ghash_ensure_p((gh), (pt), &val)) { \
-      *((int *)val) += 1; \
-    } \
-    else { \
-      *((int *)val) = 1; \
-    } \
-  } \
-  ((void)0)
-
     /* Count chunk_list's. */
-    GHash *chunk_list_map = BLI_ghash_ptr_new(__func__);
-    GHash *chunk_map = BLI_ghash_ptr_new(__func__);
+    blender::Map<BChunkList *, int> chunk_list_map;
+    blender::Map<BChunk *, int> chunk_map;
 
     int totrefs = 0;
     LISTBASE_FOREACH (BArrayState *, state, &bs->states) {
-      GHASH_PTR_ADD_USER(chunk_list_map, state->chunk_list);
+      chunk_list_map.lookup_or_add(state->chunk_list, 0)++;
     }
-    GHASH_ITER (gh_iter, chunk_list_map) {
-      const BChunkList *chunk_list = static_cast<const BChunkList *>(
-          BLI_ghashIterator_getKey(&gh_iter));
-      const int users = POINTER_AS_INT(BLI_ghashIterator_getValue(&gh_iter));
+    for (const auto &item : chunk_list_map.items()) {
+      const BChunkList *chunk_list = item.key;
+      const int users = item.value;
       if (!(chunk_list->users == users)) {
         ok = false;
         goto user_finally;
       }
     }
-    if (!(BLI_mempool_len(bs->memory.chunk_list) == int(BLI_ghash_len(chunk_list_map)))) {
+    if (!(BLI_mempool_len(bs->memory.chunk_list) == chunk_list_map.size())) {
       ok = false;
       goto user_finally;
     }
 
     /* Count chunk's. */
-    GHASH_ITER (gh_iter, chunk_list_map) {
-      const BChunkList *chunk_list = static_cast<const BChunkList *>(
-          BLI_ghashIterator_getKey(&gh_iter));
+    for (const BChunkList *chunk_list : chunk_list_map.keys()) {
       LISTBASE_FOREACH (const BChunkRef *, cref, &chunk_list->chunk_refs) {
-        GHASH_PTR_ADD_USER(chunk_map, cref->link);
+        chunk_map.lookup_or_add(cref->link, 0)++;
         totrefs += 1;
       }
     }
-    if (!(BLI_mempool_len(bs->memory.chunk) == int(BLI_ghash_len(chunk_map)))) {
+    if (!(BLI_mempool_len(bs->memory.chunk) == chunk_map.size())) {
       ok = false;
       goto user_finally;
     }
@@ -1828,22 +1811,17 @@ bool BLI_array_store_is_valid(BArrayStore *bs)
       goto user_finally;
     }
 
-    GHASH_ITER (gh_iter, chunk_map) {
-      const BChunk *chunk = static_cast<const BChunk *>(BLI_ghashIterator_getKey(&gh_iter));
-      const int users = POINTER_AS_INT(BLI_ghashIterator_getValue(&gh_iter));
+    for (const auto &item : chunk_map.items()) {
+      const BChunk *chunk = item.key;
+      const int users = item.value;
       if (!(chunk->users == users)) {
         ok = false;
         goto user_finally;
       }
     }
-
-#undef GHASH_PTR_ADD_USER
-
-  user_finally:
-    BLI_ghash_free(chunk_list_map, nullptr, nullptr);
-    BLI_ghash_free(chunk_map, nullptr, nullptr);
   }
 
+user_finally:
   return ok;
   /* TODO: dangling pointer checks. */
 }

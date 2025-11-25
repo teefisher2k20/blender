@@ -2,11 +2,14 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "DNA_pointcloud_types.h"
+
 #include "BKE_curves.hh"
 #include "BKE_grease_pencil.hh"
 #include "BKE_instances.hh"
 #include "BKE_mesh.hh"
-#include "BKE_pointcloud.hh"
+
+#include "FN_multi_function_builder.hh"
 
 #include "node_geometry_util.hh"
 
@@ -14,11 +17,13 @@ namespace blender::nodes::node_geo_set_position_cc {
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Geometry>("Geometry");
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
+  b.add_input<decl::Geometry>("Geometry").description("Points to modify the positions of");
+  b.add_output<decl::Geometry>("Geometry").propagate_all().align_with_previous();
   b.add_input<decl::Bool>("Selection").default_value(true).hide_value().field_on_all();
-  b.add_input<decl::Vector>("Position").implicit_field_on_all(implicit_field_inputs::position);
+  b.add_input<decl::Vector>("Position").implicit_field_on_all(NODE_DEFAULT_INPUT_POSITION_FIELD);
   b.add_input<decl::Vector>("Offset").subtype(PROP_TRANSLATION).field_on_all();
-  b.add_output<decl::Geometry>("Geometry").propagate_all();
 }
 
 static const auto &get_add_fn()
@@ -65,12 +70,12 @@ static void set_curves_position(bke::CurvesGeometry &curves,
   fields.append(position_field);
 
   if (attributes.contains("handle_right") && attributes.contains("handle_left")) {
-    fn::Field<float3> delta(fn::FieldOperation::Create(
-        get_sub_fn(), {position_field, bke::AttributeFieldInput::Create<float3>("position")}));
+    fn::Field<float3> delta(fn::FieldOperation::from(
+        get_sub_fn(), {position_field, bke::AttributeFieldInput::from<float3>("position")}));
     for (const StringRef name : {"handle_left", "handle_right"}) {
       attribute_names.append(name);
-      fields.append(Field<float3>(fn::FieldOperation::Create(
-          get_add_fn(), {bke::AttributeFieldInput::Create<float3>(name), delta})));
+      fields.append(Field<float3>(fn::FieldOperation::from(
+          get_add_fn(), {bke::AttributeFieldInput::from<float3>(name), delta})));
     }
   }
 
@@ -125,9 +130,9 @@ static void node_geo_exec(GeoNodeExecParams params)
   GeometrySet geometry = params.extract_input<GeometrySet>("Geometry");
   const Field<bool> selection_field = params.extract_input<Field<bool>>("Selection");
   const fn::Field<float3> position_field(
-      fn::FieldOperation::Create(get_add_fn(),
-                                 {params.extract_input<Field<float3>>("Position"),
-                                  params.extract_input<Field<float3>>("Offset")}));
+      fn::FieldOperation::from(get_add_fn(),
+                               {params.extract_input<Field<float3>>("Position"),
+                                params.extract_input<Field<float3>>("Offset")}));
 
   if (Mesh *mesh = geometry.get_mesh_for_write()) {
     set_points_position(mesh->attributes_for_write(),
@@ -135,9 +140,9 @@ static void node_geo_exec(GeoNodeExecParams params)
                         selection_field,
                         position_field);
   }
-  if (PointCloud *point_cloud = geometry.get_pointcloud_for_write()) {
-    set_points_position(point_cloud->attributes_for_write(),
-                        bke::PointCloudFieldContext(*point_cloud),
+  if (PointCloud *pointcloud = geometry.get_pointcloud_for_write()) {
+    set_points_position(pointcloud->attributes_for_write(),
+                        bke::PointCloudFieldContext(*pointcloud),
                         selection_field,
                         position_field);
   }
@@ -169,7 +174,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

@@ -8,10 +8,6 @@
  * \ingroup bke
  */
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 struct AnimationEvalContext;
 struct ChannelDriver;
 struct DriverTarget;
@@ -140,8 +136,10 @@ typedef enum eDriverVariablePropertyResult {
   DRIVER_VAR_PROPERTY_FALLBACK,
   /** The target property could not be resolved. */
   DRIVER_VAR_PROPERTY_INVALID,
-  /** The property was resolved (output parameters are set),
-   *  but the array index is out of bounds. */
+  /**
+   * The property was resolved (output parameters are set),
+   * but the array index is out of bounds.
+   */
   DRIVER_VAR_PROPERTY_INVALID_INDEX
 } eDriverVariablePropertyResult;
 
@@ -185,7 +183,3 @@ float evaluate_driver(struct PathResolvedRNA *anim_rna,
                       struct ChannelDriver *driver,
                       struct ChannelDriver *driver_orig,
                       const struct AnimationEvalContext *anim_eval_context);
-
-#ifdef __cplusplus
-}
-#endif

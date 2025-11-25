@@ -8,8 +8,7 @@
 
 #pragma once
 
-#include "BLI_sys_types.h"
-#include "BLI_utildefines.h"
+#include "BLI_assert.h"
 
 struct bTheme;
 
@@ -40,7 +39,14 @@ BLI_STATIC_ASSERT(sizeof(BIFIconID_Static) <= sizeof(BIFIconID),
 #define TH_UNDEFINED -1
 
 enum ThemeColorID {
+  TH_NONE,
+  TH_BLACK,
+  TH_WHITE,
   TH_REDALERT,
+  TH_ERROR,
+  TH_WARNING,
+  TH_INFO,
+  TH_SUCCESS,
 
   TH_THEMEUI,
   /* Common colors among spaces. */
@@ -51,10 +57,15 @@ enum ThemeColorID {
   TH_TEXT,
   TH_TEXT_HI,
   TH_TITLE,
+
+  /* Tabs. */
+  TH_TAB_TEXT,
+  TH_TAB_TEXT_HI,
   TH_TAB_ACTIVE,
   TH_TAB_INACTIVE,
   TH_TAB_BACK,
   TH_TAB_OUTLINE,
+  TH_TAB_OUTLINE_ACTIVE,
 
   TH_HEADER,
   TH_HEADER_TEXT,
@@ -64,10 +75,8 @@ enum ThemeColorID {
   TH_PANEL_HEADER,
   TH_PANEL_BACK,
   TH_PANEL_SUB_BACK,
-
-  TH_BUTBACK,
-  TH_BUTBACK_TEXT,
-  TH_BUTBACK_TEXT_HI,
+  TH_PANEL_OUTLINE,
+  TH_PANEL_ACTIVE,
 
   TH_SHADE1,
   TH_SHADE2,
@@ -93,8 +102,6 @@ enum ThemeColorID {
   TH_EDGE,
   TH_EDGE_SELECT, /* Stands for edge selection, not edge select mode. */
   TH_EDGE_MODE_SELECT,
-  TH_EDGE_SEAM,
-  TH_EDGE_FACESEL,
   TH_FACE,
   TH_FACE_SELECT, /* Stands for face selection, not face select mode. */
   TH_FACE_MODE_SELECT,
@@ -104,15 +111,14 @@ enum ThemeColorID {
   TH_NORMAL,
   TH_VNORMAL,
   TH_LNORMAL,
-  TH_FACE_DOT,
   TH_FACEDOT_SIZE,
   TH_CFRAME,
   TH_FRAME_BEFORE,
   TH_FRAME_AFTER,
   TH_TIME_SCRUB_BACKGROUND,
+  TH_TIME_SCRUB_TEXT,
   TH_TIME_MARKER_LINE,
   TH_TIME_MARKER_LINE_SELECTED,
-  TH_TIME_KEYFRAME,
   TH_TIME_GP_KEYFRAME,
   TH_NURB_ULINE,
   TH_NURB_VLINE,
@@ -131,9 +137,6 @@ enum ThemeColorID {
   TH_HANDLE_SEL_ALIGN,
   TH_HANDLE_SEL_AUTOCLAMP,
 
-  TH_ACTIVE_SPLINE,
-  TH_ACTIVE_VERT, /* equivalent of TH_EDITMESH_ACTIVE for splines */
-
   TH_SYNTAX_B,
   TH_SYNTAX_V,
   TH_SYNTAX_R,
@@ -151,6 +154,12 @@ enum ThemeColorID {
 
   TH_STRIP,
   TH_STRIP_SELECT,
+
+  TH_CHANNEL,
+  TH_CHANNEL_SELECT,
+
+  TH_LONGKEY,
+  TH_LONGKEY_SELECT,
 
   TH_KEYTYPE_KEYFRAME, /* KEYTYPES */
   TH_KEYTYPE_KEYFRAME_SELECT,
@@ -174,15 +183,14 @@ enum ThemeColorID {
   TH_EMPTY,
 
   TH_NODE,
+  TH_NODE_OUTLINE,
   TH_NODE_INPUT,
   TH_NODE_OUTPUT,
   TH_NODE_COLOR,
   TH_NODE_FILTER,
   TH_NODE_VECTOR,
   TH_NODE_TEXTURE,
-  TH_NODE_PATTERN,
   TH_NODE_SCRIPT,
-  TH_NODE_LAYOUT,
   TH_NODE_SHADER,
   TH_NODE_INTERFACE,
   TH_NODE_CONVERTER,
@@ -196,6 +204,7 @@ enum ThemeColorID {
   TH_NODE_ZONE_SIMULATION,
   TH_NODE_ZONE_REPEAT,
   TH_NODE_ZONE_FOREACH_GEOMETRY_ELEMENT,
+  TH_NODE_ZONE_CLOSURE,
   TH_SIMULATED_FRAMES,
 
   TH_CONSOLE_OUTPUT,
@@ -222,13 +231,13 @@ enum ThemeColorID {
   TH_SEQ_TEXT_CURSOR,
   TH_SEQ_SELECTED_TEXT,
 
-  TH_EDGE_SHARP,
   TH_EDITMESH_ACTIVE,
 
   TH_HANDLE_VERTEX,
   TH_HANDLE_VERTEX_SELECT,
   TH_HANDLE_VERTEX_SIZE,
 
+  TH_GP_WIRE_EDIT,
   TH_GP_VERTEX,
   TH_GP_VERTEX_SELECT,
   TH_GP_VERTEX_SIZE,
@@ -236,10 +245,10 @@ enum ThemeColorID {
   TH_DOPESHEET_CHANNELOB,
   TH_DOPESHEET_CHANNELSUBOB,
   TH_DOPESHEET_IPOLINE,
+  TH_DOPESHEET_IPOCONST,
+  TH_DOPESHEET_IPOOTHER,
 
   TH_PREVIEW_BACK,
-
-  TH_EDGE_CREASE,
 
   TH_DRAWEXTRA_EDGELEN,
   TH_DRAWEXTRA_EDGEANG,
@@ -270,13 +279,7 @@ enum ThemeColorID {
   TH_STITCH_PREVIEW_UNSTITCHABLE,
   TH_STITCH_PREVIEW_ACTIVE,
 
-  TH_PAINT_CURVE_HANDLE,
-  TH_PAINT_CURVE_PIVOT,
-
   TH_UV_SHADOW,
-
-  TH_FREESTYLE_EDGE_MARK,
-  TH_FREESTYLE_FACE_MARK,
 
   TH_MATCH,            /* highlight color for search matches */
   TH_SELECT_HIGHLIGHT, /* highlight color for selected outliner item */
@@ -288,9 +291,10 @@ enum ThemeColorID {
 
   TH_SKIN_ROOT,
 
-  TH_ANIM_ACTIVE,        /* active action */
-  TH_ANIM_INACTIVE,      /* no active action */
-  TH_ANIM_PREVIEW_RANGE, /* preview range overlay */
+  TH_ANIM_ACTIVE,            /* active action */
+  TH_ANIM_INACTIVE,          /* no active action */
+  TH_ANIM_PREVIEW_RANGE,     /* preview range overlay */
+  TH_ANIM_SCENE_STRIP_RANGE, /* scene strip range overlay */
 
   TH_ICON_SCENE,
   TH_ICON_COLLECTION,
@@ -331,6 +335,8 @@ enum ThemeColorID {
   TH_AXIS_Y,
   TH_AXIS_Z,
 
+  TH_AXIS_W, /* W (quaternion and axis-angle rotations) */
+
   TH_GIZMO_HI,
   TH_GIZMO_PRIMARY,
   TH_GIZMO_SECONDARY,
@@ -342,11 +348,8 @@ enum ThemeColorID {
 
   TH_INFO_SELECTED,
   TH_INFO_SELECTED_TEXT,
-  TH_INFO_ERROR,
   TH_INFO_ERROR_TEXT,
-  TH_INFO_WARNING,
   TH_INFO_WARNING_TEXT,
-  TH_INFO_INFO,
   TH_INFO_INFO_TEXT,
   TH_INFO_DEBUG,
   TH_INFO_DEBUG_TEXT,
@@ -361,8 +364,11 @@ enum ThemeColorID {
   TH_METADATA_BG,
   TH_METADATA_TEXT,
 
-  TH_EDGE_BEVEL,
-  TH_VERTEX_BEVEL,
+  TH_BEVEL,
+  TH_CREASE,
+  TH_SEAM,
+  TH_SHARP,
+  TH_FREESTYLE,
 };
 
 /* Specific defines per space should have higher define values. */
@@ -462,6 +468,13 @@ void UI_GetThemeColorType4ubv(int colorid, int spacetype, unsigned char col[4]);
  * Get theme color for coloring monochrome icons.
  */
 bool UI_GetIconThemeColor4ubv(int colorid, unsigned char col[4]);
+
+/**
+ * Get four color values, range 0.0-1.0, blended between two other float color pointers,
+ * complete with offset for the alpha component.
+ */
+void UI_GetColorPtrBlendAlpha4fv(
+    const float cp1[4], const float cp2[4], float fac, float alphaoffset, float r_col[4]);
 
 /**
  * Shade a 3 byte color (same as UI_GetColorPtrBlendShade3ubv with 0.0 factor).

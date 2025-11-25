@@ -9,8 +9,6 @@
 #include "BKE_context.hh"
 #include "BKE_mask.h"
 
-#include "DNA_scene_types.h"
-
 #include "WM_api.hh"
 #include "WM_types.hh"
 
@@ -35,7 +33,7 @@ bool ED_maskedit_poll(bContext *C)
       case SPACE_CLIP:
         return ED_space_clip_maskedit_poll(C);
       case SPACE_SEQ:
-        return ED_space_sequencer_maskedit_poll(C);
+        return blender::ed::vse::maskedit_poll(C);
       case SPACE_IMAGE:
         return ED_space_image_maskedit_poll(C);
     }
@@ -51,7 +49,7 @@ bool ED_maskedit_visible_splines_poll(bContext *C)
       case SPACE_CLIP:
         return ED_space_clip_maskedit_visible_splines_poll(C);
       case SPACE_SEQ:
-        return ED_space_sequencer_maskedit_poll(C);
+        return blender::ed::vse::maskedit_poll(C);
       case SPACE_IMAGE:
         return ED_space_image_maskedit_visible_splines_poll(C);
     }
@@ -67,7 +65,7 @@ bool ED_maskedit_mask_poll(bContext *C)
       case SPACE_CLIP:
         return ED_space_clip_maskedit_mask_poll(C);
       case SPACE_SEQ:
-        return ED_space_sequencer_maskedit_mask_poll(C);
+        return blender::ed::vse::maskedit_mask_poll(C);
       case SPACE_IMAGE:
         return ED_space_image_maskedit_mask_poll(C);
     }
@@ -83,7 +81,7 @@ bool ED_maskedit_mask_visible_splines_poll(bContext *C)
       case SPACE_CLIP:
         return ED_space_clip_maskedit_mask_visible_splines_poll(C);
       case SPACE_SEQ:
-        return ED_space_sequencer_maskedit_mask_poll(C);
+        return blender::ed::vse::maskedit_mask_poll(C);
       case SPACE_IMAGE:
         return ED_space_image_maskedit_mask_visible_splines_poll(C);
     }

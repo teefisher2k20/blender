@@ -6,10 +6,10 @@
  * \ingroup ply
  */
 
+#include "BKE_attribute.h"
 #include "BKE_attribute.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_mesh.hh"
-#include "BKE_mesh_runtime.hh"
 
 #include "GEO_mesh_merge_by_distance.hh"
 
@@ -100,6 +100,8 @@ Mesh *convert_ply_to_mesh(PlyData &data, const PLYImportParams &params)
       uv_map.span[i] = data.uv_coordinates[data.face_vertices[i]];
     }
     uv_map.finish();
+    mesh->uv_maps_active_set("UVMap");
+    mesh->uv_maps_default_set("UVMap");
   }
 
   /* If we have custom vertex normals, set them
@@ -116,7 +118,7 @@ Mesh *convert_ply_to_mesh(PlyData &data, const PLYImportParams &params)
       attributes.add<float3>(
           "normal",
           bke::AttrDomain::Point,
-          bke::AttributeInitVArray(VArray<float3>::ForSpan(data.vertex_normals)));
+          bke::AttributeInitVArray(VArray<float3>::from_span(data.vertex_normals)));
     }
   }
   else {
@@ -129,7 +131,7 @@ Mesh *convert_ply_to_mesh(PlyData &data, const PLYImportParams &params)
     for (const PlyCustomAttribute &attr : data.vertex_custom_attr) {
       attributes.add<float>(attr.name,
                             bke::AttrDomain::Point,
-                            bke::AttributeInitVArray(VArray<float>::ForSpan(attr.data)));
+                            bke::AttributeInitVArray(VArray<float>::from_span(attr.data)));
     }
   }
 
@@ -142,7 +144,7 @@ Mesh *convert_ply_to_mesh(PlyData &data, const PLYImportParams &params)
 #ifndef NDEBUG
     verbose_validate = true;
 #endif
-    BKE_mesh_validate(mesh, verbose_validate, false);
+    bke::mesh_validate(*mesh, verbose_validate);
   }
 
   if (set_custom_normals_for_verts) {

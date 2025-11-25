@@ -82,9 +82,6 @@ class LookupWarpGrid {
   // This will tag the grid for update without re-computing it.
   void Reset();
 
-  // Set number of threads used for threaded buffer distortion/undistortion.
-  void SetThreads(int threads);
-
  private:
   // This structure contains an offset in both x,y directions
   // in an optimized way sawing some bytes per pixel in the memory.
@@ -120,9 +117,6 @@ class LookupWarpGrid {
 
   // Overscan of the image being processed by this grid.
   double overscan_;
-
-  // Number of threads which will be used for buffer istortion/undistortion.
-  int threads_;
 };
 
 }  // namespace internal
@@ -159,9 +153,6 @@ class CameraIntrinsics {
 
   // Set principal point in pixels.
   void SetPrincipalPoint(double cx, double cy);
-
-  // Set number of threads used for threaded buffer distortion/undistortion.
-  void SetThreads(int threads);
 
   // Convert image space coordinates to normalized.
   void ImageSpaceToNormalized(double image_x,
@@ -398,6 +389,8 @@ class NukeCameraIntrinsics : public CameraIntrinsics {
   enum {
     OFFSET_K1,
     OFFSET_K2,
+    OFFSET_P1,
+    OFFSET_P2,
 
     // This defines the size of array which we need to have in order
     // to store all the coefficients.
@@ -413,9 +406,14 @@ class NukeCameraIntrinsics : public CameraIntrinsics {
 
   double k1() const { return parameters_[OFFSET_K1]; }
   double k2() const { return parameters_[OFFSET_K2]; }
+  double p1() const { return parameters_[OFFSET_P1]; }
+  double p2() const { return parameters_[OFFSET_P2]; }
 
   // Set radial distortion coeffcients.
-  void SetDistortion(double k1, double k2);
+  void SetRadialDistortion(double k1, double k2);
+
+  // Set tangential distortion coeffcients.
+  void SetTangentialDistortion(double p1, double p2);
 
   // Apply camera intrinsics to the normalized point to get image coordinates.
   //

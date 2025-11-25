@@ -13,14 +13,13 @@
 /* XXX could become UserPref */
 #define FSMENU_RECENT_MAX 10
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /**
  * Inserts a new fsmenu entry with the given \a path.
  * Duplicate entries are not added.
  * \param flag: Options for inserting the entry.
+ *
+ * \note The existence of `path` is *intentionally* not accessed,
+ * see inline code-comments for details.
  */
 void fsmenu_insert_entry(struct FSMenu *fsmenu,
                          enum FSMenuCategory category,
@@ -28,9 +27,6 @@ void fsmenu_insert_entry(struct FSMenu *fsmenu,
                          const char *name,
                          int icon,
                          enum FSMenuInsert flag);
-
-/** Refresh 'valid' status of given menu entry */
-void fsmenu_entry_refresh_valid(struct FSMenuEntry *fsentry);
 
 /** Return whether the entry was created by the user and can be saved and deleted */
 short fsmenu_can_save(struct FSMenu *fsmenu, enum FSMenuCategory category, int idx);
@@ -56,14 +52,7 @@ void fsmenu_free(void);
 /** Refresh system directory menu */
 void fsmenu_refresh_system_category(struct FSMenu *fsmenu);
 
-/** Refresh 'valid' status of all menu entries */
-void fsmenu_refresh_bookmarks_status(struct wmWindowManager *wm, struct FSMenu *fsmenu);
-
 /** Get active index based on given directory. */
 int fsmenu_get_active_indices(struct FSMenu *fsmenu,
                               enum FSMenuCategory category,
                               const char *dir);
-
-#ifdef __cplusplus
-}
-#endif

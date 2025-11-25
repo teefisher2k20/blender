@@ -289,7 +289,7 @@ bool BM_vert_is_edge_pair_manifold(const BMVert *v) ATTR_WARN_UNUSED_RESULT ATTR
  *
  * \return true when only 2 verts are found.
  */
-bool BM_vert_edge_pair(BMVert *v, BMEdge **r_e_a, BMEdge **r_e_b);
+bool BM_vert_edge_pair(const BMVert *v, BMEdge **r_e_a, BMEdge **r_e_b);
 /**
  * Return true if the vertex is connected to _any_ faces.
  *
@@ -381,7 +381,7 @@ float BM_loop_calc_face_angle(const BMLoop *l) ATTR_WARN_UNUSED_RESULT ATTR_NONN
 /**
  * \brief BM_loop_calc_face_normal
  *
- * Calculate the normal at this loop corner or fallback to the face normal on straight lines.
+ * Calculate the normal at this loop corner or fall back to the face normal on straight lines.
  *
  * \param l: The loop to calculate the normal at
  * \param r_normal: Resulting normal
@@ -397,7 +397,7 @@ float BM_loop_calc_face_normal_safe(const BMLoop *l, float r_normal[3]) ATTR_NON
 /**
  * \brief BM_loop_calc_face_normal
  *
- * Calculate the normal at this loop corner or fallback to the face normal on straight lines.
+ * Calculate the normal at this loop corner or fall back to the face normal on straight lines.
  *
  * \param l: The loop to calculate the normal at.
  * \param epsilon_sq: Value to avoid numeric errors (1e-5f works well).
@@ -430,7 +430,7 @@ void BM_loop_calc_face_direction(const BMLoop *l, float r_dir[3]);
 /**
  * \brief BM_loop_calc_face_tangent
  *
- * Calculate the tangent at this loop corner or fallback to the face normal on straight lines.
+ * Calculate the tangent at this loop corner or fall back to the face normal on straight lines.
  * This vector always points inward into the face.
  *
  * \param l: The loop to calculate the tangent at
@@ -639,7 +639,7 @@ BMVert *BM_edge_share_vert(BMEdge *e1, BMEdge *e2) ATTR_WARN_UNUSED_RESULT ATTR_
 /**
  * \brief Return the Loop Shared by Edge and Vert
  *
- * Finds the loop used which uses \a  in face loop \a l
+ * Finds the loop used which uses \a v in face loop \a l
  *
  * \note this function takes a loop rather than an edge
  * so we can select the face that the loop should be from.
@@ -777,4 +777,4 @@ int BM_mesh_calc_edge_groups_as_arrays(BMesh *bm,
 /* Not really any good place to put this. */
 float bmesh_subd_falloff_calc(int falloff, float val) ATTR_WARN_UNUSED_RESULT;
 
-#include "bmesh_query_inline.hh"
+#include "bmesh_query_inline.hh" /* IWYU pragma: export */

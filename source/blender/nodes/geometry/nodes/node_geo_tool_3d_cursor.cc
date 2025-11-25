@@ -4,8 +4,6 @@
 
 #include "BLI_math_matrix.hh"
 
-#include "BKE_scene.hh"
-
 #include "node_geometry_util.hh"
 
 namespace blender::nodes::node_geo_tool_3d_cursor_cc {
@@ -47,7 +45,7 @@ static void node_register()
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.gather_link_search_ops = search_link_ops_for_tool_node;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

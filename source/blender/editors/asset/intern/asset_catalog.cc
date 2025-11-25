@@ -9,14 +9,12 @@
 #include "AS_asset_library.hh"
 
 #include "AS_asset_catalog.hh"
-#include "AS_asset_catalog_tree.hh"
 
 #include "BKE_main.hh"
 
 #include "BLI_string_utils.hh"
 
 #include "RNA_access.hh"
-#include "RNA_prototypes.hh"
 
 #include "ED_asset_catalog.hh"
 
@@ -32,27 +30,20 @@ bool catalogs_read_only(const AssetLibrary &library)
   return catalog_service.is_read_only();
 }
 
-struct CatalogUniqueNameFnData {
-  const AssetCatalogService &catalog_service;
-  StringRef parent_path;
-};
-
-static bool catalog_name_exists_fn(void *arg, const char *name)
-{
-  CatalogUniqueNameFnData &fn_data = *static_cast<CatalogUniqueNameFnData *>(arg);
-  AssetCatalogPath fullpath = AssetCatalogPath(fn_data.parent_path) / name;
-  return fn_data.catalog_service.find_catalog_by_path(fullpath);
-}
-
 static std::string catalog_name_ensure_unique(AssetCatalogService &catalog_service,
                                               StringRefNull name,
                                               StringRef parent_path)
 {
-  CatalogUniqueNameFnData fn_data = {catalog_service, parent_path};
-
   char unique_name[MAX_NAME] = "";
   BLI_uniquename_cb(
-      catalog_name_exists_fn, &fn_data, name.c_str(), '.', unique_name, sizeof(unique_name));
+      [&](const StringRef check_name) {
+        AssetCatalogPath fullpath = AssetCatalogPath(parent_path) / check_name;
+        return catalog_service.find_catalog_by_path(fullpath);
+      },
+      name.c_str(),
+      '.',
+      unique_name,
+      sizeof(unique_name));
 
   return unique_name;
 }
@@ -170,6 +161,28 @@ void catalogs_save_from_main_path(AssetLibrary *library, const Main *bmain)
    * an undo step. */
   catalog_service.undo_push();
   catalog_service.write_to_disk(bmain->filepath);
+}
+
+void catalogs_save_from_asset_reference(AssetLibrary &library, const AssetWeakReference &reference)
+{
+  asset_system::AssetCatalogService &catalog_service = library.catalog_service();
+  if (catalog_service.is_read_only()) {
+    return;
+  }
+
+  char asset_full_path_buffer[1024 + MAX_ID_NAME /*FILE_MAX_LIBEXTRA*/];
+  char *file_path = nullptr;
+  AS_asset_full_path_explode_from_weak_ref(
+      &reference, asset_full_path_buffer, &file_path, nullptr, nullptr);
+  if (!file_path) {
+    BLI_assert_unreachable();
+    return;
+  }
+
+  /* Since writing to disk also means loading any on-disk changes, it may be a good idea to store
+   * an undo step. */
+  catalog_service.undo_push();
+  catalog_service.write_to_disk(file_path);
 }
 
 void catalogs_set_save_catalogs_when_file_is_saved(const bool should_save)

@@ -76,7 +76,6 @@ ccl_device float svm_ao(
     ray.self.prim = sd->prim;
     ray.self.light_object = OBJECT_NONE;
     ray.self.light_prim = PRIM_NONE;
-    ray.self.light = LAMP_NONE;
     ray.dP = differential_zero_compact();
     ray.dD = differential_zero_compact();
 
@@ -125,6 +124,7 @@ ccl_device_noinline
   {
     float dist = stack_load_float_default(stack, dist_offset, node.w);
     float3 normal = stack_valid(normal_offset) ? stack_load_float3(stack, normal_offset) : sd->N;
+    normal = safe_normalize(normal);
 
 #  ifdef __KERNEL_OPTIX__
     ao = optixDirectCall<float>(0, kg, state, sd, normal, dist, samples, flags);

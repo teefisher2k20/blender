@@ -6,47 +6,72 @@
  * \ingroup cmpnodes
  */
 
-#include "BLI_math_base.hh"
+#include "MEM_guardedalloc.h"
+
 #include "BLI_math_vector.hh"
 #include "BLI_math_vector_types.hh"
 
 #include "GPU_shader.hh"
 #include "GPU_texture.hh"
 
-#include "UI_interface.hh"
-#include "UI_resources.hh"
+#include "DNA_node_types.h"
 
+#include "RNA_enum_types.hh"
+
+#include "BKE_node.hh"
+
+#include "COM_algorithm_sample_pixel.hh"
+#include "COM_domain.hh"
 #include "COM_node_operation.hh"
 #include "COM_utilities.hh"
 
 #include "node_composite_util.hh"
 
-/* **************** Map UV  ******************** */
-
 namespace blender::nodes::node_composite_map_uv_cc {
 
 static void cmp_node_map_uv_declare(NodeDeclarationBuilder &b)
 {
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
+
   b.add_input<decl::Color>("Image")
       .default_value({1.0f, 1.0f, 1.0f, 1.0f})
-      .compositor_realization_options(CompositorInputRealizationOptions::None);
+      .hide_value()
+      .compositor_realization_mode(CompositorInputRealizationMode::Transforms)
+      .structure_type(StructureType::Dynamic);
+  b.add_output<decl::Color>("Image").structure_type(StructureType::Dynamic).align_with_previous();
+
   b.add_input<decl::Vector>("UV")
       .default_value({1.0f, 0.0f, 0.0f})
       .min(0.0f)
       .max(1.0f)
-      .compositor_domain_priority(0);
-  b.add_output<decl::Color>("Image");
-}
+      .description(
+          "The UV coordinates at which to sample the texture. The Z component is assumed to "
+          "contain an alpha channel")
+      .structure_type(StructureType::Dynamic);
 
-static void node_composit_buts_map_uv(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
-{
-  uiItemR(layout, ptr, "filter_type", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
-  uiItemR(layout, ptr, "alpha", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+  PanelDeclarationBuilder &sampling_panel = b.add_panel("Sampling").default_closed(true);
+  sampling_panel.add_input<decl::Menu>("Interpolation")
+      .default_value(CMP_NODE_INTERPOLATION_BILINEAR)
+      .static_items(rna_enum_node_compositor_interpolation_items)
+      .optional_label()
+      .description("Interpolation method");
+  sampling_panel.add_input<decl::Menu>("Extension X")
+      .default_value(CMP_NODE_EXTENSION_MODE_CLIP)
+      .static_items(rna_enum_node_compositor_extension_items)
+      .optional_label()
+      .description("The extension mode applied to the X axis");
+  sampling_panel.add_input<decl::Menu>("Extension Y")
+      .default_value(CMP_NODE_EXTENSION_MODE_CLIP)
+      .static_items(rna_enum_node_compositor_extension_items)
+      .optional_label()
+      .description("The extension mode applied to the Y axis");
 }
 
 static void node_composit_init_map_uv(bNodeTree * /*ntree*/, bNode *node)
 {
-  node->custom2 = CMP_NODE_MAP_UV_FILTERING_ANISOTROPIC;
+  NodeMapUVData *data = MEM_callocN<NodeMapUVData>(__func__);
+  node->storage = data;
 }
 
 using namespace blender::compositor;
@@ -57,8 +82,16 @@ class MapUVOperation : public NodeOperation {
 
   void execute() override
   {
-    if (get_input("Image").is_single_value()) {
-      get_input("Image").pass_through(get_result("Image"));
+    const Result &input = this->get_input("Image");
+    if (input.is_single_value()) {
+      Result &output = this->get_result("Image");
+      output.share_data(input);
+      return;
+    }
+
+    const Result &input_uv = this->get_input("UV");
+    if (input_uv.is_single_value()) {
+      this->execute_single();
       return;
     }
 
@@ -72,26 +105,26 @@ class MapUVOperation : public NodeOperation {
 
   void execute_gpu()
   {
-    GPUShader *shader = context().get_shader(get_shader_name());
+    const Interpolation interpolation = this->get_interpolation();
+    gpu::Shader *shader = context().get_shader(this->get_shader_name(interpolation));
     GPU_shader_bind(shader);
 
-    const bool nearest_neighbour = get_nearest_neighbour();
-    if (!nearest_neighbour) {
-      GPU_shader_uniform_1f(
-          shader, "gradient_attenuation_factor", get_gradient_attenuation_factor());
-    }
-
     const Result &input_image = get_input("Image");
-    if (nearest_neighbour) {
-      GPU_texture_mipmap_mode(input_image, false, false);
-      GPU_texture_anisotropic_filter(input_image, false);
+    if (interpolation == Interpolation::Anisotropic) {
+      GPU_texture_anisotropic_filter(input_image, true);
+      GPU_texture_mipmap_mode(input_image, true, true);
     }
     else {
-      GPU_texture_mipmap_mode(input_image, true, true);
-      GPU_texture_anisotropic_filter(input_image, true);
+      const bool use_bilinear = ELEM(
+          interpolation, Interpolation::Bilinear, Interpolation::Bicubic);
+      GPU_texture_filter_mode(input_image, use_bilinear);
     }
 
-    GPU_texture_extend_mode(input_image, GPU_SAMPLER_EXTEND_MODE_CLAMP_TO_BORDER);
+    GPU_texture_extend_mode_x(input_image,
+                              map_extension_mode_to_extend_mode(this->get_extension_mode_x()));
+    GPU_texture_extend_mode_y(input_image,
+                              map_extension_mode_to_extend_mode(this->get_extension_mode_y()));
+
     input_image.bind_as_texture(shader, "input_tx");
 
     const Result &input_uv = get_input("UV");
@@ -102,7 +135,7 @@ class MapUVOperation : public NodeOperation {
     output_image.allocate_texture(domain);
     output_image.bind_as_image(shader, "output_img");
 
-    compute_dispatch_threads_at_least(shader, domain.size);
+    compute_dispatch_threads_at_least(shader, domain.data_size);
 
     input_image.unbind_as_texture();
     input_uv.unbind_as_texture();
@@ -110,35 +143,47 @@ class MapUVOperation : public NodeOperation {
     GPU_shader_unbind();
   }
 
-  char const *get_shader_name()
+  char const *get_shader_name(const Interpolation &interpolation)
   {
-    return get_nearest_neighbour() ? "compositor_map_uv_nearest_neighbour" :
-                                     "compositor_map_uv_anisotropic";
+    switch (interpolation) {
+      case Interpolation::Anisotropic:
+        return "compositor_map_uv_anisotropic";
+      case Interpolation::Bicubic:
+        return "compositor_map_uv_bicubic";
+      case Interpolation::Bilinear:
+      case Interpolation::Nearest:
+        return "compositor_map_uv";
+    }
+
+    return "compositor_map_uv";
   }
 
   void execute_cpu()
   {
-    const Result &input_uv = get_input("UV");
-    if (input_uv.is_single_value()) {
-      this->execute_single_cpu();
-      return;
-    }
-
-    if (this->get_nearest_neighbour()) {
-      this->execute_cpu_nearest();
+    const Interpolation interpolation = this->get_interpolation();
+    if (interpolation == Interpolation::Anisotropic) {
+      this->execute_cpu_anisotropic();
     }
     else {
-      this->execute_cpu_anisotropic();
+      this->execute_cpu_interpolation(interpolation);
     }
   }
 
-  void execute_single_cpu()
+  void execute_single()
   {
+    const Interpolation interpolation = this->get_interpolation();
+    const ExtensionMode extension_mode_x = this->get_extension_mode_x();
+    const ExtensionMode extension_mode_y = this->get_extension_mode_y();
     const Result &input_uv = get_input("UV");
     const Result &input_image = get_input("Image");
 
-    float2 uv_coordinates = input_uv.get_single_value<float4>().xy();
-    float4 sampled_color = input_image.sample_nearest_zero(uv_coordinates);
+    float2 uv_coordinates = input_uv.get_single_value<float3>().xy();
+    float4 sampled_color = float4(sample_pixel(this->context(),
+                                               input_image,
+                                               interpolation,
+                                               extension_mode_x,
+                                               extension_mode_y,
+                                               uv_coordinates));
 
     /* The UV input is assumed to contain an alpha channel as its third channel, since the
      * UV coordinates might be defined in only a subset area of the UV texture as mentioned.
@@ -146,17 +191,19 @@ class MapUVOperation : public NodeOperation {
      * everywhere else, and alpha pre-multiplication is then performed. This format of having
      * an alpha channel in the UV coordinates is the format used by UV passes in render
      * engines, hence the mentioned logic. */
-    float alpha = input_uv.get_single_value<float4>().z;
+    float alpha = input_uv.get_single_value<float3>().z;
 
     float4 result = sampled_color * alpha;
 
     Result &output = get_result("Image");
     output.allocate_single_value();
-    output.set_single_value(result);
+    output.set_single_value(Color(result));
   }
 
-  void execute_cpu_nearest()
+  void execute_cpu_interpolation(const Interpolation &interpolation)
   {
+    const ExtensionMode extension_mode_x = this->get_extension_mode_x();
+    const ExtensionMode extension_mode_y = this->get_extension_mode_y();
     const Result &input_image = get_input("Image");
     const Result &input_uv = get_input("UV");
 
@@ -164,22 +211,21 @@ class MapUVOperation : public NodeOperation {
     Result &output_image = get_result("Image");
     output_image.allocate_texture(domain);
 
-    parallel_for(domain.size, [&](const int2 texel) {
-      float2 uv_coordinates = input_uv.load_pixel<float4>(texel).xy();
-
-      float4 sampled_color = input_image.sample_nearest_zero(uv_coordinates);
-
+    parallel_for(domain.data_size, [&](const int2 texel) {
+      float2 uv_coordinates = input_uv.load_pixel<float3>(texel).xy();
+      float4 sampled_color = float4(input_image.sample<Color>(
+          uv_coordinates, interpolation, extension_mode_x, extension_mode_y));
       /* The UV input is assumed to contain an alpha channel as its third channel, since the
        * UV coordinates might be defined in only a subset area of the UV texture as mentioned.
        * In that case, the alpha is typically opaque at the subset area and transparent
        * everywhere else, and alpha pre-multiplication is then performed. This format of having
        * an alpha channel in the UV coordinates is the format used by UV passes in render
        * engines, hence the mentioned logic. */
-      float alpha = input_uv.load_pixel<float4>(texel).z;
+      float alpha = input_uv.load_pixel<float3>(texel).z;
 
       float4 result = sampled_color * alpha;
 
-      output_image.store_pixel(texel, result);
+      output_image.store_pixel(texel, Color(result));
     });
   }
 
@@ -191,7 +237,6 @@ class MapUVOperation : public NodeOperation {
     const Domain domain = compute_domain();
     Result &output_image = get_result("Image");
     output_image.allocate_texture(domain);
-    const float gradient_attenuation_factor = this->get_gradient_attenuation_factor();
 
     /* In order to perform EWA sampling, we need to compute the partial derivative of the UV
      * coordinates along the x and y directions using a finite difference approximation. But in
@@ -199,8 +244,8 @@ class MapUVOperation : public NodeOperation {
      * the image in 2x2 blocks of pixels, where the derivatives are computed horizontally and
      * vertically across the 2x2 block such that odd texels use a forward finite difference
      * equation while even invocations use a backward finite difference equation. */
-    const int2 size = domain.size;
-    const int2 uv_size = input_uv.domain().size;
+    const int2 size = domain.data_size;
+    const int2 uv_size = input_uv.domain().data_size;
     parallel_for(math::divide_ceil(size, int2(2)), [&](const int2 base_texel) {
       const int x = base_texel.x * 2;
       const int y = base_texel.y * 2;
@@ -210,10 +255,10 @@ class MapUVOperation : public NodeOperation {
       const int2 upper_left_texel = int2(x, y + 1);
       const int2 upper_right_texel = int2(x + 1, y + 1);
 
-      const float2 lower_left_uv = input_uv.load_pixel<float4>(lower_left_texel).xy();
-      const float2 lower_right_uv = input_uv.load_pixel_extended<float4>(lower_right_texel).xy();
-      const float2 upper_left_uv = input_uv.load_pixel_extended<float4>(upper_left_texel).xy();
-      const float2 upper_right_uv = input_uv.load_pixel_extended<float4>(upper_right_texel).xy();
+      const float2 lower_left_uv = input_uv.load_pixel<float3>(lower_left_texel).xy();
+      const float2 lower_right_uv = input_uv.load_pixel_extended<float3>(lower_right_texel).xy();
+      const float2 upper_left_uv = input_uv.load_pixel_extended<float3>(upper_left_texel).xy();
+      const float2 upper_right_uv = input_uv.load_pixel_extended<float3>(upper_right_texel).xy();
 
       /* Compute the partial derivatives using finite difference. Divide by the input size since
        * sample_ewa_zero assumes derivatives with respect to texel coordinates. */
@@ -231,31 +276,17 @@ class MapUVOperation : public NodeOperation {
          * to utilize the anisotropic filtering capabilities of the sampler. */
         float4 sampled_color = input_image.sample_ewa_zero(coordinates, x_gradient, y_gradient);
 
-        /* The UV coordinates might be defined in only a subset area of the UV textures, in which
-         * case, the gradients would be infinite at the boundary of that area, which would
-         * produce erroneous results due to anisotropic filtering. To workaround this, we
-         * attenuate the result if its computed gradients are too high such that the result tends
-         * to zero when the magnitude of the gradients tends to one, that is when their sum tends
-         * to 2. One is chosen as the threshold because that's the maximum gradient magnitude
-         * when the boundary is the maximum sampler value of one and the out of bound values are
-         * zero. Additionally, the user supplied gradient attenuation factor can be used to
-         * control this attenuation or even disable it when it is zero, ranging between zero and
-         * one. */
-        float gradient_magnitude = (math::length(x_gradient) + math::length(y_gradient)) / 2.0f;
-        float gradient_attenuation = math::max(
-            0.0f, 1.0f - gradient_attenuation_factor * gradient_magnitude);
-
         /* The UV input is assumed to contain an alpha channel as its third channel, since the
          * UV coordinates might be defined in only a subset area of the UV texture as mentioned.
          * In that case, the alpha is typically opaque at the subset area and transparent
          * everywhere else, and alpha pre-multiplication is then performed. This format of having
          * an alpha channel in the UV coordinates is the format used by UV passes in render
          * engines, hence the mentioned logic. */
-        float alpha = input_uv.load_pixel<float4>(texel).z;
+        float alpha = input_uv.load_pixel<float3>(texel).z;
 
-        float4 result = sampled_color * gradient_attenuation * alpha;
+        float4 result = sampled_color * alpha;
 
-        output_image.store_pixel(texel, result);
+        output_image.store_pixel(texel, Color(result));
       };
 
       /* Compute each of the pixels in the 2x2 block, making sure to exempt out of bounds right
@@ -273,18 +304,60 @@ class MapUVOperation : public NodeOperation {
     });
   }
 
-  /* A factor that controls the attenuation of the result at the pixels where the gradients of
-   * the UV texture are too high, see the shader for more information. The factor ranges between
-   * zero and one, where it has no effect when it is zero and performs full attenuation when it
-   * is 1. */
-  float get_gradient_attenuation_factor()
+  Interpolation get_interpolation()
   {
-    return bnode().custom1 / 100.0f;
+    const Result &input = this->get_input("Interpolation");
+    const MenuValue default_menu_value = MenuValue(CMP_NODE_INTERPOLATION_BILINEAR);
+    const MenuValue menu_value = input.get_single_value_default(default_menu_value);
+    const CMPNodeInterpolation interpolation = static_cast<CMPNodeInterpolation>(menu_value.value);
+    switch (interpolation) {
+      case CMP_NODE_INTERPOLATION_NEAREST:
+        return Interpolation::Nearest;
+      case CMP_NODE_INTERPOLATION_BILINEAR:
+        return Interpolation::Bilinear;
+      case CMP_NODE_INTERPOLATION_BICUBIC:
+        return Interpolation::Bicubic;
+      case CMP_NODE_INTERPOLATION_ANISOTROPIC:
+        return Interpolation::Anisotropic;
+    }
+
+    return Interpolation::Nearest;
   }
 
-  bool get_nearest_neighbour()
+  ExtensionMode get_extension_mode_x()
   {
-    return bnode().custom2 == CMP_NODE_MAP_UV_FILTERING_NEAREST;
+    const Result &input = this->get_input("Extension X");
+    const MenuValue default_menu_value = MenuValue(CMP_NODE_EXTENSION_MODE_CLIP);
+    const MenuValue menu_value = input.get_single_value_default(default_menu_value);
+    const CMPExtensionMode extension_x = static_cast<CMPExtensionMode>(menu_value.value);
+    switch (extension_x) {
+      case CMP_NODE_EXTENSION_MODE_CLIP:
+        return ExtensionMode::Clip;
+      case CMP_NODE_EXTENSION_MODE_REPEAT:
+        return ExtensionMode::Repeat;
+      case CMP_NODE_EXTENSION_MODE_EXTEND:
+        return ExtensionMode::Extend;
+    }
+
+    return ExtensionMode::Clip;
+  }
+
+  ExtensionMode get_extension_mode_y()
+  {
+    const Result &input = this->get_input("Extension Y");
+    const MenuValue default_menu_value = MenuValue(CMP_NODE_EXTENSION_MODE_CLIP);
+    const MenuValue menu_value = input.get_single_value_default(default_menu_value);
+    const CMPExtensionMode extension_y = static_cast<CMPExtensionMode>(menu_value.value);
+    switch (extension_y) {
+      case CMP_NODE_EXTENSION_MODE_CLIP:
+        return ExtensionMode::Clip;
+      case CMP_NODE_EXTENSION_MODE_REPEAT:
+        return ExtensionMode::Repeat;
+      case CMP_NODE_EXTENSION_MODE_EXTEND:
+        return ExtensionMode::Extend;
+    }
+
+    return ExtensionMode::Clip;
   }
 };
 
@@ -295,7 +368,7 @@ static NodeOperation *get_compositor_operation(Context &context, DNode node)
 
 }  // namespace blender::nodes::node_composite_map_uv_cc
 
-void register_node_type_cmp_mapuv()
+static void register_node_type_cmp_mapuv()
 {
   namespace file_ns = blender::nodes::node_composite_map_uv_cc;
 
@@ -308,9 +381,11 @@ void register_node_type_cmp_mapuv()
   ntype.enum_name_legacy = "MAP_UV";
   ntype.nclass = NODE_CLASS_DISTORT;
   ntype.declare = file_ns::cmp_node_map_uv_declare;
-  ntype.draw_buttons = file_ns::node_composit_buts_map_uv;
   ntype.get_compositor_operation = file_ns::get_compositor_operation;
   ntype.initfunc = file_ns::node_composit_init_map_uv;
+  blender::bke::node_type_storage(
+      ntype, "NodeMapUVData", node_free_standard_storage, node_copy_standard_storage);
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
+NOD_REGISTER_NODE(register_node_type_cmp_mapuv)

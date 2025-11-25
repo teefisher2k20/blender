@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bke
+ */
+
 #pragma once
 
 #include "BLI_memory_counter_fwd.hh"
@@ -9,6 +13,8 @@
 #include "BKE_bake_data_block_map.hh"
 #include "BKE_geometry_set.hh"
 #include "BKE_volume_grid_fwd.hh"
+
+#include "NOD_geometry_nodes_list_fwd.hh"
 
 namespace blender::bke::bake {
 
@@ -97,7 +103,7 @@ class VolumeGridBakeItem : public BakeItem {
   std::unique_ptr<GVolumeGrid> grid;
 
   VolumeGridBakeItem(std::unique_ptr<GVolumeGrid> grid);
-  ~VolumeGridBakeItem();
+  ~VolumeGridBakeItem() override;
 
   void count_memory(MemoryCounter &memory) const override;
 };
@@ -111,7 +117,7 @@ class PrimitiveBakeItem : public BakeItem {
 
  public:
   PrimitiveBakeItem(const CPPType &type, const void *value);
-  ~PrimitiveBakeItem();
+  ~PrimitiveBakeItem() override;
 
   const void *value() const
   {
@@ -135,6 +141,44 @@ class StringBakeItem : public BakeItem {
   {
     return value_;
   }
+
+  void count_memory(MemoryCounter &memory) const override;
+};
+
+/**
+ * \note It's not possible to use #PrimitiveBakeItem for bundles in general, because the items in
+ * the bundle also have to be converted to their bakeable form. This is especially important when
+ * serializing the bake.
+ */
+class BundleBakeItem : public BakeItem {
+ public:
+  struct SocketValue {
+    std::string socket_idname;
+    std::unique_ptr<BakeItem> value;
+  };
+
+  struct InternalValue {
+    ImplicitSharingPtr<> value;
+  };
+
+  struct Item {
+    std::string key;
+    std::variant<SocketValue, InternalValue> value;
+  };
+
+  Vector<Item> items;
+};
+
+class ListBakeItem : public BakeItem {
+ public:
+  /* List of bake items for bundles which need additional preparation for baking. */
+  using BundleList = Vector<BundleBakeItem>;
+
+  std::variant<nodes::ListPtr, BundleList> value;
+
+  ListBakeItem(nodes::ListPtr list);
+  ListBakeItem(Vector<BundleBakeItem> &&items);
+  ~ListBakeItem() override;
 
   void count_memory(MemoryCounter &memory) const override;
 };

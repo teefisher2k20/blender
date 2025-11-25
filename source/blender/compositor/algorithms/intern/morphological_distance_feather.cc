@@ -6,7 +6,6 @@
 #include "BLI_math_vector_types.hh"
 
 #include "GPU_shader.hh"
-#include "GPU_texture.hh"
 
 #include "COM_algorithm_morphological_distance_feather.hh"
 #include "COM_context.hh"
@@ -68,7 +67,7 @@ static void morphological_distance_feather_pass(const Result &input,
 {
   /* Notice that the size is transposed, see the note on the horizontal pass method for more
    * information on the reasoning behind this. */
-  const int2 size = int2(output.domain().size.y, output.domain().size.x);
+  const int2 size = int2(output.domain().data_size.y, output.domain().data_size.x);
   parallel_for(size, [&](const int2 texel) {
     /* A value for accumulating the blur result. */
     float accumulated_value = 0.0f;
@@ -90,7 +89,7 @@ static void morphological_distance_feather_pass(const Result &input,
      * falloffs textures only store the weights and falloffs for the positive half, but since the
      * they are both symmetric, the same weights and falloffs are used for the negative half and we
      * compute both of their contributions. */
-    for (int i = 1; i < weights.weights_result.domain().size.x; i++) {
+    for (int i = 1; i < weights.weights_result.domain().data_size.x; i++) {
       float weight = weights.weights_result.load_pixel<float>(int2(i, 0));
       float falloff = weights.falloffs_result.load_pixel<float>(int2(i, 0));
 
@@ -143,7 +142,7 @@ static Result horizontal_pass_gpu(Context &context,
                                   const int distance,
                                   const int falloff_type)
 {
-  GPUShader *shader = context.get_shader(get_shader_name(distance));
+  gpu::Shader *shader = context.get_shader(get_shader_name(distance));
   GPU_shader_bind(shader);
 
   input.bind_as_texture(shader, "input_tx");
@@ -163,13 +162,13 @@ static Result horizontal_pass_gpu(Context &context,
    * spatial cache locality in the shader and to avoid having two separate shaders for each of
    * the passes. */
   const Domain domain = input.domain();
-  const int2 transposed_domain = int2(domain.size.y, domain.size.x);
+  const int2 transposed_domain = int2(domain.data_size.y, domain.data_size.x);
 
   Result output = context.create_result(ResultType::Float);
   output.allocate_texture(transposed_domain);
   output.bind_as_image(shader, "output_img");
 
-  compute_dispatch_threads_at_least(shader, domain.size);
+  compute_dispatch_threads_at_least(shader, domain.data_size);
 
   GPU_shader_unbind();
   input.unbind_as_texture();
@@ -198,7 +197,7 @@ static Result horizontal_pass_cpu(Context &context,
    * spatial cache locality in the shader and to avoid having two separate shaders for each of
    * the passes. */
   const Domain domain = input.domain();
-  const int2 transposed_domain = int2(domain.size.y, domain.size.x);
+  const int2 transposed_domain = int2(domain.data_size.y, domain.data_size.x);
 
   Result output = context.create_result(ResultType::Float);
   output.allocate_texture(transposed_domain);
@@ -231,7 +230,7 @@ static void vertical_pass_gpu(Context &context,
                               const int distance,
                               const int falloff_type)
 {
-  GPUShader *shader = context.get_shader(get_shader_name(distance));
+  gpu::Shader *shader = context.get_shader(get_shader_name(distance));
   GPU_shader_bind(shader);
 
   horizontal_pass_result.bind_as_texture(shader, "input_tx");
@@ -248,7 +247,7 @@ static void vertical_pass_gpu(Context &context,
 
   /* Notice that the domain is transposed, see the note on the horizontal pass function for more
    * information on the reasoning behind this. */
-  compute_dispatch_threads_at_least(shader, int2(domain.size.y, domain.size.x));
+  compute_dispatch_threads_at_least(shader, int2(domain.data_size.y, domain.data_size.x));
 
   GPU_shader_unbind();
   horizontal_pass_result.unbind_as_texture();

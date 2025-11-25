@@ -6,16 +6,12 @@
  * \ingroup RNA
  */
 
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 
-#include "BLI_utildefines.h"
-
 #include "RNA_define.hh"
 
-#include "DNA_anim_types.h"
 #include "DNA_scene_types.h"
 
 #include "ANIM_fcurve.hh"
@@ -24,9 +20,12 @@
 
 #ifdef RNA_RUNTIME
 
-#  include <stddef.h>
+#  include <cstddef>
 
 #  include "BKE_fcurve.hh"
+#  include "BKE_report.hh"
+
+#  include "WM_api.hh"
 
 static void rna_FCurve_convert_to_samples(FCurve *fcu, ReportList *reports, int start, int end)
 {
@@ -158,14 +157,12 @@ void RNA_api_fcurves(StructRNA *srna)
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
   parm = RNA_def_float(
       func, "step", 1, 0.01, FLT_MAX, "Step", "At which interval to add keys", 1, 16);
-  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_PYFUNC_OPTIONAL);
   RNA_def_enum(func,
                "remove",
                channel_bake_remove_options,
                int(blender::animrig::BakeCurveRemove::IN_RANGE),
                "Remove Options",
                "Choose which keys should be automatically removed by the bake");
-  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_PYFUNC_OPTIONAL);
 }
 
 void RNA_api_drivers(StructRNA * /*srna*/)

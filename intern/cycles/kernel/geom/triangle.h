@@ -12,11 +12,19 @@
 
 #include "kernel/globals.h"
 
+#include "kernel/geom/attribute.h"
 #include "kernel/geom/object.h"
 
-#include "util/color.h"
-
 CCL_NAMESPACE_BEGIN
+
+/* Evaluate a quantity at barycentric coordinates u, v, given the values at three triangle
+ * vertices. */
+template<typename T>
+ccl_device_inline T
+triangle_interpolate(const float u, const float v, const T f0, const T f1, const T f2)
+{
+  return (1.0f - u - v) * f0 + u * f1 + v * f2;
+}
 
 /* Normal on triangle. */
 ccl_device_inline float3 triangle_normal(KernelGlobals kg, ccl_private ShaderData *sd)
@@ -62,7 +70,7 @@ ccl_device_inline void triangle_point_normal(KernelGlobals kg,
   else {
     *Ng = normalize(cross(v1 - v0, v2 - v0));
   }
-  /* shader`*/
+  /* shader */
   *shader = kernel_data_fetch(tri_shader, prim);
 }
 
@@ -110,6 +118,34 @@ triangle_smooth_normal(KernelGlobals kg, const float3 Ng, const int prim, const 
   return is_zero(N) ? Ng : N;
 }
 
+/* Compute triangle normals at the hit position, and offsetted positions in x and y direction for
+ * bump mapping. */
+ccl_device_inline float3 triangle_smooth_normal(KernelGlobals kg,
+                                                const float3 Ng,
+                                                const int prim,
+                                                const float u,
+                                                float v,
+                                                const differential du,
+                                                const differential dv,
+                                                ccl_private float3 &N_x,
+                                                ccl_private float3 &N_y)
+{
+  /* Load triangle vertices. */
+  const uint3 tri_vindex = kernel_data_fetch(tri_vindex, prim);
+
+  const float3 n0 = kernel_data_fetch(tri_vnormal, tri_vindex.x);
+  const float3 n1 = kernel_data_fetch(tri_vnormal, tri_vindex.y);
+  const float3 n2 = kernel_data_fetch(tri_vnormal, tri_vindex.z);
+
+  const float3 N = safe_normalize(triangle_interpolate(u, v, n0, n1, n2));
+  N_x = safe_normalize(triangle_interpolate(u + du.dx, v + dv.dx, n0, n1, n2));
+  N_y = safe_normalize(triangle_interpolate(u + du.dy, v + dv.dy, n0, n1, n2));
+
+  N_x = is_zero(N_x) ? Ng : N_x;
+  N_y = is_zero(N_y) ? Ng : N_y;
+  return is_zero(N) ? Ng : N;
+}
+
 ccl_device_inline float3 triangle_smooth_normal_unnormalized(KernelGlobals kg,
                                                              const ccl_private ShaderData *sd,
                                                              const float3 Ng,
@@ -154,226 +190,89 @@ ccl_device_inline void triangle_dPdudv(KernelGlobals kg,
   *dPdv = (p2 - p0);
 }
 
-/* Reading attributes on various triangle elements */
-
-ccl_device float triangle_attribute_float(KernelGlobals kg,
-                                          const ccl_private ShaderData *sd,
-                                          const AttributeDescriptor desc,
-                                          ccl_private float *dx,
-                                          ccl_private float *dy)
+/* Partial derivative of f w.r.t. x, namely ∂f/∂x.
+ * f is a function of barycentric coordinates u, v, given by
+ *       f(u, v) = f1 * u + f2 * v + f0 * (1 - u - v),
+ * the derivatives are
+ *           ∂f/∂u = (f1 - f0), ∂f/∂v = (f2 - f0).
+ * The partial derivative in x is
+ *    ∂f/∂x = ∂f/∂u * ∂u/∂x + ∂f/∂v * ∂v/∂x
+ *          = (f1 - f0) * du.dx + (f2 - f0) * dv.dx. */
+template<typename T>
+ccl_device_inline T triangle_attribute_dfdx(const ccl_private differential &du,
+                                            const ccl_private differential &dv,
+                                            const ccl_private T &f0,
+                                            const ccl_private T &f1,
+                                            const ccl_private T &f2)
 {
-  if (desc.element & (ATTR_ELEMENT_VERTEX | ATTR_ELEMENT_VERTEX_MOTION | ATTR_ELEMENT_CORNER)) {
-    float f0;
-    float f1;
-    float f2;
-
-    if (desc.element & (ATTR_ELEMENT_VERTEX | ATTR_ELEMENT_VERTEX_MOTION)) {
-      const uint3 tri_vindex = kernel_data_fetch(tri_vindex, sd->prim);
-
-      f0 = kernel_data_fetch(attributes_float, desc.offset + tri_vindex.x);
-      f1 = kernel_data_fetch(attributes_float, desc.offset + tri_vindex.y);
-      f2 = kernel_data_fetch(attributes_float, desc.offset + tri_vindex.z);
-    }
-    else {
-      const int tri = desc.offset + sd->prim * 3;
-      f0 = kernel_data_fetch(attributes_float, tri + 0);
-      f1 = kernel_data_fetch(attributes_float, tri + 1);
-      f2 = kernel_data_fetch(attributes_float, tri + 2);
-    }
-
-#ifdef __RAY_DIFFERENTIALS__
-    if (dx) {
-      *dx = sd->du.dx * f1 + sd->dv.dx * f2 - (sd->du.dx + sd->dv.dx) * f0;
-    }
-    if (dy) {
-      *dy = sd->du.dy * f1 + sd->dv.dy * f2 - (sd->du.dy + sd->dv.dy) * f0;
-    }
-#endif
-
-    return sd->u * f1 + sd->v * f2 + (1.0f - sd->u - sd->v) * f0;
-  }
-#ifdef __RAY_DIFFERENTIALS__
-  if (dx) {
-    *dx = 0.0f;
-  }
-  if (dy) {
-    *dy = 0.0f;
-  }
-#endif
-
-  if (desc.element & (ATTR_ELEMENT_FACE | ATTR_ELEMENT_OBJECT | ATTR_ELEMENT_MESH)) {
-    const int offset = (desc.element == ATTR_ELEMENT_FACE) ? desc.offset + sd->prim : desc.offset;
-    return kernel_data_fetch(attributes_float, offset);
-  }
-  return 0.0f;
+  return du.dx * f1 + dv.dx * f2 - (du.dx + dv.dx) * f0;
 }
 
-ccl_device float2 triangle_attribute_float2(KernelGlobals kg,
-                                            const ccl_private ShaderData *sd,
-                                            const AttributeDescriptor desc,
-                                            ccl_private float2 *dx,
-                                            ccl_private float2 *dy)
+/* Partial derivative of f w.r.t. in x, namely ∂f/∂y, similarly computed as ∂f/∂x above. */
+template<typename T>
+ccl_device_inline T triangle_attribute_dfdy(const ccl_private differential &du,
+                                            const ccl_private differential &dv,
+                                            const ccl_private T &f0,
+                                            const ccl_private T &f1,
+                                            const ccl_private T &f2)
 {
-  if (desc.element & (ATTR_ELEMENT_VERTEX | ATTR_ELEMENT_VERTEX_MOTION | ATTR_ELEMENT_CORNER)) {
-    float2 f0;
-    float2 f1;
-    float2 f2;
-
-    if (desc.element & (ATTR_ELEMENT_VERTEX | ATTR_ELEMENT_VERTEX_MOTION)) {
-      const uint3 tri_vindex = kernel_data_fetch(tri_vindex, sd->prim);
-
-      f0 = kernel_data_fetch(attributes_float2, desc.offset + tri_vindex.x);
-      f1 = kernel_data_fetch(attributes_float2, desc.offset + tri_vindex.y);
-      f2 = kernel_data_fetch(attributes_float2, desc.offset + tri_vindex.z);
-    }
-    else {
-      const int tri = desc.offset + sd->prim * 3;
-      f0 = kernel_data_fetch(attributes_float2, tri + 0);
-      f1 = kernel_data_fetch(attributes_float2, tri + 1);
-      f2 = kernel_data_fetch(attributes_float2, tri + 2);
-    }
-
-#ifdef __RAY_DIFFERENTIALS__
-    if (dx) {
-      *dx = sd->du.dx * f1 + sd->dv.dx * f2 - (sd->du.dx + sd->dv.dx) * f0;
-    }
-    if (dy) {
-      *dy = sd->du.dy * f1 + sd->dv.dy * f2 - (sd->du.dy + sd->dv.dy) * f0;
-    }
-#endif
-
-    return sd->u * f1 + sd->v * f2 + (1.0f - sd->u - sd->v) * f0;
-  }
-#ifdef __RAY_DIFFERENTIALS__
-  if (dx) {
-    *dx = make_float2(0.0f, 0.0f);
-  }
-  if (dy) {
-    *dy = make_float2(0.0f, 0.0f);
-  }
-#endif
-
-  if (desc.element & (ATTR_ELEMENT_FACE | ATTR_ELEMENT_OBJECT | ATTR_ELEMENT_MESH)) {
-    const int offset = (desc.element == ATTR_ELEMENT_FACE) ? desc.offset + sd->prim : desc.offset;
-    return kernel_data_fetch(attributes_float2, offset);
-  }
-  return make_float2(0.0f, 0.0f);
+  return du.dy * f1 + dv.dy * f2 - (du.dy + dv.dy) * f0;
 }
 
-ccl_device float3 triangle_attribute_float3(KernelGlobals kg,
-                                            const ccl_private ShaderData *sd,
-                                            const AttributeDescriptor desc,
-                                            ccl_private float3 *dx,
-                                            ccl_private float3 *dy)
+/* Read attributes on various triangle elements, and compute the partial derivatives if requested.
+ */
+template<typename T>
+ccl_device dual<T> triangle_attribute(KernelGlobals kg,
+                                      const ccl_private ShaderData *sd,
+                                      const AttributeDescriptor desc,
+                                      const bool dx = false,
+                                      const bool dy = false)
 {
-  if (desc.element & (ATTR_ELEMENT_VERTEX | ATTR_ELEMENT_VERTEX_MOTION | ATTR_ELEMENT_CORNER)) {
-    float3 f0;
-    float3 f1;
-    float3 f2;
-
-    if (desc.element & (ATTR_ELEMENT_VERTEX | ATTR_ELEMENT_VERTEX_MOTION)) {
-      const uint3 tri_vindex = kernel_data_fetch(tri_vindex, sd->prim);
-
-      f0 = kernel_data_fetch(attributes_float3, desc.offset + tri_vindex.x);
-      f1 = kernel_data_fetch(attributes_float3, desc.offset + tri_vindex.y);
-      f2 = kernel_data_fetch(attributes_float3, desc.offset + tri_vindex.z);
-    }
-    else {
-      const int tri = desc.offset + sd->prim * 3;
-      f0 = kernel_data_fetch(attributes_float3, tri + 0);
-      f1 = kernel_data_fetch(attributes_float3, tri + 1);
-      f2 = kernel_data_fetch(attributes_float3, tri + 2);
-    }
-
-#ifdef __RAY_DIFFERENTIALS__
-    if (dx) {
-      *dx = sd->du.dx * f1 + sd->dv.dx * f2 - (sd->du.dx + sd->dv.dx) * f0;
-    }
-    if (dy) {
-      *dy = sd->du.dy * f1 + sd->dv.dy * f2 - (sd->du.dy + sd->dv.dy) * f0;
-    }
-#endif
-
-    return sd->u * f1 + sd->v * f2 + (1.0f - sd->u - sd->v) * f0;
-  }
-#ifdef __RAY_DIFFERENTIALS__
-  if (dx) {
-    *dx = make_float3(0.0f, 0.0f, 0.0f);
-  }
-  if (dy) {
-    *dy = make_float3(0.0f, 0.0f, 0.0f);
-  }
-#endif
-
-  if (desc.element & (ATTR_ELEMENT_FACE | ATTR_ELEMENT_OBJECT | ATTR_ELEMENT_MESH)) {
-    const int offset = (desc.element == ATTR_ELEMENT_FACE) ? desc.offset + sd->prim : desc.offset;
-    return kernel_data_fetch(attributes_float3, offset);
-  }
-  return make_float3(0.0f, 0.0f, 0.0f);
-}
-
-ccl_device float4 triangle_attribute_float4(KernelGlobals kg,
-                                            const ccl_private ShaderData *sd,
-                                            const AttributeDescriptor desc,
-                                            ccl_private float4 *dx,
-                                            ccl_private float4 *dy)
-{
+  dual<T> result;
   if (desc.element & (ATTR_ELEMENT_VERTEX | ATTR_ELEMENT_VERTEX_MOTION | ATTR_ELEMENT_CORNER |
                       ATTR_ELEMENT_CORNER_BYTE))
   {
-    float4 f0;
-    float4 f1;
-    float4 f2;
+    T f0;
+    T f1;
+    T f2;
 
     if (desc.element & (ATTR_ELEMENT_VERTEX | ATTR_ELEMENT_VERTEX_MOTION)) {
       const uint3 tri_vindex = kernel_data_fetch(tri_vindex, sd->prim);
 
-      f0 = kernel_data_fetch(attributes_float4, desc.offset + tri_vindex.x);
-      f1 = kernel_data_fetch(attributes_float4, desc.offset + tri_vindex.y);
-      f2 = kernel_data_fetch(attributes_float4, desc.offset + tri_vindex.z);
+      f0 = attribute_data_fetch<T>(kg, desc.offset + tri_vindex.x);
+      f1 = attribute_data_fetch<T>(kg, desc.offset + tri_vindex.y);
+      f2 = attribute_data_fetch<T>(kg, desc.offset + tri_vindex.z);
+    }
+    else if (desc.element == ATTR_ELEMENT_CORNER_BYTE) {
+      const int tri = desc.offset + sd->prim * 3;
+      f0 = attribute_data_fetch_bytecolor<T>(kg, tri + 0);
+      f1 = attribute_data_fetch_bytecolor<T>(kg, tri + 1);
+      f2 = attribute_data_fetch_bytecolor<T>(kg, tri + 2);
     }
     else {
       const int tri = desc.offset + sd->prim * 3;
-      if (desc.element == ATTR_ELEMENT_CORNER) {
-        f0 = kernel_data_fetch(attributes_float4, tri + 0);
-        f1 = kernel_data_fetch(attributes_float4, tri + 1);
-        f2 = kernel_data_fetch(attributes_float4, tri + 2);
-      }
-      else {
-        f0 = color_srgb_to_linear_v4(
-            color_uchar4_to_float4(kernel_data_fetch(attributes_uchar4, tri + 0)));
-        f1 = color_srgb_to_linear_v4(
-            color_uchar4_to_float4(kernel_data_fetch(attributes_uchar4, tri + 1)));
-        f2 = color_srgb_to_linear_v4(
-            color_uchar4_to_float4(kernel_data_fetch(attributes_uchar4, tri + 2)));
-      }
+      f0 = attribute_data_fetch<T>(kg, tri + 0);
+      f1 = attribute_data_fetch<T>(kg, tri + 1);
+      f2 = attribute_data_fetch<T>(kg, tri + 2);
     }
 
 #ifdef __RAY_DIFFERENTIALS__
     if (dx) {
-      *dx = sd->du.dx * f1 + sd->dv.dx * f2 - (sd->du.dx + sd->dv.dx) * f0;
+      result.dx = triangle_attribute_dfdx(sd->du, sd->dv, f0, f1, f2);
     }
     if (dy) {
-      *dy = sd->du.dy * f1 + sd->dv.dy * f2 - (sd->du.dy + sd->dv.dy) * f0;
+      result.dy = triangle_attribute_dfdy(sd->du, sd->dv, f0, f1, f2);
     }
 #endif
 
-    return sd->u * f1 + sd->v * f2 + (1.0f - sd->u - sd->v) * f0;
+    result.val = sd->u * f1 + sd->v * f2 + (1.0f - sd->u - sd->v) * f0;
+    return result;
   }
-#ifdef __RAY_DIFFERENTIALS__
-  if (dx) {
-    *dx = zero_float4();
-  }
-  if (dy) {
-    *dy = zero_float4();
-  }
-#endif
 
-  if (desc.element & (ATTR_ELEMENT_FACE | ATTR_ELEMENT_OBJECT | ATTR_ELEMENT_MESH)) {
-    const int offset = (desc.element == ATTR_ELEMENT_FACE) ? desc.offset + sd->prim : desc.offset;
-    return kernel_data_fetch(attributes_float4, offset);
+  if (desc.element == ATTR_ELEMENT_FACE) {
+    return dual<T>(attribute_data_fetch<T>(kg, desc.offset + sd->prim));
   }
-  return zero_float4();
+  return make_zero<dual<T>>();
 }
 
 CCL_NAMESPACE_END

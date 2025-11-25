@@ -491,13 +491,10 @@ template<typename T>
 /**
  * Returns true if matrix has inverted handedness.
  *
- * \note It doesn't use determinant(mat4x4) as only the 3x3 components are needed
- * when the matrix is used as a transformation to represent location/scale/rotation.
+ * \note It doesn't use determinant(mat4x4) as only the 3x3 components are needed assuming
+ * the matrix is used as a transformation to represent 3D location/scale/rotation.
  */
-template<typename T, int Size> [[nodiscard]] bool is_negative(const MatBase<T, Size, Size> &mat)
-{
-  return determinant(mat) < T(0);
-}
+template<typename T> [[nodiscard]] bool is_negative(const MatBase<T, 3, 3> &mat);
 template<typename T> [[nodiscard]] bool is_negative(const MatBase<T, 4, 4> &mat);
 
 /**
@@ -511,6 +508,22 @@ template<typename T, int NumCol, int NumRow>
   for (int i = 0; i < NumCol; i++) {
     for (int j = 0; j < NumRow; j++) {
       if (math::abs(a[i][j] - b[i][j]) > epsilon) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * Returns true if the matrix is exactly the identity matrix.
+ */
+template<typename T, int NumCol, int NumRow>
+[[nodiscard]] inline bool is_identity(const MatBase<T, NumCol, NumRow> &mat)
+{
+  for (int i = 0; i < NumCol; i++) {
+    for (int j = 0; j < NumRow; j++) {
+      if (mat[i][j] != (i != j ? 0.0f : 1.0f)) {
         return false;
       }
     }
@@ -964,7 +977,7 @@ template<typename T> QuaternionBase<T> normalized_to_quat_with_checks(const MatB
   if (UNLIKELY(!std::isfinite(det))) {
     return QuaternionBase<T>::identity();
   }
-  else if (UNLIKELY(det < T(0))) {
+  if (UNLIKELY(det < T(0))) {
     return normalized_to_quat_fast(-mat);
   }
   return normalized_to_quat_fast(mat);
@@ -1792,5 +1805,21 @@ extern template float4x4 perspective(
 }  // namespace projection
 
 /** \} */
+
+/**
+ * Transform normal vectors, maintaining their unit length status, but implementing some
+ * optimizations for identity matrix and uniform scaling.
+ */
+void transform_normals(const float3x3 &transform, MutableSpan<float3> normals);
+void transform_normals(Span<float3> src, const float3x3 &transform, MutableSpan<float3> dst);
+
+/** Transform point vectors with matrix multiplication, optionally using multi-threading. */
+void transform_points(const float4x4 &transform,
+                      MutableSpan<float3> points,
+                      bool use_threading = true);
+void transform_points(Span<float3> src,
+                      const float4x4 &transform,
+                      MutableSpan<float3> dst,
+                      bool use_threading = true);
 
 }  // namespace blender::math

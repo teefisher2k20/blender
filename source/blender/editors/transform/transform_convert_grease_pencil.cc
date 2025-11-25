@@ -9,16 +9,18 @@
 #include "ANIM_keyframing.hh"
 
 #include "BKE_context.hh"
+#include "BKE_curves_utils.hh"
+
+#include "BLI_index_mask_expression.hh"
 
 #include "DEG_depsgraph_query.hh"
-
-#include "BKE_curves_utils.hh"
 
 #include "ED_curves.hh"
 #include "ED_grease_pencil.hh"
 
 #include "transform.hh"
 #include "transform_convert.hh"
+#include "transform_snap.hh"
 
 /* -------------------------------------------------------------------- */
 /** \name Grease Pencil Transform Creation
@@ -39,22 +41,23 @@ static void createTransGreasePencilVerts(bContext *C, TransInfo *t)
   const bool is_scale_thickness = ((t->mode == TFM_CURVE_SHRINKFATTEN) ||
                                    (ts->gp_sculpt.flag & GP_SCULPT_SETT_FLAG_SCALE_THICKNESS));
 
-  Vector<int> handle_selection;
-
   int total_number_of_drawings = 0;
-  Vector<Vector<ed::greasepencil::MutableDrawingInfo>> all_drawings;
+  Vector<CurvesTransformData *> all_curves_transform_data;
   /* Count the number layers in all objects. */
   for (const int i : trans_data_contrainers.index_range()) {
     TransDataContainer &tc = trans_data_contrainers[i];
     GreasePencil &grease_pencil = *static_cast<GreasePencil *>(tc.obedit->data);
 
-    Vector<ed::greasepencil::MutableDrawingInfo> drawings =
-        ed::greasepencil::retrieve_editable_drawings_with_falloff(*scene, grease_pencil);
+    CurvesTransformData *curves_transform_data = curves::create_curves_transform_custom_data(
+        tc.custom.type);
 
-    if (blender::animrig::is_autokey_on(scene)) {
-      for (const int info_i : drawings.index_range()) {
-        blender::bke::greasepencil::Layer &target_layer = grease_pencil.layer(
-            drawings[info_i].layer_index);
+    curves_transform_data->drawings = ed::greasepencil::retrieve_editable_drawings_with_falloff(
+        *scene, grease_pencil);
+
+    if (animrig::is_autokey_on(scene)) {
+      for (const int info_i : curves_transform_data->drawings.index_range()) {
+        bke::greasepencil::Layer &target_layer = grease_pencil.layer(
+            curves_transform_data->drawings[info_i].layer_index);
         const int current_frame = scene->r.cfra;
         std::optional<int> start_frame = target_layer.start_frame_at(current_frame);
         if (start_frame.has_value() && (start_frame.value() != current_frame)) {
@@ -62,11 +65,12 @@ static void createTransGreasePencilVerts(bContext *C, TransInfo *t)
               target_layer, *target_layer.start_frame_at(current_frame), current_frame, false);
         }
       }
-      drawings = ed::greasepencil::retrieve_editable_drawings_with_falloff(*scene, grease_pencil);
+      curves_transform_data->drawings = ed::greasepencil::retrieve_editable_drawings_with_falloff(
+          *scene, grease_pencil);
     }
 
-    all_drawings.append(drawings);
-    total_number_of_drawings += drawings.size();
+    all_curves_transform_data.append(curves_transform_data);
+    total_number_of_drawings += curves_transform_data->drawings.size();
   }
 
   Array<Vector<IndexMask>> points_to_transform_per_attribute(total_number_of_drawings);
@@ -76,80 +80,74 @@ static void createTransGreasePencilVerts(bContext *C, TransInfo *t)
   /* Count selected elements per layer per object and create TransData structs. */
   for (const int i : trans_data_contrainers.index_range()) {
     TransDataContainer &tc = trans_data_contrainers[i];
-    CurvesTransformData *curves_transform_data = create_curves_transform_custom_data(
-        tc.custom.type);
+    CurvesTransformData &curves_transform_data = *all_curves_transform_data[i];
     tc.data_len = 0;
 
-    const Vector<ed::greasepencil::MutableDrawingInfo> drawings = all_drawings[i];
-    curves_transform_data->grease_pencil_falloffs.reinitialize(drawings.size());
+    const Span<ed::greasepencil::MutableDrawingInfo> drawings =
+        curves_transform_data.drawings.as_span();
+    curves_transform_data.grease_pencil_falloffs.reinitialize(drawings.size());
+
     for (ed::greasepencil::MutableDrawingInfo info : drawings) {
-      const bke::CurvesGeometry &curves = info.drawing.strokes();
+      bke::CurvesGeometry &curves = info.drawing.strokes_for_write();
       Span<StringRef> selection_attribute_names = ed::curves::get_curves_selection_attribute_names(
           curves);
       std::array<IndexMask, 3> selection_per_attribute;
 
       const IndexMask editable_points = ed::greasepencil::retrieve_editable_points(
-          *object, info.drawing, info.layer_index, curves_transform_data->memory);
+          *object, info.drawing, info.layer_index, curves_transform_data.memory);
       const IndexMask editable_strokes = ed::greasepencil::retrieve_editable_strokes(
-          *object, info.drawing, info.layer_index, curves_transform_data->memory);
-
-      for (const int attribute_i : selection_attribute_names.index_range()) {
-        const StringRef &selection_name = selection_attribute_names[attribute_i];
-        selection_per_attribute[attribute_i] = ed::curves::retrieve_selected_points(
-            curves, selection_name, curves_transform_data->memory);
-
-        /* Make sure only editable points are used. */
-        selection_per_attribute[attribute_i] = IndexMask::from_intersection(
-            selection_per_attribute[attribute_i], editable_points, curves_transform_data->memory);
-      }
+          *object, info.drawing, info.layer_index, curves_transform_data.memory);
 
       bezier_curves[layer_offset] = bke::curves::indices_for_type(curves.curve_types(),
                                                                   curves.curve_type_counts(),
                                                                   CURVE_TYPE_BEZIER,
                                                                   editable_strokes,
-                                                                  curves_transform_data->memory);
+                                                                  curves_transform_data.memory);
+      const OffsetIndices<int> points_by_curve = curves.points_by_curve();
+      const IndexMask bezier_points = IndexMask::from_ranges(
+          points_by_curve, bezier_curves[layer_offset], curves_transform_data.memory);
+
+      for (const int attribute_i : selection_attribute_names.index_range()) {
+        const StringRef &selection_name = selection_attribute_names[attribute_i];
+        selection_per_attribute[attribute_i] = ed::curves::retrieve_selected_points(
+            curves, selection_name, bezier_points, curves_transform_data.memory);
+
+        /* Make sure only editable points are used. */
+        selection_per_attribute[attribute_i] = IndexMask::from_intersection(
+            selection_per_attribute[attribute_i], editable_points, curves_transform_data.memory);
+      }
+
       /* Alter selection as in legacy curves bezt_select_to_transform_triple_flag(). */
-      if (!bezier_curves[layer_offset].is_empty()) {
-        const OffsetIndices<int> points_by_curve = curves.points_by_curve();
-        const VArray<int8_t> handle_types_left = curves.handle_types_left();
-        const VArray<int8_t> handle_types_right = curves.handle_types_right();
-
-        handle_selection.clear();
-        bezier_curves[layer_offset].foreach_index([&](const int bezier_index) {
-          for (const int point_i : points_by_curve[bezier_index]) {
-            if (selection_per_attribute[0].contains(point_i)) {
-              const HandleType type_left = HandleType(handle_types_left[point_i]);
-              const HandleType type_right = HandleType(handle_types_right[point_i]);
-              if (ELEM(type_left, BEZIER_HANDLE_AUTO, BEZIER_HANDLE_ALIGN) &&
-                  ELEM(type_right, BEZIER_HANDLE_AUTO, BEZIER_HANDLE_ALIGN))
-              {
-                handle_selection.append(point_i);
-              }
-            }
-          }
-        });
-
-        /* Select bezier handles that must be transformed if the main control point is selected. */
-        const IndexMask handle_selection_mask = IndexMask::from_indices(
-            handle_selection.as_span(), curves_transform_data->memory);
-        if (!handle_selection.is_empty()) {
-          selection_per_attribute[1] = IndexMask::from_union(
-              selection_per_attribute[1], handle_selection_mask, curves_transform_data->memory);
-          selection_per_attribute[2] = IndexMask::from_union(
-              selection_per_attribute[2], handle_selection_mask, curves_transform_data->memory);
+      if (!bezier_points.is_empty()) {
+        if (curves::update_handle_types_for_transform(
+                t->mode, selection_per_attribute, bezier_points, curves))
+        {
+          info.drawing.tag_topology_changed();
         }
+
+        index_mask::ExprBuilder builder;
+        const index_mask::Expr &selected_bezier_points = builder.intersect(
+            {&bezier_points, &selection_per_attribute[0]});
+
+        /* Select bezier handles that must be transformed because the control point is
+         * selected. */
+        selection_per_attribute[1] = evaluate_expression(
+            builder.merge({&selection_per_attribute[1], &selected_bezier_points}),
+            curves_transform_data.memory);
+        selection_per_attribute[2] = evaluate_expression(
+            builder.merge({&selection_per_attribute[2], &selected_bezier_points}),
+            curves_transform_data.memory);
       }
 
       if (use_proportional_edit) {
-        const IndexMask bezier_points = bke::curves::curve_to_point_selection(
-            curves.points_by_curve(), bezier_curves[layer_offset], curves_transform_data->memory);
-
-        tc.data_len += curves.points_num() + 2 * bezier_points.size();
-        points_to_transform_per_attribute[layer_offset].append(curves.points_range());
+        const IndexMask editable_bezier_points = IndexMask::from_intersection(
+            editable_points, bezier_points, curves_transform_data.memory);
+        tc.data_len += editable_points.size() + 2 * editable_bezier_points.size();
+        points_to_transform_per_attribute[layer_offset].append(editable_points);
 
         if (selection_attribute_names.size() > 1) {
-          points_to_transform_per_attribute[layer_offset].append(bezier_points);
-          points_to_transform_per_attribute[layer_offset].append(bezier_points);
+          points_to_transform_per_attribute[layer_offset].append(editable_bezier_points);
+          points_to_transform_per_attribute[layer_offset].append(editable_bezier_points);
         }
       }
       else {
@@ -164,8 +162,8 @@ static void createTransGreasePencilVerts(bContext *C, TransInfo *t)
     }
 
     if (tc.data_len > 0) {
-      tc.data = MEM_cnew_array<TransData>(tc.data_len, __func__);
-      curves_transform_data->positions.reinitialize(tc.data_len);
+      tc.data = MEM_calloc_arrayN<TransData>(tc.data_len, __func__);
+      curves_transform_data.positions.reinitialize(tc.data_len);
     }
     else {
       tc.custom.type.free_cb(t, &tc, &tc.custom.type);
@@ -182,11 +180,16 @@ static void createTransGreasePencilVerts(bContext *C, TransInfo *t)
     if (tc.data_len == 0) {
       continue;
     }
-    Object *object_eval = DEG_get_evaluated_object(depsgraph, tc.obedit);
+    Object *object_eval = DEG_get_evaluated(depsgraph, tc.obedit);
     GreasePencil &grease_pencil = *static_cast<GreasePencil *>(tc.obedit->data);
     Span<const bke::greasepencil::Layer *> layers = grease_pencil.layers();
 
-    const Vector<ed::greasepencil::MutableDrawingInfo> drawings = all_drawings[i];
+    CurvesTransformData &transform_data = *static_cast<CurvesTransformData *>(tc.custom.type.data);
+    const Span<ed::greasepencil::MutableDrawingInfo> drawings = transform_data.drawings.as_span();
+
+    transform_data.aligned_with_left.reinitialize(drawings.size());
+    transform_data.aligned_with_right.reinitialize(drawings.size());
+
     for (const int drawing : drawings.index_range()) {
       ed::greasepencil::MutableDrawingInfo info = drawings[drawing];
       const bke::greasepencil::Layer &layer = *layers[info.layer_index];
@@ -194,7 +197,7 @@ static void createTransGreasePencilVerts(bContext *C, TransInfo *t)
       bke::CurvesGeometry &curves = info.drawing.strokes_for_write();
       const bke::crazyspace::GeometryDeformation deformation =
           bke::crazyspace::get_evaluated_grease_pencil_drawing_deformation(
-              *CTX_data_depsgraph_pointer(C), *object, info.layer_index, info.frame_number);
+              *CTX_data_depsgraph_pointer(C), *object, info.drawing);
 
       std::optional<MutableSpan<float>> value_attribute;
       if (t->mode == TFM_GPENCIL_OPACITY) {
@@ -215,17 +218,20 @@ static void createTransGreasePencilVerts(bContext *C, TransInfo *t)
           tc.custom.type.data);
       curves_transform_data.grease_pencil_falloffs[drawing] = info.multi_frame_falloff;
       float &drawing_falloff = curves_transform_data.grease_pencil_falloffs[drawing];
-      curve_populate_trans_data_structs(*t,
-                                        tc,
-                                        curves,
-                                        layer_space_to_world_space,
-                                        deformation,
-                                        value_attribute,
-                                        points_to_transform_per_attribute[layer_offset],
-                                        affected_strokes,
-                                        use_connected_only,
-                                        bezier_curves[layer_offset],
-                                        &drawing_falloff);
+      curves::curve_populate_trans_data_structs(*t,
+                                                tc,
+                                                curves,
+                                                layer_space_to_world_space,
+                                                deformation,
+                                                value_attribute,
+                                                points_to_transform_per_attribute[layer_offset],
+                                                affected_strokes,
+                                                use_connected_only,
+                                                bezier_curves[layer_offset],
+                                                &drawing_falloff);
+      curves::create_aligned_handles_masks(
+          curves, points_to_transform_per_attribute[layer_offset], drawing, tc.custom.type);
+
       layer_offset++;
     }
   }
@@ -233,15 +239,17 @@ static void createTransGreasePencilVerts(bContext *C, TransInfo *t)
 
 static void recalcData_grease_pencil(TransInfo *t)
 {
-  bContext *C = t->context;
-  Scene *scene = CTX_data_scene(C);
+  if (t->state != TRANS_CANCEL) {
+    transform_snap_project_individual_apply(t);
+  }
 
   const Span<TransDataContainer> trans_data_contrainers(t->data_container, t->data_container_len);
   for (const TransDataContainer &tc : trans_data_contrainers) {
     GreasePencil &grease_pencil = *static_cast<GreasePencil *>(tc.obedit->data);
+    const CurvesTransformData &transform_data = *static_cast<CurvesTransformData *>(
+        tc.custom.type.data);
 
-    const Vector<ed::greasepencil::MutableDrawingInfo> drawings =
-        ed::greasepencil::retrieve_editable_drawings(*scene, grease_pencil);
+    const Vector<ed::greasepencil::MutableDrawingInfo> drawings = transform_data.drawings;
 
     int layer_i = 0;
     for (const int64_t i : drawings.index_range()) {
@@ -249,20 +257,22 @@ static void recalcData_grease_pencil(TransInfo *t)
       bke::CurvesGeometry &curves = info.drawing.strokes_for_write();
 
       if (t->mode == TFM_CURVE_SHRINKFATTEN) {
-        /* No cache to update currently. */
+        curves.tag_radii_changed();
       }
       else if (t->mode == TFM_TILT) {
-        /* No cache to update currently. */
+        curves.tag_normals_changed();
       }
       else {
         const Vector<MutableSpan<float3>> positions_per_selection_attr =
             ed::curves::get_curves_positions_for_write(curves);
         for (MutableSpan<float3> positions : positions_per_selection_attr) {
-          copy_positions_from_curves_transform_custom_data(tc.custom.type, layer_i++, positions);
+          curves::copy_positions_from_curves_transform_custom_data(
+              tc.custom.type, layer_i++, positions);
         }
         curves.tag_positions_changed();
         curves.calculate_bezier_auto_handles();
         info.drawing.tag_positions_changed();
+        curves::calculate_aligned_handles(tc.custom.type, curves, i);
       }
     }
 
@@ -270,13 +280,13 @@ static void recalcData_grease_pencil(TransInfo *t)
   }
 }
 
-}  // namespace blender::ed::transform::greasepencil
-
 /** \} */
 
 TransConvertTypeInfo TransConvertType_GreasePencil = {
     /*flags*/ (T_EDIT | T_POINTS),
-    /*create_trans_data*/ blender::ed::transform::greasepencil::createTransGreasePencilVerts,
-    /*recalc_data*/ blender::ed::transform::greasepencil::recalcData_grease_pencil,
+    /*create_trans_data*/ createTransGreasePencilVerts,
+    /*recalc_data*/ recalcData_grease_pencil,
     /*special_aftertrans_update*/ nullptr,
 };
+
+}  // namespace blender::ed::transform::greasepencil

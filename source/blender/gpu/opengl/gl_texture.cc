@@ -9,6 +9,7 @@
 #include <string>
 
 #include "BLI_assert.h"
+#include "BLI_math_half.hh"
 #include "BLI_string.h"
 
 #include "DNA_userdef_types.h"
@@ -40,7 +41,7 @@ GLTexture::GLTexture(const char *name) : Texture(name)
 GLTexture::~GLTexture()
 {
   if (framebuffer_) {
-    GPU_framebuffer_free(wrap(framebuffer_));
+    GPU_framebuffer_free(framebuffer_);
   }
   GLContext *ctx = GLContext::get();
   if (ctx != nullptr && is_bound_) {
@@ -48,17 +49,11 @@ GLTexture::~GLTexture()
     ctx->state_manager->texture_unbind(this);
     ctx->state_manager->image_unbind(this);
   }
-  GLContext::tex_free(tex_id_);
+  GLContext::texture_free(tex_id_);
 }
 
 bool GLTexture::init_internal()
 {
-  if ((format_ == GPU_DEPTH24_STENCIL8) && GPU_depth_blitting_workaround()) {
-    /* MacOS + Radeon Pro fails to blit depth on GPU_DEPTH24_STENCIL8
-     * but works on GPU_DEPTH32F_STENCIL8. */
-    format_ = GPU_DEPTH32F_STENCIL8;
-  }
-
   target_ = to_gl_target(type_);
 
   /* We need to bind once to define the texture type. */
@@ -120,9 +115,12 @@ bool GLTexture::init_internal(VertBuf *vbo)
   return true;
 }
 
-bool GLTexture::init_internal(GPUTexture *src, int mip_offset, int layer_offset, bool use_stencil)
+bool GLTexture::init_internal(gpu::Texture *src,
+                              int mip_offset,
+                              int layer_offset,
+                              bool use_stencil)
 {
-  const GLTexture *gl_src = static_cast<const GLTexture *>(unwrap(src));
+  const GLTexture *gl_src = static_cast<const GLTexture *>(src);
   GLenum internal_format = to_gl_internal_format(format_);
   target_ = to_gl_target(type_);
 
@@ -138,7 +136,7 @@ bool GLTexture::init_internal(GPUTexture *src, int mip_offset, int layer_offset,
   debug::object_label(GL_TEXTURE, tex_id_, name_);
 
   /* Stencil view support. */
-  if (ELEM(format_, GPU_DEPTH24_STENCIL8, GPU_DEPTH32F_STENCIL8)) {
+  if (ELEM(format_, TextureFormat::SFLOAT_32_DEPTH_UINT_8)) {
     stencil_texture_mode_set(use_stencil);
   }
 
@@ -198,6 +196,76 @@ void GLTexture::update_sub(
   if (mip >= mipmaps_) {
     debug::raise_gl_error("Updating a miplvl on a texture too small to have this many levels.");
     return;
+  }
+
+  /* If `texture_unpack_row_length` is 0, rows are sequentially stored. Otherwise we unpack data
+   * into a staging block, so the half conversion below doesn't happen on the full input. */
+  const uint texture_unpack_row_length =
+      GLContext::state_manager_active_get()->texture_unpack_row_length_get();
+  const bool do_texture_unpack = !ELEM(texture_unpack_row_length, 0, extent[0]);
+
+  /* Unpack `data` if `texture_unpack_row_length` is set. */
+  std::unique_ptr<uint8_t, MEM_freeN_smart_ptr_deleter> unpack_buffer = nullptr;
+  if (do_texture_unpack) {
+    BLI_assert_msg(!(format_flag_ & GPU_FORMAT_COMPRESSED),
+                   "Compressed data with texture_unpack_row_length != 0 is not supported.");
+    BLI_assert_msg(extent[2] <= 1,
+                   "3D texture data with texture_unpack_row_length != 0 is not supported.");
+
+    size_t src_row_stride = texture_unpack_row_length * to_bytesize(format_, type);
+    size_t dst_row_stride = max_ii(extent[0], 1) * to_bytesize(format_, type);
+    size_t dst_total_count = dst_row_stride * max_ii(extent[1], 1) * max_ii(extent[2], 1);
+
+    /* Allocate buffer to size necessary for gather */
+    unpack_buffer.reset((uint8_t *)MEM_mallocN_aligned(dst_total_count, 128, __func__));
+
+    /* Strided loop; we advance source and destination pointers separately during a gather. */
+    const uint8_t *src_ptr = static_cast<const uint8_t *>(data);
+    uint8_t *dst_ptr = unpack_buffer.get();
+    for (int y = 0; y < max_ii(extent[1], 1); ++y) {
+      std::memcpy(dst_ptr, src_ptr, dst_row_stride);
+      src_ptr += src_row_stride;
+      dst_ptr += dst_row_stride;
+    }
+
+    /* Replace the 'data' ptr with `unpack_buffer`,
+     * which has lifetime in the function scope. */
+    data = unpack_buffer.get();
+  }
+
+  /* If `data` is float and target storage is half, convert to half */
+  std::unique_ptr<uint16_t, MEM_freeN_smart_ptr_deleter> clamped_half_buffer = nullptr;
+  if (type == GPU_DATA_FLOAT && is_half_float(format_)) {
+    size_t dst_pixel_count = max_ii(extent[0], 1) * max_ii(extent[1], 1) * max_ii(extent[2], 1);
+    size_t dst_total_count = to_component_len(format_) * dst_pixel_count;
+
+    /* Allocate buffer to size necessary for conversion.. */
+    clamped_half_buffer.reset(
+        (uint16_t *)MEM_mallocN_aligned(sizeof(uint16_t) * dst_total_count, 128, __func__));
+
+    Span<float> src(static_cast<const float *>(data), dst_total_count);
+    MutableSpan<uint16_t> dst(static_cast<uint16_t *>(clamped_half_buffer.get()), dst_total_count);
+
+    constexpr int64_t chunk_size = 4 * 1024 * 1024;
+    threading::parallel_for(IndexRange(dst_total_count), chunk_size, [&](const IndexRange range) {
+      /* Doing float to half conversion manually to avoid implementation specific behavior
+       * regarding Inf and NaNs. Use make finite version to avoid unexpected black pixels on
+       * certain implementation. For platform parity we clamp these infinite values to finite
+       * values. */
+      blender::math::float_to_half_make_finite_array(
+          src.slice(range).data(), dst.slice(range).data(), range.size());
+    });
+
+    /* Replace the 'data' ptr with `clamped_half_buffer`,
+     * which has lifetime in the function scope. */
+    data = clamped_half_buffer.get();
+    type = GPU_DATA_HALF_FLOAT;
+
+    /* If the `data` ptr was previously replaced by `unpack_buffer`,
+     * clear `unpack_buffer` as it is no longer necessary. */
+    if (do_texture_unpack) {
+      unpack_buffer.reset(nullptr);
+    }
   }
 
   const int dimensions = this->dimensions_count();
@@ -269,7 +337,7 @@ void GLTexture::update_sub(int offset[3],
   GLContext::state_manager_active_get()->texture_bind_temp(this);
 
   /* Bind pixel buffer for source data. */
-  GLint pix_buf_handle = (GLint)GPU_pixel_buffer_get_native_handle(pixbuf);
+  GLint pix_buf_handle = (GLint)GPU_pixel_buffer_get_native_handle(pixbuf).handle;
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pix_buf_handle);
 
   switch (dimensions) {
@@ -298,8 +366,7 @@ void GLTexture::generate_mipmap()
 
   /* Some drivers have bugs when using #glGenerateMipmap with depth textures (see #56789).
    * In this case we just create a complete texture with mipmaps manually without
-   * down-sampling. You must initialize the texture levels using other methods like
-   * #GPU_framebuffer_recursive_downsample(). */
+   * down-sampling. You must initialize the texture levels using other methods. */
   if (format_flag_ & GPU_FORMAT_DEPTH) {
     return;
   }
@@ -335,7 +402,7 @@ void GLTexture::clear(eGPUDataFormat data_format, const void *data)
    * "pixel data" to exist which is then uploaded CPU -> GPU at bind
    * time. */
 
-  GPUFrameBuffer *prev_fb = GPU_framebuffer_active_get();
+  gpu::FrameBuffer *prev_fb = GPU_framebuffer_active_get();
 
   FrameBuffer *fb = this->framebuffer_get();
   fb->bind(true);
@@ -381,7 +448,8 @@ void *GLTexture::read(int mip, eGPUDataFormat type)
    * if the texture is big. (see #66573) */
   void *data = MEM_mallocN(texture_size + 8, "GPU_texture_read");
 
-  GLenum gl_format = to_gl_data_format(format_);
+  GLenum gl_format = to_gl_data_format(
+      format_ == TextureFormat::SFLOAT_32_DEPTH_UINT_8 ? TextureFormat::SFLOAT_32_DEPTH : format_);
   GLenum gl_type = to_gl(type);
 
   if (GLContext::direct_state_access_support) {
@@ -459,8 +527,8 @@ FrameBuffer *GLTexture::framebuffer_get()
     return framebuffer_;
   }
   BLI_assert(!(type_ & GPU_TEXTURE_1D));
-  framebuffer_ = unwrap(GPU_framebuffer_create(name_));
-  framebuffer_->attachment_set(this->attachment_type(0), GPU_ATTACHMENT_TEXTURE(wrap(this)));
+  framebuffer_ = GPU_framebuffer_create(name_);
+  framebuffer_->attachment_set(this->attachment_type(0), GPU_ATTACHMENT_TEXTURE(this));
   has_pixels_ = true;
   return framebuffer_;
 }
@@ -620,10 +688,11 @@ GLuint GLTexture::get_sampler(const GPUSamplerState &sampler_state)
  * Dummy texture to see if the implementation supports the requested size.
  * \{ */
 
-/* NOTE: This only checks if this mipmap is valid / supported.
- * TODO(fclem): make the check cover the whole mipmap chain. */
 bool GLTexture::proxy_check(int mip)
 {
+  /* NOTE: This only checks if this mipmap is valid / supported.
+   * TODO(fclem): make the check cover the whole mipmap chain. */
+
   /* Manual validation first, since some implementation have issues with proxy creation. */
   int max_size = GPU_max_texture_size();
   int max_3d_size = GPU_max_texture_3d_size();
@@ -673,7 +742,7 @@ bool GLTexture::proxy_check(int mip)
   GLenum gl_proxy = to_gl_proxy(type_);
   GLenum internal_format = to_gl_internal_format(format_);
   GLenum gl_format = to_gl_data_format(format_);
-  GLenum gl_type = to_gl(to_data_format(format_));
+  GLenum gl_type = to_gl(to_texture_data_format(format_));
   /* Small exception. */
   int dimensions = (type_ == GPU_TEXTURE_CUBE) ? 2 : this->dimensions_count();
 
@@ -718,11 +787,6 @@ bool GLTexture::proxy_check(int mip)
 
 void GLTexture::check_feedback_loop()
 {
-  /* Recursive down sample workaround break this check.
-   * See #recursive_downsample() for more information. */
-  if (GPU_mip_render_workaround()) {
-    return;
-  }
   /* Do not check if using compute shader. */
   GLShader *sh = dynamic_cast<GLShader *>(Context::get()->shader);
   if (sh && sh->is_compute()) {
@@ -752,13 +816,6 @@ void GLTexture::check_feedback_loop()
       return;
     }
   }
-}
-
-uint GLTexture::gl_bindcode_get() const
-{
-  /* TODO(fclem): Legacy. Should be removed at some point. */
-
-  return tex_id_;
 }
 
 /* -------------------------------------------------------------------- */
@@ -809,9 +866,12 @@ void GLPixelBuffer::unmap()
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 }
 
-int64_t GLPixelBuffer::get_native_handle()
+GPUPixelBufferNativeHandle GLPixelBuffer::get_native_handle()
 {
-  return int64_t(gl_id_);
+  GPUPixelBufferNativeHandle native_handle;
+  native_handle.handle = int64_t(gl_id_);
+  native_handle.size = size_;
+  return native_handle;
 }
 
 size_t GLPixelBuffer::get_size()

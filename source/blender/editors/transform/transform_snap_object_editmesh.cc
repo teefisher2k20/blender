@@ -18,7 +18,7 @@
 
 #include "transform_snap_object.hh"
 
-using namespace blender;
+namespace blender::ed::transform {
 
 /* -------------------------------------------------------------------- */
 /** \name Snap Object Data
@@ -37,6 +37,24 @@ static const Mesh *get_mesh_ref(const Object *ob_eval)
   return static_cast<const Mesh *>(ob_eval->data);
 }
 
+/**
+ * Edit mesh snap cache.
+ *
+ * \note It's important there is only ever one object
+ * per #SnapObjectContext that references this snap cache.
+ *
+ * Otherwise freed memory access may occur:
+ * - While the lookup uses the original object data, change-detection uses the evaluated object.
+ * - A change causes the previously cached mesh (#SnapCache_EditMesh::mesh) to be freed.
+ * - The cached mesh may be referenced by a snap "hit", so freeing it may crash
+ *   when that mesh is later accessed.
+ *
+ * Furthermore, constantly re-creating cache is inefficient.
+ *
+ * Resolve by only using this cache for objects in edit-mode, instead objects with edit-mode data.
+ * This works because only one objects-data may be in edit-mode at a time.
+ * See: #148788.
+ */
 struct SnapCache_EditMesh : public SnapObjectContext::SnapCache {
   /* Mesh created from the edited mesh. */
   Mesh *mesh;
@@ -61,6 +79,7 @@ struct SnapCache_EditMesh : public SnapObjectContext::SnapCache {
   {
     if (this->mesh) {
       BKE_id_free(nullptr, this->mesh);
+      this->mesh = nullptr;
     }
   }
 
@@ -76,7 +95,7 @@ static Mesh *create_mesh(SnapObjectContext *sctx,
                          const Object *ob_eval,
                          eSnapEditType /*edit_mode_type*/)
 {
-  Mesh *mesh = static_cast<Mesh *>(BKE_id_new_nomain(ID_ME, nullptr));
+  Mesh *mesh = BKE_id_new_nomain<Mesh>(nullptr);
   const BMEditMesh *em = BKE_editmesh_from_object(const_cast<Object *>(ob_eval));
   BMesh *bm = em->bm;
   BM_mesh_bm_to_me_compact(*bm, *mesh, nullptr, false);
@@ -147,6 +166,7 @@ static SnapCache_EditMesh *snap_object_data_editmesh_get(SnapObjectContext *sctx
                                                          const Object *ob_eval,
                                                          bool create)
 {
+  BLI_assert((ob_eval->mode & OB_MODE_EDIT) || sctx->runtime.params.ignore_editmode_filtering);
   SnapCache_EditMesh *em_cache = nullptr;
 
   bool init = false;
@@ -212,6 +232,13 @@ static SnapCache_EditMesh *editmesh_snapdata_init(SnapObjectContext *sctx,
                                                   const Object *ob_eval,
                                                   eSnapMode snap_to_flag)
 {
+  /* See code-comment on #SnapCache_EditMesh for why this is needed.  */
+  if (!sctx->runtime.params.ignore_editmode_filtering) {
+    if ((ob_eval->mode & OB_MODE_EDIT) == 0) {
+      return nullptr;
+    }
+  }
+
   const BMEditMesh *em = BKE_editmesh_from_object(const_cast<Object *>(ob_eval));
   if (em == nullptr) {
     return nullptr;
@@ -245,3 +272,5 @@ eSnapMode snap_object_editmesh(SnapObjectContext *sctx,
   }
   return SCE_SNAP_TO_NONE;
 }
+
+}  // namespace blender::ed::transform

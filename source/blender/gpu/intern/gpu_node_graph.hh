@@ -10,19 +10,18 @@
 
 #pragma once
 
-#include "DNA_customdata_types.h"
 #include "DNA_listBase.h"
 
+#include "BLI_enum_flags.hh"
 #include "BLI_ghash.h"
 
 #include "GPU_material.hh"
-#include "GPU_shader.hh"
 
 struct GPUNode;
 struct GPUOutput;
 struct ListBase;
 
-enum eGPUDataSource {
+enum GPUDataSource {
   GPU_SOURCE_OUTPUT,
   GPU_SOURCE_CONSTANT,
   GPU_SOURCE_UNIFORM,
@@ -52,7 +51,7 @@ enum GPUNodeLinkType {
   GPU_NODE_LINK_DIFFERENTIATE_FLOAT_FN,
 };
 
-enum eGPUNodeTag {
+enum GPUNodeTag {
   GPU_NODE_TAG_NONE = 0,
   GPU_NODE_TAG_SURFACE = (1 << 0),
   GPU_NODE_TAG_VOLUME = (1 << 1),
@@ -63,7 +62,7 @@ enum eGPUNodeTag {
   GPU_NODE_TAG_COMPOSITOR = (1 << 6),
 };
 
-ENUM_OPERATORS(eGPUNodeTag, GPU_NODE_TAG_COMPOSITOR)
+ENUM_OPERATORS(GPUNodeTag)
 
 struct GPUNode {
   GPUNode *next, *prev;
@@ -71,10 +70,14 @@ struct GPUNode {
   const char *name;
 
   /* Internal flag to mark nodes during pruning */
-  eGPUNodeTag tag;
+  GPUNodeTag tag;
 
   ListBase inputs;
   ListBase outputs;
+
+  /* Zones. */
+  int zone_index;
+  bool is_zone_end;
 };
 
 struct GPUNodeLink {
@@ -87,7 +90,7 @@ struct GPUNodeLink {
     /* GPU_NODE_LINK_CONSTANT | GPU_NODE_LINK_UNIFORM */
     const float *data;
     /* GPU_NODE_LINK_COLORBAND */
-    GPUTexture **colorband;
+    blender::gpu::Texture **colorband;
     /* GPU_NODE_LINK_OUTPUT */
     GPUOutput *output;
     /* GPU_NODE_LINK_ATTR */
@@ -99,7 +102,10 @@ struct GPUNodeLink {
     /* GPU_NODE_LINK_IMAGE_BLENDER */
     GPUMaterialTexture *texture;
     /* GPU_NODE_LINK_DIFFERENTIATE_FLOAT_FN */
-    const char *function_name;
+    struct {
+      const char *function_name;
+      float filter_width;
+    } differentiate_float;
   };
 };
 
@@ -107,22 +113,27 @@ struct GPUOutput {
   GPUOutput *next, *prev;
 
   GPUNode *node;
-  eGPUType type;     /* data type = length of vector/matrix */
+  GPUType type;      /* data type = length of vector/matrix */
   GPUNodeLink *link; /* output link */
   int id;            /* unique id as created by code generator */
+
+  /* True for Zone Items. */
+  bool is_zone_io;
+  /* This variable is shared with other socket/s and doesn't need to be declared. */
+  bool is_duplicate;
 };
 
 struct GPUInput {
   GPUInput *next, *prev;
 
   GPUNode *node;
-  eGPUType type; /* data-type. */
+  GPUType type; /* data-type. */
   GPUNodeLink *link;
   int id; /* unique id as created by code generator */
 
-  eGPUDataSource source; /* data source */
+  GPUDataSource source; /* data source */
 
-  /* Content based on eGPUDataSource */
+  /* Content based on GPUDataSource */
   union {
     /* GPU_SOURCE_CONSTANT | GPU_SOURCE_UNIFORM */
     float vec[16]; /* vector data */
@@ -137,6 +148,11 @@ struct GPUInput {
     /* GPU_SOURCE_FUNCTION_CALL */
     char function_call[64];
   };
+
+  /* True for Zone Items. */
+  bool is_zone_io;
+  /* This variable is shared with other socket/s and doesn't need to be declared. */
+  bool is_duplicate;
 };
 
 struct GPUNodeGraphOutputLink {
@@ -176,14 +192,11 @@ struct GPUNodeGraph {
 
   /* The list of layer attributes. */
   ListBase layer_attrs;
-
-  /** Set of all the GLSL lib code blocks. */
-  GSet *used_libraries;
 };
 
 /* Node Graph */
 
-void gpu_nodes_tag(GPUNodeLink *link, eGPUNodeTag tag);
+void gpu_nodes_tag(GPUNodeGraph *graph, GPUNodeLink *link_start, GPUNodeTag tag);
 void gpu_node_graph_prune_unused(GPUNodeGraph *graph);
 void gpu_node_graph_finalize_uniform_attrs(GPUNodeGraph *graph);
 
@@ -215,12 +228,12 @@ GPUNodeGraph *gpu_material_node_graph(GPUMaterial *material);
 /**
  * Returns the address of the future pointer to coba_tex.
  */
-GPUTexture **gpu_material_ramp_texture_row_set(GPUMaterial *mat,
-                                               int size,
-                                               const float *pixels,
-                                               float *r_row);
+blender::gpu::Texture **gpu_material_ramp_texture_row_set(GPUMaterial *mat,
+                                                          int size,
+                                                          const float *pixels,
+                                                          float *r_row);
 /**
  * Returns the address of the future pointer to sky_tex
  */
-GPUTexture **gpu_material_sky_texture_layer_set(
+blender::gpu::Texture **gpu_material_sky_texture_layer_set(
     GPUMaterial *mat, int width, int height, const float *pixels, float *row);

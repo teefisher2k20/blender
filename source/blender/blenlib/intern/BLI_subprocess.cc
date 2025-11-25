@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bli
+ */
+
 #include "BLI_subprocess.hh"
 
 #if BLI_SUBPROCESS_SUPPORT
@@ -289,7 +293,7 @@ bool BlenderSubprocess::create(Span<StringRefNull> args)
     ERROR("fork");
     return false;
   }
-  else if (pid_ > 0) {
+  if (pid_ > 0) {
     return true;
   }
 
@@ -406,7 +410,7 @@ void SharedSemaphore::decrement()
     if (result == 0) {
       return;
     }
-    else if (errno != EINTR) {
+    if (errno != EINTR) {
       ERROR("sem_wait");
       return;
     }
@@ -421,7 +425,7 @@ bool SharedSemaphore::try_decrement(int wait_ms)
     if (result == 0) {
       return true;
     }
-    else if (errno == EINVAL) {
+    if (errno == EINVAL) {
       ERROR("sem_trywait");
     }
     return false;
@@ -442,7 +446,7 @@ bool SharedSemaphore::try_decrement(int wait_ms)
     if (result == 0) {
       return true;
     }
-    else if (errno != EINTR) {
+    if (errno != EINTR) {
       if (errno != ETIMEDOUT) {
         ERROR("sem_timedwait");
       }

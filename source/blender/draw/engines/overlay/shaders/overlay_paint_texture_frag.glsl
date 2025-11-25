@@ -2,17 +2,22 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "common_colormanagement_lib.glsl"
+#include "infos/overlay_paint_infos.hh"
+
+FRAGMENT_SHADER_CREATE_INFO(overlay_paint_texture)
+
+#include "draw_colormanagement_lib.glsl"
 
 void main()
 {
-  vec4 mask = vec4(texture_read_as_srgb(maskImage, maskImagePremultiplied, uv_interp).rgb, 1.0);
-  if (maskInvertStencil) {
-    mask.rgb = 1.0 - mask.rgb;
+  float4 mask = float4(texture_read_as_srgb(mask_image, mask_image_premultiplied, uv_interp).rgb,
+                       1.0f);
+  if (mask_invert_stencil) {
+    mask.rgb = 1.0f - mask.rgb;
   }
-  float mask_step = smoothstep(0.0, 3.0, mask.r + mask.g + mask.b);
-  mask.rgb *= maskColor;
+  float mask_step = smoothstep(0.0f, 3.0f, mask.r + mask.g + mask.b);
+  mask.rgb *= mask_color;
   mask.a = mask_step * opacity;
 
-  fragColor = mask;
+  frag_color = mask;
 }

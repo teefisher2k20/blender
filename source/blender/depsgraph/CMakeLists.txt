@@ -7,6 +7,7 @@ set(INC
   ../animrig
   ../makesrna
   ../modifiers
+  ../nodes
   # RNA_prototypes.hh
   ${CMAKE_BINARY_DIR}/source/blender/makesrna
 )
@@ -153,6 +154,7 @@ set(LIB
   PRIVATE bf::draw
   PRIVATE bf::functions
   PRIVATE bf::intern::atomic
+  PRIVATE bf::intern::clog
   PRIVATE bf::intern::guardedalloc
   PRIVATE bf::sequencer
   PRIVATE bf::windowmanager

@@ -11,7 +11,6 @@
 
 #include "BLT_translation.hh"
 
-#include "RNA_access.hh"
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
 
@@ -25,9 +24,11 @@ const EnumPropertyItem rna_enum_velocity_unit_items[] = {
 
 #ifdef RNA_RUNTIME
 
-#  include "BLI_string.h"
+#  include "BLI_math_base.h"
 
 #  include "BKE_cachefile.hh"
+#  include "BKE_context.hh"
+#  include "BKE_report.hh"
 
 #  include "DEG_depsgraph.hh"
 #  include "DEG_depsgraph_build.hh"
@@ -55,23 +56,17 @@ static void rna_CacheFileLayer_update(Main * /*bmain*/, Scene * /*scene*/, Point
   WM_main_add_notifier(NC_OBJECT | ND_DRAW, nullptr);
 }
 
-static void rna_CacheFile_dependency_update(Main *bmain, Scene *scene, PointerRNA *ptr)
-{
-  rna_CacheFile_update(bmain, scene, ptr);
-  DEG_relations_tag_update(bmain);
-}
-
 static void rna_CacheFile_object_paths_begin(CollectionPropertyIterator *iter, PointerRNA *ptr)
 {
   CacheFile *cache_file = (CacheFile *)ptr->data;
-  rna_iterator_listbase_begin(iter, &cache_file->object_paths, nullptr);
+  rna_iterator_listbase_begin(iter, ptr, &cache_file->object_paths, nullptr);
 }
 
 static PointerRNA rna_CacheFile_active_layer_get(PointerRNA *ptr)
 {
   CacheFile *cache_file = (CacheFile *)ptr->owner_id;
-  return rna_pointer_inherit_refine(
-      ptr, &RNA_CacheFileLayer, BKE_cachefile_get_active_layer(cache_file));
+  return RNA_pointer_create_with_parent(
+      *ptr, &RNA_CacheFileLayer, BKE_cachefile_get_active_layer(cache_file));
 }
 
 static void rna_CacheFile_active_layer_set(PointerRNA *ptr, PointerRNA value, ReportList *reports)
@@ -190,6 +185,7 @@ static void rna_def_cachefile_layer(BlenderRNA *brna)
 
   PropertyRNA *prop = RNA_def_property(srna, "filepath", PROP_STRING, PROP_FILEPATH);
   RNA_def_property_ui_text(prop, "File Path", "Path to the archive");
+  RNA_def_property_flag(prop, PROP_PATH_SUPPORTS_BLEND_RELATIVE);
   RNA_def_property_update(prop, 0, "rna_CacheFileLayer_update");
 
   prop = RNA_def_property(srna, "hide_layer", PROP_BOOLEAN, PROP_NONE);
@@ -245,22 +241,13 @@ static void rna_def_cachefile(BlenderRNA *brna)
 
   PropertyRNA *prop = RNA_def_property(srna, "filepath", PROP_STRING, PROP_FILEPATH);
   RNA_def_property_ui_text(prop, "File Path", "Path to external displacements file");
+  RNA_def_property_flag(prop, PROP_PATH_SUPPORTS_BLEND_RELATIVE);
   RNA_def_property_update(prop, 0, "rna_CacheFile_update");
 
   prop = RNA_def_property(srna, "is_sequence", PROP_BOOLEAN, PROP_NONE);
   RNA_def_property_ui_text(
       prop, "Sequence", "Whether the cache is separated in a series of files");
   RNA_def_property_update(prop, 0, "rna_CacheFile_update");
-
-  prop = RNA_def_property(srna, "use_render_procedural", PROP_BOOLEAN, PROP_NONE);
-  RNA_def_property_ui_text(
-      prop,
-      "Use Render Engine Procedural",
-      "Display boxes in the viewport as placeholders for the objects, Cycles will use a "
-      "procedural to load the objects during viewport rendering in experimental mode, "
-      "other render engines will also receive a placeholder and should take care of loading the "
-      "Alembic data themselves if possible");
-  RNA_def_property_update(prop, 0, "rna_CacheFile_dependency_update");
 
   /* ----------------- For Scene time ------------------- */
 
@@ -288,23 +275,6 @@ static void rna_def_cachefile(BlenderRNA *brna)
                            "Subtracted from the current frame to use for "
                            "looking up the data in the cache file, or to "
                            "determine which file to use in a file sequence");
-  RNA_def_property_update(prop, 0, "rna_CacheFile_update");
-
-  /* ----------------- Cache controls ----------------- */
-
-  prop = RNA_def_property(srna, "use_prefetch", PROP_BOOLEAN, PROP_NONE);
-  RNA_def_property_ui_text(
-      prop,
-      "Use Prefetch",
-      "When enabled, the Cycles Procedural will preload animation data for faster updates");
-  RNA_def_property_update(prop, 0, "rna_CacheFile_update");
-
-  prop = RNA_def_property(srna, "prefetch_cache_size", PROP_INT, PROP_UNSIGNED);
-  RNA_def_property_ui_text(
-      prop,
-      "Prefetch Cache Size",
-      "Memory usage limit in megabytes for the Cycles Procedural cache, if the data does not "
-      "fit within the limit, rendering is aborted");
   RNA_def_property_update(prop, 0, "rna_CacheFile_update");
 
   /* ----------------- Axis Conversion ----------------- */

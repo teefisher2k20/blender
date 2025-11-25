@@ -10,12 +10,23 @@
 #include <glog/logging.h>   // IWYU pragma: export
 #include <gtest/gtest.h>    // IWYU pragma: export
 
+/* Fwd.
+ */
+namespace blender {
+
+template<typename T> class Span;
+
+}  // namespace blender
+
 namespace blender::tests {
 
 /* These strings are passed on the CLI with the --test-asset-dir and --test-release-dir arguments.
  * The arguments are added automatically when invoking tests via `ctest`. */
-const std::string &flags_test_asset_dir();   /* tests/data in the Blender repository. */
+const std::string &flags_test_asset_dir();   /* tests/files in the Blender repository. */
 const std::string &flags_test_release_dir(); /* bin/{blender version} in the build directory. */
+
+/* Returns true if the `BLENDER_TEST_IGNORE_BLOCKLIST` environment variable is set. */
+bool should_ignore_blocklist();
 
 }  // namespace blender::tests
 
@@ -130,6 +141,30 @@ inline void EXPECT_EQ_VECTOR(const std::vector<T> &expected, const std::vector<T
   if (expected.size() == actual.size()) {
     for (size_t i = 0; i < expected.size(); ++i) {
       EXPECT_EQ(expected[i], actual[i]) << "Element mismatch at index " << i;
+    }
+  }
+}
+
+template<typename T>
+inline void EXPECT_EQ_SPAN(const blender::Span<T> expected, const blender::Span<T> actual)
+{
+  EXPECT_EQ(expected.size(), actual.size());
+  if (expected.size() == actual.size()) {
+    for (const int64_t i : expected.index_range()) {
+      EXPECT_EQ(expected[i], actual[i]) << "Element mismatch at index " << i;
+    }
+  }
+}
+
+template<typename T, typename U>
+inline void EXPECT_NEAR_SPAN(const blender::Span<T> expected,
+                             const blender::Span<T> actual,
+                             const U tolerance)
+{
+  EXPECT_EQ(expected.size(), actual.size());
+  if (expected.size() == actual.size()) {
+    for (const int64_t i : expected.index_range()) {
+      EXPECT_NEAR(expected[i], actual[i], tolerance) << "Element mismatch at index " << i;
     }
   }
 }

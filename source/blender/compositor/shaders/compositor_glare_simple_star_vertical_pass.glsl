@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "infos/compositor_glare_infos.hh"
+
+COMPUTE_SHADER_CREATE_INFO(compositor_glare_simple_star_vertical_pass)
+
 #include "gpu_shader_compositor_texture_utilities.glsl"
 
 void main()
@@ -16,14 +20,15 @@ void main()
      * pixel in the column with the average value of the previous output and next input in the same
      * column. */
     for (int y = 0; y < height; y++) {
-      ivec2 texel = ivec2(gl_GlobalInvocationID.x, y);
-      vec4 previous_output = imageLoad(vertical_img, texel - ivec2(0, i));
-      vec4 current_input = imageLoad(vertical_img, texel);
-      vec4 next_input = imageLoad(vertical_img, texel + ivec2(0, i));
+      int2 texel = int2(gl_GlobalInvocationID.x, y);
+      float4 previous_output = imageLoad(vertical_img, texel - int2(0, i));
+      float4 current_input = imageLoad(vertical_img, texel);
+      float4 next_input = imageLoad(vertical_img, texel + int2(0, i));
 
-      vec4 neighbor_average = (previous_output + next_input) / 2.0;
-      vec4 causal_output = mix(current_input, neighbor_average, fade_factor);
+      float4 neighbor_average = (previous_output + next_input) / 2.0f;
+      float4 causal_output = mix(current_input, neighbor_average, fade_factor);
       imageStore(vertical_img, texel, causal_output);
+      imageFence(vertical_img);
     }
 
     /* Non Causal Pass:
@@ -31,24 +36,25 @@ void main()
      * pixel in the column with the average value of the previous output and next input in the same
      * column. */
     for (int y = height - 1; y >= 0; y--) {
-      ivec2 texel = ivec2(gl_GlobalInvocationID.x, y);
-      vec4 previous_output = imageLoad(vertical_img, texel + ivec2(0, i));
-      vec4 current_input = imageLoad(vertical_img, texel);
-      vec4 next_input = imageLoad(vertical_img, texel - ivec2(0, i));
+      int2 texel = int2(gl_GlobalInvocationID.x, y);
+      float4 previous_output = imageLoad(vertical_img, texel + int2(0, i));
+      float4 current_input = imageLoad(vertical_img, texel);
+      float4 next_input = imageLoad(vertical_img, texel - int2(0, i));
 
-      vec4 neighbor_average = (previous_output + next_input) / 2.0;
-      vec4 non_causal_output = mix(current_input, neighbor_average, fade_factor);
+      float4 neighbor_average = (previous_output + next_input) / 2.0f;
+      float4 non_causal_output = mix(current_input, neighbor_average, fade_factor);
       imageStore(vertical_img, texel, non_causal_output);
+      imageFence(vertical_img);
     }
   }
 
   /* For each pixel in the column mapped to the current invocation thread, add the result of the
    * horizontal pass to the vertical pass. */
   for (int y = 0; y < height; y++) {
-    ivec2 texel = ivec2(gl_GlobalInvocationID.x, y);
-    vec4 horizontal = texture_load(horizontal_tx, texel);
-    vec4 vertical = imageLoad(vertical_img, texel);
-    vec4 combined = horizontal + vertical;
-    imageStore(vertical_img, texel, vec4(combined.rgb, 1.0));
+    int2 texel = int2(gl_GlobalInvocationID.x, y);
+    float4 horizontal = texture_load(horizontal_tx, texel);
+    float4 vertical = imageLoad(vertical_img, texel);
+    float4 combined = horizontal + vertical;
+    imageStore(vertical_img, texel, float4(combined.rgb, 1.0f));
   }
 }

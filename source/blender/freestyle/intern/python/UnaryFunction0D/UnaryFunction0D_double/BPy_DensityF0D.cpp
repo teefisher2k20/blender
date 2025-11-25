@@ -10,10 +10,6 @@
 
 #include "../../../stroke/AdvancedFunctions0D.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -48,7 +44,6 @@ PyDoc_STRVAR(
     "   :return: The density of the image evaluated at the pointed\n"
     "      Interface0D.\n"
     "   :rtype: float\n");
-
 static int DensityF0D___init__(BPy_DensityF0D *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"sigma", nullptr};
@@ -106,7 +101,3 @@ PyTypeObject DensityF0D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

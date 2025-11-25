@@ -16,16 +16,20 @@
 #include "BLI_vector_set.hh"
 
 #include "DNA_view3d_types.h"
+#include "DNA_windowmanager_enums.h"
 
 #include "ED_select_utils.hh"
+#include "ED_view3d.hh"
 
 struct bContext;
 struct Curves;
 struct UndoType;
-struct ViewContext;
 struct rcti;
 struct TransVertStore;
 struct wmKeyConfig;
+struct wmOperator;
+struct wmKeyMap;
+struct EnumPropertyItem;
 namespace blender::bke {
 enum class AttrDomain : int8_t;
 struct GSpanAttributeWriter;
@@ -37,6 +41,105 @@ void operatortypes_curves();
 void operatormacros_curves();
 void undosys_type_register(UndoType *ut);
 void keymap_curves(wmKeyConfig *keyconf);
+
+void ED_operatortypes_curves_pen();
+void ED_curves_pentool_modal_keymap(wmKeyConfig *keyconf);
+
+namespace pen_tool {
+
+enum class ElementMode : int8_t {
+  None = 0,
+  Point = 1,
+  Edge = 2,
+  HandleLeft = 3,
+  HandleRight = 4,
+};
+
+struct ClosestElement {
+  float distance_squared = std::numeric_limits<float>::max();
+  ElementMode element_mode;
+  int point_index = -1;
+  int curve_index = -1;
+  float edge_t = -1.0f;
+  int drawing_index = -1;
+
+  bool is_closer(const float new_distance_squared,
+                 const ElementMode new_element_mode,
+                 const float threshold_distance) const;
+};
+
+class PenToolOperation {
+ public:
+  ViewContext vc;
+
+  float threshold_distance;
+  float threshold_distance_edge;
+
+  bool extrude_point;
+  bool delete_point;
+  bool insert_point;
+  bool move_seg;
+  bool select_point;
+  bool move_point;
+  bool cycle_handle_type;
+  int extrude_handle;
+  float radius;
+
+  bool move_entire;
+  bool snap_angle;
+  bool move_handle;
+
+  bool point_added;
+  bool point_removed;
+  /* Used to go back to `aligned` after `move_handle` becomes `false` */
+  bool handle_moved;
+
+  float4x4 projection;
+  float2 mouse_co;
+  float2 xy;
+  float2 prev_xy;
+  float2 center_of_mass_co;
+  ClosestElement closest_element;
+
+  std::optional<int> active_drawing_index;
+  Vector<float4x4> layer_to_world_per_curves;
+  /* Only used for Grease Pencil. */
+  Vector<float4x4> layer_to_object_per_curves;
+
+  virtual ~PenToolOperation() = default;
+
+  virtual float3 project(const float2 &screen_co) const = 0;
+  virtual IndexMask all_selected_points(int curves_index, IndexMaskMemory &memory) const = 0;
+  virtual IndexMask visible_bezier_handle_points(int curves_index,
+                                                 IndexMaskMemory &memory) const = 0;
+  virtual IndexMask editable_curves(int curves_index, IndexMaskMemory &memory) const = 0;
+  virtual void tag_curve_changed(int curves_index) const = 0;
+  virtual bke::CurvesGeometry &get_curves(int curves_index) const = 0;
+  virtual IndexRange curves_range() const = 0;
+  virtual void single_point_attributes(bke::CurvesGeometry &curves, int curves_index) const = 0;
+  /**
+   * Will return true if a new curve can be created, and report any errors.
+   */
+  virtual bool can_create_new_curve(wmOperator *op) const = 0;
+  virtual void update_view(bContext *C) const = 0;
+  virtual std::optional<wmOperatorStatus> initialize(bContext *C,
+                                                     wmOperator *op,
+                                                     const wmEvent *event) = 0;
+
+  float2 layer_to_screen(const float4x4 &layer_to_object, const float3 &point) const;
+
+  float3 screen_to_layer(const float4x4 &layer_to_world,
+                         const float2 &screen_co,
+                         const float3 &depth_point_layer) const;
+
+  wmOperatorStatus invoke(bContext *C, wmOperator *op, const wmEvent *event);
+  wmOperatorStatus modal(bContext *C, wmOperator *op, const wmEvent *event);
+};
+
+void pen_tool_common_props(wmOperatorType *ot);
+wmKeyMap *ensure_keymap(wmKeyConfig *keyconf);
+
+}  // namespace pen_tool
 
 /**
  * Return an owning pointer to an array of point normals the same size as the number of control
@@ -58,6 +161,11 @@ Span<StringRef> get_curves_selection_attribute_names(const bke::CurvesGeometry &
  */
 Vector<MutableSpan<float3>> get_curves_positions_for_write(bke::CurvesGeometry &curves);
 
+/**
+ * Get read-only positions per selection attribute for given curve.
+ */
+Vector<Span<float3>> get_curves_positions(const bke::CurvesGeometry &curves);
+
 /* Get all possible curve selection attribute names. */
 Span<StringRef> get_curves_all_selection_attribute_names();
 
@@ -78,10 +186,10 @@ void remove_selection_attributes(
 /**
  * Get the position span associated with the given selection attribute name.
  */
-Span<float3> get_selection_attribute_positions(
+std::optional<Span<float3>> get_selection_attribute_positions(
     const bke::CurvesGeometry &curves,
     const bke::crazyspace::GeometryDeformation &deformation,
-    const StringRef attribute_name);
+    StringRef attribute_name);
 
 using SelectionRangeFn = FunctionRef<void(
     IndexRange range, Span<float3> positions, StringRef selection_attribute_name)>;
@@ -114,11 +222,20 @@ VectorSet<Curves *> get_unique_editable_curves(const bContext &C);
 void ensure_surface_deformation_node_exists(bContext &C, Object &curves_ob);
 
 /**
- * Allocate an array of `TransVert` for cursor/selection snapping (See
- * `ED_transverts_create_from_obedit` in `view3d_snap.cc`).
- * \note The `TransVert` elements in \a tvs are expected to write to the positions of \a curves.
+ * Allocate an array of #TransVert for cursor/selection snapping (See
+ * #ED_transverts_create_from_obedit in `view3d_snap.cc`).
+ * \note The #TransVert elements in \a tvs are expected to write to the positions of \a curves.
  */
-void transverts_from_curves_positions_create(bke::CurvesGeometry &curves, TransVertStore *tvs);
+void transverts_from_curves_positions_create(bke::CurvesGeometry &curves,
+                                             TransVertStore *tvs,
+                                             const bool skip_handles);
+
+/**
+ * Update original curve positions with transform changes.
+ */
+void transverts_update_curves(bke::CurvesGeometry &curves,
+                              const TransVertStore *tvs,
+                              bool skip_handles);
 
 /* -------------------------------------------------------------------- */
 /** \name Poll Functions
@@ -140,6 +257,7 @@ void CURVES_OT_attribute_set(wmOperatorType *ot);
 void CURVES_OT_draw(wmOperatorType *ot);
 void CURVES_OT_extrude(wmOperatorType *ot);
 void CURVES_OT_select_linked_pick(wmOperatorType *ot);
+void CURVES_OT_separate(wmOperatorType *ot);
 
 /** \} */
 
@@ -174,26 +292,6 @@ IndexMask end_points(const bke::CurvesGeometry &curves,
                      bool inverted,
                      IndexMaskMemory &memory);
 
-/**
- * Return a mask of random points or curves.
- *
- * \param mask: (optional) The elements that should be used in the resulting mask. This mask should
- * be in the same domain as the \a selection_domain. \param random_seed: The seed for the \a
- * RandomNumberGenerator. \param probability: Determines how likely a point/curve will be chosen.
- * If set to 0.0, nothing will be in the mask, if set to 1.0 everything will be in the mask.
- */
-IndexMask random_mask(const bke::CurvesGeometry &curves,
-                      bke::AttrDomain selection_domain,
-                      uint32_t random_seed,
-                      float probability,
-                      IndexMaskMemory &memory);
-IndexMask random_mask(const bke::CurvesGeometry &curves,
-                      const IndexMask &mask,
-                      bke::AttrDomain selection_domain,
-                      uint32_t random_seed,
-                      float probability,
-                      IndexMaskMemory &memory);
-
 /** \} */
 
 /* -------------------------------------------------------------------- */
@@ -209,8 +307,8 @@ IndexMask random_mask(const bke::CurvesGeometry &curves,
  * helpful utilities on top of that.
  * \{ */
 
-void fill_selection_false(GMutableSpan span);
-void fill_selection_true(GMutableSpan span);
+void fill_selection_false(GMutableSpan selection);
+void fill_selection_true(GMutableSpan selection);
 void fill_selection(GMutableSpan selection, bool value);
 void fill_selection_false(GMutableSpan selection, const IndexMask &mask);
 void fill_selection_true(GMutableSpan selection, const IndexMask &mask);
@@ -243,17 +341,31 @@ IndexMask retrieve_selected_curves(const Curves &curves_id, IndexMaskMemory &mem
  * or points in curves with a selection factor greater than zero).
  */
 IndexMask retrieve_selected_points(const bke::CurvesGeometry &curves, IndexMaskMemory &memory);
+IndexMask retrieve_selected_points(const Curves &curves_id, IndexMaskMemory &memory);
+/**
+ * Find points that are selected, for a given attribute_name, requires mask of all Bezier points.
+ * Note: When retrieving ".selection_handle_left" or ".selection_handle_right" all non-Bezier
+ * points will be deselected even if the raw attribute is selected.
+ */
 IndexMask retrieve_selected_points(const bke::CurvesGeometry &curves,
                                    StringRef attribute_name,
+                                   const IndexMask &bezier_points,
                                    IndexMaskMemory &memory);
-IndexMask retrieve_selected_points(const Curves &curves_id, IndexMaskMemory &memory);
+
+/**
+ * Find points that are selected (a selection factor greater than zero) or have
+ * any of their Bezier handle selected.
+ */
+IndexMask retrieve_all_selected_points(const bke::CurvesGeometry &curves,
+                                       int handle_display,
+                                       IndexMaskMemory &memory);
 
 /**
  * If the selection_id attribute doesn't exist, create it with the requested type (bool or float).
  */
 bke::GSpanAttributeWriter ensure_selection_attribute(bke::CurvesGeometry &curves,
                                                      bke::AttrDomain selection_domain,
-                                                     eCustomDataType create_type,
+                                                     bke::AttrType create_type,
                                                      StringRef attribute_name = ".selection");
 
 void foreach_selection_attribute_writer(
@@ -437,6 +549,14 @@ bool remove_selection(bke::CurvesGeometry &curves, bke::AttrDomain selection_dom
 void duplicate_points(bke::CurvesGeometry &curves, const IndexMask &mask);
 void duplicate_curves(bke::CurvesGeometry &curves, const IndexMask &mask);
 
+void separate_points(const bke::CurvesGeometry &curves,
+                     const IndexMask &points_to_separate,
+                     bke::CurvesGeometry &separated,
+                     bke::CurvesGeometry &retained);
+
+bke::CurvesGeometry split_points(const bke::CurvesGeometry &curves,
+                                 const IndexMask &points_to_split);
+
 /**
  * Adds new curves to \a curves.
  * \param new_sizes: The new size for each curve. Sizes must be > 0.
@@ -459,6 +579,18 @@ void resize_curves(bke::CurvesGeometry &curves,
  * reorder curves.
  */
 void reorder_curves(bke::CurvesGeometry &curves, Span<int> old_by_new_indices_map);
+
+wmOperatorStatus join_objects_exec(bContext *C, wmOperator *op);
+
+enum class SetHandleType : uint8_t {
+  Free = 0,
+  Auto = 1,
+  Vector = 2,
+  Align = 3,
+  Toggle = 4,
+};
+
+extern const EnumPropertyItem rna_enum_set_handle_type_items[];
 
 /** \} */
 

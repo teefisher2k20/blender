@@ -24,6 +24,11 @@ ccl_device_inline float4 one_float4()
   return make_float4(1.0f);
 }
 
+ccl_device_template_spec float4 make_zero()
+{
+  return zero_float4();
+}
+
 ccl_device_inline int4 cast(const float4 a)
 {
 #ifdef __KERNEL_SSE__
@@ -401,16 +406,6 @@ ccl_device_inline float distance(const float4 a, const float4 b)
   return len(a - b);
 }
 
-ccl_device_inline float4 rcp(const float4 a)
-{
-#  ifdef __KERNEL_SSE__
-  /* Don't use _mm_rcp_ps due to poor precision. */
-  return float4(_mm_div_ps(_mm_set_ps1(1.0f), a.m128));
-#  else
-  return make_float4(1.0f / a.x, 1.0f / a.y, 1.0f / a.z, 1.0f / a.w);
-#  endif
-}
-
 ccl_device_inline float4 sqrt(const float4 a)
 {
 #  ifdef __KERNEL_SSE__
@@ -468,9 +463,24 @@ ccl_device_inline float4 fabs(const float4 a)
 #  endif
 }
 
+/* The floating-point remainder of the division operation `a / b` calculated by this function is
+ * exactly the value `a - iquot * b`, where `iquot` is `a / b with` its fractional part truncated.
+ *
+ * The returned value has the same sign as `a` and is less than `b` in magnitude. */
 ccl_device_inline float4 fmod(const float4 a, const float b)
 {
+#  if defined(__KERNEL_NEON__)
+  /* Use native Neon instructions.
+   * The logic is the same as the SSE code below, but on Apple M2 Ultra this seems to be faster.
+   * Possibly due to some runtime checks in _mm_round_ps which do not get properly inlined. */
+  const float32x4_t iquot = vrndq_f32(a / b);
+  return float4(vsubq_f32(a, vmulq_f32(iquot, vdupq_n_f32(b))));
+#  elif defined(__KERNEL_SSE42__) && defined(__KERNEL_SSE__)
+  const __m128 iquot = _mm_round_ps(a / b, _MM_FROUND_TRUNC);
+  return float4(_mm_sub_ps(a, _mm_mul_ps(iquot, _mm_set1_ps(b))));
+#  else
   return make_float4(fmodf(a.x, b), fmodf(a.y, b), fmodf(a.z, b), fmodf(a.w, b));
+#  endif
 }
 
 ccl_device_inline float4 floor(const float4 a)
@@ -538,27 +548,31 @@ ccl_device_inline bool isequal(const float4 a, const float4 b)
 #endif
 }
 
-#ifndef __KERNEL_GPU__
-ccl_device_inline float4 select(const int4 mask, const float4 a, const float4 b)
+template<class MaskType>
+ccl_device_inline float4 select(const MaskType mask, const float4 a, const float4 b)
 {
-#  ifdef __KERNEL_SSE__
-#    ifdef __KERNEL_SSE42__
+#if defined(__KERNEL_METAL__)
+  return metal::select(b, a, bool4(mask));
+#elif defined(__KERNEL_SSE__)
+#  ifdef __KERNEL_SSE42__
   return float4(_mm_blendv_ps(b.m128, a.m128, _mm_castsi128_ps(mask.m128)));
-#    else
+#  else
   return float4(
       _mm_or_ps(_mm_and_ps(_mm_castsi128_ps(mask), a), _mm_andnot_ps(_mm_castsi128_ps(mask), b)));
-#    endif
-#  else
+#  endif
+#else
   return make_float4(
       (mask.x) ? a.x : b.x, (mask.y) ? a.y : b.y, (mask.z) ? a.z : b.z, (mask.w) ? a.w : b.w);
-#  endif
+#endif
 }
 
-ccl_device_inline float4 mask(const int4 mask, const float4 a)
+template<class MaskType> ccl_device_inline float4 mask(const MaskType mask, const float4 a)
 {
   /* Replace elements of x with zero where mask isn't set. */
   return select(mask, a, zero_float4());
 }
+
+#ifndef __KERNEL_GPU__
 
 ccl_device_inline float4 load_float4(const ccl_private float *v)
 {
@@ -613,6 +627,11 @@ ccl_device_inline float4 power(const float4 v, const float e)
   return make_float4(powf(v.x, e), powf(v.y, e), powf(v.z, e), powf(v.w, e));
 }
 
+ccl_device_inline float4 interp(float4 a, float4 b, float t)
+{
+  return a + t * (b - a);
+}
+
 #if !defined(__KERNEL_METAL__) && !defined(__KERNEL_ONEAPI__)
 /* Int/Float conversion */
 ccl_device_inline int4 __float4_as_int4(const float4 f)
@@ -635,5 +654,13 @@ ccl_device_inline float4 __int4_as_float4(const int4 i)
 #  endif
 }
 #endif /* !defined(__KERNEL_METAL__) && !defined(__KERNEL_ONEAPI__) */
+
+ccl_device_inline void copy_v4_v4(ccl_private float *r, const float4 val)
+{
+  r[0] = val.x;
+  r[1] = val.y;
+  r[2] = val.z;
+  r[3] = val.w;
+}
 
 CCL_NAMESPACE_END

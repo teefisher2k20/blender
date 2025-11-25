@@ -8,18 +8,18 @@
 #define OPENSUBDIV_EVAL_OUTPUT_H_
 
 #include <opensubdiv/osd/cpuPatchTable.h>
-#include <opensubdiv/osd/glPatchTable.h>
 #include <opensubdiv/osd/mesh.h>
 #include <opensubdiv/osd/types.h>
 
 #include "opensubdiv_evaluator.hh"
 #include "opensubdiv_evaluator_capi.hh"
 
+#include "gpu_patch_table.hh"
+
 using OpenSubdiv::Far::PatchTable;
 using OpenSubdiv::Far::StencilTable;
 using OpenSubdiv::Osd::BufferDescriptor;
 using OpenSubdiv::Osd::CpuPatchTable;
-using OpenSubdiv::Osd::GLPatchTable;
 using OpenSubdiv::Osd::PatchCoord;
 
 namespace blender::opensubdiv {
@@ -76,34 +76,53 @@ class EvalOutputAPI::EvalOutput {
   // data structure. They need to be overridden in the specific instances of the EvalOutput derived
   // classes if needed, while the interfaces above are overridden through VolatileEvalOutput.
 
-  virtual void fillPatchArraysBuffer(OpenSubdiv_Buffer * /*patch_arrays_buffer*/) {}
-
-  virtual void wrapPatchIndexBuffer(OpenSubdiv_Buffer * /*patch_index_buffer*/) {}
-
-  virtual void wrapPatchParamBuffer(OpenSubdiv_Buffer * /*patch_param_buffer*/) {}
-
-  virtual void wrapSrcBuffer(OpenSubdiv_Buffer * /*src_buffer*/) {}
-
-  virtual void wrapSrcVertexDataBuffer(OpenSubdiv_Buffer * /*src_buffer*/) {}
-
-  virtual void fillFVarPatchArraysBuffer(const int /*face_varying_channel*/,
-                                         OpenSubdiv_Buffer * /*patch_arrays_buffer*/)
+  virtual gpu::StorageBuf *create_patch_arrays_buf()
   {
+    return nullptr;
   }
 
-  virtual void wrapFVarPatchIndexBuffer(const int /*face_varying_channel*/,
-                                        OpenSubdiv_Buffer * /*patch_index_buffer*/)
+  virtual gpu::StorageBuf *get_patch_index_buf()
   {
+    return nullptr;
   }
 
-  virtual void wrapFVarPatchParamBuffer(const int /*face_varying_channel*/,
-                                        OpenSubdiv_Buffer * /*patch_param_buffer*/)
+  virtual gpu::StorageBuf *get_patch_param_buf()
   {
+    return nullptr;
   }
 
-  virtual void wrapFVarSrcBuffer(const int /*face_varying_channel*/,
-                                 OpenSubdiv_Buffer * /*src_buffer*/)
+  virtual gpu::VertBuf *get_source_buf()
   {
+    return nullptr;
+  }
+
+  virtual gpu::VertBuf *get_source_data_buf()
+  {
+    return nullptr;
+  }
+
+  virtual gpu::StorageBuf *create_face_varying_patch_array_buf(const int /*face_varying_channel*/)
+  {
+    return nullptr;
+  }
+
+  virtual gpu::StorageBuf *get_face_varying_patch_index_buf(const int /*face_varying_channel*/)
+  {
+    return nullptr;
+  }
+
+  virtual gpu::StorageBuf *get_face_varying_patch_param_buf(const int /*face_varying_channel*/)
+  {
+    return nullptr;
+  }
+  virtual gpu::VertBuf *get_face_varying_source_buf(const int /*face_varying_channel*/)
+  {
+    return nullptr;
+  }
+
+  virtual int get_face_varying_source_offset(const int /*face_varying_channel*/) const
+  {
+    return 0;
   }
 
   virtual bool hasVertexData() const
@@ -123,9 +142,9 @@ template<typename T> class RawDataWrapperBuffer {
     return data_;
   }
 
-  int BindVBO()
+  gpu::VertBuf *get_vertex_buffer()
   {
-    return 0;
+    return nullptr;
   }
 
   // TODO(sergey): Support UpdateData().
@@ -161,7 +180,7 @@ class ConstPatchCoordWrapperBuffer : public RawDataWrapperVertexBuffer<const Pat
 // Discriminators used in FaceVaryingVolatileEval in order to detect whether we are using adaptive
 // patches as the CPU and OpenGL PatchTable have different APIs.
 bool is_adaptive(const CpuPatchTable *patch_table);
-bool is_adaptive(const GLPatchTable *patch_table);
+bool is_adaptive(const GPUPatchTable *patch_table);
 
 template<typename EVAL_VERTEX_BUFFER,
          typename STENCIL_TABLE,
@@ -170,7 +189,7 @@ template<typename EVAL_VERTEX_BUFFER,
          typename DEVICE_CONTEXT = void>
 class FaceVaryingVolatileEval {
  public:
-  typedef OpenSubdiv::Osd::EvaluatorCacheT<EVALUATOR> EvaluatorCache;
+  using EvaluatorCache = OpenSubdiv::Osd::EvaluatorCacheT<EVALUATOR>;
 
   FaceVaryingVolatileEval(int face_varying_channel,
                           const StencilTable *face_varying_stencils,
@@ -210,7 +229,7 @@ class FaceVaryingVolatileEval {
     BufferDescriptor dst_face_varying_desc = src_face_varying_desc_;
     dst_face_varying_desc.offset += num_coarse_face_varying_vertices_ *
                                     src_face_varying_desc_.stride;
-    const EVALUATOR *eval_instance = OpenSubdiv::Osd::GetEvaluator<EVALUATOR>(
+    EVALUATOR *eval_instance = OpenSubdiv::Osd::GetEvaluator<EVALUATOR>(
         evaluator_cache_, src_face_varying_desc_, dst_face_varying_desc, device_context_);
     // in and out points to same buffer so output is put directly after coarse vertices, needed in
     // adaptive mode
@@ -229,7 +248,7 @@ class FaceVaryingVolatileEval {
     RawDataWrapperBuffer<float> face_varying_data(face_varying);
     BufferDescriptor face_varying_desc(0, 2, 2);
     ConstPatchCoordWrapperBuffer patch_coord_buffer(patch_coord, num_patch_coords);
-    const EVALUATOR *eval_instance = OpenSubdiv::Osd::GetEvaluator<EVALUATOR>(
+    EVALUATOR *eval_instance = OpenSubdiv::Osd::GetEvaluator<EVALUATOR>(
         evaluator_cache_, src_face_varying_desc_, face_varying_desc, device_context_);
 
     BufferDescriptor src_desc = get_src_varying_desc();
@@ -251,7 +270,7 @@ class FaceVaryingVolatileEval {
     return src_face_varying_data_;
   }
 
-  int getFVarSrcBufferOffset() const
+  int get_face_varying_source_offset() const
   {
     BufferDescriptor src_desc = get_src_varying_desc();
     return src_desc.offset;
@@ -309,13 +328,12 @@ template<typename SRC_VERTEX_BUFFER,
          typename DEVICE_CONTEXT = void>
 class VolatileEvalOutput : public EvalOutputAPI::EvalOutput {
  public:
-  typedef OpenSubdiv::Osd::EvaluatorCacheT<EVALUATOR> EvaluatorCache;
-  typedef FaceVaryingVolatileEval<EVAL_VERTEX_BUFFER,
-                                  STENCIL_TABLE,
-                                  PATCH_TABLE,
-                                  EVALUATOR,
-                                  DEVICE_CONTEXT>
-      FaceVaryingEval;
+  using EvaluatorCache = OpenSubdiv::Osd::EvaluatorCacheT<EVALUATOR>;
+  using FaceVaryingEval = FaceVaryingVolatileEval<EVAL_VERTEX_BUFFER,
+                                                  STENCIL_TABLE,
+                                                  PATCH_TABLE,
+                                                  EVALUATOR,
+                                                  DEVICE_CONTEXT>;
 
   VolatileEvalOutput(const StencilTable *vertex_stencils,
                      const StencilTable *varying_stencils,
@@ -438,7 +456,7 @@ class VolatileEvalOutput : public EvalOutputAPI::EvalOutput {
     // Evaluate vertex positions.
     BufferDescriptor dst_desc = src_desc_;
     dst_desc.offset += num_coarse_vertices_ * src_desc_.stride;
-    const EVALUATOR *eval_instance = OpenSubdiv::Osd::GetEvaluator<EVALUATOR>(
+    EVALUATOR *eval_instance = OpenSubdiv::Osd::GetEvaluator<EVALUATOR>(
         evaluator_cache_, src_desc_, dst_desc, device_context_);
     EVALUATOR::EvalStencils(src_data_,
                             src_desc_,
@@ -452,7 +470,7 @@ class VolatileEvalOutput : public EvalOutputAPI::EvalOutput {
     if (src_vertex_data_) {
       BufferDescriptor dst_vertex_data_desc = src_vertex_data_desc_;
       dst_vertex_data_desc.offset += num_coarse_vertices_ * src_vertex_data_desc_.stride;
-      const EVALUATOR *eval_instance = OpenSubdiv::Osd::GetEvaluator<EVALUATOR>(
+      EVALUATOR *eval_instance = OpenSubdiv::Osd::GetEvaluator<EVALUATOR>(
           evaluator_cache_, src_vertex_data_desc_, dst_vertex_data_desc, device_context_);
       EVALUATOR::EvalStencils(src_vertex_data_,
                               src_vertex_data_desc_,
@@ -492,7 +510,7 @@ class VolatileEvalOutput : public EvalOutputAPI::EvalOutput {
     // TODO(sergey): Support interleaved vertex-varying data.
     BufferDescriptor P_desc(0, 3, 3);
     ConstPatchCoordWrapperBuffer patch_coord_buffer(patch_coord, num_patch_coords);
-    const EVALUATOR *eval_instance = OpenSubdiv::Osd::GetEvaluator<EVALUATOR>(
+    EVALUATOR *eval_instance = OpenSubdiv::Osd::GetEvaluator<EVALUATOR>(
         evaluator_cache_, src_desc_, P_desc, device_context_);
     EVALUATOR::EvalPatches(src_data_,
                            src_desc_,
@@ -520,7 +538,7 @@ class VolatileEvalOutput : public EvalOutputAPI::EvalOutput {
     BufferDescriptor P_desc(0, 3, 3);
     BufferDescriptor dpDu_desc(0, 3, 3), pPdv_desc(0, 3, 3);
     ConstPatchCoordWrapperBuffer patch_coord_buffer(patch_coord, num_patch_coords);
-    const EVALUATOR *eval_instance = OpenSubdiv::Osd::GetEvaluator<EVALUATOR>(
+    EVALUATOR *eval_instance = OpenSubdiv::Osd::GetEvaluator<EVALUATOR>(
         evaluator_cache_, src_desc_, P_desc, dpDu_desc, pPdv_desc, device_context_);
     EVALUATOR::EvalPatches(src_data_,
                            src_desc_,
@@ -545,7 +563,7 @@ class VolatileEvalOutput : public EvalOutputAPI::EvalOutput {
     RawDataWrapperBuffer<float> varying_data(varying);
     BufferDescriptor varying_desc(3, 3, 6);
     ConstPatchCoordWrapperBuffer patch_coord_buffer(patch_coord, num_patch_coords);
-    const EVALUATOR *eval_instance = OpenSubdiv::Osd::GetEvaluator<EVALUATOR>(
+    EVALUATOR *eval_instance = OpenSubdiv::Osd::GetEvaluator<EVALUATOR>(
         evaluator_cache_, src_varying_desc_, varying_desc, device_context_);
     EVALUATOR::EvalPatchesVarying(src_varying_data_,
                                   src_varying_desc_,
@@ -566,7 +584,7 @@ class VolatileEvalOutput : public EvalOutputAPI::EvalOutput {
     RawDataWrapperBuffer<float> vertex_data(data);
     BufferDescriptor vertex_desc(0, src_vertex_data_desc_.length, src_vertex_data_desc_.length);
     ConstPatchCoordWrapperBuffer patch_coord_buffer(patch_coord, num_patch_coords);
-    const EVALUATOR *eval_instance = OpenSubdiv::Osd::GetEvaluator<EVALUATOR>(
+    EVALUATOR *eval_instance = OpenSubdiv::Osd::GetEvaluator<EVALUATOR>(
         evaluator_cache_, src_vertex_data_desc_, vertex_desc, device_context_);
     EVALUATOR::EvalPatches(src_vertex_data_,
                            src_vertex_data_desc_,
@@ -610,9 +628,9 @@ class VolatileEvalOutput : public EvalOutputAPI::EvalOutput {
     return face_varying_evaluators_[face_varying_channel]->getSrcBuffer();
   }
 
-  int getFVarSrcBufferOffset(const int face_varying_channel) const
+  int get_face_varying_source_offset(const int face_varying_channel) const override
   {
-    return face_varying_evaluators_[face_varying_channel]->getFVarSrcBufferOffset();
+    return face_varying_evaluators_[face_varying_channel]->get_face_varying_source_offset();
   }
 
   PATCH_TABLE *getFVarPatchTable(const int face_varying_channel) const

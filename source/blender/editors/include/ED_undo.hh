@@ -15,6 +15,7 @@ struct Base;
 struct CLG_LogRef;
 struct ID;
 struct MemFile;
+struct PointerRNA;
 struct Object;
 struct Scene;
 struct UndoStack;
@@ -47,8 +48,10 @@ void ED_OT_undo_history(wmOperatorType *ot);
 
 /**
  * UI callbacks should call this rather than calling WM_operator_repeat() themselves.
+ *
+ * \return true when repeat succeeded.
  */
-int ED_undo_operator_repeat(bContext *C, wmOperator *op);
+bool ED_undo_operator_repeat(bContext *C, wmOperator *op);
 /**
  * Convenience since UI callbacks use this mostly.
  */
@@ -72,7 +75,7 @@ bool ED_undo_is_memfile_compatible(const bContext *C);
  * For example, changing a brush property isn't stored by sculpt-mode undo steps.
  * This workaround is needed until the limitation is removed, see: #61948.
  */
-bool ED_undo_is_legacy_compatible_for_property(bContext *C, ID *id);
+bool ED_undo_is_legacy_compatible_for_property(bContext *C, ID *id, PointerRNA &ptr);
 
 /**
  * This function addresses the problem of restoring undo steps when multiple windows are used.
@@ -112,7 +115,7 @@ blender::Vector<Base *> ED_undo_editmode_bases_from_view_layer(const Scene *scen
  * this is needed for modes which handle undo themselves (bypassing #ED_undo_push).
  *
  * Using global isn't great, this just avoids doing inline,
- * causing 'BKE_global.hh' & 'BKE_main.hh' includes.
+ * causing `BKE_global.hh` & `BKE_main.hh` includes.
  */
 UndoStack *ED_undo_stack_get();
 
@@ -145,3 +148,13 @@ MemFile *ED_undosys_stack_memfile_get_if_active(UndoStack *ustack);
  * (currently we only do that in #MemFileWriteData when writing a new step).
  */
 void ED_undosys_stack_memfile_id_changed_tag(UndoStack *ustack, ID *id);
+/**
+ * Get the total memory usage of all undo steps in the current undo stack.
+ *
+ * This function iterates through all undo steps and calculates their memory consumption.
+ * For sculpt undo steps, it uses the specialized sculpt memory calculation function.
+ * For other undo step types, it uses the generic `data_size` field.
+ *
+ * \return Total memory usage in bytes, or 0 if no undo stack is available.
+ */
+size_t ED_undosys_total_memory_calc(UndoStack *ustack);

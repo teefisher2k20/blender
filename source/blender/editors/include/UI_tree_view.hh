@@ -15,6 +15,7 @@
 #include <memory>
 #include <string>
 
+#include "BLI_enum_flags.hh"
 #include "BLI_function_ref.hh"
 #include "BLI_math_vector_types.hh"
 #include "BLI_vector.hh"
@@ -24,13 +25,13 @@
 
 struct bContext;
 struct uiBlock;
-struct uiLayout;
 
 namespace blender::ui {
 
 class AbstractTreeView;
 class AbstractTreeViewItem;
 class TreeViewItemDropTarget;
+struct Layout;
 
 /* ---------------------------------------------------------------------- */
 /** \name Tree-View Item Container
@@ -60,13 +61,17 @@ class TreeViewItemContainer {
   /** Pointer back to the owning item. */
   AbstractTreeViewItem *parent_ = nullptr;
 
+  /**
+   * Can be set to true to indicate that all of the children items do not have children themselves.
+   * In this case, no space is reserved for the chevron.
+   */
+  bool is_flat_ = false;
+
  public:
   enum class IterOptions {
     None = 0,
     SkipCollapsed = 1 << 0,
     SkipFiltered = 1 << 1,
-
-    /* Keep ENUM_OPERATORS() below updated! */
   };
   using ItemIterFn = FunctionRef<void(AbstractTreeViewItem &)>;
 
@@ -95,8 +100,7 @@ class TreeViewItemContainer {
   void foreach_parent(ItemIterFn iter_fn) const;
 };
 
-ENUM_OPERATORS(TreeViewItemContainer::IterOptions,
-               TreeViewItemContainer::IterOptions::SkipCollapsed);
+ENUM_OPERATORS(TreeViewItemContainer::IterOptions);
 
 /**
  * The container class is the base for both the tree-view and the items. This alias gives it a
@@ -117,7 +121,19 @@ class AbstractTreeView : public AbstractView, public TreeViewItemContainer {
    */
   /* TODO support region zoom. */
   std::shared_ptr<int> custom_height_ = nullptr;
+  /** Scroll offset in items, also see #uiViewState.scroll_offset. Clamped before creating the
+   * button layout. */
   std::shared_ptr<int> scroll_value_ = nullptr;
+  /**
+   * The total number of items in the tree during the last redraw.
+   */
+  int last_tot_items_ = 0;
+
+  bool scroll_active_into_view_on_draw_ = false;
+  std::shared_ptr<char> show_display_options_ = std::make_shared<char>(0);
+  /* `char[UI_MAX_NAME_STR]` wrapped in shared pointer, to keep a stable pointer over
+   * reconstruction that can be passed to buttons. */
+  std::shared_ptr<char[]> search_string_{new char[256 /*UI_MAX_NAME_STR*/]{}};
 
   friend class AbstractTreeViewItem;
   friend class TreeViewBuilder;
@@ -130,8 +146,11 @@ class AbstractTreeView : public AbstractView, public TreeViewItemContainer {
   void draw_overlays(const ARegion &region, const uiBlock &block) const override;
 
   void foreach_item(ItemIterFn iter_fn, IterOptions options = IterOptions::None) const;
+  void foreach_root_item(ItemIterFn iter_fn) const;
 
+  bool is_fully_visible() const override;
   void scroll(ViewScrollDirection direction) override;
+  /* Scroll to the active element when state is changed. */
 
   /**
    * \param xy: The mouse coordinates in window space.
@@ -141,7 +160,10 @@ class AbstractTreeView : public AbstractView, public TreeViewItemContainer {
   /** Visual feature: Define a number of item rows the view will show by default. If there
    * are fewer items, empty dummy items will be added. These contribute to the view bounds, so the
    * drop target of the view includes them, but they are not interactive (e.g. no mouse-hover
-   * highlight). */
+   * highlight).
+   *
+   * \note Value should be greater than #MIN_ROWS. This is to prevent resizing below certain
+   * height. */
   void set_default_rows(int default_rows);
 
  protected:
@@ -169,6 +191,7 @@ class AbstractTreeView : public AbstractView, public TreeViewItemContainer {
                            int &visible_item_index) const;
 
   int count_visible_descendants(const AbstractTreeViewItem &parent) const;
+  void scroll_active_into_view();
 };
 
 /** \} */
@@ -200,7 +223,7 @@ class AbstractTreeViewItem : public AbstractViewItem, public TreeViewItemContain
  public:
   /* virtual */ ~AbstractTreeViewItem() override = default;
 
-  virtual void build_row(uiLayout &row) = 0;
+  virtual void build_row(Layout &row) = 0;
 
   /* virtual */ std::optional<std::string> debug_name() const override;
 
@@ -231,6 +254,19 @@ class AbstractTreeViewItem : public AbstractViewItem, public TreeViewItemContain
    */
   virtual bool set_collapsed(bool collapsed);
   /**
+   * Called when the view changes an item's state from expanded to collapsed, or vice versa. Will
+   * only be called if the state change is triggered through the view, not through external
+   * changes. E.g. a click on an item calls it, a change in the value returned by
+   * #should_be_collapsed() to reflect an external state change does not.
+   */
+  virtual void on_collapse_change(bContext &C, bool is_collapsed);
+  /**
+   * If the result is not empty, it controls whether the item should be collapsed or not, usually
+   * depending on the data that the view represents.
+   */
+  virtual std::optional<bool> should_be_collapsed() const;
+
+  /**
    * Make this item be uncollapsed on first draw (may later be overridden by
    * #should_be_collapsed()). Must only be done during tree building.
    *
@@ -247,18 +283,7 @@ class AbstractTreeViewItem : public AbstractViewItem, public TreeViewItemContain
 
   int count_parents() const;
 
-  /**
-   * Called when the view changes an item's state from expanded to collapsed, or vice versa. Will
-   * only be called if the state change is triggered through the view, not through external
-   * changes. E.g. a click on an item calls it, a change in the value returned by
-   * #should_be_collapsed() to reflect an external state change does not.
-   */
-  virtual void on_collapse_change(bContext &C, bool is_collapsed);
-  /**
-   * If the result is not empty, it controls whether the item should be collapsed or not, usually
-   * depending on the data that the view represents.
-   */
-  virtual std::optional<bool> should_be_collapsed() const;
+  void on_filter() override;
 
  protected:
   /** See AbstractViewItem::get_rename_string(). */
@@ -307,7 +332,6 @@ class AbstractTreeViewItem : public AbstractViewItem, public TreeViewItemContain
   void ensure_parents_uncollapsed();
 
  private:
-  static void tree_row_click_fn(bContext *, void *, void *);
   static void collapse_chevron_click_fn(bContext *, void *but_arg1, void *);
 
   /**
@@ -318,9 +342,9 @@ class AbstractTreeViewItem : public AbstractViewItem, public TreeViewItemContain
 
   void add_treerow_button(uiBlock &block);
   int indent_width() const;
-  void add_indent(uiLayout &row) const;
+  void add_indent(Layout &row) const;
   void add_collapse_chevron(uiBlock &block) const;
-  void add_rename_button(uiLayout &row);
+  void add_rename_button(Layout &row);
 
   bool has_active_child() const;
 };
@@ -344,8 +368,8 @@ class BasicTreeViewItem : public AbstractTreeViewItem {
 
   explicit BasicTreeViewItem(StringRef label, BIFIconID icon = ICON_NONE);
 
-  void build_row(uiLayout &row) override;
-  void add_label(uiLayout &layout, StringRefNull label_override = "");
+  void build_row(Layout &row) override;
+  void add_label(Layout &layout, StringRefNull label_override = "");
   void set_on_activate_fn(ActivateFn fn);
   /**
    * Set a custom callback to check if this item should be active.
@@ -362,8 +386,6 @@ class BasicTreeViewItem : public AbstractTreeViewItem {
   IsActiveFn is_active_fn_;
 
  private:
-  static void tree_row_click_fn(bContext *C, void *arg1, void *arg2);
-
   std::optional<bool> should_be_active() const override;
   void on_activate(bContext &C) override;
 };
@@ -410,8 +432,7 @@ class TreeViewBuilder {
  public:
   static void build_tree_view(const bContext &C,
                               AbstractTreeView &tree_view,
-                              uiLayout &layout,
-                              std::optional<StringRef> search_string = {},
+                              Layout &layout,
                               bool add_box = true);
 
  private:
@@ -425,7 +446,7 @@ class TreeViewBuilder {
 template<class ItemT, typename... Args>
 inline ItemT &TreeViewItemContainer::add_tree_item(Args &&...args)
 {
-  static_assert(std::is_base_of<AbstractTreeViewItem, ItemT>::value,
+  static_assert(std::is_base_of_v<AbstractTreeViewItem, ItemT>,
                 "Type must derive from and implement the AbstractTreeViewItem interface");
 
   return dynamic_cast<ItemT &>(
@@ -434,7 +455,7 @@ inline ItemT &TreeViewItemContainer::add_tree_item(Args &&...args)
 
 template<class ViewType> ViewType &TreeViewItemDropTarget::get_view() const
 {
-  static_assert(std::is_base_of<AbstractTreeView, ViewType>::value,
+  static_assert(std::is_base_of_v<AbstractTreeView, ViewType>,
                 "Type must derive from and implement the ui::AbstractTreeView interface");
   return dynamic_cast<ViewType &>(view_item_.get_tree_view());
 }

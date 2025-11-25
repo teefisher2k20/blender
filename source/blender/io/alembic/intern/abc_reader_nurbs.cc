@@ -87,7 +87,7 @@ static bool set_knots(const FloatArraySamplePtr &knots, float *&nu_knots)
 
   /* Skip first and last knots, as they are used for padding. */
   const size_t num_knots = knots->size() - 2;
-  nu_knots = static_cast<float *>(MEM_callocN(num_knots * sizeof(float), "abc_setsplineknotsu"));
+  nu_knots = MEM_calloc_arrayN<float>(num_knots, "abc_setsplineknotsu");
 
   for (size_t i = 0; i < num_knots; i++) {
     nu_knots[i] = (*knots)[i + 1];
@@ -98,13 +98,13 @@ static bool set_knots(const FloatArraySamplePtr &knots, float *&nu_knots)
 
 void AbcNurbsReader::readObjectData(Main *bmain, const Alembic::Abc::ISampleSelector &sample_sel)
 {
-  Curve *cu = static_cast<Curve *>(BKE_curve_add(bmain, m_data_name.c_str(), OB_SURF));
+  Curve *cu = BKE_curve_add(bmain, m_data_name.c_str(), OB_SURF);
   cu->actvert = CU_ACT_NONE;
 
   std::vector<std::pair<INuPatchSchema, IObject>>::iterator it;
 
   for (it = m_schemas.begin(); it != m_schemas.end(); ++it) {
-    Nurb *nu = static_cast<Nurb *>(MEM_callocN(sizeof(Nurb), "abc_getnurb"));
+    Nurb *nu = MEM_callocN<Nurb>("abc_getnurb");
     nu->flag = CU_SMOOTH;
     nu->type = CU_NURBS;
     nu->resolu = cu->resolu;
@@ -136,7 +136,7 @@ void AbcNurbsReader::readObjectData(Main *bmain, const Alembic::Abc::ISampleSele
 
     const size_t num_points = positions->size();
 
-    nu->bp = static_cast<BPoint *>(MEM_callocN(num_points * sizeof(BPoint), "abc_setsplinetype"));
+    nu->bp = MEM_calloc_arrayN<BPoint>(num_points, "abc_setsplinetype");
 
     BPoint *bp = nu->bp;
     float posw_in = 1.0f;

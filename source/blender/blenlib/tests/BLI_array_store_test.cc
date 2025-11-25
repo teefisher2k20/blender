@@ -18,6 +18,13 @@
 /* print memory savings */
 // #define DEBUG_PRINT
 
+/* Print time. */
+// #define DEBUG_TIME
+#ifdef DEBUG_TIME
+#  include "BLI_time.h"
+#  include "BLI_time_utildefines.h"
+#endif
+
 /* -------------------------------------------------------------------- */
 /* Helper functions */
 
@@ -42,7 +49,7 @@ struct TestChunk {
 
 static TestChunk *testchunk_list_add(ListBase *lb, const void *data, size_t data_len)
 {
-  TestChunk *tc = (TestChunk *)MEM_mallocN(sizeof(*tc), __func__);
+  TestChunk *tc = MEM_mallocN<TestChunk>(__func__);
   tc->data = data;
   tc->data_len = data_len;
   BLI_addtail(lb, tc);
@@ -63,7 +70,7 @@ static void testchunk_list_free(ListBase *lb)
 {
   for (TestChunk *tc = (TestChunk *)lb->first, *tb_next; tc; tc = tb_next) {
     tb_next = tc->next;
-    MEM_freeN((void *)tc->data);
+    MEM_freeN(const_cast<void *>(tc->data));
     MEM_freeN(tc);
   }
   BLI_listbase_clear(lb);
@@ -76,7 +83,7 @@ static char *testchunk_as_data(ListBase *lb, size_t *r_data_len)
   for (TestChunk *tc = (TestChunk *)lb->first; tc; tc = tc->next) {
     data_len += tc->data_len;
   }
-  char *data = (char *)MEM_mallocN(data_len, __func__);
+  char *data = MEM_malloc_arrayN<char>(data_len, __func__);
   size_t i = 0;
   for (TestChunk *tc = (TestChunk *)lb->first; tc; tc = tc->next) {
     memcpy(&data[i], tc->data, tc->data_len);
@@ -96,7 +103,7 @@ static char *testchunk_as_data_array(TestChunk **tc_array, int tc_array_len, siz
   for (int tc_index = 0; tc_index < tc_array_len; tc_index++) {
     data_len += tc_array[tc_index]->data_len;
   }
-  char *data = (char *)MEM_mallocN(data_len, __func__);
+  char *data = MEM_malloc_arrayN<char>(data_len, __func__);
   size_t i = 0;
   for (int tc_index = 0; tc_index < tc_array_len; tc_index++) {
     TestChunk *tc = tc_array[tc_index];
@@ -124,7 +131,7 @@ struct TestBuffer {
 
 static TestBuffer *testbuffer_list_add(ListBase *lb, const void *data, size_t data_len)
 {
-  TestBuffer *tb = (TestBuffer *)MEM_mallocN(sizeof(*tb), __func__);
+  TestBuffer *tb = MEM_mallocN<TestBuffer>(__func__);
   tb->data = data;
   tb->data_len = data_len;
   tb->state = nullptr;
@@ -158,7 +165,7 @@ static void testbuffer_list_state_from_data__stride_expand(ListBase *lb,
   }
   else {
     const size_t data_stride_len = data_len * stride;
-    char *data_stride = (char *)MEM_mallocN(data_stride_len, __func__);
+    char *data_stride = MEM_malloc_arrayN<char>(data_stride_len, __func__);
 
     for (size_t i = 0, i_stride = 0; i < data_len; i += 1, i_stride += stride) {
       memset(&data_stride[i_stride], data[i], stride);
@@ -255,7 +262,7 @@ static void testbuffer_list_free(ListBase *lb)
 {
   for (TestBuffer *tb = (TestBuffer *)lb->first, *tb_next; tb; tb = tb_next) {
     tb_next = tb->next;
-    MEM_freeN((void *)tb->data);
+    MEM_freeN(const_cast<void *>(tb->data));
     MEM_freeN(tb);
   }
   BLI_listbase_clear(lb);
@@ -322,7 +329,7 @@ TEST(array_store, Single)
   EXPECT_STREQ(data_src, data_dst);
   EXPECT_EQ(data_dst_len, sizeof(data_src));
   BLI_array_store_destroy(bs);
-  MEM_freeN((void *)data_dst);
+  MEM_freeN(data_dst);
 }
 
 TEST(array_store, DoubleNop)
@@ -341,11 +348,11 @@ TEST(array_store, DoubleNop)
 
   data_dst = (char *)BLI_array_store_state_data_get_alloc(state_a, &data_dst_len);
   EXPECT_STREQ(data_src, data_dst);
-  MEM_freeN((void *)data_dst);
+  MEM_freeN(data_dst);
 
   data_dst = (char *)BLI_array_store_state_data_get_alloc(state_b, &data_dst_len);
   EXPECT_STREQ(data_src, data_dst);
-  MEM_freeN((void *)data_dst);
+  MEM_freeN(data_dst);
 
   EXPECT_EQ(data_dst_len, sizeof(data_src));
   BLI_array_store_destroy(bs);
@@ -367,11 +374,11 @@ TEST(array_store, DoubleDiff)
 
   data_dst = (char *)BLI_array_store_state_data_get_alloc(state_a, &data_dst_len);
   EXPECT_STREQ(data_src_a, data_dst);
-  MEM_freeN((void *)data_dst);
+  MEM_freeN(data_dst);
 
   data_dst = (char *)BLI_array_store_state_data_get_alloc(state_b, &data_dst_len);
   EXPECT_STREQ(data_src_b, data_dst);
-  MEM_freeN((void *)data_dst);
+  MEM_freeN(data_dst);
 
   BLI_array_store_destroy(bs);
 }
@@ -421,7 +428,7 @@ TEST(array_store, TextDupeIncreaseDecrease)
 /* Plain Text Tests */
 
 /**
- * Test that uses text input with different params for the array-store
+ * Test that uses text input with different parameters for the array-store
  * to ensure no corner cases fail.
  */
 static void plain_text_helper(const char *words,
@@ -581,7 +588,7 @@ static void testbuffer_list_state_random_data(ListBase *lb,
                                               RNG *rng)
 {
   size_t data_len = rand_range_i(rng, data_min_len, data_max_len + stride, stride);
-  char *data = (char *)MEM_mallocN(data_len, __func__);
+  char *data = MEM_malloc_arrayN<char>(data_len, __func__);
 
   if (lb->last == nullptr) {
     BLI_rng_get_char_n(rng, data, data_len);
@@ -713,7 +720,7 @@ static void random_chunk_generate(ListBase *lb,
   RNG *rng = BLI_rng_new(random_seed);
   const size_t chunk_size_bytes = stride * chunk_count;
   for (int i = 0; i < chunks_per_buffer; i++) {
-    char *data_chunk = (char *)MEM_mallocN(chunk_size_bytes, __func__);
+    char *data_chunk = MEM_malloc_arrayN<char>(chunk_size_bytes, __func__);
     BLI_rng_get_char_n(rng, data_chunk, chunk_size_bytes);
     testchunk_list_add(lb, data_chunk, chunk_size_bytes);
   }
@@ -734,8 +741,7 @@ static void random_chunk_mutate_helper(const int chunks_per_buffer,
   ListBase random_chunks;
   BLI_listbase_clear(&random_chunks);
   random_chunk_generate(&random_chunks, chunks_per_buffer, stride, chunk_count, random_seed);
-  TestChunk **chunks_array = (TestChunk **)MEM_mallocN(chunks_per_buffer * sizeof(TestChunk *),
-                                                       __func__);
+  TestChunk **chunks_array = MEM_malloc_arrayN<TestChunk *>(size_t(chunks_per_buffer), __func__);
   {
     TestChunk *tc = (TestChunk *)random_chunks.first;
     for (int i = 0; i < chunks_per_buffer; i++, tc = tc->next) {
@@ -790,10 +796,274 @@ TEST(array_store, TestChunk_Rand31_Stride11_Chunk21)
   random_chunk_mutate_helper(31, 100, 11, 21, 7117);
 }
 
-#if 0
 /* -------------------------------------------------------------------- */
+/** \name RLE Encode/Decode Utilities
+ * \{ */
 
-/* Test From Files (disabled, keep for local tests.) */
+static bool rle_encode_decode_test(const uint8_t *data_dec,
+                                   size_t data_dec_len,
+                                   size_t *r_data_enc_len)
+{
+  size_t data_enc_len;
+  uint8_t *data_enc;
+
+#ifdef DEBUG_TIME
+  TIMEIT_START(encode);
+#endif
+  data_enc = BLI_array_store_rle_encode(data_dec, data_dec_len, 0, &data_enc_len);
+#ifdef DEBUG_TIME
+  TIMEIT_END(encode);
+#endif
+
+  uint8_t *data_dec_copy = MEM_malloc_arrayN<uint8_t>(data_dec_len, __func__);
+
+#ifdef DEBUG_TIME
+  TIMEIT_START(decode);
+#endif
+  BLI_array_store_rle_decode(data_enc, data_enc_len, data_dec_copy, data_dec_len);
+#ifdef DEBUG_TIME
+  TIMEIT_END(decode);
+#endif
+
+  MEM_freeN(data_enc);
+  const bool eq = memcmp(data_dec, data_dec_copy, data_dec_len) == 0;
+  MEM_freeN(data_dec_copy);
+  if (r_data_enc_len) {
+    *r_data_enc_len = data_enc_len;
+  }
+  return eq;
+}
+
+/**
+ * Test that a span of empty data gets RLE encoded.
+ */
+static void array_store_test_random_span_rle_encode(const size_t data_size,
+                                                    const size_t span_size,
+                                                    const int permitations)
+{
+  BLI_assert(data_size > span_size);
+
+  RNG *rng = BLI_rng_new(1);
+  uint8_t *data = MEM_malloc_arrayN<uint8_t>(data_size, __func__);
+  uint8_t *data_pattern = MEM_malloc_arrayN<uint8_t>(data_size, __func__);
+
+  for (int i = 0; i < data_size; i++) {
+    data_pattern[i] = i % 2;
+  }
+
+  /* Get the size without any RLE. */
+  const size_t data_enc_no_rle_len = [&data_pattern, &data_size]() -> size_t {
+    size_t data_enc_len;
+    rle_encode_decode_test(data_pattern, data_size, &data_enc_len);
+    return data_enc_len;
+  }();
+
+  for (int mutaiton = 0; mutaiton < permitations; mutaiton++) {
+    memcpy(data, data_pattern, data_size);
+
+    /* The first two mutations are always end-points. */
+    int index;
+    if (mutaiton == 0) {
+      index = 0;
+    }
+    else if (mutaiton == 1) {
+      index = int(data_size) - span_size;
+    }
+    else {
+      /* Place the span in a random location. */
+      index = BLI_rng_get_int(rng) % (data_size - span_size);
+    }
+
+    memset(data + index, 0, span_size);
+
+    size_t data_enc_len;
+    rle_encode_decode_test(data, data_size, &data_enc_len);
+
+    /* Ensure the RLE encoded version has at-least the memory reduction of the span. */
+    const size_t data_enc_len_expected_max = (data_enc_no_rle_len - span_size) +
+                                             (sizeof(size_t[2]) * 2);
+    EXPECT_LE(data_enc_len, data_enc_len_expected_max);
+  }
+  MEM_freeN(data);
+  MEM_freeN(data_pattern);
+
+  BLI_rng_free(rng);
+}
+
+static void array_store_test_random_data_rle_encode(const size_t data_size,
+                                                    const size_t data_ratio_size,
+                                                    const int permitations)
+{
+  RNG *rng = BLI_rng_new(1);
+  uint8_t *data = MEM_malloc_arrayN<uint8_t>(data_size, __func__);
+
+  for (int mutaiton = 0; mutaiton < permitations; mutaiton++) {
+    memset(data, 1, data_ratio_size);
+    memset(data + data_ratio_size, 0, data_size - data_ratio_size);
+
+    BLI_rng_shuffle_array(rng, data, 1, data_size);
+
+    size_t data_enc_len;
+    EXPECT_TRUE(rle_encode_decode_test(data, data_size, &data_enc_len));
+  }
+
+  MEM_freeN(data);
+  BLI_rng_free(rng);
+}
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name RLE Encode/Decode Tests
+ * \{ */
+
+TEST(array_store, RLE_Simple)
+{
+  {
+    const uint8_t data[] = {0};
+    EXPECT_TRUE(rle_encode_decode_test(data, 0, nullptr));
+  }
+  {
+    const uint8_t data[] = {0};
+    EXPECT_TRUE(rle_encode_decode_test(data, sizeof(data), nullptr));
+  }
+  {
+    const uint8_t data[] = {1};
+    EXPECT_TRUE(rle_encode_decode_test(data, sizeof(data), nullptr));
+  }
+}
+
+TEST(array_store, RLE_Uniform)
+{
+  const uint8_t data_uniform[64] = {0};
+  uint8_t data_pattern[64] = {0};
+  for (int i = 0; i < sizeof(data_pattern); i += 2) {
+    data_pattern[i] = 1;
+  }
+
+  size_t data_uniform_enc_len = 0;
+  size_t data_pattern_enc_len = 0;
+
+  EXPECT_TRUE(rle_encode_decode_test(data_uniform, sizeof(data_uniform), &data_uniform_enc_len));
+  EXPECT_TRUE(rle_encode_decode_test(data_pattern, sizeof(data_pattern), &data_pattern_enc_len));
+
+  /* This depends on implementation details of header sizes.
+   * Since there is no intention to change these, allow this.
+   * They can always be updated as needed. */
+  EXPECT_EQ(data_uniform_enc_len, sizeof(size_t) + sizeof(uint8_t) + sizeof(size_t[2]));
+  EXPECT_EQ(data_pattern_enc_len, sizeof(data_uniform) + sizeof(size_t[4]));
+}
+
+TEST(array_store, RLE_Alignment)
+{
+  /* Use a size large enough to detect usable spans
+   * but not so large as to make the tests slow. */
+  const size_t data_len_max = sizeof(void *) * 8;
+  uint8_t *data_pattern = MEM_calloc_arrayN<uint8_t>(data_len_max, __func__);
+  for (size_t i = 0; i < data_len_max; i += 2) {
+    data_pattern[i] = 1;
+  }
+
+  /* Use allocations memory checking tools will report errors on invalid buffer read/writes.
+   * It's important to offset the start of the array so as to ensure searching the array
+   * is performed at different memory alignments.
+   * It's also important to use `malloc` not `MEM_mallocN` since these hide out of bounds reads. */
+  for (int data_len = 1; data_len < data_len_max; data_len += 1) {
+    uint8_t *data = static_cast<uint8_t *>(malloc(data_len));
+    for (size_t offset = 0; offset < sizeof(void *); offset += 1) {
+      uint8_t *data_offset = data + offset;
+      if (data_len <= offset) {
+        continue;
+      }
+      const size_t data_offset_len = data_len - offset;
+      memset(data, 0, data_offset_len);
+
+      /* Uniform data. */
+      EXPECT_TRUE(rle_encode_decode_test(data_offset, data_offset_len, nullptr));
+
+      /* Non-uniform data. */
+      memcpy(data_offset, data_pattern, data_offset_len);
+      EXPECT_TRUE(rle_encode_decode_test(data_offset, data_offset_len, nullptr));
+    }
+    free(data);
+  }
+  MEM_freeN(data_pattern);
+}
+
+TEST(array_store, RLE_RandomSpan)
+{
+  /* Enable if there is suspicion of rare edge cases causing problems. */
+  const bool do_stress_test = false;
+
+  const int permutations = do_stress_test ? 256 : 8;
+
+  array_store_test_random_span_rle_encode(63, 31, permutations);
+  array_store_test_random_span_rle_encode(63, 32, permutations);
+  array_store_test_random_span_rle_encode(63, 33, permutations);
+
+  array_store_test_random_span_rle_encode(64, 31, permutations);
+  array_store_test_random_span_rle_encode(64, 32, permutations);
+  array_store_test_random_span_rle_encode(64, 33, permutations);
+
+  array_store_test_random_span_rle_encode(65, 31, permutations);
+  array_store_test_random_span_rle_encode(65, 32, permutations);
+  array_store_test_random_span_rle_encode(65, 33, permutations);
+
+  if (do_stress_test) {
+    const int data_size_max = 256;
+    const int margin = sizeof(size_t[2]);
+    for (int data_size = margin; data_size < data_size_max; data_size++) {
+      for (int span_size = 1; span_size < data_size - margin; span_size++) {
+        array_store_test_random_span_rle_encode(data_size, span_size, permutations);
+      }
+    }
+  }
+}
+
+TEST(array_store, RLE_RandomBytes)
+{
+  /* Enable if there is suspicion of rare edge cases causing problems. */
+  const bool do_stress_test = false;
+
+  const int permutations = do_stress_test ? 256 : 8;
+
+  array_store_test_random_data_rle_encode(128, 16, permutations);
+  array_store_test_random_data_rle_encode(128, 32, permutations);
+  array_store_test_random_data_rle_encode(128, 64, permutations);
+  array_store_test_random_data_rle_encode(128, 128, permutations);
+
+  array_store_test_random_data_rle_encode(131, 16, permutations);
+  array_store_test_random_data_rle_encode(131, 32, permutations);
+  array_store_test_random_data_rle_encode(131, 64, permutations);
+  array_store_test_random_data_rle_encode(131, 128, permutations);
+
+  if (do_stress_test) {
+    const int data_size_max = 256;
+    const int margin = sizeof(size_t[2]);
+    for (int data_size = margin; data_size < data_size_max; data_size++) {
+      for (int data_ratio_size = 1; data_ratio_size < data_size - 1; data_ratio_size++) {
+        array_store_test_random_span_rle_encode(data_size, data_ratio_size, permutations);
+      }
+    }
+  }
+
+  if (do_stress_test) {
+    /* Stress random data, handy for timing (20 million). */
+    const size_t data_len_large = 32000000;
+    array_store_test_random_data_rle_encode(data_len_large, data_len_large / 2, 4);
+    array_store_test_random_data_rle_encode(data_len_large, 0, 4);
+  }
+}
+
+/** \} */
+
+#if 0
+
+/* -------------------------------------------------------------------- */
+/** \name Text File Tests (Disabled)
+ *
+ * Test From Files (disabled, keep for local tests).
+ * \{ */
 
 static void *file_read_binary_as_mem(const char *filepath, size_t pad_bytes, size_t *r_size)
 {
@@ -871,3 +1141,5 @@ TEST(array_store, PlainTextFiles)
   BLI_array_store_destroy(bs);
 }
 #endif
+
+/** \} */

@@ -4,7 +4,7 @@
 
 # ./blender.bin --background --python tests/python/bl_pyapi_mathutils.py -- --verbose
 import unittest
-from mathutils import Matrix, Vector, Quaternion, Euler
+from mathutils import Matrix, Vector, Quaternion, Euler, Color
 from mathutils import kdtree, geometry
 import math
 
@@ -33,7 +33,49 @@ vector_data = sum(
                    for sign in (1.0, -1.0))), ()) + ((0.0, 0.0, 0.0),)
 
 
+def _test_flat_buffer_protocol(self, ty, n):
+    expected = list(range(n))
+    data = ty(expected)
+    view = memoryview(data)
+
+    self.assertEqual(view.shape, (n,))
+    self.assertEqual(view.format, "f")
+    self.assertEqual(view.tolist(), expected)
+
+    # Check multiple simultaneous.
+    with self.assertRaises(BufferError):
+        memoryview(data)
+
+    # Check frozen.
+    with self.assertRaises(BufferError):
+        data.freeze()
+
+    # Check resize.
+    if ty is Vector:
+        with self.assertRaises(BufferError):
+            data.resize(100)
+
+    _incref = view  # For potential changes in GC.
+
+    # Check for a release buffer call, GC releases the buffer if it's not referenced.
+    data = ty(expected)
+    memoryview(data)
+    memoryview(data)
+
+    vec = ty(expected)
+    vec.freeze()
+    view = memoryview(vec)
+    with self.assertRaises(TypeError):
+        view[0] = 1
+
+
 class MatrixTesting(unittest.TestCase):
+
+    def assertAlmostEqualMatrix(self, first, second, size, *, places=6, msg=None, delta=None):
+        for i in range(size):
+            for j in range(size):
+                self.assertAlmostEqual(first[i][j], second[i][j], places=places, msg=msg, delta=delta)
+
     def test_matrix_column_access(self):
         # mat =
         # [ 1  2  3  4 ]
@@ -249,10 +291,22 @@ class MatrixTesting(unittest.TestCase):
         result = Matrix.LocRotScale((1, 2, 3), euler.to_matrix(), (4, 5, 6))
         self.assertAlmostEqualMatrix(result, expected, 4)
 
-    def assertAlmostEqualMatrix(self, first, second, size, *, places=6, msg=None, delta=None):
-        for i in range(size):
-            for j in range(size):
-                self.assertAlmostEqual(first[i][j], second[i][j], places=places, msg=msg, delta=delta)
+    def test_matrix_freeze_is_read_only(self):
+        mat = Matrix(((1, 1, 1),) * 3)
+        mat.freeze()
+        with self.assertRaises(ValueError):
+            mat.resize_4x4()
+        with self.assertRaises(TypeError):
+            mat[0][0] = 0.0
+
+    def test_buffer_protocol(self):
+        expected = [list(range(i * 4, (i * 4) + 4)) for i in range(4)]
+        m = Matrix(expected)
+        view = memoryview(m)
+
+        self.assertEqual(view.shape, (4, 4))
+        self.assertEqual(view.format, "f")
+        self.assertEqual(view.tolist(), expected)
 
 
 class VectorTesting(unittest.TestCase):
@@ -306,6 +360,18 @@ class VectorTesting(unittest.TestCase):
         vec *= 2
         self.assertEqual(vec, prod2)
 
+    def test_vector_freeze_is_read_only(self):
+        vec = Vector((1, 3, 5))
+
+        vec.freeze()
+        with self.assertRaises(ValueError):
+            vec.resize(2)
+        with self.assertRaises(TypeError):
+            vec[0] = 0.0
+
+    def test_buffer_protocol(self):
+        _test_flat_buffer_protocol(self, Vector, 10)
+
 
 class QuaternionTesting(unittest.TestCase):
 
@@ -334,6 +400,212 @@ class QuaternionTesting(unittest.TestCase):
         self.assertAlmostEqual(axis.x, math.sqrt(0.5), 6)
         self.assertAlmostEqual(axis.y, math.sqrt(0.5), 6)
         self.assertAlmostEqual(axis.z, 0)
+
+    def test_buffer_protocol(self):
+        _test_flat_buffer_protocol(self, Quaternion, 4)
+
+
+class EulerTesting(unittest.TestCase):
+
+    def test_buffer_protocol(self):
+        _test_flat_buffer_protocol(self, Euler, 3)
+
+
+class ColorTesting(unittest.TestCase):
+
+    def test_buffer_protocol(self):
+        _test_flat_buffer_protocol(self, Color, 3)
+
+
+# Test features of `mathutils` types.
+class TypeTesting(unittest.TestCase):
+
+    def test_keywords_unsupported_matrix(self):
+        with self.assertRaises(TypeError) as context:
+            Matrix(dummy=None)
+        self.assertEqual(str(context.exception), "Matrix(): takes no keyword args")
+
+    def test_keywords_unsupported_vector(self):
+        with self.assertRaises(TypeError) as context:
+            Vector(dummy=None)
+        self.assertEqual(str(context.exception), "Vector(): takes no keyword args")
+
+    def test_keywords_unsupported_color(self):
+        with self.assertRaises(TypeError) as context:
+            Color(dummy=None)
+        self.assertEqual(str(context.exception), "mathutils.Color(): takes no keyword args")
+
+    def test_keywords_unsupported_euler(self):
+        with self.assertRaises(TypeError) as context:
+            Euler(dummy=None)
+        self.assertEqual(str(context.exception), "mathutils.Euler(): takes no keyword args")
+
+    def test_subclass_matrix(self):
+        class MyMatrix(Matrix):
+            __slots__ = (
+                "offset",
+            )
+
+            def __new__(cls, *args, **kw):
+                del kw
+                return super().__new__(cls, *args)
+
+            def __init__(self, *args, offset=0.0):
+                self.offset = offset
+
+            def __str__(self):
+                return "{:s}({!r})".format(type(self).__name__, tuple(tuple(x) for x in self))
+
+            def my_sum_and_offset(self):
+                return sum(iter([i for v in self for i in v])) + self.offset
+
+        value = MyMatrix(offset=1.0)
+        self.assertEqual(
+            str(value),
+            "MyMatrix(((1.0, 0.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0), (0.0, 0.0, 0.0, 1.0)))",
+        )
+        self.assertEqual(value.my_sum_and_offset(), 5.0)
+        value.offset += 1.0
+        self.assertEqual(value.my_sum_and_offset(), 6.0)
+
+        value = MyMatrix(((1.0, 2.0, 3.0), (4.0, 5.0, 6.0), (7.0, 8.0, 9.0)), offset=5.0)
+        self.assertEqual(str(value), "MyMatrix(((1.0, 2.0, 3.0), (4.0, 5.0, 6.0), (7.0, 8.0, 9.0)))")
+        self.assertEqual(value.my_sum_and_offset(), 50.0)
+
+        # Ensure `__slots__` is working.
+        with self.assertRaises(AttributeError):
+            value.offset_other = 5.0
+
+    def test_subclass_vector(self):
+        class MyVector(Vector):
+            __slots__ = (
+                "offset",
+            )
+
+            def __new__(cls, *args, **kw):
+                del kw
+                return super().__new__(cls, *args)
+
+            def __init__(self, *args, offset=0.0):
+                self.offset = offset
+
+            def __str__(self):
+                return "{:s}({!r})".format(type(self).__name__, tuple(self))
+
+            def my_sum_and_offset(self):
+                return sum(iter(self)) + self.offset
+
+        value = MyVector(offset=1.0)
+        self.assertEqual(str(value), "MyVector((0.0, 0.0, 0.0))")
+        self.assertEqual(value.my_sum_and_offset(), 1.0)
+        value.offset += 1.0
+        self.assertEqual(value.my_sum_and_offset(), 2.0)
+
+        value = MyVector((1.0, 2.0, 3.0), offset=4.0)
+        self.assertEqual(str(value), "MyVector((1.0, 2.0, 3.0))")
+        self.assertEqual(value.my_sum_and_offset(), 10.0)
+
+        # Ensure `__slots__` is working.
+        with self.assertRaises(AttributeError):
+            value.offset_other = 5.0
+
+    def test_subclass_color(self):
+        class MyColor(Color):
+            __slots__ = (
+                "offset",
+            )
+
+            def __new__(cls, *args, **kw):
+                del kw
+                return super().__new__(cls, *args)
+
+            def __init__(self, *args, offset=0.0):
+                self.offset = offset
+
+            def __str__(self):
+                return "{:s}({!r})".format(type(self).__name__, tuple(self))
+
+            def my_sum_and_offset(self):
+                return sum(iter(self)) + self.offset
+
+        value = MyColor(offset=1.0)
+        self.assertEqual(str(value), "MyColor((0.0, 0.0, 0.0))")
+        self.assertEqual(value.my_sum_and_offset(), 1.0)
+
+        value = MyColor((1.0, 2.0, 3.0), offset=4.0)
+        self.assertEqual(str(value), "MyColor((1.0, 2.0, 3.0))")
+        self.assertEqual(value.my_sum_and_offset(), 10.0)
+
+        # Ensure `__slots__` is working.
+        with self.assertRaises(AttributeError):
+            value.offset_other = 5.0
+        value.offset += 1.0
+
+    def test_subclass_quaternion(self):
+        class MyQuaternion(Quaternion):
+            __slots__ = (
+                "offset",
+            )
+
+            def __new__(cls, *args, **_kw):
+                return super().__new__(cls, *args)
+
+            def __init__(self, *args, offset=0.0):
+                self.offset = offset
+
+            def __str__(self):
+                return "{:s}({!r})".format(type(self).__name__, tuple(self))
+
+            def my_sum_and_offset(self):
+                return sum(iter(self)) + self.offset
+
+        value = MyQuaternion(offset=1.0)
+        self.assertEqual(str(value), "MyQuaternion((1.0, 0.0, 0.0, 0.0))")
+        self.assertEqual(value.my_sum_and_offset(), 2.0)
+        value.offset += 1.0
+        self.assertEqual(value.my_sum_and_offset(), 3.0)
+
+        value = MyQuaternion((1.0, 2.0, 3.0, 4.0), offset=4.0)
+        self.assertEqual(str(value), "MyQuaternion((1.0, 2.0, 3.0, 4.0))")
+        self.assertEqual(value.my_sum_and_offset(), 14.0)
+
+        # Ensure `__slots__` is working.
+        with self.assertRaises(AttributeError):
+            value.offset_other = 5.0
+
+    def test_subclass_euler(self):
+        class MyEuler(Euler):
+            __slots__ = (
+                "offset",
+            )
+
+            def __new__(cls, *args, **kw):
+                del kw
+                return super().__new__(cls, *args)
+
+            def __init__(self, *args, offset=0.0):
+                self.offset = offset
+
+            def __str__(self):
+                return "{:s}({!r})".format(type(self).__name__, tuple(self))
+
+            def my_sum_and_offset(self):
+                return sum(iter(self)) + self.offset
+
+        value = MyEuler(offset=1.0)
+        self.assertEqual(str(value), "MyEuler((0.0, 0.0, 0.0))")
+        self.assertEqual(value.my_sum_and_offset(), 1.0)
+        value.offset += 1.0
+        self.assertEqual(value.my_sum_and_offset(), 2.0)
+
+        value = MyEuler((1.0, 2.0, 3.0), offset=4.0)
+        self.assertEqual(str(value), "MyEuler((1.0, 2.0, 3.0))")
+        self.assertEqual(value.my_sum_and_offset(), 10.0)
+
+        # Ensure `__slots__` is working.
+        with self.assertRaises(AttributeError):
+            value.offset_other = 5.0
+        value.offset += 1.0
 
 
 class KDTreeTesting(unittest.TestCase):

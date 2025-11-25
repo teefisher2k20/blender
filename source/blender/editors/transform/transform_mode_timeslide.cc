@@ -12,22 +12,25 @@
 #include "MEM_guardedalloc.h"
 
 #include "BLI_math_vector.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "BKE_nla.hh"
 #include "BKE_unit.hh"
 
 #include "ED_screen.hh"
 
-#include "UI_interface.hh"
 #include "UI_view2d.hh"
 
 #include "BLT_translation.hh"
+
+#include "UI_interface_types.hh"
 
 #include "transform.hh"
 #include "transform_convert.hh"
 
 #include "transform_mode.hh"
+
+namespace blender::ed::transform {
 
 /* -------------------------------------------------------------------- */
 /** \name Transform (Animation Time Slide)
@@ -50,10 +53,10 @@ static void headerTimeSlide(TransInfo *t, const float sval, char str[UI_MAX_DRAW
     val = 2.0f * (cval - sval) / (maxx - minx);
     CLAMP(val, -1.0f, 1.0f);
 
-    BLI_snprintf(&tvec[0], NUM_STR_REP_LEN, "%.4f", val);
+    BLI_snprintf_utf8(&tvec[0], NUM_STR_REP_LEN, "%.4f", val);
   }
 
-  BLI_snprintf(str, UI_MAX_DRAW_STR, IFACE_("TimeSlide: %s"), &tvec[0]);
+  BLI_snprintf_utf8(str, UI_MAX_DRAW_STR, IFACE_("TimeSlide: %s"), &tvec[0]);
 }
 
 static void applyTimeSlideValue(TransInfo *t, float sval, float cval)
@@ -193,12 +196,8 @@ static void initTimeSlide(TransInfo *t, wmOperator * /*op*/)
           val = BKE_nla_tweakedit_remap(adt, val, NLATIME_CONVERT_MAP);
         }
 
-        if (min > val) {
-          min = val;
-        }
-        if (max < val) {
-          max = val;
-        }
+        min = std::min(min, val);
+        max = std::max(max, val);
       }
     }
 
@@ -218,9 +217,10 @@ static void initTimeSlide(TransInfo *t, wmOperator * /*op*/)
   t->num.idx_max = t->idx_max;
 
   /* Initialize snap like for everything else. */
-  t->snap[0] = t->snap[1] = 1.0f;
+  t->increment[0] = 1.0f;
+  t->increment_precision = 1.0f;
 
-  copy_v3_fl(t->num.val_inc, t->snap[0]);
+  copy_v3_fl(t->num.val_inc, t->increment[0]);
   t->num.unit_sys = t->scene->unit.system;
   /* No time unit supporting frames currently. */
   t->num.unit_type[0] = B_UNIT_NONE;
@@ -238,3 +238,5 @@ TransModeInfo TransMode_timeslide = {
     /*snap_apply_fn*/ nullptr,
     /*draw_fn*/ nullptr,
 };
+
+}  // namespace blender::ed::transform

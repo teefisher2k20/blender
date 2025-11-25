@@ -12,11 +12,146 @@
 
 #include "BLI_assert.h"
 #include "BLI_compiler_compat.h"
-#include "BLI_math_geom.h"
 #include "BLI_math_vector_types.hh"
-#include "GPU_common.hh"
+#include "BLI_string_ref.hh"
+#include "BLI_sys_types.h"
 
-struct GPUShader;
+#include "GPU_format.hh"
+
+namespace blender::gpu {
+
+enum class VertAttrType : uint8_t {
+  Invalid = 0,
+
+#define DECLARE(a, b, c, blender_enum, d, e, f, g, h) blender_enum = int(DataFormat::blender_enum),
+
+#define GPU_VERTEX_FORMAT_EXPAND(impl) \
+  SNORM_8_8_8_8_(impl) \
+\
+  SNORM_16_16_(impl) \
+  SNORM_16_16_16_16_(impl) \
+\
+  UNORM_8_8_8_8_(impl) \
+\
+  UNORM_16_16_(impl) \
+  UNORM_16_16_16_16_(impl) \
+\
+  SINT_8_8_8_8_(impl) \
+\
+  SINT_16_16_(impl) \
+  SINT_16_16_16_16_(impl) \
+\
+  SINT_32_(impl) \
+  SINT_32_32_(impl) \
+  SINT_32_32_32_(impl) \
+  SINT_32_32_32_32_(impl) \
+\
+  UINT_8_8_8_8_(impl) \
+\
+  UINT_16_16_(impl) \
+  UINT_16_16_16_16_(impl) \
+\
+  UINT_32_(impl) \
+  UINT_32_32_(impl) \
+  UINT_32_32_32_(impl) \
+  UINT_32_32_32_32_(impl) \
+\
+  SFLOAT_32_(impl) \
+  SFLOAT_32_32_(impl) \
+  SFLOAT_32_32_32_(impl) \
+  SFLOAT_32_32_32_32_(impl) \
+\
+  SNORM_10_10_10_2_(impl) \
+  UNORM_10_10_10_2_(impl) \
+\
+  /* UFLOAT_11_11_10_(impl) Available on Metal (and maybe VK) but not on GL. */ \
+  /* UFLOAT_9_9_9_EXP_5_(impl) Available on Metal (and maybe VK) but not on GL. */
+
+  GPU_VERTEX_FORMAT_EXPAND(DECLARE)
+#undef DECLARE
+
+#define DECLARE(a, b, c, blender_enum, d, e, f, g, h) \
+  blender_enum##_DEPRECATED = int(DataFormat::blender_enum),
+
+/* Deprecated formats. To be removed in 5.0. Needed for python shaders. */
+#define GPU_VERTEX_DEPRECATED_FORMAT_EXPAND(impl) \
+  SNORM_8_(impl) \
+  SNORM_8_8_(impl) \
+  SNORM_8_8_8_(impl) \
+  SNORM_16_(impl) \
+  SNORM_16_16_16_(impl) \
+  UNORM_8_(impl) \
+  UNORM_8_8_(impl) \
+  UNORM_8_8_8_(impl) \
+  UNORM_16_(impl) \
+  UNORM_16_16_16_(impl) \
+  SINT_8_(impl) \
+  SINT_8_8_(impl) \
+  SINT_8_8_8_(impl) \
+  SINT_16_(impl) \
+  SINT_16_16_16_(impl) \
+  UINT_8_(impl) \
+  UINT_8_8_(impl) \
+  UINT_8_8_8_(impl) \
+  UINT_16_(impl) \
+  UINT_16_16_16_(impl)
+
+      GPU_VERTEX_DEPRECATED_FORMAT_EXPAND(DECLARE)
+
+#undef DECLARE
+};
+
+/* TODO: Should reuse GPU_VERTEX_FORMAT_EXPAND, but we need to have `s/unorm` types first. */
+#define GPU_VERTEX_FORMAT_EXPAND_TYPED(impl) \
+  SINT_8_8_8_8_(impl) \
+\
+  SINT_16_16_(impl) \
+  SINT_16_16_16_16_(impl) \
+\
+  SINT_32_(impl) \
+  SINT_32_32_(impl) \
+  SINT_32_32_32_(impl) \
+  SINT_32_32_32_32_(impl) \
+\
+  UINT_8_8_8_8_(impl) \
+\
+  UINT_16_16_(impl) \
+  UINT_16_16_16_16_(impl) \
+\
+  UINT_32_(impl) \
+  UINT_32_32_(impl) \
+  UINT_32_32_32_(impl) \
+  UINT_32_32_32_32_(impl) \
+\
+  SFLOAT_32_(impl) \
+  SFLOAT_32_32_(impl) \
+  SFLOAT_32_32_32_(impl) \
+  SFLOAT_32_32_32_32_(impl) \
+\
+  /* UFLOAT_11_11_10_(impl) Available on Metal (and maybe VK) but not on GL. */ \
+  /* UFLOAT_9_9_9_EXP_5_(impl) Available on Metal (and maybe VK) but not on GL. */
+
+/* Must be implemented for each type used in vertex format.
+ * Should contain the associated VertAttrType just like below. */
+template<typename T> struct AttrType {};
+
+#define ATTR_TYPE_MAPPING(_type, b, c, blender_enum, d, e, f, g, h) \
+  template<> struct AttrType<_type> { \
+    static constexpr VertAttrType type = VertAttrType::blender_enum; \
+  };
+
+GPU_VERTEX_FORMAT_EXPAND_TYPED(ATTR_TYPE_MAPPING)
+
+#undef ATTR_TYPE_MAPPING
+
+inline constexpr DataFormat to_data_format(VertAttrType format)
+{
+  return DataFormat(int(format));
+}
+
+class Shader;
+
+}  // namespace blender::gpu
 
 constexpr static int GPU_VERT_ATTR_MAX_LEN = 16;
 constexpr static int GPU_VERT_ATTR_MAX_NAMES = 6;
@@ -45,23 +180,31 @@ enum GPUVertFetchMode {
   GPU_FETCH_FLOAT = 0,
   GPU_FETCH_INT,
   GPU_FETCH_INT_TO_FLOAT_UNIT, /* 127 (ubyte) -> 0.5 (and so on for other int types) */
-  GPU_FETCH_INT_TO_FLOAT,      /* 127 (any int type) -> 127.0 */
   /* Warning! adjust GPUVertAttr if changing. */
 };
 
 struct GPUVertAttr {
-  /* GPUVertFetchMode */
-  uint fetch_mode : 2;
-  /* GPUVertCompType */
-  uint comp_type : 3;
-  /* 1 to 4 or 8 or 12 or 16 */
-  uint comp_len : 5;
-  /* size in bytes, 1 to 64 */
-  uint size : 7;
+  /* To replace fetch_mode, comp_type, comp_len, size. */
+  struct Type {
+    blender::gpu::VertAttrType format;
+
+    size_t size() const
+    {
+      return to_bytesize(to_data_format(format));
+    };
+
+    int comp_len() const
+    {
+      return format_component_len(to_data_format(format));
+    }
+
+    GPUVertFetchMode fetch_mode() const;
+    GPUVertCompType comp_type() const;
+  } type;
   /* from beginning of vertex, in bytes */
-  uint offset : 11;
+  uint8_t offset;
   /* up to GPU_VERT_ATTR_MAX_NAMES */
-  uint name_len : 3;
+  uint8_t name_len;
   uchar names[GPU_VERT_ATTR_MAX_NAMES];
 };
 
@@ -87,15 +230,136 @@ struct GPUVertFormat {
 
   GPUVertAttr attrs[GPU_VERT_ATTR_MAX_LEN];
   char names[GPU_VERT_ATTR_NAMES_BUF_LEN];
+
+  void pack();
+  uint attribute_add(blender::StringRef name, blender::gpu::VertAttrType type, size_t offset = -1);
 };
+
+#define GPU_VERTEX_FORMAT_ADD_ATTR(attr) \
+  format.attribute_add( \
+      #attr, blender::gpu::AttrType<decltype(attr)>::type, offsetof(VertT, attr)); \
+  BLI_STATIC_ASSERT(offsetof(VertT, attr) < 255, #attr " has offset greater than 255") \
+  BLI_STATIC_ASSERT(offsetof(VertT, attr) % 4 == 0, #attr " is not aligned to 4 bytes")
+
+#define _ATTR_EXPAND1(a) GPU_VERTEX_FORMAT_ADD_ATTR(a)
+#define _ATTR_EXPAND2(a, b) \
+  _ATTR_EXPAND1(a) \
+  GPU_VERTEX_FORMAT_ADD_ATTR(b)
+#define _ATTR_EXPAND3(a, b, c) \
+  _ATTR_EXPAND2(a, b) \
+  GPU_VERTEX_FORMAT_ADD_ATTR(c)
+#define _ATTR_EXPAND4(a, b, c, d) \
+  _ATTR_EXPAND3(a, b, c) \
+  GPU_VERTEX_FORMAT_ADD_ATTR(d)
+#define _ATTR_EXPAND5(a, b, c, d, e) \
+  _ATTR_EXPAND4(a, b, c, d) \
+  GPU_VERTEX_FORMAT_ADD_ATTR(e)
+#define _ATTR_EXPAND6(a, b, c, d, e, f) \
+  _ATTR_EXPAND5(a, b, c, d, e) \
+  GPU_VERTEX_FORMAT_ADD_ATTR(f)
+#define _ATTR_EXPAND7(a, b, c, d, e, f, g) \
+  _ATTR_EXPAND6(a, b, c, d, e, f) \
+  GPU_VERTEX_FORMAT_ADD_ATTR(g)
+#define _ATTR_EXPAND8(a, b, c, d, e, f, g, h) \
+  _ATTR_EXPAND7(a, b, c, d, e, f, g) \
+  GPU_VERTEX_FORMAT_ADD_ATTR(h)
+#define _ATTR_EXPAND9(a, b, c, d, e, f, g, h, i) \
+  _ATTR_EXPAND8(a, b, c, d, e, f, g, h) \
+  GPU_VERTEX_FORMAT_ADD_ATTR(i)
+#define _ATTR_EXPAND10(a, b, c, d, e, f, g, h, i, j) \
+  _ATTR_EXPAND9(a, b, c, d, e, f, g, h, i) \
+  GPU_VERTEX_FORMAT_ADD_ATTR(j)
+#define _ATTR_EXPAND11(a, b, c, d, e, f, g, h, i, j, k) \
+  _ATTR_EXPAND10(a, b, c, d, e, f, g, h, i, j) \
+  GPU_VERTEX_FORMAT_ADD_ATTR(k)
+#define _ATTR_EXPAND12(a, b, c, d, e, f, g, h, i, j, k, l) \
+  _ATTR_EXPAND11(a, b, c, d, e, f, g, h, i, j, k) \
+  GPU_VERTEX_FORMAT_ADD_ATTR(l)
+#define _ATTR_EXPAND13(a, b, c, d, e, f, g, h, i, j, k, l, m) \
+  _ATTR_EXPAND12(a, b, c, d, e, f, g, h, i, j, k, l) \
+  GPU_VERTEX_FORMAT_ADD_ATTR(m)
+#define _ATTR_EXPAND14(a, b, c, d, e, f, g, h, i, j, k, l, m, n) \
+  _ATTR_EXPAND13(a, b, c, d, e, f, g, h, i, j, k, l, m) \
+  GPU_VERTEX_FORMAT_ADD_ATTR(n)
+#define _ATTR_EXPAND15(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o) \
+  _ATTR_EXPAND14(a, b, c, d, e, f, g, h, i, j, k, l, m, n) \
+  GPU_VERTEX_FORMAT_ADD_ATTR(o)
+#define _ATTR_EXPAND16(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p) \
+  _ATTR_EXPAND15(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o) \
+  GPU_VERTEX_FORMAT_ADD_ATTR(p)
+/* We only support up to GPU_VERT_ATTR_MAX_LEN attribute per format. */
+
+#define GPU_VERTEX_FORMAT_ADD_ATTR_EXPAND(...) VA_NARGS_CALL_OVERLOAD(_ATTR_EXPAND, __VA_ARGS__)
+
+#define GPU_VERTEX_FORMAT_FUNC(_VertT, ...) \
+  static GPUVertFormat &format() \
+  { \
+    using VertT = _VertT; \
+    static GPUVertFormat format = {}; \
+    if (format.attr_len == 0) { \
+      GPU_VERTEX_FORMAT_ADD_ATTR_EXPAND(__VA_ARGS__) \
+      format.stride = sizeof(VertT); \
+      BLI_STATIC_ASSERT(sizeof(VertT) < 1024, "Vertex format is too big") \
+      format.packed = true; \
+      BLI_STATIC_ASSERT_ALIGN(VertT, 4) \
+    } \
+    return format; \
+  }
+
+namespace blender::gpu {
+
+/** Generic vertex format for single attribute buffers. */
+template<typename T> struct GenericVertexFormat {
+  T attr;
+  GPU_VERTEX_FORMAT_FUNC(GenericVertexFormat, attr);
+};
+
+template<> struct GenericVertexFormat<int8_t> {
+  /* This is a workaround to reinterpret int8_t into padded vertex format to be able to upload it
+   * on any GPU. The shaders then need to read uint32_t and use shifts and mask to decode in
+   * individual bytes. */
+  uint32_t attr;
+  GPU_VERTEX_FORMAT_FUNC(GenericVertexFormat, attr);
+};
+
+template<> struct GenericVertexFormat<uint8_t> {
+  /* This is a workaround to reinterpret uint8_t into padded vertex format to be able to upload it
+   * on any GPU. The shaders then need to read uint32_t and use shifts and mask to decode in
+   * individual bytes. */
+  uint32_t attr;
+  GPU_VERTEX_FORMAT_FUNC(GenericVertexFormat, attr);
+};
+
+template<> struct GenericVertexFormat<bool> {
+  /* This is a workaround to reinterpret bool into padded vertex format to be able to upload it
+   * on any GPU. The shaders then need to read uint32_t and use shifts and mask to decode in
+   * individual bytes. */
+  uint32_t attr;
+  GPU_VERTEX_FORMAT_FUNC(GenericVertexFormat, attr);
+};
+
+}  // namespace blender::gpu
 
 void GPU_vertformat_clear(GPUVertFormat *);
 void GPU_vertformat_copy(GPUVertFormat *dest, const GPUVertFormat &src);
-void GPU_vertformat_from_shader(GPUVertFormat *format, const GPUShader *shader);
+void GPU_vertformat_from_shader(GPUVertFormat *format, const blender::gpu::Shader *shader);
 
-uint GPU_vertformat_attr_add(
-    GPUVertFormat *, const char *name, GPUVertCompType, uint comp_len, GPUVertFetchMode);
-void GPU_vertformat_alias_add(GPUVertFormat *, const char *alias);
+uint GPU_vertformat_attr_add(GPUVertFormat *format,
+                             blender::StringRef name,
+                             blender::gpu::VertAttrType type);
+/* Legacy/unsafe version.
+ * TODO: Replace by vertex_format_combine. */
+uint GPU_vertformat_attr_add_legacy(
+    GPUVertFormat *, blender::StringRef name, GPUVertCompType, uint comp_len, GPUVertFetchMode);
+
+void GPU_vertformat_alias_add(GPUVertFormat *, blender::StringRef alias);
+
+/**
+ * Return a vertex format from a single attribute description.
+ * The attribute ID is ensured to be 0.
+ */
+GPUVertFormat GPU_vertformat_from_attribute(blender::StringRef name,
+                                            blender::gpu::VertAttrType type);
 
 /**
  * Makes vertex attribute from the next vertices to be accessible in the vertex shader.
@@ -126,7 +390,7 @@ void GPU_vertformat_multiload_enable(GPUVertFormat *format, int load_count);
  */
 void GPU_vertformat_deinterleave(GPUVertFormat *format);
 
-int GPU_vertformat_attr_id_get(const GPUVertFormat *, const char *name);
+int GPU_vertformat_attr_id_get(const GPUVertFormat *, blender::StringRef name);
 
 BLI_INLINE const char *GPU_vertformat_attr_name_get(const GPUVertFormat *format,
                                                     const GPUVertAttr *attr,
@@ -145,91 +409,4 @@ void GPU_vertformat_attr_rename(GPUVertFormat *format, int attr, const char *new
  * \warning Always add a prefix to the result of this function as
  * the generated string can start with a number and not be a valid attribute name.
  */
-void GPU_vertformat_safe_attr_name(const char *attr_name, char *r_safe_name, uint max_len);
-
-/* format conversion */
-
-struct GPUPackedNormal {
-  int x : 10;
-  int y : 10;
-  int z : 10;
-  int w : 2; /* 0 by default, can manually set to { -2, -1, 0, 1 } */
-
-  GPUPackedNormal() = default;
-  GPUPackedNormal(int _x, int _y, int _z, int _w = 0) : x(_x), y(_y), z(_z), w(_w) {}
-
-  /* Cast from int to float. */
-  operator blender::float4()
-  {
-    return blender::float4(x, y, z, w);
-  }
-};
-
-struct GPUNormal {
-  union {
-    GPUPackedNormal low;
-    short high[4];
-  };
-};
-
-BLI_INLINE int clampi(int x, int min_allowed, int max_allowed)
-{
-  BLI_assert(min_allowed <= max_allowed);
-  if (x < min_allowed) {
-    return min_allowed;
-  }
-  if (x > max_allowed) {
-    return max_allowed;
-  }
-  return x;
-}
-
-BLI_INLINE int gpu_convert_normalized_f32_to_i10(float x)
-{
-  /* OpenGL ES packs in a different order as desktop GL but component conversion is the same.
-   * Of the code here, only GPUPackedNormal needs to change. */
-  constexpr int signed_int_10_max = 511;
-  constexpr int signed_int_10_min = -512;
-
-  int qx = x * signed_int_10_max;
-  return clampi(qx, signed_int_10_min, signed_int_10_max);
-}
-
-BLI_INLINE int gpu_convert_i16_to_i10(short x)
-{
-  /* 16-bit signed --> 10-bit signed */
-  /* TODO: round? */
-  return x >> 6;
-}
-
-BLI_INLINE GPUPackedNormal GPU_normal_convert_i10_v3(const float data[3])
-{
-  GPUPackedNormal n = {
-      gpu_convert_normalized_f32_to_i10(data[0]),
-      gpu_convert_normalized_f32_to_i10(data[1]),
-      gpu_convert_normalized_f32_to_i10(data[2]),
-  };
-  return n;
-}
-
-BLI_INLINE GPUPackedNormal GPU_normal_convert_i10_s3(const short data[3])
-{
-  GPUPackedNormal n = {
-      gpu_convert_i16_to_i10(data[0]),
-      gpu_convert_i16_to_i10(data[1]),
-      gpu_convert_i16_to_i10(data[2]),
-  };
-  return n;
-}
-
-BLI_INLINE void GPU_normal_convert_v3(GPUNormal *gpu_normal,
-                                      const float data[3],
-                                      const bool do_hq_normals)
-{
-  if (do_hq_normals) {
-    normal_float_to_short_v3(gpu_normal->high, data);
-  }
-  else {
-    gpu_normal->low = GPU_normal_convert_i10_v3(data);
-  }
-}
+void GPU_vertformat_safe_attr_name(blender::StringRef attr_name, char *r_safe_name, uint max_len);

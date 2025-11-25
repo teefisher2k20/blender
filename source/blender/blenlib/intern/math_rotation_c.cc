@@ -13,7 +13,7 @@
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 /******************************** Quaternions ********************************/
 
@@ -881,7 +881,7 @@ void interp_dot_slerp(const float t, const float cosom, float r_w[2])
     r_w[1] = sinf(t * omega) / sinom;
   }
   else {
-    /* fallback to lerp */
+    /* fall back to lerp */
     r_w[0] = 1.0f - t;
     r_w[1] = t;
   }
@@ -2090,27 +2090,23 @@ void add_weighted_dq_dq(DualQuat *dq_sum, const DualQuat *dq, float weight)
       weight = -weight;
     }
 
-    copy_m4_m4(wmat, (float(*)[4])dq->scale);
+    copy_m4_m4(wmat, (float (*)[4])dq->scale);
     mul_m4_fl(wmat, weight);
     add_m4_m4m4(dq_sum->scale, dq_sum->scale, wmat);
     dq_sum->scale_weight += weight;
   }
 }
 
-/**
- * Add the transformation defined by the given dual quaternion to the accumulator,
- * using the specified pivot point for combining scale transformations.
- *
- * If the resulting dual quaternion would only be used to transform the pivot point itself,
- * this function can avoid fully computing the combined scale matrix to get a performance
- * boost without affecting the result.
- */
 void add_weighted_dq_dq_pivot(DualQuat *dq_sum,
                               const DualQuat *dq,
                               const float pivot[3],
                               const float weight,
                               const bool compute_scale_matrix)
 {
+  /* NOTE: If the resulting dual quaternion would only be used to transform the pivot point itself,
+   * this function can avoid fully computing the combined scale matrix to get a performance
+   * boost without affecting the result. */
+
   /* FIX #32022, #43188, #100373 - bad deformation when combining scaling and rotation. */
   if (dq->scale_weight) {
     DualQuat mdq = *dq;
@@ -2317,7 +2313,7 @@ float fov_to_focallength(float hfov, float sensor)
   return (sensor / 2.0f) / tanf(hfov * 0.5f);
 }
 
-/* 'mod_inline(-3, 4)= 1', 'fmod(-3, 4)= -3' */
+/* `mod_inline(-3, 4)= 1`, `fmod(-3, 4)= -3` */
 static float mod_inline(float a, float b)
 {
   return a - (b * floorf(a / b));

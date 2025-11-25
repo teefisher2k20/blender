@@ -18,6 +18,7 @@
 #include "DNA_light_types.h"
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
+#include "DNA_text_types.h"
 #include "DNA_view3d_types.h"
 
 #include "BLI_listbase.h"
@@ -29,6 +30,7 @@
 #include "BLI_utildefines.h"
 
 #include "BKE_action.hh"
+#include "BKE_bpath.hh"
 #include "BKE_camera.h"
 #include "BKE_idprop.hh"
 #include "BKE_idtype.hh"
@@ -85,6 +87,10 @@ static void camera_copy_data(Main * /*bmain*/,
     CameraBGImage *bgpic_dst = BKE_camera_background_image_copy(bgpic_src, flag_subdata);
     BLI_addtail(&cam_dst->bg_images, bgpic_dst);
   }
+
+  if (cam_src->custom_bytecode) {
+    cam_dst->custom_bytecode = static_cast<char *>(MEM_dupallocN(cam_src->custom_bytecode));
+  }
 }
 
 /** Free (or release) any data used by this camera (does not free the camera itself). */
@@ -92,6 +98,9 @@ static void camera_free_data(ID *id)
 {
   Camera *cam = (Camera *)id;
   BLI_freelistN(&cam->bg_images);
+  if (cam->custom_bytecode) {
+    MEM_freeN(cam->custom_bytecode);
+  }
 }
 
 static void camera_foreach_id(ID *id, LibraryForeachIDData *data)
@@ -106,8 +115,19 @@ static void camera_foreach_id(ID *id, LibraryForeachIDData *data)
   }
 
   if (flag & IDWALK_DO_DEPRECATED_POINTERS) {
-    BKE_LIB_FOREACHID_PROCESS_ID_NOCHECK(data, camera->ipo, IDWALK_CB_USER);
     BKE_LIB_FOREACHID_PROCESS_IDSUPER(data, camera->dof_ob, IDWALK_CB_NOP);
+  }
+
+  BKE_LIB_FOREACHID_PROCESS_IDSUPER(data, camera->custom_shader, IDWALK_CB_USER);
+}
+
+static void camera_foreach_path(ID *id, BPathForeachPathData *bpath_data)
+{
+  Camera *camera = reinterpret_cast<Camera *>(id);
+
+  if (camera->custom_filepath[0]) {
+    BKE_bpath_foreach_path_fixed_process(
+        bpath_data, camera->custom_filepath, sizeof(camera->custom_filepath));
   }
 }
 
@@ -130,7 +150,7 @@ static CameraCyclesCompatibilityData camera_write_cycles_compatibility_data_crea
 
   auto cycles_property_int_set = [](IDProperty *idprop, const char *name, int value) {
     if (IDProperty *prop = IDP_GetPropertyTypeFromGroup(idprop, name, IDP_INT)) {
-      IDP_Int(prop) = value;
+      IDP_int_set(prop, value);
     }
     else {
       IDP_AddToGroup(idprop, blender::bke::idprop::create(name, value).release());
@@ -139,7 +159,7 @@ static CameraCyclesCompatibilityData camera_write_cycles_compatibility_data_crea
 
   auto cycles_property_float_set = [](IDProperty *idprop, const char *name, float value) {
     if (IDProperty *prop = IDP_GetPropertyTypeFromGroup(idprop, name, IDP_FLOAT)) {
-      IDP_Float(prop) = value;
+      IDP_float_set(prop, value);
     }
     else {
       IDP_AddToGroup(idprop, blender::bke::idprop::create(name, value).release());
@@ -148,9 +168,10 @@ static CameraCyclesCompatibilityData camera_write_cycles_compatibility_data_crea
 
   /* For forward compatibility, still write panoramic properties as ID properties for
    * previous blender versions. */
-  IDProperty *idprop_prev = IDP_GetProperties(id);
+  IDProperty *idprop_prev = IDP_ID_system_properties_get(id);
   /* Make a copy to avoid modifying the original. */
-  IDProperty *idprop_temp = idprop_prev ? IDP_CopyProperty(idprop_prev) : IDP_EnsureProperties(id);
+  IDProperty *idprop_temp = idprop_prev ? IDP_CopyProperty(idprop_prev) :
+                                          IDP_ID_system_properties_ensure(id);
 
   Camera *cam = (Camera *)id;
   IDProperty *cycles_cam = cycles_data_ensure(idprop_temp);
@@ -167,7 +188,7 @@ static CameraCyclesCompatibilityData camera_write_cycles_compatibility_data_crea
   cycles_property_float_set(cycles_cam, "fisheye_polynomial_k3", cam->fisheye_polynomial_k3);
   cycles_property_float_set(cycles_cam, "fisheye_polynomial_k4", cam->fisheye_polynomial_k4);
 
-  id->properties = idprop_temp;
+  id->system_properties = idprop_temp;
 
   return {idprop_prev, idprop_temp};
 }
@@ -175,7 +196,7 @@ static CameraCyclesCompatibilityData camera_write_cycles_compatibility_data_crea
 static void camera_write_cycles_compatibility_data_clear(ID *id,
                                                          CameraCyclesCompatibilityData &data)
 {
-  id->properties = data.idprop_prev;
+  id->system_properties = data.idprop_prev;
   data.idprop_prev = nullptr;
 
   if (data.idprop_temp) {
@@ -205,6 +226,10 @@ static void camera_blend_write(BlendWriter *writer, ID *id, const void *id_addre
   if (!is_undo) {
     camera_write_cycles_compatibility_data_clear(id, cycles_data);
   }
+
+  if (cam->custom_bytecode) {
+    BLO_write_string(writer, cam->custom_bytecode);
+  }
 }
 
 static void camera_blend_read_data(BlendDataReader *reader, ID *id)
@@ -221,10 +246,12 @@ static void camera_blend_read_data(BlendDataReader *reader, ID *id)
       bgpic->flag &= ~CAM_BGIMG_FLAG_OVERRIDE_LIBRARY_LOCAL;
     }
   }
+
+  BLO_read_string(reader, &ca->custom_bytecode);
 }
 
 IDTypeInfo IDType_ID_CA = {
-    /*id_code*/ ID_CA,
+    /*id_code*/ Camera::id_type,
     /*id_filter*/ FILTER_ID_CA,
     /*dependencies_id_types*/ FILTER_ID_OB | FILTER_ID_IM,
     /*main_listbase_index*/ INDEX_ID_CA,
@@ -241,7 +268,8 @@ IDTypeInfo IDType_ID_CA = {
     /*make_local*/ nullptr,
     /*foreach_id*/ camera_foreach_id,
     /*foreach_cache*/ nullptr,
-    /*foreach_path*/ nullptr,
+    /*foreach_path*/ camera_foreach_path,
+    /*foreach_working_space_color*/ nullptr,
     /*owner_pointer_get*/ nullptr,
 
     /*blend_write*/ camera_blend_write,
@@ -263,7 +291,7 @@ Camera *BKE_camera_add(Main *bmain, const char *name)
 {
   Camera *cam;
 
-  cam = static_cast<Camera *>(BKE_id_new(bmain, ID_CA, name));
+  cam = BKE_id_new<Camera>(bmain, name);
 
   return cam;
 }
@@ -390,7 +418,7 @@ void BKE_camera_params_from_view3d(CameraParams *params,
 
   if (rv3d->persp == RV3D_CAMOB) {
     /* camera view */
-    const Object *ob_camera_eval = DEG_get_evaluated_object(depsgraph, v3d->camera);
+    const Object *ob_camera_eval = DEG_get_evaluated(depsgraph, v3d->camera);
     BKE_camera_params_from_object(params, ob_camera_eval);
 
     params->zoom = BKE_screen_view3d_zoom_to_fac(rv3d->camzoom);
@@ -694,7 +722,7 @@ static void camera_frame_fit_data_init(const Scene *scene,
   BKE_camera_params_compute_matrix(params);
 
   /* initialize callback data */
-  copy_m3_m4(data->camera_rotmat, (float(*)[4])ob->object_to_world().ptr());
+  copy_m3_m4(data->camera_rotmat, (float (*)[4])ob->object_to_world().ptr());
   normalize_m3(data->camera_rotmat);
   /* To transform a plane which is in its homogeneous representation (4d vector),
    * we need the inverse of the transpose of the transform matrix... */
@@ -871,7 +899,7 @@ bool BKE_camera_view_frame_fit_to_coords(const Depsgraph *depsgraph,
                                          float *r_scale)
 {
   Scene *scene_eval = DEG_get_evaluated_scene(depsgraph);
-  Object *camera_ob_eval = DEG_get_evaluated_object(depsgraph, camera_ob);
+  Object *camera_ob_eval = DEG_get_evaluated(depsgraph, camera_ob);
   CameraParams params;
   CameraViewFrameData data_cb;
 
@@ -1076,7 +1104,8 @@ bool BKE_camera_multiview_spherical_stereo(const RenderData *rd, const Object *c
 
   const Camera *cam = static_cast<const Camera *>(camera->data);
 
-  if ((rd->views_format == SCE_VIEWS_FORMAT_STEREO_3D) && ELEM(cam->type, CAM_PANO, CAM_PERSP) &&
+  if ((rd->views_format == SCE_VIEWS_FORMAT_STEREO_3D) &&
+      ELEM(cam->type, CAM_PANO, CAM_PERSP, CAM_CUSTOM) &&
       ((cam->stereo.flag & CAM_S3D_SPHERICAL) != 0))
   {
     return true;
@@ -1212,13 +1241,13 @@ void BKE_camera_multiview_params(const RenderData *rd,
 
 CameraBGImage *BKE_camera_background_image_new(Camera *cam)
 {
-  CameraBGImage *bgpic = static_cast<CameraBGImage *>(
-      MEM_callocN(sizeof(CameraBGImage), "Background Image"));
+  CameraBGImage *bgpic = MEM_callocN<CameraBGImage>("Background Image");
 
   bgpic->scale = 1.0f;
   bgpic->alpha = 0.5f;
   bgpic->iuser.flag |= IMA_ANIM_ALWAYS;
-  bgpic->flag |= CAM_BGIMG_FLAG_EXPANDED | CAM_BGIMG_FLAG_OVERRIDE_LIBRARY_LOCAL;
+  bgpic->flag |= CAM_BGIMG_FLAG_EXPANDED | CAM_BGIMG_FLAG_CAMERA_ASPECT |
+                 CAM_BGIMG_FLAG_OVERRIDE_LIBRARY_LOCAL;
 
   BLI_addtail(&cam->bg_images, bgpic);
 

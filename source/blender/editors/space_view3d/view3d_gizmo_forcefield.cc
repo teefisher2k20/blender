@@ -6,8 +6,11 @@
  * \ingroup spview3d
  */
 
+#include "BLI_listbase.h"
+
 #include "BKE_context.hh"
 #include "BKE_layer.hh"
+#include "BKE_lib_id.hh"
 
 #include "DNA_object_force_types.h"
 #include "DNA_object_types.h"
@@ -45,9 +48,11 @@ static bool WIDGETGROUP_forcefield_poll(const bContext *C, wmGizmoGroupType * /*
   BKE_view_layer_synced_ensure(scene, view_layer);
   Base *base = BKE_view_layer_active_base_get(view_layer);
   if (base && BASE_SELECTABLE(v3d, base)) {
-    Object *ob = base->object;
+    const Object *ob = base->object;
     if (ob->pd && ob->pd->forcefield) {
-      return true;
+      if (BKE_id_is_editable(CTX_data_main(C), &ob->id)) {
+        return true;
+      }
     }
   }
   return false;
@@ -56,8 +61,7 @@ static bool WIDGETGROUP_forcefield_poll(const bContext *C, wmGizmoGroupType * /*
 static void WIDGETGROUP_forcefield_setup(const bContext * /*C*/, wmGizmoGroup *gzgroup)
 {
   /* only wind effector for now */
-  wmGizmoWrapper *wwrapper = static_cast<wmGizmoWrapper *>(
-      MEM_mallocN(sizeof(wmGizmoWrapper), __func__));
+  wmGizmoWrapper *wwrapper = MEM_mallocN<wmGizmoWrapper>(__func__);
   gzgroup->customdata = wwrapper;
 
   wwrapper->gizmo = WM_gizmo_new("GIZMO_GT_arrow_3d", gzgroup, nullptr);

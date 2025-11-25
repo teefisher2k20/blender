@@ -4,9 +4,11 @@
 
 bl_info = {
     "name": "Node Wrangler",
-    "author": "Bartek Skorupa, Greg Zaal, Sebastian Koenig, Christian Brinkmann, Florian Meyer",
-    "version": (3, 55),
-    "blender": (4, 2, 0),
+    # This is now displayed as the maintainer, so show the foundation.
+    # "author": "Bartek Skorupa, Greg Zaal, Sebastian Koenig, Christian Brinkmann, Florian Meyer", # Original Authors
+    "author": "Blender Foundation",
+    "version": (4, 1, 0),
+    "blender": (5, 0, 0),
     "location": "Node Editor Toolbar or Shift-W",
     "description": "Various tools to enhance and speed up node-based workflow",
     "warning": "",

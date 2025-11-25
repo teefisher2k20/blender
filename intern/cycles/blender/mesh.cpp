@@ -10,7 +10,6 @@
 #include "blender/sync.h"
 #include "blender/util.h"
 
-#include "scene/bake.h"
 #include "scene/camera.h"
 #include "scene/mesh.h"
 #include "scene/object.h"
@@ -25,216 +24,14 @@
 #include "util/log.h"
 #include "util/math.h"
 
-#include "mikktspace.hh"
-
 #include "BKE_anonymous_attribute_id.hh"
+#include "BKE_attribute.h"
 #include "BKE_attribute.hh"
 #include "BKE_attribute_math.hh"
 #include "BKE_customdata.hh"
 #include "BKE_mesh.hh"
 
 CCL_NAMESPACE_BEGIN
-
-/* Tangent Space */
-
-template<bool is_subd> struct MikkMeshWrapper {
-  MikkMeshWrapper(const ::Mesh &b_mesh,
-                  const char *layer_name,
-                  const Mesh *mesh,
-                  float3 *tangent,
-                  float *tangent_sign)
-      : mesh(mesh), tangent(tangent), tangent_sign(tangent_sign)
-  {
-    const AttributeSet &attributes = is_subd ? mesh->subd_attributes : mesh->attributes;
-
-    Attribute *attr_vN = attributes.find(ATTR_STD_VERTEX_NORMAL);
-    vertex_normal = attr_vN->data_float3();
-
-    if (layer_name == nullptr) {
-      Attribute *attr_orco = attributes.find(ATTR_STD_GENERATED);
-
-      if (attr_orco) {
-        orco = attr_orco->data_float3();
-        float3 orco_size;
-        mesh_texture_space(b_mesh, orco_loc, orco_size);
-        inv_orco_size = 1.0f / orco_size;
-      }
-    }
-    else {
-      Attribute *attr_uv = attributes.find(ustring(layer_name));
-      if (attr_uv != nullptr) {
-        uv = attr_uv->data_float2();
-      }
-    }
-  }
-
-  int GetNumFaces()
-  {
-    if constexpr (is_subd) {
-      return mesh->get_num_subd_faces();
-    }
-    else {
-      return mesh->num_triangles();
-    }
-  }
-
-  int GetNumVerticesOfFace(const int face_num)
-  {
-    if constexpr (is_subd) {
-      return mesh->get_subd_num_corners()[face_num];
-    }
-    else {
-      return 3;
-    }
-  }
-
-  int CornerIndex(const int face_num, const int vert_num)
-  {
-    if constexpr (is_subd) {
-      const Mesh::SubdFace &face = mesh->get_subd_face(face_num);
-      return face.start_corner + vert_num;
-    }
-    else {
-      return face_num * 3 + vert_num;
-    }
-  }
-
-  int VertexIndex(const int face_num, const int vert_num)
-  {
-    const int corner = CornerIndex(face_num, vert_num);
-    if constexpr (is_subd) {
-      return mesh->get_subd_face_corners()[corner];
-    }
-    else {
-      return mesh->get_triangles()[corner];
-    }
-  }
-
-  mikk::float3 GetPosition(const int face_num, const int vert_num)
-  {
-    const float3 vP = mesh->get_verts()[VertexIndex(face_num, vert_num)];
-    return mikk::float3(vP.x, vP.y, vP.z);
-  }
-
-  mikk::float3 GetTexCoord(const int face_num, const int vert_num)
-  {
-    /* TODO: Check whether introducing a template boolean in order to
-     * turn this into a constexpr is worth it. */
-    if (uv != nullptr) {
-      const int corner_index = CornerIndex(face_num, vert_num);
-      const float2 tfuv = uv[corner_index];
-      return mikk::float3(tfuv.x, tfuv.y, 1.0f);
-    }
-    if (orco != nullptr) {
-      const int vertex_index = VertexIndex(face_num, vert_num);
-      const float2 uv = map_to_sphere((orco[vertex_index] + orco_loc) * inv_orco_size);
-      return mikk::float3(uv.x, uv.y, 1.0f);
-    }
-    return mikk::float3(0.0f, 0.0f, 1.0f);
-  }
-
-  mikk::float3 GetNormal(const int face_num, const int vert_num)
-  {
-    float3 vN;
-    if (is_subd) {
-      const Mesh::SubdFace &face = mesh->get_subd_face(face_num);
-      if (face.smooth) {
-        const int vertex_index = VertexIndex(face_num, vert_num);
-        vN = vertex_normal[vertex_index];
-      }
-      else {
-        vN = face.normal(mesh);
-      }
-    }
-    else {
-      if (mesh->get_smooth()[face_num]) {
-        const int vertex_index = VertexIndex(face_num, vert_num);
-        vN = vertex_normal[vertex_index];
-      }
-      else {
-        const Mesh::Triangle tri = mesh->get_triangle(face_num);
-        vN = tri.compute_normal(mesh->get_verts().data());
-      }
-    }
-    return mikk::float3(vN.x, vN.y, vN.z);
-  }
-
-  void SetTangentSpace(const int face_num, const int vert_num, mikk::float3 T, bool orientation)
-  {
-    const int corner_index = CornerIndex(face_num, vert_num);
-    tangent[corner_index] = make_float3(T.x, T.y, T.z);
-    if (tangent_sign != nullptr) {
-      tangent_sign[corner_index] = orientation ? 1.0f : -1.0f;
-    }
-  }
-
-  const Mesh *mesh;
-  int num_faces;
-
-  float3 *vertex_normal;
-  float2 *texface;
-  float2 *uv = nullptr;
-  float3 *orco = nullptr;
-  float3 orco_loc, inv_orco_size;
-
-  float3 *tangent;
-  float *tangent_sign;
-};
-
-static void mikk_compute_tangents(
-    const ::Mesh &b_mesh, const char *layer_name, Mesh *mesh, bool need_sign, bool active_render)
-{
-  /* Create tangent attributes. */
-  const bool is_subd = mesh->get_num_subd_faces();
-  AttributeSet &attributes = is_subd ? mesh->subd_attributes : mesh->attributes;
-  Attribute *attr;
-  ustring name;
-  if (layer_name != nullptr) {
-    name = ustring((string(layer_name) + ".tangent").c_str());
-  }
-  else {
-    name = ustring("orco.tangent");
-  }
-  if (active_render) {
-    attr = attributes.add(ATTR_STD_UV_TANGENT, name);
-  }
-  else {
-    attr = attributes.add(name, TypeVector, ATTR_ELEMENT_CORNER);
-  }
-  float3 *tangent = attr->data_float3();
-  /* Create bitangent sign attribute. */
-  float *tangent_sign = nullptr;
-  if (need_sign) {
-    Attribute *attr_sign;
-    ustring name_sign;
-    if (layer_name != nullptr) {
-      name_sign = ustring((string(layer_name) + ".tangent_sign").c_str());
-    }
-    else {
-      name_sign = ustring("orco.tangent_sign");
-    }
-
-    if (active_render) {
-      attr_sign = attributes.add(ATTR_STD_UV_TANGENT_SIGN, name_sign);
-    }
-    else {
-      attr_sign = attributes.add(name_sign, TypeFloat, ATTR_ELEMENT_CORNER);
-    }
-    tangent_sign = attr_sign->data_float();
-  }
-
-  /* Setup userdata. */
-  if (is_subd) {
-    MikkMeshWrapper<true> userdata(b_mesh, layer_name, mesh, tangent, tangent_sign);
-    /* Compute tangents. */
-    mikk::Mikktspace(userdata).genTangSpace();
-  }
-  else {
-    MikkMeshWrapper<false> userdata(b_mesh, layer_name, mesh, tangent, tangent_sign);
-    /* Compute tangents. */
-    mikk::Mikktspace(userdata).genTangSpace();
-  }
-}
 
 static void attr_create_motion_from_velocity(Mesh *mesh,
                                              const blender::Span<blender::float3> b_attr,
@@ -245,12 +42,16 @@ static void attr_create_motion_from_velocity(Mesh *mesh,
   /* Override motion steps to fixed number. */
   mesh->set_motion_steps(3);
 
+  AttributeSet &attributes = mesh->get_subdivision_type() == Mesh::SUBDIVISION_NONE ?
+                                 mesh->attributes :
+                                 mesh->subd_attributes;
+
   /* Find or add attribute */
   float3 *P = mesh->get_verts().data();
-  Attribute *attr_mP = mesh->attributes.find(ATTR_STD_MOTION_VERTEX_POSITION);
+  Attribute *attr_mP = attributes.find(ATTR_STD_MOTION_VERTEX_POSITION);
 
   if (!attr_mP) {
-    attr_mP = mesh->attributes.add(ATTR_STD_MOTION_VERTEX_POSITION);
+    attr_mP = attributes.add(ATTR_STD_MOTION_VERTEX_POSITION);
   }
 
   /* Only export previous and next frame, we don't have any in between data. */
@@ -281,7 +82,8 @@ static void attr_create_generic(Scene *scene,
   const blender::bke::AttributeAccessor b_attributes = b_mesh.attributes();
   AttributeSet &attributes = (subdivision) ? mesh->subd_attributes : mesh->attributes;
   static const ustring u_velocity("velocity");
-  const ustring default_color_name{BKE_id_attributes_default_color_name(&b_mesh.id)};
+  const ustring default_color_name{
+      std::string_view(BKE_id_attributes_default_color_name(&b_mesh.id).value_or(""))};
 
   b_attributes.foreach_attribute([&](const blender::bke::AttributeIter &iter) {
     const ustring name{std::string_view(iter.name)};
@@ -313,7 +115,8 @@ static void attr_create_generic(Scene *scene,
       return;
     }
 
-    if (b_attr.domain == blender::bke::AttrDomain::Corner && iter.data_type == CD_PROP_BYTE_COLOR)
+    if (b_attr.domain == blender::bke::AttrDomain::Corner &&
+        iter.data_type == blender::bke::AttrType::ColorByte)
     {
       Attribute *attr = attributes.add(name, TypeRGBA, ATTR_ELEMENT_CORNER_BYTE);
       if (is_render_color) {
@@ -420,7 +223,9 @@ static set<ustring> get_blender_uv_names(const ::Mesh &b_mesh)
 {
   set<ustring> uv_names;
   b_mesh.attributes().foreach_attribute([&](const blender::bke::AttributeIter &iter) {
-    if (iter.domain == blender::bke::AttrDomain::Corner && iter.data_type == CD_PROP_FLOAT2) {
+    if (iter.domain == blender::bke::AttrDomain::Corner &&
+        iter.data_type == blender::bke::AttrType::Float2)
+    {
       if (!blender::bke::attribute_name_is_anonymous(iter.name)) {
         uv_names.emplace(std::string_view(iter.name));
       }
@@ -437,65 +242,38 @@ static void attr_create_uv_map(Scene *scene,
 {
   const blender::Span<blender::int3> corner_tris = b_mesh.corner_tris();
   const blender::bke::AttributeAccessor b_attributes = b_mesh.attributes();
-  const ustring render_name(CustomData_get_render_layer_name(&b_mesh.corner_data, CD_PROP_FLOAT2));
-  if (!blender_uv_names.empty()) {
-    for (const ustring &uv_name : blender_uv_names) {
-      const bool active_render = uv_name == render_name;
-      const AttributeStandard uv_std = (active_render) ? ATTR_STD_UV : ATTR_STD_NONE;
-      const AttributeStandard tangent_std = (active_render) ? ATTR_STD_UV_TANGENT : ATTR_STD_NONE;
-      const ustring tangent_name = ustring((string(uv_name) + ".tangent").c_str());
-
-      /* Denotes whether UV map was requested directly. */
-      const bool need_uv = mesh->need_attribute(scene, uv_name) ||
-                           mesh->need_attribute(scene, uv_std);
-      /* Denotes whether tangent was requested directly. */
-      const bool need_tangent = mesh->need_attribute(scene, tangent_name) ||
-                                (active_render && mesh->need_attribute(scene, tangent_std));
-
-      /* UV map */
-      /* NOTE: We create temporary UV layer if its needed for tangent but
-       * wasn't requested by other nodes in shaders.
-       */
-      Attribute *uv_attr = nullptr;
-      if (need_uv || need_tangent) {
-        if (active_render) {
-          uv_attr = mesh->attributes.add(uv_std, uv_name);
-        }
-        else {
-          uv_attr = mesh->attributes.add(uv_name, TypeFloat2, ATTR_ELEMENT_CORNER);
-        }
-
-        const blender::VArraySpan b_uv_map = *b_attributes.lookup<blender::float2>(
-            uv_name.c_str(), blender::bke::AttrDomain::Corner);
-        float2 *fdata = uv_attr->data_float2();
-        for (const int i : corner_tris.index_range()) {
-          const blender::int3 &tri = corner_tris[i];
-          fdata[i * 3 + 0] = make_float2(b_uv_map[tri[0]][0], b_uv_map[tri[0]][1]);
-          fdata[i * 3 + 1] = make_float2(b_uv_map[tri[1]][0], b_uv_map[tri[1]][1]);
-          fdata[i * 3 + 2] = make_float2(b_uv_map[tri[2]][0], b_uv_map[tri[2]][1]);
-        }
-      }
-
-      /* UV tangent */
-      if (need_tangent) {
-        const AttributeStandard sign_std = (active_render) ? ATTR_STD_UV_TANGENT_SIGN :
-                                                             ATTR_STD_NONE;
-        const ustring sign_name = ustring((string(uv_name) + ".tangent_sign").c_str());
-        const bool need_sign = (mesh->need_attribute(scene, sign_name) ||
-                                mesh->need_attribute(scene, sign_std));
-        mikk_compute_tangents(b_mesh, uv_name.c_str(), mesh, need_sign, active_render);
-      }
-      /* Remove temporarily created UV attribute. */
-      if (!need_uv && uv_attr != nullptr) {
-        mesh->attributes.remove(uv_attr);
-      }
-    }
+  const ustring render_name(std::string_view(b_mesh.default_uv_map_name()));
+  if (blender_uv_names.empty()) {
+    return;
   }
-  else if (mesh->need_attribute(scene, ATTR_STD_UV_TANGENT)) {
-    const bool need_sign = mesh->need_attribute(scene, ATTR_STD_UV_TANGENT_SIGN);
-    mikk_compute_tangents(b_mesh, nullptr, mesh, need_sign, true);
-    if (!mesh->need_attribute(scene, ATTR_STD_GENERATED)) {
-      mesh->attributes.remove(ATTR_STD_GENERATED);
+
+  for (const ustring &uv_name : blender_uv_names) {
+    const bool active_render = uv_name == render_name;
+    const AttributeStandard uv_std = (active_render) ? ATTR_STD_UV : ATTR_STD_NONE;
+
+    /* Denotes whether UV map was requested directly. */
+    const bool need_uv = mesh->need_attribute(scene, uv_name) ||
+                         (active_render && mesh->need_attribute(scene, uv_std));
+
+    /* UV map */
+    Attribute *uv_attr = nullptr;
+    if (need_uv) {
+      if (active_render) {
+        uv_attr = mesh->attributes.add(uv_std, uv_name);
+      }
+      else {
+        uv_attr = mesh->attributes.add(uv_name, TypeFloat2, ATTR_ELEMENT_CORNER);
+      }
+
+      const blender::VArraySpan b_uv_map = *b_attributes.lookup<blender::float2>(
+          uv_name.c_str(), blender::bke::AttrDomain::Corner);
+      float2 *fdata = uv_attr->data_float2();
+      for (const int i : corner_tris.index_range()) {
+        const blender::int3 &tri = corner_tris[i];
+        fdata[i * 3 + 0] = make_float2(b_uv_map[tri[0]][0], b_uv_map[tri[0]][1]);
+        fdata[i * 3 + 1] = make_float2(b_uv_map[tri[1]][0], b_uv_map[tri[1]][1]);
+        fdata[i * 3 + 2] = make_float2(b_uv_map[tri[2]][0], b_uv_map[tri[2]][1]);
+      }
     }
   }
 }
@@ -503,7 +281,6 @@ static void attr_create_uv_map(Scene *scene,
 static void attr_create_subd_uv_map(Scene *scene,
                                     Mesh *mesh,
                                     const ::Mesh &b_mesh,
-                                    bool subdivide_uvs,
                                     const set<ustring> &blender_uv_names)
 {
   const blender::OffsetIndices faces = b_mesh.faces();
@@ -511,70 +288,43 @@ static void attr_create_subd_uv_map(Scene *scene,
     return;
   }
 
-  if (!blender_uv_names.empty()) {
-    const blender::bke::AttributeAccessor b_attributes = b_mesh.attributes();
-    const ustring render_name(
-        CustomData_get_render_layer_name(&b_mesh.corner_data, CD_PROP_FLOAT2));
-    for (const ustring &uv_name : blender_uv_names) {
-      const bool active_render = uv_name == render_name;
-      const AttributeStandard uv_std = (active_render) ? ATTR_STD_UV : ATTR_STD_NONE;
-      const AttributeStandard tangent_std = (active_render) ? ATTR_STD_UV_TANGENT : ATTR_STD_NONE;
-      const ustring tangent_name = ustring((string(uv_name) + ".tangent").c_str());
-
-      /* Denotes whether UV map was requested directly. */
-      const bool need_uv = mesh->need_attribute(scene, uv_name) ||
-                           mesh->need_attribute(scene, uv_std);
-      /* Denotes whether tangent was requested directly. */
-      const bool need_tangent = mesh->need_attribute(scene, tangent_name) ||
-                                (active_render && mesh->need_attribute(scene, tangent_std));
-
-      Attribute *uv_attr = nullptr;
-
-      /* UV map */
-      if (need_uv || need_tangent) {
-        if (active_render) {
-          uv_attr = mesh->subd_attributes.add(uv_std, uv_name);
-        }
-        else {
-          uv_attr = mesh->subd_attributes.add(uv_name, TypeFloat2, ATTR_ELEMENT_CORNER);
-        }
-
-        if (subdivide_uvs) {
-          uv_attr->flags |= ATTR_SUBDIVIDED;
-        }
-
-        const blender::VArraySpan b_uv_map = *b_attributes.lookup<blender::float2>(
-            uv_name.c_str(), blender::bke::AttrDomain::Corner);
-        float2 *fdata = uv_attr->data_float2();
-
-        for (const int i : faces.index_range()) {
-          const blender::IndexRange face = faces[i];
-          for (const int corner : face) {
-            *(fdata++) = make_float2(b_uv_map[corner][0], b_uv_map[corner][1]);
-          }
-        }
-      }
-
-      /* UV tangent */
-      if (need_tangent) {
-        const AttributeStandard sign_std = (active_render) ? ATTR_STD_UV_TANGENT_SIGN :
-                                                             ATTR_STD_NONE;
-        const ustring sign_name = ustring((string(uv_name) + ".tangent_sign").c_str());
-        const bool need_sign = (mesh->need_attribute(scene, sign_name) ||
-                                mesh->need_attribute(scene, sign_std));
-        mikk_compute_tangents(b_mesh, uv_name.c_str(), mesh, need_sign, active_render);
-      }
-      /* Remove temporarily created UV attribute. */
-      if (!need_uv && uv_attr != nullptr) {
-        mesh->subd_attributes.remove(uv_attr);
-      }
-    }
+  if (blender_uv_names.empty()) {
+    return;
   }
-  else if (mesh->need_attribute(scene, ATTR_STD_UV_TANGENT)) {
-    const bool need_sign = mesh->need_attribute(scene, ATTR_STD_UV_TANGENT_SIGN);
-    mikk_compute_tangents(b_mesh, nullptr, mesh, need_sign, true);
-    if (!mesh->need_attribute(scene, ATTR_STD_GENERATED)) {
-      mesh->subd_attributes.remove(ATTR_STD_GENERATED);
+
+  const blender::bke::AttributeAccessor b_attributes = b_mesh.attributes();
+  const ustring render_name(std::string_view(b_mesh.default_uv_map_name()));
+  for (const ustring &uv_name : blender_uv_names) {
+    const bool active_render = uv_name == render_name;
+    const AttributeStandard uv_std = (active_render) ? ATTR_STD_UV : ATTR_STD_NONE;
+
+    /* Denotes whether UV map was requested directly. */
+    const bool need_uv = mesh->need_attribute(scene, uv_name) ||
+                         (active_render && mesh->need_attribute(scene, uv_std));
+
+    Attribute *uv_attr = nullptr;
+
+    /* UV map */
+    if (need_uv) {
+      if (active_render) {
+        uv_attr = mesh->subd_attributes.add(uv_std, uv_name);
+      }
+      else {
+        uv_attr = mesh->subd_attributes.add(uv_name, TypeFloat2, ATTR_ELEMENT_CORNER);
+      }
+
+      uv_attr->flags |= ATTR_SUBDIVIDE_SMOOTH_FVAR;
+
+      const blender::VArraySpan b_uv_map = *b_attributes.lookup<blender::float2>(
+          uv_name.c_str(), blender::bke::AttrDomain::Corner);
+      float2 *fdata = uv_attr->data_float2();
+
+      for (const int i : faces.index_range()) {
+        const blender::IndexRange face = faces[i];
+        for (const int corner : face) {
+          *(fdata++) = make_float2(b_uv_map[corner][0], b_uv_map[corner][1]);
+        }
+      }
     }
   }
 }
@@ -697,7 +447,7 @@ static void attr_create_pointiness(Mesh *mesh,
     visited_edges.insert(v0, v1);
     const float3 co0 = make_float3(positions[v0][0], positions[v0][1], positions[v0][2]);
     const float3 co1 = make_float3(positions[v1][0], positions[v1][1], positions[v1][2]);
-    const float3 edge = normalize(co1 - co0);
+    const float3 edge = safe_normalize(co1 - co0);
     edge_accum[v0] += edge;
     edge_accum[v1] += -edge;
     ++counter[v0];
@@ -812,8 +562,7 @@ static void create_mesh(Scene *scene,
                         const array<Node *> &used_shaders,
                         const bool need_motion,
                         const float motion_scale,
-                        const bool subdivision = false,
-                        const bool subdivide_uvs = true)
+                        const bool subdivision = false)
 {
   const blender::Span<blender::float3> positions = b_mesh.vert_positions();
   const blender::OffsetIndices faces = b_mesh.faces();
@@ -840,21 +589,13 @@ static void create_mesh(Scene *scene,
     corner_normals = b_mesh.corner_normals();
   }
 
-  int numngons = 0;
   int numtris = 0;
   if (!subdivision) {
     numtris = numfaces;
   }
-  else {
-    const blender::OffsetIndices faces = b_mesh.faces();
-    for (const int i : faces.index_range()) {
-      numngons += (faces[i].size() == 4) ? 0 : 1;
-    }
-  }
-
   /* allocate memory */
   if (subdivision) {
-    mesh->resize_subd_faces(numfaces, numngons, corner_verts.size());
+    mesh->resize_subd_faces(numfaces, corner_verts.size());
   }
   mesh->resize_mesh(positions.size(), numtris);
 
@@ -880,10 +621,9 @@ static void create_mesh(Scene *scene,
   const bool need_default_tangent = (subdivision == false) && (blender_uv_names.empty()) &&
                                     (mesh->need_attribute(scene, ATTR_STD_UV_TANGENT));
   if (mesh->need_attribute(scene, ATTR_STD_GENERATED) || need_default_tangent) {
-    const float(*orco)[3] = static_cast<const float(*)[3]>(
+    const float (*orco)[3] = static_cast<const float (*)[3]>(
         CustomData_get_layer(&b_mesh.vert_data, CD_ORCO));
     Attribute *attr = attributes.add(ATTR_STD_GENERATED);
-    attr->flags |= ATTR_SUBDIVIDED;
 
     float3 loc;
     float3 size;
@@ -1022,7 +762,7 @@ static void create_mesh(Scene *scene,
   attr_create_generic(scene, mesh, b_mesh, subdivision, need_motion, motion_scale);
 
   if (subdivision) {
-    attr_create_subd_uv_map(scene, mesh, b_mesh, subdivide_uvs, blender_uv_names);
+    attr_create_subd_uv_map(scene, mesh, b_mesh, blender_uv_names);
   }
   else {
     attr_create_uv_map(scene, mesh, b_mesh, blender_uv_names);
@@ -1056,46 +796,59 @@ static void create_subd_mesh(Scene *scene,
   BL::Object b_ob = b_ob_info.real_object;
 
   BL::SubsurfModifier subsurf_mod(b_ob.modifiers[b_ob.modifiers.length() - 1]);
-  const bool subdivide_uvs = subsurf_mod.uv_smooth() != BL::SubsurfModifier::uv_smooth_NONE;
+  const bool use_creases = subsurf_mod.use_creases();
 
-  create_mesh(scene, mesh, b_mesh, used_shaders, need_motion, motion_scale, true, subdivide_uvs);
+  create_mesh(scene, mesh, b_mesh, used_shaders, need_motion, motion_scale, true);
 
-  const blender::VArraySpan creases = *b_mesh.attributes().lookup<float>(
-      "crease_edge", blender::bke::AttrDomain::Edge);
-  if (!creases.is_empty()) {
-    size_t num_creases = 0;
-    for (const int i : creases.index_range()) {
-      if (creases[i] != 0.0f) {
-        num_creases++;
+  if (use_creases) {
+    const blender::VArraySpan creases = *b_mesh.attributes().lookup<float>(
+        "crease_edge", blender::bke::AttrDomain::Edge);
+    if (!creases.is_empty()) {
+      size_t num_creases = 0;
+      for (const int i : creases.index_range()) {
+        if (creases[i] != 0.0f) {
+          num_creases++;
+        }
+      }
+
+      mesh->reserve_subd_creases(num_creases);
+
+      const blender::Span<blender::int2> edges = b_mesh.edges();
+      for (const int i : edges.index_range()) {
+        const float crease = creases[i];
+        if (crease != 0.0f) {
+          const blender::int2 &b_edge = edges[i];
+          mesh->add_edge_crease(b_edge[0], b_edge[1], crease);
+        }
       }
     }
 
-    mesh->reserve_subd_creases(num_creases);
-
-    const blender::Span<blender::int2> edges = b_mesh.edges();
-    for (const int i : edges.index_range()) {
-      const float crease = creases[i];
-      if (crease != 0.0f) {
-        const blender::int2 &b_edge = edges[i];
-        mesh->add_edge_crease(b_edge[0], b_edge[1], crease);
+    const blender::VArraySpan vert_creases = *b_mesh.attributes().lookup<float>(
+        "crease_vert", blender::bke::AttrDomain::Point);
+    if (!vert_creases.is_empty()) {
+      for (const int i : vert_creases.index_range()) {
+        if (vert_creases[i] != 0.0f) {
+          mesh->add_vertex_crease(i, vert_creases[i]);
+        }
       }
     }
   }
 
-  const blender::VArraySpan vert_creases = *b_mesh.attributes().lookup<float>(
-      "crease_vert", blender::bke::AttrDomain::Point);
-  if (!vert_creases.is_empty()) {
-    for (const int i : vert_creases.index_range()) {
-      if (vert_creases[i] != 0.0f) {
-        mesh->add_vertex_crease(i, vert_creases[i]);
-      }
-    }
+  /* Set subd parameters. */
+  Mesh::SubdivisionAdaptiveSpace space = Mesh::SUBDIVISION_ADAPTIVE_SPACE_PIXEL;
+  switch (subsurf_mod.adaptive_space()) {
+    case BL::SubsurfModifier::adaptive_space_OBJECT:
+      space = Mesh::SUBDIVISION_ADAPTIVE_SPACE_OBJECT;
+      break;
+    case BL::SubsurfModifier::adaptive_space_PIXEL:
+      space = Mesh::SUBDIVISION_ADAPTIVE_SPACE_PIXEL;
+      break;
   }
+  const float subd_dicing_rate = (space == Mesh::SUBDIVISION_ADAPTIVE_SPACE_PIXEL) ?
+                                     max(0.1f, subsurf_mod.adaptive_pixel_size() * dicing_rate) :
+                                     subsurf_mod.adaptive_object_edge_length() * dicing_rate;
 
-  /* set subd params */
-  PointerRNA cobj = RNA_pointer_get(&b_ob.ptr, "cycles");
-  const float subd_dicing_rate = max(0.1f, RNA_float_get(&cobj, "dicing_rate") * dicing_rate);
-
+  mesh->set_subd_adaptive_space(space);
   mesh->set_subd_dicing_rate(subd_dicing_rate);
   mesh->set_subd_max_level(max_subdivisions);
   mesh->set_subd_objecttoworld(get_transform(b_ob.matrix_world()));
@@ -1103,7 +856,7 @@ static void create_subd_mesh(Scene *scene,
 
 /* Sync */
 
-void BlenderSync::sync_mesh(BL::Depsgraph b_depsgraph, BObjectInfo &b_ob_info, Mesh *mesh)
+void BlenderSync::sync_mesh(BObjectInfo &b_ob_info, Mesh *mesh)
 {
   /* make a copy of the shaders as the caller in the main thread still need them for syncing the
    * attributes */
@@ -1113,19 +866,8 @@ void BlenderSync::sync_mesh(BL::Depsgraph b_depsgraph, BObjectInfo &b_ob_info, M
   new_mesh.set_used_shaders(used_shaders);
 
   if (view_layer.use_surfaces) {
-    /* Adaptive subdivision setup. Not for baking since that requires
-     * exact mapping to the Blender mesh. */
-    Mesh::SubdivisionType subdivision_type = (b_ob_info.real_object != b_bake_target) ?
-                                                 object_subdivision_type(b_ob_info.real_object,
-                                                                         preview,
-                                                                         experimental) :
-                                                 Mesh::SUBDIVISION_NONE;
-    new_mesh.set_subdivision_type(subdivision_type);
-
-    /* For some reason, meshes do not need this... */
-    const bool need_undeformed = new_mesh.need_attribute(scene, ATTR_STD_GENERATED);
-    BL::Mesh b_mesh = object_to_mesh(
-        b_data, b_ob_info, b_depsgraph, need_undeformed, new_mesh.get_subdivision_type());
+    object_subdivision_to_mesh(b_ob_info.real_object, new_mesh, preview, use_adaptive_subdivision);
+    BL::Mesh b_mesh = object_to_mesh(b_ob_info);
 
     if (b_mesh) {
       /* Motion blur attribute is relative to seconds, we need it relative to frames. */
@@ -1157,7 +899,7 @@ void BlenderSync::sync_mesh(BL::Depsgraph b_depsgraph, BObjectInfo &b_ob_info, M
                     false);
       }
 
-      free_object_to_mesh(b_data, b_ob_info, b_mesh);
+      free_object_to_mesh(b_ob_info, b_mesh);
     }
   }
 
@@ -1188,10 +930,7 @@ void BlenderSync::sync_mesh(BL::Depsgraph b_depsgraph, BObjectInfo &b_ob_info, M
   mesh->tag_update(scene, rebuild);
 }
 
-void BlenderSync::sync_mesh_motion(BL::Depsgraph b_depsgraph,
-                                   BObjectInfo &b_ob_info,
-                                   Mesh *mesh,
-                                   const int motion_step)
+void BlenderSync::sync_mesh_motion(BObjectInfo &b_ob_info, Mesh *mesh, const int motion_step)
 {
   /* Skip if no vertices were exported. */
   const size_t numverts = mesh->get_verts().size();
@@ -1204,7 +943,7 @@ void BlenderSync::sync_mesh_motion(BL::Depsgraph b_depsgraph,
   BL::Mesh b_mesh_rna(PointerRNA_NULL);
   if (ccl::BKE_object_is_deform_modified(b_ob_info, b_scene, preview)) {
     /* get derived mesh */
-    b_mesh_rna = object_to_mesh(b_data, b_ob_info, b_depsgraph, false, Mesh::SUBDIVISION_NONE);
+    b_mesh_rna = object_to_mesh(b_ob_info);
   }
 
   const std::string ob_name = b_ob_info.real_object.name();
@@ -1215,21 +954,25 @@ void BlenderSync::sync_mesh_motion(BL::Depsgraph b_depsgraph,
     const int b_verts_num = b_mesh.verts_num;
     const blender::Span<blender::float3> positions = b_mesh.vert_positions();
     if (positions.is_empty()) {
-      free_object_to_mesh(b_data, b_ob_info, b_mesh_rna);
+      free_object_to_mesh(b_ob_info, b_mesh_rna);
       return;
     }
 
+    AttributeSet &attributes = mesh->get_subdivision_type() == Mesh::SUBDIVISION_NONE ?
+                                   mesh->attributes :
+                                   mesh->subd_attributes;
+
     /* Export deformed coordinates. */
     /* Find attributes. */
-    Attribute *attr_mP = mesh->attributes.find(ATTR_STD_MOTION_VERTEX_POSITION);
-    Attribute *attr_mN = mesh->attributes.find(ATTR_STD_MOTION_VERTEX_NORMAL);
-    Attribute *attr_N = mesh->attributes.find(ATTR_STD_VERTEX_NORMAL);
+    Attribute *attr_mP = attributes.find(ATTR_STD_MOTION_VERTEX_POSITION);
+    Attribute *attr_mN = attributes.find(ATTR_STD_MOTION_VERTEX_NORMAL);
+    Attribute *attr_N = attributes.find(ATTR_STD_VERTEX_NORMAL);
     bool new_attribute = false;
     /* Add new attributes if they don't exist already. */
     if (!attr_mP) {
-      attr_mP = mesh->attributes.add(ATTR_STD_MOTION_VERTEX_POSITION);
+      attr_mP = attributes.add(ATTR_STD_MOTION_VERTEX_POSITION);
       if (attr_N) {
-        attr_mN = mesh->attributes.add(ATTR_STD_MOTION_VERTEX_NORMAL);
+        attr_mN = attributes.add(ATTR_STD_MOTION_VERTEX_NORMAL);
       }
 
       new_attribute = true;
@@ -1257,18 +1000,18 @@ void BlenderSync::sync_mesh_motion(BL::Depsgraph b_depsgraph,
       {
         /* no motion, remove attributes again */
         if (b_verts_num != numverts) {
-          VLOG_WARNING << "Topology differs, disabling motion blur for object " << ob_name;
+          LOG_WARNING << "Topology differs, disabling motion blur for object " << ob_name;
         }
         else {
-          VLOG_DEBUG << "No actual deformation motion for object " << ob_name;
+          LOG_TRACE << "No actual deformation motion for object " << ob_name;
         }
-        mesh->attributes.remove(ATTR_STD_MOTION_VERTEX_POSITION);
+        attributes.remove(ATTR_STD_MOTION_VERTEX_POSITION);
         if (attr_mN) {
-          mesh->attributes.remove(ATTR_STD_MOTION_VERTEX_NORMAL);
+          attributes.remove(ATTR_STD_MOTION_VERTEX_NORMAL);
         }
       }
       else if (motion_step > 0) {
-        VLOG_DEBUG << "Filling deformation motion for object " << ob_name;
+        LOG_TRACE << "Filling deformation motion for object " << ob_name;
         /* motion, fill up previous steps that we might have skipped because
          * they had no motion, but we need them anyway now */
         const float3 *P = mesh->get_verts().data();
@@ -1283,8 +1026,8 @@ void BlenderSync::sync_mesh_motion(BL::Depsgraph b_depsgraph,
     }
     else {
       if (b_verts_num != numverts) {
-        VLOG_WARNING << "Topology differs, discarding motion blur for object " << ob_name
-                     << " at time " << motion_step;
+        LOG_WARNING << "Topology differs, discarding motion blur for object " << ob_name
+                    << " at time " << motion_step;
         const float3 *P = mesh->get_verts().data();
         const float3 *N = (attr_N) ? attr_N->data_float3() : nullptr;
         std::copy_n(P, numverts, mP);
@@ -1294,7 +1037,7 @@ void BlenderSync::sync_mesh_motion(BL::Depsgraph b_depsgraph,
       }
     }
 
-    free_object_to_mesh(b_data, b_ob_info, b_mesh_rna);
+    free_object_to_mesh(b_ob_info, b_mesh_rna);
     return;
   }
 

@@ -23,7 +23,7 @@ class InstanceScaleFieldInput final : public bke::InstancesFieldInput {
                                  const IndexMask & /*mask*/) const final
   {
     const Span<float4x4> transforms = instances.transforms();
-    return VArray<float3>::ForFunc(instances.instances_num(), [transforms](const int i) {
+    return VArray<float3>::from_func(instances.instances_num(), [transforms](const int i) {
       return math::to_scale<true>(transforms[i]);
     });
   }
@@ -55,7 +55,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_INPUT;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

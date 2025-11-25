@@ -24,7 +24,7 @@
 #include "BKE_grease_pencil.hh"
 #include "BKE_modifier.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "MOD_grease_pencil_util.hh"
@@ -103,9 +103,8 @@ static void deform_drawing(const ModifierData &md,
 
   MutableSpan<float> radii = drawing.radii_for_write();
   const OffsetIndices points_by_curve = curves.points_by_curve();
-  bke::MutableAttributeAccessor attributes = curves.attributes_for_write();
-  const VArray<float> vgroup_weights = *attributes.lookup_or_default<float>(
-      mmd.influence.vertex_group_name, bke::AttrDomain::Point, 1.0f);
+  const VArray<float> vgroup_weights = modifier::greasepencil::get_influence_vertex_weights(
+      curves, mmd.influence);
   const bool is_normalized = (mmd.flag & MOD_GREASE_PENCIL_THICK_NORMALIZE) != 0;
   const bool is_inverted = ((mmd.flag & MOD_GREASE_PENCIL_THICK_WEIGHT_FACTOR) == 0) &&
                            ((mmd.influence.flag & GREASE_PENCIL_INFLUENCE_INVERT_VERTEX_GROUP) !=
@@ -179,24 +178,24 @@ static void panel_draw(const bContext *C, Panel *panel)
 
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiItemR(layout, ptr, "use_uniform_thickness", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "use_uniform_thickness", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   if (RNA_boolean_get(ptr, "use_uniform_thickness")) {
-    uiItemR(layout, ptr, "thickness", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    layout->prop(ptr, "thickness", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
   else {
     const bool is_weighted = !RNA_boolean_get(ptr, "use_weight_factor");
-    uiLayout *row = uiLayoutRow(layout, true);
-    uiLayoutSetActive(row, is_weighted);
-    uiItemR(row, ptr, "thickness_factor", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiLayout *sub = uiLayoutRow(row, true);
-    uiLayoutSetActive(sub, true);
-    uiItemR(row, ptr, "use_weight_factor", UI_ITEM_NONE, "", ICON_MOD_VERTEX_WEIGHT);
+    uiLayout *row = &layout->row(true);
+    row->active_set(is_weighted);
+    row->prop(ptr, "thickness_factor", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    uiLayout *sub = &row->row(true);
+    sub->active_set(true);
+    row->prop(ptr, "use_weight_factor", UI_ITEM_NONE, "", ICON_MOD_VERTEX_WEIGHT);
   }
 
-  if (uiLayout *influence_panel = uiLayoutPanelProp(
-          C, layout, ptr, "open_influence_panel", IFACE_("Influence")))
+  if (uiLayout *influence_panel = layout->panel_prop(
+          C, ptr, "open_influence_panel", IFACE_("Influence")))
   {
     modifier::greasepencil::draw_layer_filter_settings(C, influence_panel, ptr);
     modifier::greasepencil::draw_material_filter_settings(C, influence_panel, ptr);
@@ -204,7 +203,7 @@ static void panel_draw(const bContext *C, Panel *panel)
     modifier::greasepencil::draw_custom_curve_settings(C, influence_panel, ptr);
   }
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void panel_register(ARegionType *region_type)

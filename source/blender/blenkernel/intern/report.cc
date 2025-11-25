@@ -26,6 +26,33 @@
 #include "BKE_global.hh" /* G.background only */
 #include "BKE_report.hh"
 
+#include "CLG_log.h"
+
+static CLG_LogRef LOG = {"reports"};
+
+void BKE_report_log(eReportType type, const char *message, CLG_LogRef *log)
+{
+  switch (type) {
+    case RPT_DEBUG:
+      CLOG_STR_DEBUG(log, message);
+      break;
+    case RPT_INFO:
+    case RPT_OPERATOR:
+    case RPT_PROPERTY:
+      CLOG_INFO_NOCHECK(log, "%s", message);
+      break;
+    case RPT_WARNING:
+      CLOG_STR_WARN(log, message);
+      break;
+    case RPT_ERROR:
+    case RPT_ERROR_INVALID_INPUT:
+    case RPT_ERROR_INVALID_CONTEXT:
+    case RPT_ERROR_OUT_OF_MEMORY:
+      CLOG_STR_ERROR(log, message);
+      break;
+  }
+}
+
 const char *BKE_report_type_str(eReportType type)
 {
   switch (type) {
@@ -58,7 +85,7 @@ void BKE_reports_init(ReportList *reports, int flag)
     return;
   }
 
-  memset(reports, 0, sizeof(ReportList));
+  *reports = ReportList{};
 
   reports->storelevel = RPT_INFO;
   reports->printlevel = RPT_ERROR;
@@ -93,7 +120,7 @@ void BKE_reports_clear(ReportList *reports)
 
   while (report) {
     report_next = report->next;
-    MEM_freeN((void *)report->message);
+    MEM_freeN(report->message);
     MEM_freeN(report);
     report = report_next;
   }
@@ -130,7 +157,7 @@ void BKE_report(ReportList *reports, eReportType type, const char *_message)
   const char *message = RPT_(_message);
 
   if (BKE_reports_print_test(reports, type)) {
-    printf("%s: %s\n", BKE_report_type_str(type), message);
+    BKE_report_log(type, message, &LOG);
     fflush(stdout); /* this ensures the message is printed before a crash */
   }
 
@@ -138,12 +165,12 @@ void BKE_report(ReportList *reports, eReportType type, const char *_message)
     std::scoped_lock lock(*reports->lock);
 
     char *message_alloc;
-    report = static_cast<Report *>(MEM_callocN(sizeof(Report), "Report"));
+    report = MEM_callocN<Report>("Report");
     report->type = type;
     report->typestr = BKE_report_type_str(type);
 
     len = strlen(message);
-    message_alloc = static_cast<char *>(MEM_mallocN(sizeof(char) * (len + 1), "ReportMessage"));
+    message_alloc = MEM_malloc_arrayN<char>(size_t(len) + 1, "ReportMessage");
     memcpy(message_alloc, message, sizeof(char) * (len + 1));
     report->message = message_alloc;
     report->len = len;
@@ -158,18 +185,18 @@ void BKE_reportf(ReportList *reports, eReportType type, const char *_format, ...
   const char *format = RPT_(_format);
 
   if (BKE_reports_print_test(reports, type)) {
-    printf("%s: ", BKE_report_type_str(type));
     va_start(args, _format);
-    vprintf(format, args);
+    const char *message = BLI_vsprintfN(format, args);
     va_end(args);
-    fprintf(stdout, "\n"); /* otherwise each report needs to include a \n */
-    fflush(stdout);        /* this ensures the message is printed before a crash */
+    BKE_report_log(type, message, &LOG);
+    fflush(stdout); /* this ensures the message is printed before a crash */
+    MEM_freeN(message);
   }
 
   if (reports && (reports->flag & RPT_STORE) && (type >= reports->storelevel)) {
     std::scoped_lock lock(*reports->lock);
 
-    report = static_cast<Report *>(MEM_callocN(sizeof(Report), "Report"));
+    report = MEM_callocN<Report>("Report");
 
     va_start(args, _format);
     report->message = BLI_vsprintfN(format, args);
@@ -196,7 +223,7 @@ static void reports_prepend_impl(ReportList *reports, const char *prepend)
   const size_t prefix_len = strlen(prepend);
   LISTBASE_FOREACH (Report *, report, &reports->list) {
     char *message = BLI_string_joinN(prepend, report->message);
-    MEM_freeN((void *)report->message);
+    MEM_freeN(report->message);
     report->message = message;
     report->len += prefix_len;
     BLI_assert(report->len == strlen(message));
@@ -313,6 +340,19 @@ bool BKE_reports_print_test(const ReportList *reports, eReportType type)
   return (reports->flag & RPT_PRINT) && (type >= reports->printlevel);
 }
 
+void BKE_reports_log(ReportList *reports, eReportType level, CLG_LogRef *log)
+{
+  if (reports == nullptr) {
+    return;
+  }
+
+  LISTBASE_FOREACH (Report *, report, &reports->list) {
+    if (report->type >= level) {
+      BKE_report_log(eReportType(report->type), report->message, log);
+    }
+  }
+}
+
 void BKE_reports_print(ReportList *reports, eReportType level)
 {
   char *cstring = BKE_reports_string(reports, level);
@@ -363,7 +403,7 @@ bool BKE_report_write_file_fp(FILE *fp, ReportList *reports, const char *header)
   std::scoped_lock lock(*reports->lock);
 
   LISTBASE_FOREACH (Report *, report, &reports->list) {
-    fprintf((FILE *)fp, "%s  # %s\n", report->message, report->typestr);
+    fprintf(fp, "%s  # %s\n", report->message, report->typestr);
   }
 
   return true;

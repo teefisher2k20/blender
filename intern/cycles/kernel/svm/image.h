@@ -135,15 +135,12 @@ ccl_device_noinline void svm_node_tex_image_box(KernelGlobals kg,
   /* get object space normal */
   float3 N = sd->N;
 
-  N = sd->N;
   object_inverse_normal_transform(kg, sd, &N);
 
   /* project from direction vector to barycentric coordinates in triangles */
   const float3 signed_N = N;
 
-  N.x = fabsf(N.x);
-  N.y = fabsf(N.y);
-  N.z = fabsf(N.z);
+  N = fabs(N);
 
   N /= (N.x + N.y + N.z);
 
@@ -155,7 +152,7 @@ ccl_device_noinline void svm_node_tex_image_box(KernelGlobals kg,
    * The `Nxyz` values are the barycentric coordinates in an equilateral
    * triangle, which in case of blending, in the middle has a smaller
    * equilateral triangle where 3 textures blend. this divides things into
-   * 7 zones, with an if() test for each zone. */
+   * 7 zones, with an `if()` test for each zone. */
 
   float3 weight = make_float3(0.0f, 0.0f, 0.0f);
   const float blend = __int_as_float(node.w);
@@ -196,7 +193,7 @@ ccl_device_noinline void svm_node_tex_image_box(KernelGlobals kg,
     }
   }
   else {
-    /* Desperate mode, no valid choice anyway, fallback to one side. */
+    /* Desperate mode, no valid choice anyway, fall back to one side. */
     weight.x = 1.0f;
   }
 

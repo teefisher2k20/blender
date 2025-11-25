@@ -25,6 +25,7 @@
 #include "BLI_math_vector.h"
 #include "BLI_math_vector.hh"
 #include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_string_utils.hh"
 #include "BLI_utildefines.h"
 #include "BLT_translation.hh"
@@ -58,11 +59,12 @@
 #include "BKE_displist.h"
 #include "BKE_editmesh.hh"
 #include "BKE_fcurve_driver.h"
+#include "BKE_geometry_set_instances.hh"
 #include "BKE_global.hh"
 #include "BKE_idprop.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_lib_query.hh"
-#include "BKE_mesh.hh"
+#include "BKE_library.hh"
 #include "BKE_mesh_runtime.hh"
 #include "BKE_movieclip.h"
 #include "BKE_object.hh"
@@ -72,6 +74,8 @@
 #include "BKE_tracking.h"
 
 #include "BIK_api.h"
+
+#include "RNA_prototypes.hh"
 
 #include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_query.hh"
@@ -98,7 +102,7 @@
 /* Constraint Target Macros */
 #define VALID_CONS_TARGET(ct) ((ct) && (ct->tar))
 
-static CLG_LogRef LOG = {"bke.constraint"};
+static CLG_LogRef LOG = {"object.constraint"};
 
 /* ************************ Constraints - General Utilities *************************** */
 /* These functions here don't act on any specific constraints, and are therefore should/will
@@ -129,7 +133,7 @@ bConstraintOb *BKE_constraints_make_evalob(
   bConstraintOb *cob;
 
   /* create regardless of whether we have any data! */
-  cob = static_cast<bConstraintOb *>(MEM_callocN(sizeof(bConstraintOb), "bConstraintOb"));
+  cob = MEM_callocN<bConstraintOb>("bConstraintOb");
 
   /* NOTE(@ton): For system time, part of de-globalization, code nicer later with local time. */
   cob->scene = scene;
@@ -557,15 +561,12 @@ static void contarget_get_mesh_mat(Object *ob, const char *substring, float mat[
   else if (mesh_eval) {
     const blender::Span<blender::float3> positions = mesh_eval->vert_positions();
     const blender::Span<blender::float3> vert_normals = mesh_eval->vert_normals();
-    const MDeformVert *dvert = static_cast<const MDeformVert *>(
-        CustomData_get_layer(&mesh_eval->vert_data, CD_MDEFORMVERT));
-
+    const blender::Span<MDeformVert> dverts = mesh_eval->deform_verts();
     /* check that dvert is a valid pointers (just in case) */
-    if (dvert) {
-
+    if (!dverts.is_empty()) {
       /* get the average of all verts with that are in the vertex-group */
       for (const int i : positions.index_range()) {
-        const MDeformVert *dv = &dvert[i];
+        const MDeformVert *dv = &dverts[i];
         const MDeformWeight *dw = BKE_defvert_find_index(dv, defgroup);
 
         if (dw && dw->weight > 0.0f) {
@@ -878,11 +879,10 @@ static bool default_get_tarmat_full_bbone(Depsgraph * /*depsgraph*/,
 /* TODO: cope with getting rotation order... */
 #define SINGLETARGET_GET_TARS(con, datatar, datasubtarget, ct, list) \
   { \
-    ct = static_cast<bConstraintTarget *>( \
-        MEM_callocN(sizeof(bConstraintTarget), "tempConstraintTarget")); \
+    ct = MEM_callocN<bConstraintTarget>("tempConstraintTarget"); \
 \
     ct->tar = datatar; \
-    STRNCPY(ct->subtarget, datasubtarget); \
+    STRNCPY_UTF8(ct->subtarget, datasubtarget); \
     ct->space = con->tarspace; \
     ct->flag = CONSTRAINT_TAR_TEMP; \
 \
@@ -914,8 +914,7 @@ static bool default_get_tarmat_full_bbone(Depsgraph * /*depsgraph*/,
 /* TODO: cope with getting rotation order... */
 #define SINGLETARGETNS_GET_TARS(con, datatar, ct, list) \
   { \
-    ct = static_cast<bConstraintTarget *>( \
-        MEM_callocN(sizeof(bConstraintTarget), "tempConstraintTarget")); \
+    ct = MEM_callocN<bConstraintTarget>("tempConstraintTarget"); \
 \
     ct->tar = datatar; \
     ct->space = con->tarspace; \
@@ -940,7 +939,7 @@ static bool default_get_tarmat_full_bbone(Depsgraph * /*depsgraph*/,
       bConstraintTarget *ctn = ct->next; \
       if (no_copy == 0) { \
         datatar = ct->tar; \
-        STRNCPY(datasubtarget, ct->subtarget); \
+        STRNCPY_UTF8(datasubtarget, ct->subtarget); \
         con->tarspace = char(ct->space); \
       } \
 \
@@ -1650,34 +1649,22 @@ static void loclimit_evaluate(bConstraint *con, bConstraintOb *cob, ListBase * /
   bLocLimitConstraint *data = static_cast<bLocLimitConstraint *>(con->data);
 
   if (data->flag & LIMIT_XMIN) {
-    if (cob->matrix[3][0] < data->xmin) {
-      cob->matrix[3][0] = data->xmin;
-    }
+    cob->matrix[3][0] = std::max(cob->matrix[3][0], data->xmin);
   }
   if (data->flag & LIMIT_XMAX) {
-    if (cob->matrix[3][0] > data->xmax) {
-      cob->matrix[3][0] = data->xmax;
-    }
+    cob->matrix[3][0] = std::min(cob->matrix[3][0], data->xmax);
   }
   if (data->flag & LIMIT_YMIN) {
-    if (cob->matrix[3][1] < data->ymin) {
-      cob->matrix[3][1] = data->ymin;
-    }
+    cob->matrix[3][1] = std::max(cob->matrix[3][1], data->ymin);
   }
   if (data->flag & LIMIT_YMAX) {
-    if (cob->matrix[3][1] > data->ymax) {
-      cob->matrix[3][1] = data->ymax;
-    }
+    cob->matrix[3][1] = std::min(cob->matrix[3][1], data->ymax);
   }
   if (data->flag & LIMIT_ZMIN) {
-    if (cob->matrix[3][2] < data->zmin) {
-      cob->matrix[3][2] = data->zmin;
-    }
+    cob->matrix[3][2] = std::max(cob->matrix[3][2], data->zmin);
   }
   if (data->flag & LIMIT_ZMAX) {
-    if (cob->matrix[3][2] > data->zmax) {
-      cob->matrix[3][2] = data->zmax;
-    }
+    cob->matrix[3][2] = std::min(cob->matrix[3][2], data->zmax);
   }
 }
 
@@ -1855,34 +1842,22 @@ static void sizelimit_evaluate(bConstraint *con, bConstraintOb *cob, ListBase * 
   copy_v3_v3(obsize, size);
 
   if (data->flag & LIMIT_XMIN) {
-    if (size[0] < data->xmin) {
-      size[0] = data->xmin;
-    }
+    size[0] = std::max(size[0], data->xmin);
   }
   if (data->flag & LIMIT_XMAX) {
-    if (size[0] > data->xmax) {
-      size[0] = data->xmax;
-    }
+    size[0] = std::min(size[0], data->xmax);
   }
   if (data->flag & LIMIT_YMIN) {
-    if (size[1] < data->ymin) {
-      size[1] = data->ymin;
-    }
+    size[1] = std::max(size[1], data->ymin);
   }
   if (data->flag & LIMIT_YMAX) {
-    if (size[1] > data->ymax) {
-      size[1] = data->ymax;
-    }
+    size[1] = std::min(size[1], data->ymax);
   }
   if (data->flag & LIMIT_ZMIN) {
-    if (size[2] < data->zmin) {
-      size[2] = data->zmin;
-    }
+    size[2] = std::max(size[2], data->zmin);
   }
   if (data->flag & LIMIT_ZMAX) {
-    if (size[2] > data->zmax) {
-      size[2] = data->zmax;
-    }
+    size[2] = std::min(size[2], data->zmax);
   }
 
   if (obsize[0]) {
@@ -2490,139 +2465,6 @@ static bConstraintTypeInfo CTI_SAMEVOL = {
     /*evaluate_constraint*/ samevolume_evaluate,
 };
 
-/* ----------- Python Constraint -------------- */
-
-static void pycon_free(bConstraint *con)
-{
-  bPythonConstraint *data = static_cast<bPythonConstraint *>(con->data);
-
-  /* id-properties */
-  IDP_FreeProperty(data->prop);
-
-  /* multiple targets */
-  BLI_freelistN(&data->targets);
-}
-
-static void pycon_copy(bConstraint *con, bConstraint *srccon)
-{
-  bPythonConstraint *pycon = (bPythonConstraint *)con->data;
-  bPythonConstraint *opycon = (bPythonConstraint *)srccon->data;
-
-  pycon->prop = IDP_CopyProperty(opycon->prop);
-  BLI_duplicatelist(&pycon->targets, &opycon->targets);
-}
-
-static void pycon_new_data(void *cdata)
-{
-  bPythonConstraint *data = (bPythonConstraint *)cdata;
-
-  /* Everything should be set correctly by calloc, except for the prop->type constant. */
-  data->prop = static_cast<IDProperty *>(MEM_callocN(sizeof(IDProperty), "PyConstraintProps"));
-  data->prop->type = IDP_GROUP;
-}
-
-static int pycon_get_tars(bConstraint *con, ListBase *list)
-{
-  if (con && list) {
-    bPythonConstraint *data = static_cast<bPythonConstraint *>(con->data);
-
-    list->first = data->targets.first;
-    list->last = data->targets.last;
-
-    return data->tarnum;
-  }
-
-  return 0;
-}
-
-static void pycon_id_looper(bConstraint *con, ConstraintIDFunc func, void *userdata)
-{
-  bPythonConstraint *data = static_cast<bPythonConstraint *>(con->data);
-
-  /* targets */
-  LISTBASE_FOREACH (bConstraintTarget *, ct, &data->targets) {
-    func(con, (ID **)&ct->tar, false, userdata);
-  }
-
-  /* script */
-  func(con, (ID **)&data->text, true, userdata);
-}
-
-/* Whether this approach is maintained remains to be seen (aligorith) */
-static bool pycon_get_tarmat(Depsgraph * /*depsgraph*/,
-                             bConstraint *con,
-                             bConstraintOb *cob,
-                             bConstraintTarget *ct,
-                             float /*ctime*/)
-{
-#ifdef WITH_PYTHON
-  bPythonConstraint *data = static_cast<bPythonConstraint *>(con->data);
-#endif
-
-  if (!VALID_CONS_TARGET(ct)) {
-    unit_ct_matrix_nullsafe(ct);
-    return false;
-  }
-
-  if (ct->tar->type == OB_CURVES_LEGACY && ct->tar->runtime->curve_cache == nullptr) {
-    unit_m4(ct->matrix);
-    return false;
-  }
-
-  /* firstly calculate the matrix the normal way, then let the py-function override
-   * this matrix if it needs to do so
-   */
-  constraint_target_to_mat4(ct->tar,
-                            ct->subtarget,
-                            cob,
-                            ct->matrix,
-                            CONSTRAINT_SPACE_WORLD,
-                            ct->space,
-                            con->flag,
-                            con->headtail);
-
-/* only execute target calculation if allowed */
-#ifdef WITH_PYTHON
-  if (G.f & G_FLAG_SCRIPT_AUTOEXEC) {
-    BPY_pyconstraint_target(data, ct);
-  }
-#endif
-  return true;
-}
-
-static void pycon_evaluate(bConstraint *con, bConstraintOb *cob, ListBase *targets)
-{
-#ifndef WITH_PYTHON
-  UNUSED_VARS(con, cob, targets);
-  return;
-#else
-  bPythonConstraint *data = static_cast<bPythonConstraint *>(con->data);
-
-  /* only evaluate in python if we're allowed to do so */
-  if ((G.f & G_FLAG_SCRIPT_AUTOEXEC) == 0) {
-    return;
-  }
-
-  /* Now, run the actual 'constraint' function, which should only access the matrices */
-  BPY_pyconstraint_exec(data, cob, targets);
-#endif /* WITH_PYTHON */
-}
-
-static bConstraintTypeInfo CTI_PYTHON = {
-    /*type*/ CONSTRAINT_TYPE_PYTHON,
-    /*size*/ sizeof(bPythonConstraint),
-    /*name*/ N_("Script"),
-    /*struct_name*/ "bPythonConstraint",
-    /*free_data*/ pycon_free,
-    /*id_looper*/ pycon_id_looper,
-    /*copy_data*/ pycon_copy,
-    /*new_data*/ pycon_new_data,
-    /*get_constraint_targets*/ pycon_get_tars,
-    /*flush_constraint_targets*/ nullptr,
-    /*get_target_matrix*/ pycon_get_tarmat,
-    /*evaluate_constraint*/ pycon_evaluate,
-};
-
 /* ----------- Armature Constraint -------------- */
 
 static void armdef_free(bConstraint *con)
@@ -2802,17 +2644,15 @@ static void armdef_evaluate(bConstraint *con, bConstraintOb *cob, ListBase *targ
 {
   bArmatureConstraint *data = static_cast<bArmatureConstraint *>(con->data);
 
-  float sum_mat[4][4], input_co[3];
-  DualQuat sum_dq;
-  float weight = 0.0f;
-
   /* Prepare for blending. */
-  zero_m4(sum_mat);
-  memset(&sum_dq, 0, sizeof(sum_dq));
+  float sum_mat[4][4] = {};
+  DualQuat sum_dq = {};
+  float weight = 0.0f;
 
   DualQuat *pdq = (data->flag & CONSTRAINT_ARMATURE_QUATERNION) ? &sum_dq : nullptr;
   bool use_envelopes = (data->flag & CONSTRAINT_ARMATURE_ENVELOPE) != 0;
 
+  float input_co[3];
   if (cob->pchan && cob->pchan->bone && !(data->flag & CONSTRAINT_ARMATURE_CUR_LOCATION)) {
     /* For constraints on bones, use the rest position to bind b-bone segments
      * and envelopes, to allow safely changing the bone location as if parented. */
@@ -2932,6 +2772,10 @@ static bool actcon_get_tarmat(Depsgraph *depsgraph,
 {
   bActionConstraint *data = static_cast<bActionConstraint *>(con->data);
 
+  /* Initialize return matrix. This needs to happen even when there is no
+   * Action, to avoid returning an all-zeroes matrix. */
+  unit_m4(ct->matrix);
+
   if (!data->act) {
     /* Without an Action, this constraint cannot do anything. */
     return false;
@@ -2945,9 +2789,6 @@ static bool actcon_get_tarmat(Depsgraph *depsgraph,
   float tempmat[4][4], vec[3];
   float s, t;
   short axis;
-
-  /* initialize return matrix */
-  unit_m4(ct->matrix);
 
   /* Skip targets if we're using local float property to set action time */
   if (use_eval_time) {
@@ -3073,6 +2914,11 @@ static void actcon_evaluate(bConstraint *con, bConstraintOb *cob, ListBase *targ
 
   if (VALID_CONS_TARGET(ct) || data->flag & ACTCON_USE_EVAL_TIME) {
     switch (data->mix_mode) {
+      /* Replace the input transformation. */
+      case ACTCON_MIX_REPLACE:
+        copy_m4_m4(cob->matrix, ct->matrix);
+        break;
+
       /* Simple matrix multiplication. */
       case ACTCON_MIX_BEFORE_FULL:
         mul_m4_m4m4(cob->matrix, ct->matrix, cob->matrix);
@@ -3535,7 +3381,7 @@ static void distlimit_evaluate(bConstraint *con, bConstraintOb *cob, ListBase *t
       else if (data->flag & LIMITDIST_USESOFT) {
         /* FIXME: there's a problem with "jumping" when this kicks in */
         if (dist >= (data->dist - data->soft)) {
-          sfac = float(data->soft * (1.0f - expf(-(dist - data->dist) / data->soft)) + data->dist);
+          sfac = (data->soft * (1.0f - expf(-(dist - data->dist) / data->soft)) + data->dist);
           if (dist != 0.0f) {
             sfac /= dist;
           }
@@ -3657,8 +3503,9 @@ static void stretchto_evaluate(bConstraint *con, bConstraintOb *cob, ListBase *t
 
     dist = normalize_v3(vec);
 
-    /* Only Y constrained object axis scale should be used, to keep same length when scaling it. */
-    dist /= size[1];
+    /* Only Y constrained object axis scale should be used, to keep same length when scaling it.
+     * Use safe divide to avoid creating a matrix with NAN values, see: #141612. */
+    dist = blender::math::safe_divide(dist, size[1]);
 
     /* data->orglength==0 occurs on first run, and after 'R' button is clicked */
     if (data->orglength == 0) {
@@ -3735,7 +3582,7 @@ static void stretchto_evaluate(bConstraint *con, bConstraintOb *cob, ListBase *t
         damptrack_do_transform(cob->matrix, vec, TRACK_Y);
         break;
       case PLANE_X:
-        /* New Y aligns  object target connection. */
+        /* New Y aligns object target connection. */
         copy_v3_v3(cob->matrix[1], vec);
 
         /* Build new Z vector. */
@@ -3751,7 +3598,7 @@ static void stretchto_evaluate(bConstraint *con, bConstraintOb *cob, ListBase *t
         normalize_v3_v3(cob->matrix[0], xx);
         break;
       case PLANE_Z:
-        /* New Y aligns  object target connection. */
+        /* New Y aligns object target connection. */
         copy_v3_v3(cob->matrix[1], vec);
 
         /* Build new X vector. */
@@ -5520,13 +5367,9 @@ static void transformcache_evaluate(bConstraint *con, bConstraintOb *cob, ListBa
     return;
   }
 
-  /* Do not process data if using a render time procedural. */
-  if (BKE_cache_file_uses_render_procedural(cache_file, scene)) {
-    return;
-  }
-
   const float frame = DEG_get_ctime(cob->depsgraph);
-  const double time = BKE_cachefile_time_offset(cache_file, double(frame), FPS);
+  const double time = BKE_cachefile_time_offset(
+      cache_file, double(frame), scene->frames_per_second());
 
   if (!data->reader || !STREQ(data->reader_object_path, data->object_path)) {
     STRNCPY(data->reader_object_path, data->object_path);
@@ -5542,7 +5385,7 @@ static void transformcache_evaluate(bConstraint *con, bConstraintOb *cob, ListBa
     case CACHEFILE_TYPE_USD:
 #  ifdef WITH_USD
       blender::io::usd::USD_get_transform(
-          data->reader, cob->matrix, time * FPS, cache_file->scale);
+          data->reader, cob->matrix, time * scene->frames_per_second(), cache_file->scale);
 #  endif
       break;
     case CACHE_FILE_TYPE_INVALID:
@@ -5598,8 +5441,291 @@ static bConstraintTypeInfo CTI_TRANSFORM_CACHE = {
     /*evaluate_constraint*/ transformcache_evaluate,
 };
 
+/* ---------- Geometry Attribute Constraint ----------- */
+
+static blender::bke::AttrDomain domain_value_to_attribute(const Attribute_Domain domain)
+{
+  switch (domain) {
+    case CON_ATTRIBUTE_DOMAIN_POINT:
+      return blender::bke::AttrDomain::Point;
+    case CON_ATTRIBUTE_DOMAIN_EDGE:
+      return blender::bke::AttrDomain::Edge;
+    case CON_ATTRIBUTE_DOMAIN_FACE:
+      return blender::bke::AttrDomain::Face;
+    case CON_ATTRIBUTE_DOMAIN_FACE_CORNER:
+      return blender::bke::AttrDomain::Corner;
+    case CON_ATTRIBUTE_DOMAIN_CURVE:
+      return blender::bke::AttrDomain::Curve;
+    case CON_ATTRIBUTE_DOMAIN_INSTANCE:
+      return blender::bke::AttrDomain::Instance;
+  }
+  BLI_assert_unreachable();
+  return blender::bke::AttrDomain::Point;
+}
+
+static blender::bke::AttrType type_value_to_attribute(const Attribute_Data_Type data_type)
+{
+  switch (data_type) {
+    case CON_ATTRIBUTE_VECTOR:
+      return blender::bke::AttrType::Float3;
+    case CON_ATTRIBUTE_QUATERNION:
+      return blender::bke::AttrType::Quaternion;
+    case CON_ATTRIBUTE_4X4MATRIX:
+      return blender::bke::AttrType::Float4x4;
+  }
+  BLI_assert_unreachable();
+  return blender::bke::AttrType::Float3;
+}
+
+static void value_attribute_to_matrix(float r_matrix[4][4],
+                                      const blender::GPointer value,
+                                      const Attribute_Data_Type data_type)
+{
+  switch (data_type) {
+    case CON_ATTRIBUTE_VECTOR:
+      copy_v3_v3(r_matrix[3], *value.get<blender::float3>());
+      return;
+    case CON_ATTRIBUTE_QUATERNION:
+      quat_to_mat4(r_matrix, *value.get<blender::float4>());
+      return;
+    case CON_ATTRIBUTE_4X4MATRIX:
+      copy_m4_m4(r_matrix, value.get<blender::float4x4>()->ptr());
+      return;
+  }
+  BLI_assert_unreachable();
+}
+
+static bool component_is_available(const blender::bke::GeometrySet &geometry,
+                                   const blender::bke::GeometryComponent::Type type,
+                                   const blender::bke::AttrDomain domain)
+{
+  if (const blender::bke::GeometryComponent *component = geometry.get_component(type)) {
+    return component->attribute_domain_size(domain) != 0;
+  }
+  return false;
+}
+
+static const blender::bke::GeometryComponent *find_source_component(
+    const blender::bke::GeometrySet &geometry, const blender::bke::AttrDomain domain)
+{
+  /* Choose the other component based on a consistent order, rather than some more complicated
+   * heuristic. This is the same order visible in the spreadsheet and used in the ray-cast node. */
+  static const blender::Array<blender::bke::GeometryComponent::Type> supported_types = {
+      blender::bke::GeometryComponent::Type::Mesh,
+      blender::bke::GeometryComponent::Type::PointCloud,
+      blender::bke::GeometryComponent::Type::Curve,
+      blender::bke::GeometryComponent::Type::Instance,
+      blender::bke::GeometryComponent::Type::GreasePencil};
+  for (const blender::bke::GeometryComponent::Type src_type : supported_types) {
+    if (component_is_available(geometry, src_type, domain)) {
+      return geometry.get_component(src_type);
+    }
+  }
+
+  return nullptr;
+}
+
+static void geometry_attribute_free_data(bConstraint *con)
+{
+  bGeometryAttributeConstraint *data = static_cast<bGeometryAttributeConstraint *>(con->data);
+  MEM_SAFE_FREE(data->attribute_name);
+}
+
+static void geometry_attribute_id_looper(bConstraint *con, ConstraintIDFunc func, void *userdata)
+{
+  bGeometryAttributeConstraint *data = static_cast<bGeometryAttributeConstraint *>(con->data);
+  func(con, (ID **)&data->target, false, userdata);
+}
+
+static void geometry_attribute_copy_data(bConstraint *con, bConstraint *srccon)
+{
+  const auto *src = static_cast<bGeometryAttributeConstraint *>(srccon->data);
+  auto *dst = static_cast<bGeometryAttributeConstraint *>(con->data);
+  dst->attribute_name = BLI_strdup_null(src->attribute_name);
+}
+
+static void geometry_attribute_new_data(void *cdata)
+{
+  bGeometryAttributeConstraint *data = static_cast<bGeometryAttributeConstraint *>(cdata);
+  data->attribute_name = BLI_strdup("position");
+  data->flags = MIX_LOC | MIX_ROT | MIX_SCALE;
+}
+
+static int geometry_attribute_get_tars(bConstraint *con, ListBase *list)
+{
+  if (!con || !list) {
+    return 0;
+  }
+  bGeometryAttributeConstraint *data = static_cast<bGeometryAttributeConstraint *>(con->data);
+  bConstraintTarget *ct;
+
+  SINGLETARGETNS_GET_TARS(con, data->target, ct, list);
+
+  return 1;
+}
+
+static void geometry_attribute_flush_tars(bConstraint *con, ListBase *list, const bool no_copy)
+{
+  if (!con || !list) {
+    return;
+  }
+  bGeometryAttributeConstraint *data = static_cast<bGeometryAttributeConstraint *>(con->data);
+  bConstraintTarget *ct = static_cast<bConstraintTarget *>(list->first);
+
+  SINGLETARGETNS_FLUSH_TARS(con, data->target, ct, list, no_copy);
+}
+
+static bool geometry_attribute_get_tarmat(Depsgraph * /*depsgraph*/,
+                                          bConstraint *con,
+                                          bConstraintOb * /*cob*/,
+                                          bConstraintTarget *ct,
+                                          float /*ctime*/)
+{
+  using namespace blender;
+  const bGeometryAttributeConstraint *acon = static_cast<bGeometryAttributeConstraint *>(
+      con->data);
+
+  if (!VALID_CONS_TARGET(ct)) {
+    return false;
+  }
+
+  unit_m4(ct->matrix);
+
+  const bke::AttrDomain domain = domain_value_to_attribute(
+      static_cast<Attribute_Domain>(acon->domain));
+  const bke::AttrType sample_data_type = type_value_to_attribute(
+      static_cast<Attribute_Data_Type>(acon->data_type));
+  const bke::GeometrySet &target_eval = bke::object_get_evaluated_geometry_set(*ct->tar);
+
+  const bke::GeometryComponent *component = find_source_component(target_eval, domain);
+  if (component == nullptr) {
+    return false;
+  }
+
+  const std::optional<bke::AttributeAccessor> optional_attributes = component->attributes();
+  if (!optional_attributes.has_value()) {
+    return false;
+  }
+
+  const bke::AttributeAccessor &attributes = *optional_attributes;
+  const GVArray attribute = *attributes.lookup(acon->attribute_name, domain, sample_data_type);
+
+  if (attribute.is_empty()) {
+    return false;
+  }
+
+  const int index = std::clamp<int>(acon->sample_index, 0, attribute.size() - 1);
+
+  const CPPType &type = attribute.type();
+  BUFFER_FOR_CPP_TYPE_VALUE(type, sampled_value);
+  attribute.get_to_uninitialized(index, sampled_value);
+
+  value_attribute_to_matrix(ct->matrix,
+                            GPointer(type, sampled_value),
+                            static_cast<Attribute_Data_Type>(acon->data_type));
+  type.destruct(sampled_value);
+
+  return true;
+}
+
+static void geometry_attribute_evaluate(bConstraint *con, bConstraintOb *cob, ListBase *targets)
+{
+  bConstraintTarget *ct = static_cast<bConstraintTarget *>(targets->first);
+  const bGeometryAttributeConstraint *data = static_cast<bGeometryAttributeConstraint *>(
+      con->data);
+
+  /* Only evaluate if there is a target. */
+  if (!VALID_CONS_TARGET(ct)) {
+    return;
+  }
+
+  float target_mat[4][4];
+  if (data->mix_mode == CON_ATTRIBUTE_MIX_REPLACE) {
+    copy_m4_m4(target_mat, cob->matrix);
+  }
+  else {
+    unit_m4(target_mat);
+  }
+
+  float prev_location[3];
+  float prev_rotation[3][3];
+  float prev_size[3];
+  mat4_to_loc_rot_size(prev_location, prev_rotation, prev_size, target_mat);
+
+  float next_location[3];
+  float next_rotation[3][3];
+  float next_size[3];
+  mat4_to_loc_rot_size(next_location, next_rotation, next_size, ct->matrix);
+
+  switch (data->data_type) {
+    case CON_ATTRIBUTE_VECTOR:
+      loc_rot_size_to_mat4(target_mat, next_location, prev_rotation, prev_size);
+      break;
+    case CON_ATTRIBUTE_QUATERNION:
+      loc_rot_size_to_mat4(target_mat, prev_location, next_rotation, prev_size);
+      break;
+    case CON_ATTRIBUTE_4X4MATRIX:
+      if ((data->flags & MIX_LOC) && (data->flags & MIX_ROT) && (data->flags & MIX_SCALE)) {
+        copy_m4_m4(target_mat, ct->matrix);
+      }
+      else {
+        if (data->flags & MIX_LOC) {
+          copy_v3_v3(prev_location, next_location);
+        }
+        if (data->flags & MIX_ROT) {
+          copy_m3_m3(prev_rotation, next_rotation);
+        }
+        if (data->flags & MIX_SCALE) {
+          copy_v3_v3(prev_size, next_size);
+        }
+        loc_rot_size_to_mat4(target_mat, prev_location, prev_rotation, prev_size);
+      }
+      break;
+  }
+
+  /* Finally, combine the matrices. */
+  switch (data->mix_mode) {
+    case CON_ATTRIBUTE_MIX_REPLACE:
+      copy_m4_m4(cob->matrix, target_mat);
+      break;
+    /* Simple matrix multiplication. */
+    case CON_ATTRIBUTE_MIX_BEFORE_FULL:
+      mul_m4_m4m4(cob->matrix, target_mat, cob->matrix);
+      break;
+    case CON_ATTRIBUTE_MIX_AFTER_FULL:
+      mul_m4_m4m4(cob->matrix, cob->matrix, target_mat);
+      break;
+    /* Fully separate handling of channels. */
+    case CON_ATTRIBUTE_MIX_BEFORE_SPLIT:
+      mul_m4_m4m4_split_channels(cob->matrix, target_mat, cob->matrix);
+      break;
+    case CON_ATTRIBUTE_MIX_AFTER_SPLIT:
+      mul_m4_m4m4_split_channels(cob->matrix, cob->matrix, target_mat);
+      break;
+  }
+
+  if (data->apply_target_transform) {
+    mul_m4_m4m4(cob->matrix, ct->tar->object_to_world().ptr(), cob->matrix);
+  }
+}
+
+static bConstraintTypeInfo CTI_ATTRIBUTE = {
+    /*type*/ CONSTRAINT_TYPE_GEOMETRY_ATTRIBUTE,
+    /*size*/ sizeof(bGeometryAttributeConstraint),
+    /*name*/ N_("Geometry Attribute"),
+    /*struct_name*/ "bGeometryAttributeConstraint",
+    /*free_data*/ geometry_attribute_free_data,
+    /*id_looper*/ geometry_attribute_id_looper,
+    /*copy_data*/ geometry_attribute_copy_data,
+    /*new_data*/ geometry_attribute_new_data,
+    /*get_constraint_targets*/ geometry_attribute_get_tars,
+    /*flush_constraint_targets*/ geometry_attribute_flush_tars,
+    /*get_target_matrix*/ geometry_attribute_get_tarmat,
+    /*evaluate_constraint*/ geometry_attribute_evaluate,
+};
+
 /* ************************* Constraints Type-Info *************************** */
-/* All of the constraints api functions use bConstraintTypeInfo structs to carry out
+/* All of the constraints API functions use #bConstraintTypeInfo structs to carry out
  * and operations that involve constraint specific code.
  */
 
@@ -5621,7 +5747,7 @@ static void constraints_init_typeinfo()
   constraintsTypeInfo[8] = &CTI_ROTLIKE;          /* Copy Rotation Constraint */
   constraintsTypeInfo[9] = &CTI_LOCLIKE;          /* Copy Location Constraint */
   constraintsTypeInfo[10] = &CTI_SIZELIKE;        /* Copy Scale Constraint */
-  constraintsTypeInfo[11] = &CTI_PYTHON;          /* Python/Script Constraint */
+  constraintsTypeInfo[11] = nullptr;              /* Python/Script Constraint: DEPRECATED. */
   constraintsTypeInfo[12] = &CTI_ACTION;          /* Action Constraint */
   constraintsTypeInfo[13] = &CTI_LOCKTRACK;       /* Locked-Track Constraint */
   constraintsTypeInfo[14] = &CTI_DISTLIMIT;       /* Limit Distance Constraint */
@@ -5641,6 +5767,7 @@ static void constraints_init_typeinfo()
   constraintsTypeInfo[28] = &CTI_OBJECTSOLVER;    /* Object Solver Constraint */
   constraintsTypeInfo[29] = &CTI_TRANSFORM_CACHE; /* Transform Cache Constraint */
   constraintsTypeInfo[30] = &CTI_ARMATURE;        /* Armature Constraint */
+  constraintsTypeInfo[31] = &CTI_ATTRIBUTE;       /* Attribute Transform Constraint */
 }
 
 const bConstraintTypeInfo *BKE_constraint_typeinfo_from_type(int type)
@@ -5692,11 +5819,16 @@ static void con_unlink_refs_cb(bConstraint * /*con*/,
   }
 }
 
-/** Helper function to invoke the id_looper callback, including custom space. */
+/**
+ * Helper function to invoke the id_looper callback, including custom space.
+ *
+ * \param flag: is unused right now, but it's kept as a reminder that new code may need to check
+ * flags as well. See enum #LibraryForeachIDFlag in `BKE_lib_query.hh`.
+ */
 static void con_invoke_id_looper(const bConstraintTypeInfo *cti,
                                  bConstraint *con,
                                  ConstraintIDFunc func,
-                                 const int flag,
+                                 const int /*flag*/,
                                  void *userdata)
 {
   if (cti->id_looper) {
@@ -5704,10 +5836,6 @@ static void con_invoke_id_looper(const bConstraintTypeInfo *cti,
   }
 
   func(con, (ID **)&con->space_object, false, userdata);
-
-  if (flag & IDWALK_DO_DEPRECATED_POINTERS) {
-    func(con, reinterpret_cast<ID **>(&con->ipo), false, userdata);
-  }
 }
 
 void BKE_constraint_free_data_ex(bConstraint *con, bool do_id_user)
@@ -5753,7 +5881,7 @@ void BKE_constraints_free(ListBase *list)
   BKE_constraints_free_ex(list, true);
 }
 
-bool BKE_constraint_remove(ListBase *list, bConstraint *con)
+static bool constraint_remove(ListBase *list, bConstraint *con)
 {
   if (con) {
     BKE_constraint_free_data(con);
@@ -5766,8 +5894,10 @@ bool BKE_constraint_remove(ListBase *list, bConstraint *con)
 
 bool BKE_constraint_remove_ex(ListBase *list, Object *ob, bConstraint *con)
 {
+  BKE_animdata_drivers_remove_for_rna_struct(ob->id, RNA_Constraint, con);
+
   const short type = con->type;
-  if (BKE_constraint_remove(list, con)) {
+  if (constraint_remove(list, con)) {
     /* ITASC needs to be rebuilt once a constraint is removed #26920. */
     if (ELEM(type, CONSTRAINT_TYPE_KINEMATIC, CONSTRAINT_TYPE_SPLINEIK)) {
       BIK_clear_data(ob->pose);
@@ -5792,7 +5922,7 @@ bool BKE_constraint_apply_for_object(Depsgraph *depsgraph,
   /* Do this all in the evaluated domain (e.g. shrinkwrap needs to access evaluated constraint
    * target mesh). */
   Scene *scene_eval = DEG_get_evaluated_scene(depsgraph);
-  Object *ob_eval = DEG_get_evaluated_object(depsgraph, ob);
+  Object *ob_eval = DEG_get_evaluated(depsgraph, ob);
   bConstraint *con_eval = BKE_constraints_find_name(&ob_eval->constraints, con->name);
 
   bConstraint *new_con = BKE_constraint_duplicate_ex(con_eval, 0, ID_IS_EDITABLE(ob));
@@ -5844,7 +5974,7 @@ bool BKE_constraint_apply_for_pose(
   /* Do this all in the evaluated domain (e.g. shrinkwrap needs to access evaluated constraint
    * target mesh). */
   Scene *scene_eval = DEG_get_evaluated_scene(depsgraph);
-  Object *ob_eval = DEG_get_evaluated_object(depsgraph, ob);
+  Object *ob_eval = DEG_get_evaluated(depsgraph, ob);
   bPoseChannel *pchan_eval = BKE_pose_channel_find_name(ob_eval->pose, pchan->name);
   bConstraint *con_eval = BKE_constraints_find_name(&pchan_eval->constraints, con->name);
 
@@ -5905,7 +6035,7 @@ void BKE_constraint_panel_expand(bConstraint *con)
 /* Creates a new constraint, initializes its data, and returns it */
 static bConstraint *add_new_constraint_internal(const char *name, short type)
 {
-  bConstraint *con = static_cast<bConstraint *>(MEM_callocN(sizeof(bConstraint), "Constraint"));
+  bConstraint *con = MEM_callocN<bConstraint>("Constraint");
   const bConstraintTypeInfo *cti = BKE_constraint_typeinfo_from_type(type);
   const char *newName;
 
@@ -5941,7 +6071,7 @@ static bConstraint *add_new_constraint_internal(const char *name, short type)
   }
 
   /* copy the name */
-  STRNCPY(con->name, newName);
+  STRNCPY_UTF8(con->name, newName);
 
   /* return the new constraint */
   return con;
@@ -6203,10 +6333,7 @@ static bConstraint *constraint_list_find_from_target(ListBase *constraints, bCon
   LISTBASE_FOREACH (bConstraint *, con, constraints) {
     ListBase *targets = nullptr;
 
-    if (con->type == CONSTRAINT_TYPE_PYTHON) {
-      targets = &((bPythonConstraint *)con->data)->targets;
-    }
-    else if (con->type == CONSTRAINT_TYPE_ARMATURE) {
+    if (con->type == CONSTRAINT_TYPE_ARMATURE) {
       targets = &((bArmatureConstraint *)con->data)->targets;
     }
 
@@ -6255,7 +6382,7 @@ static bConstraint *constraint_find_original(Object *ob,
                                              bConstraint *con,
                                              Object **r_orig_ob)
 {
-  Object *orig_ob = (Object *)DEG_get_original_id(&ob->id);
+  Object *orig_ob = DEG_get_original(ob);
 
   if (ELEM(orig_ob, nullptr, ob)) {
     return nullptr;
@@ -6368,7 +6495,7 @@ void BKE_constraint_targets_flush(bConstraint *con, ListBase *targets, bool no_c
 
     if (!no_copy) {
       con->space_object = ct->tar;
-      STRNCPY(con->space_subtarget, ct->subtarget);
+      STRNCPY_UTF8(con->space_subtarget, ct->subtarget);
     }
 
     BLI_freelinkN(targets, ct);
@@ -6396,7 +6523,7 @@ void BKE_constraint_target_matrix_get(Depsgraph *depsgraph,
 
   if (cti && cti->get_constraint_targets) {
     /* make 'constraint-ob' */
-    cob = static_cast<bConstraintOb *>(MEM_callocN(sizeof(bConstraintOb), "tempConstraintOb"));
+    cob = MEM_callocN<bConstraintOb>("tempConstraintOb");
     cob->type = ownertype;
     cob->scene = scene;
     cob->depsgraph = depsgraph;
@@ -6609,20 +6736,6 @@ void BKE_constraint_blend_write(BlendWriter *writer, ListBase *conlist)
 
       /* do any constraint specific stuff */
       switch (con->type) {
-        case CONSTRAINT_TYPE_PYTHON: {
-          bPythonConstraint *data = static_cast<bPythonConstraint *>(con->data);
-
-          /* write targets */
-          LISTBASE_FOREACH (bConstraintTarget *, ct, &data->targets) {
-            BLO_write_struct(writer, bConstraintTarget, ct);
-          }
-
-          /* Write ID Properties -- and copy this comment EXACTLY for easy finding
-           * of library blocks that implement this. */
-          IDP_BlendWrite(writer, data->prop);
-
-          break;
-        }
         case CONSTRAINT_TYPE_ARMATURE: {
           bArmatureConstraint *data = static_cast<bArmatureConstraint *>(con->data);
 
@@ -6639,6 +6752,12 @@ void BKE_constraint_blend_write(BlendWriter *writer, ListBase *conlist)
           /* write points array */
           BLO_write_float_array(writer, data->numpoints, data->points);
 
+          break;
+        }
+        case CONSTRAINT_TYPE_GEOMETRY_ATTRIBUTE: {
+          bGeometryAttributeConstraint *data = static_cast<bGeometryAttributeConstraint *>(
+              con->data);
+          BLO_write_string(writer, data->attribute_name);
           break;
         }
       }
@@ -6665,9 +6784,6 @@ void BKE_constraint_blend_read_data(BlendDataReader *reader, ID *id_owner, ListB
 
     /* Patch for error introduced by changing constraints (don't know how). */
     /* NOTE(@ton): If `con->data` type changes, DNA cannot resolve the pointer!. */
-    /* FIXME This is likely dead code actually, since it used to be in
-     * constraint 'read_lib', so it would have crashed on null pointer access in any of
-     * the code below? But does not hurt to keep it around as a safety measure. */
     if (con->data == nullptr) {
       con->type = CONSTRAINT_TYPE_NULL;
     }
@@ -6678,15 +6794,6 @@ void BKE_constraint_blend_read_data(BlendDataReader *reader, ID *id_owner, ListB
     }
 
     switch (con->type) {
-      case CONSTRAINT_TYPE_PYTHON: {
-        bPythonConstraint *data = static_cast<bPythonConstraint *>(con->data);
-
-        BLO_read_struct_list(reader, bConstraintTarget, &data->targets);
-
-        BLO_read_struct(reader, IDProperty, &data->prop);
-        IDP_BlendDataRead(reader, &data->prop);
-        break;
-      }
       case CONSTRAINT_TYPE_ARMATURE: {
         bArmatureConstraint *data = static_cast<bArmatureConstraint *>(con->data);
 
@@ -6714,6 +6821,13 @@ void BKE_constraint_blend_read_data(BlendDataReader *reader, ID *id_owner, ListB
         bTransformCacheConstraint *data = static_cast<bTransformCacheConstraint *>(con->data);
         data->reader = nullptr;
         data->reader_object_path[0] = '\0';
+        break;
+      }
+      case CONSTRAINT_TYPE_GEOMETRY_ATTRIBUTE: {
+        bGeometryAttributeConstraint *data = static_cast<bGeometryAttributeConstraint *>(
+            con->data);
+        BLO_read_string(reader, &data->attribute_name);
+        break;
       }
     }
   }

@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bli
+ */
+
 #pragma once
 
 /**
@@ -17,7 +21,7 @@
  * protected data should generally be placed next to each other.
  *
  * Each #CacheMutex protects exactly one cache, so multiple cache mutexes have to be used when a
- * class has multiple caches. That is contrary to a "custom" solution using `std::mutex` where one
+ * class has multiple caches. That is contrary to a "custom" solution using `Mutex` where one
  * mutex could protect multiple caches at the cost of higher lock contention.
  *
  * To make sure the cache is up to date, call `CacheMutex::ensure` and pass in the function that
@@ -59,15 +63,15 @@
  */
 
 #include <atomic>
-#include <mutex>
 
 #include "BLI_function_ref.hh"
+#include "BLI_mutex.hh"
 
 namespace blender {
 
 class CacheMutex {
  private:
-  std::mutex mutex_;
+  Mutex mutex_;
   std::atomic<bool> cache_valid_ = false;
 
  public:
@@ -78,7 +82,14 @@ class CacheMutex {
    * This function is thread-safe under the assumption that the same parameters are passed from
    * every thread.
    */
-  void ensure(FunctionRef<void()> compute_cache);
+  void ensure(const FunctionRef<void()> compute_cache)
+  {
+    /* Handle fast case when the cache is up-to-date. */
+    if (cache_valid_.load(std::memory_order_acquire)) {
+      return;
+    }
+    this->ensure_impl(compute_cache);
+  }
 
   /**
    * Reset the cache. The next time #ensure is called, it will recompute that code.
@@ -103,6 +114,9 @@ class CacheMutex {
   {
     return cache_valid_.load(std::memory_order_relaxed);
   }
+
+ private:
+  void ensure_impl(FunctionRef<void()> compute_cache);
 };
 
 }  // namespace blender

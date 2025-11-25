@@ -15,10 +15,6 @@
 
 #include <sstream>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -52,8 +48,7 @@ PyDoc_STRVAR(
     "   otherwise, time is used as a seed.\n"
     "\n"
     "   :arg seed: Seed for random number generation.\n"
-    "   :type seed: int");
-
+    "   :type seed: int\n");
 static int FrsNoise_init(BPy_FrsNoise *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"seed", nullptr};
@@ -95,8 +90,7 @@ PyDoc_STRVAR(
     "   :arg oct: Number of octaves.\n"
     "   :type oct: int\n"
     "   :return: A noise value.\n"
-    "   :rtype: float");
-
+    "   :rtype: float\n");
 static PyObject *FrsNoise_drand(BPy_FrsNoise * /*self*/, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"seed", nullptr};
@@ -152,8 +146,7 @@ PyDoc_STRVAR(
     "   :arg oct: Number of octaves.\n"
     "   :type oct: int\n"
     "   :return: A noise value.\n"
-    "   :rtype: float");
-
+    "   :rtype: float\n");
 static PyObject *FrsNoise_turbulence2(BPy_FrsNoise *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"v", "freq", "amp", "oct", nullptr};
@@ -190,8 +183,7 @@ PyDoc_STRVAR(
     "   :arg oct: Number of octaves.\n"
     "   :type oct: int\n"
     "   :return: A noise value.\n"
-    "   :rtype: float");
-
+    "   :rtype: float\n");
 static PyObject *FrsNoise_turbulence3(BPy_FrsNoise *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"v", "freq", "amp", "oct", nullptr};
@@ -222,8 +214,7 @@ PyDoc_STRVAR(
     "   :arg v: One-dimensional sample point.\n"
     "   :type v: float\n"
     "   :return: A smooth noise value.\n"
-    "   :rtype: float");
-
+    "   :rtype: float\n");
 static PyObject *FrsNoise_smoothNoise1(BPy_FrsNoise *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"v", nullptr};
@@ -245,8 +236,7 @@ PyDoc_STRVAR(
     "   :arg v: Two-dimensional sample point.\n"
     "   :type v: :class:`mathutils.Vector` | tuple[float, float] | list[float]\n"
     "   :return: A smooth noise value.\n"
-    "   :rtype: float");
-
+    "   :rtype: float\n");
 static PyObject *FrsNoise_smoothNoise2(BPy_FrsNoise *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"v", nullptr};
@@ -275,8 +265,7 @@ PyDoc_STRVAR(
     "   :arg v: Three-dimensional sample point.\n"
     "   :type v: :class:`mathutils.Vector` | tuple[float, float, float] | list[float]\n"
     "   :return: A smooth noise value.\n"
-    "   :rtype: float");
-
+    "   :rtype: float\n");
 static PyObject *FrsNoise_smoothNoise3(BPy_FrsNoise *self, PyObject *args, PyObject *kwds)
 {
   static const char *kwlist[] = {"v", nullptr};
@@ -294,6 +283,16 @@ static PyObject *FrsNoise_smoothNoise3(BPy_FrsNoise *self, PyObject *args, PyObj
   float t = self->n->smoothNoise3(vec);
   return PyFloat_FromDouble(t);
 }
+
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
+#endif
 
 static PyMethodDef BPy_FrsNoise_methods[] = {
     {"turbulence1",
@@ -327,6 +326,14 @@ static PyMethodDef BPy_FrsNoise_methods[] = {
      nullptr},
     {nullptr, nullptr, 0, nullptr},
 };
+
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
+#endif
 
 /*-----------------------BPy_FrsNoise type definition ------------------------------*/
 
@@ -372,7 +379,3 @@ PyTypeObject FrsNoise_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

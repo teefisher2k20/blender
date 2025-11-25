@@ -1,29 +1,22 @@
 
 msgid ""
 msgstr ""
-"Project-Id-Version: Blender 4.4.0 Alpha (b'efff379ea583')\n"
+"Project-Id-Version: Blender 5.1.0 Alpha (b'ef4e8fa75057')\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2025-01-27 10:58+0000\n"
-"PO-Revision-Date: 2017-12-25 14:01+0100\n"
-"Last-Translator: UMAR HARUNA ABDULLAHI <umarbrowser20@gmail.com>\n"
-"Language-Team: BlenderNigeria <pyc0der@outlook.com>\n"
+"POT-Creation-Date: 2025-11-24 08:35+0000\n"
+"PO-Revision-Date: 2025-07-23 15:21+0000\n"
+"Last-Translator: Anonymous <noreply@weblate.org>\n"
+"Language-Team: Hausa <https://translate.blender.org/projects/blender-ui/ui/ha/>\n"
 "Language: ha\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"X-Generator: Poedit 1.8.11"
+"Plural-Forms: nplurals=2; plural=n != 1;\n"
+"X-Generator: Weblate 5.12.1"
 
 
 msgid "Name"
 msgstr "Suna"
-
-
-msgid "Action F-Curves"
-msgstr "Aikin F-Curves"
-
-
-msgid "Collection of action F-Curves"
-msgstr "Karban bayanan aikin F-Curves"
 
 
 msgid "Action Group"
@@ -104,14 +97,6 @@ msgstr "An zabi aikin kungiya"
 
 msgid "Expanded"
 msgstr "budadde"
-
-
-msgid "Action Groups"
-msgstr "Aikin kungiyoyi"
-
-
-msgid "Collection of action groups"
-msgstr "Karban aikin kungiyoyi"
 
 
 msgid "Action Pose Markers"

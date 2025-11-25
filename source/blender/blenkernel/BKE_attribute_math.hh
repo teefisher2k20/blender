@@ -2,10 +2,14 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bke
+ */
+
 #pragma once
 
 #include "BLI_array.hh"
-#include "BLI_color.hh"
+#include "BLI_color_types.hh"
 #include "BLI_cpp_type.hh"
 #include "BLI_generic_span.hh"
 #include "BLI_math_axis_angle.hh"
@@ -53,9 +57,9 @@ inline void convert_to_static_type(const CPPType &cpp_type, const Func &func)
 }
 
 template<typename Func>
-inline void convert_to_static_type(const eCustomDataType data_type, const Func &func)
+inline void convert_to_static_type(const bke::AttrType data_type, const Func &func)
 {
-  const CPPType &cpp_type = *bke::custom_data_type_to_cpp_type(data_type);
+  const CPPType &cpp_type = bke::attribute_type_to_cpp_type(data_type);
   convert_to_static_type(cpp_type, func);
 }
 
@@ -376,7 +380,7 @@ template<typename T> class SimpleMixer {
  * mixers in order to be simpler to use. This mixing method has a few benefits:
  *  - An "average" for selections is relatively meaningless.
  *  - Predictable selection propagation is very super important.
- *  - It's generally  easier to remove an element from a selection that is slightly too large than
+ *  - It's generally easier to remove an element from a selection that is slightly too large than
  *    the opposite.
  */
 class BooleanPropagationMixer {
@@ -702,6 +706,11 @@ void gather_to_groups(OffsetIndices<int> dst_offsets,
                       const IndexMask &src_selection,
                       GSpan src,
                       GMutableSpan dst);
+
+void gather_ranges_to_groups(Span<IndexRange> src_ranges,
+                             OffsetIndices<int> dst_offsets,
+                             GSpan src,
+                             GMutableSpan dst);
 
 /** \} */
 

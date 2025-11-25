@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "infos/gpu_shader_test_infos.hh"
+
+COMPUTE_SHADER_CREATE_INFO(gpu_graphic_specialization_test)
+
 #if defined(GPU_COMPUTE_SHADER) || defined(GPU_VERTEX_SHADER)
 
 void main()
@@ -12,8 +16,8 @@ void main()
   data_out[3] = int(bool_in);
 
 #  if defined(GPU_VERTEX_SHADER)
-  gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
-  gl_PointSize = 1.0;
+  gl_Position = float4(0.0f, 0.0f, 0.0f, 1.0f);
+  gl_PointSize = 1.0f;
 #  endif
 }
 

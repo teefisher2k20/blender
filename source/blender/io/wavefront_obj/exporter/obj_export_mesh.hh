@@ -8,8 +8,6 @@
 
 #pragma once
 
-#include <optional>
-
 #include "BLI_math_matrix_types.hh"
 #include "BLI_math_vector_types.hh"
 #include "BLI_offset_indices.hh"
@@ -137,7 +135,7 @@ class OBJMesh : NonCopyable {
    */
   void store_uv_coords_and_indices();
   /* Get UV coordinates computed by store_uv_coords_and_indices. */
-  const Span<float2> get_uv_coords() const
+  Span<float2> get_uv_coords() const
   {
     return uv_coords_;
   }
@@ -225,6 +223,7 @@ class OBJMesh : NonCopyable {
   void set_world_axes_transform(const Object &obj_eval,
                                 eIOAxis forward,
                                 eIOAxis up,
-                                float global_scale);
+                                float global_scale,
+                                bool apply_transform);
 };
 }  // namespace blender::io::obj

@@ -19,7 +19,7 @@ namespace blender::bke::greasepencil {
 void validate_drawing_vertex_groups(GreasePencil &grease_pencil);
 
 /** Find or create a vertex group in a drawing. */
-int ensure_vertex_group(const StringRef name, ListBase &vertex_group_names);
+int ensure_vertex_group(StringRef name, ListBase &vertex_group_names);
 
 /** Assign selected vertices to the vertex group. */
 void assign_to_vertex_group(Drawing &drawing, StringRef name, float weight);
@@ -37,11 +37,5 @@ bool remove_from_vertex_group(Drawing &drawing, StringRef name, bool use_selecti
 
 /** Remove vertices from all vertex groups. */
 void clear_vertex_groups(GreasePencil &grease_pencil);
-
-/** Select or deselect vertices assigned to this group. */
-void select_from_group(Drawing &drawing,
-                       const AttrDomain selection_domain,
-                       StringRef name,
-                       bool select);
 
 }  // namespace blender::bke::greasepencil

@@ -34,7 +34,7 @@ using blender::Vector;
 /** \name Screw Operator
  * \{ */
 
-static int edbm_screw_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus edbm_screw_exec(bContext *C, wmOperator *op)
 {
   BMEdge *eed;
   BMVert *eve, *v1, *v2;
@@ -160,7 +160,7 @@ static int edbm_screw_exec(bContext *C, wmOperator *op)
 }
 
 /* get center and axis, in global coords */
-static int edbm_screw_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus edbm_screw_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
 {
   Scene *scene = CTX_data_scene(C);
   RegionView3D *rv3d = ED_view3d_context_rv3d(C);
@@ -188,7 +188,7 @@ void MESH_OT_screw(wmOperatorType *ot)
       "Extrude selected vertices in screw-shaped rotation around the cursor in indicated viewport";
   ot->idname = "MESH_OT_screw";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = edbm_screw_invoke;
   ot->exec = edbm_screw_exec;
   ot->poll = ED_operator_editmesh;

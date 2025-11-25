@@ -23,18 +23,20 @@
 #include "transform.hh"
 #include "transform_convert.hh"
 
+namespace blender::ed::transform {
+
 /* -------------------------------------------------------------------- */
 /** \name Sculpt Transform Creation
  * \{ */
 
 static void createTransSculpt(bContext *C, TransInfo *t)
 {
-  using namespace blender::ed;
   TransData *td;
+  TransDataExtension *td_ext;
 
   Scene *scene = t->scene;
   if (!BKE_id_is_editable(CTX_data_main(C), &scene->id)) {
-    BKE_report(t->reports, RPT_ERROR, "Linked data can't text-space transform");
+    BKE_report(t->reports, RPT_ERROR, "Cannot create transform on linked data");
     return;
   }
 
@@ -52,8 +54,8 @@ static void createTransSculpt(bContext *C, TransInfo *t)
     TransDataContainer *tc = t->data_container;
     tc->data_len = 1;
     tc->is_active = true;
-    td = tc->data = MEM_cnew<TransData>(__func__);
-    td->ext = tc->data_ext = MEM_cnew<TransDataExtension>(__func__);
+    td = tc->data = MEM_callocN<TransData>(__func__);
+    td_ext = tc->data_ext = MEM_callocN<TransDataExtension>(__func__);
   }
 
   td->flag = TD_SELECTED;
@@ -71,24 +73,24 @@ static void createTransSculpt(bContext *C, TransInfo *t)
   copy_m3_m4(obmat_inv, ob.object_to_world().ptr());
   invert_m3(obmat_inv);
 
-  td->ext->rot = nullptr;
-  td->ext->rotAxis = nullptr;
-  td->ext->rotAngle = nullptr;
-  td->ext->quat = ss.pivot_rot;
-  copy_m4_m4(td->ext->obmat, ob.object_to_world().ptr());
-  copy_m3_m3(td->ext->l_smtx, obmat_inv);
-  copy_m3_m4(td->ext->r_mtx, ob.object_to_world().ptr());
-  copy_m3_m3(td->ext->r_smtx, obmat_inv);
+  td_ext->rot = nullptr;
+  td_ext->rotAxis = nullptr;
+  td_ext->rotAngle = nullptr;
+  td_ext->quat = ss.pivot_rot;
+  copy_m4_m4(td_ext->obmat, ob.object_to_world().ptr());
+  copy_m3_m3(td_ext->l_smtx, obmat_inv);
+  copy_m3_m4(td_ext->r_mtx, ob.object_to_world().ptr());
+  copy_m3_m3(td_ext->r_smtx, obmat_inv);
 
-  copy_qt_qt(td->ext->iquat, ss.pivot_rot);
-  td->ext->rotOrder = ROT_MODE_QUAT;
+  copy_qt_qt(td_ext->iquat, ss.pivot_rot);
+  td_ext->rotOrder = ROT_MODE_QUAT;
 
   ss.pivot_scale[0] = 1.0f;
   ss.pivot_scale[1] = 1.0f;
   ss.pivot_scale[2] = 1.0f;
-  td->ext->size = ss.pivot_scale;
+  td_ext->scale = ss.pivot_scale;
   copy_v3_v3(ss.init_pivot_scale, ss.pivot_scale);
-  copy_v3_v3(td->ext->isize, ss.init_pivot_scale);
+  copy_v3_v3(td_ext->iscale, ss.init_pivot_scale);
 
   copy_m3_m3(td->smtx, obmat_inv);
   copy_m3_m4(td->mtx, ob.object_to_world().ptr());
@@ -107,15 +109,19 @@ static void createTransSculpt(bContext *C, TransInfo *t)
 
 static void recalcData_sculpt(TransInfo *t)
 {
-  using namespace blender::ed;
   BKE_view_layer_synced_ensure(t->scene, t->view_layer);
   Object *ob = BKE_view_layer_active_object_get(t->view_layer);
-  sculpt_paint::update_modal_transform(t->context, *ob);
+
+  if (t->state == TRANS_CANCEL) {
+    sculpt_paint::cancel_modal_transform(t->context, *ob);
+  }
+  else {
+    sculpt_paint::update_modal_transform(t->context, *ob);
+  }
 }
 
 static void special_aftertrans_update__sculpt(bContext *C, TransInfo *t)
 {
-  using namespace blender::ed;
   Scene *scene = t->scene;
   if (!BKE_id_is_editable(CTX_data_main(C), &scene->id)) {
     /* `sculpt_paint::init_transform` was not called in this case. */
@@ -136,3 +142,5 @@ TransConvertTypeInfo TransConvertType_Sculpt = {
     /*recalc_data*/ recalcData_sculpt,
     /*special_aftertrans_update*/ special_aftertrans_update__sculpt,
 };
+
+}  // namespace blender::ed::transform

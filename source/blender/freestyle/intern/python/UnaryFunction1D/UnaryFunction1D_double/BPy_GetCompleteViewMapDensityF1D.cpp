@@ -12,10 +12,6 @@
 #include "../../BPy_Convert.h"
 #include "../../BPy_IntegrationType.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -58,7 +54,6 @@ PyDoc_STRVAR(
     "   :return: The density evaluated for the Interface1D in the complete\n"
     "      viewmap image.\n"
     "   :rtype: float\n");
-
 static int GetCompleteViewMapDensityF1D___init__(BPy_GetCompleteViewMapDensityF1D *self,
                                                  PyObject *args,
                                                  PyObject *kwds)
@@ -122,7 +117,3 @@ PyTypeObject GetCompleteViewMapDensityF1D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

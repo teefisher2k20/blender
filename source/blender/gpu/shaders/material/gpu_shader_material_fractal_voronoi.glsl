@@ -2,9 +2,8 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "gpu_shader_common_hash.glsl"
-#include "gpu_shader_common_math_utils.glsl"
 #include "gpu_shader_material_voronoi.glsl"
+#include "gpu_shader_math_vector_safe_lib.glsl"
 
 /* TODO(jbakker): Deduplicate code when OpenGL backend has been removed.
  * `fractal_voronoi_x_fx` functions are identical, except for the input parameter.
@@ -15,12 +14,12 @@
 #define FRACTAL_VORONOI_DISTANCE_TO_EDGE_FUNCTION(T) \
   float fractal_voronoi_distance_to_edge(VoronoiParams params, T coord) \
   { \
-    float amplitude = 1.0; \
+    float amplitude = 1.0f; \
     float max_amplitude = params.max_distance; \
-    float scale = 1.0; \
-    float distance = 8.0; \
+    float scale = 1.0f; \
+    float distance = 8.0f; \
 \
-    bool zero_input = params.detail == 0.0 || params.roughness == 0.0; \
+    bool zero_input = params.detail == 0.0f || params.roughness == 0.0f; \
 \
     for (int i = 0; i <= ceil(params.detail); ++i) { \
       float octave_distance = voronoi_distance_to_edge(params, coord * scale); \
@@ -37,7 +36,7 @@
       } \
       else { \
         float remainder = params.detail - floor(params.detail); \
-        if (remainder != 0.0) { \
+        if (remainder != 0.0f) { \
           float lerp_amplitude = mix(max_amplitude, params.max_distance / scale, amplitude); \
           max_amplitude = mix(max_amplitude, lerp_amplitude, remainder); \
           float lerp_distance = mix(distance, min(distance, octave_distance / scale), amplitude); \
@@ -59,22 +58,22 @@
  * by lerps. */
 VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, float coord)
 {
-  float amplitude = 1.0;
-  float max_amplitude = 0.0;
-  float scale = 1.0;
+  float amplitude = 1.0f;
+  float max_amplitude = 0.0f;
+  float scale = 1.0f;
 
   VoronoiOutput Output;
-  Output.Distance = 0.0;
-  Output.Color = vec3(0.0, 0.0, 0.0);
-  Output.Position = vec4(0.0, 0.0, 0.0, 0.0);
-  bool zero_input = params.detail == 0.0 || params.roughness == 0.0;
+  Output.Distance = 0.0f;
+  Output.Color = float3(0.0f, 0.0f, 0.0f);
+  Output.Position = float4(0.0f, 0.0f, 0.0f, 0.0f);
+  bool zero_input = params.detail == 0.0f || params.roughness == 0.0f;
 
   for (int i = 0; i <= ceil(params.detail); ++i) {
     VoronoiOutput octave;
     if (params.feature == SHD_VORONOI_F2) {
       octave = voronoi_f2(params, coord * scale);
     }
-    else if (params.feature == SHD_VORONOI_SMOOTH_F1 && params.smoothness != 0.0) {
+    else if (params.feature == SHD_VORONOI_SMOOTH_F1 && params.smoothness != 0.0f) {
       octave = voronoi_smooth_f1(params, coord * scale);
     }
     else {
@@ -82,7 +81,7 @@ VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, float coord)
     }
 
     if (zero_input) {
-      max_amplitude = 1.0;
+      max_amplitude = 1.0f;
       Output = octave;
       break;
     }
@@ -96,7 +95,7 @@ VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, float coord)
     }
     else {
       float remainder = params.detail - floor(params.detail);
-      if (remainder != 0.0) {
+      if (remainder != 0.0f) {
         max_amplitude = mix(max_amplitude, max_amplitude + amplitude, remainder);
         Output.Distance = mix(
             Output.Distance, Output.Distance + octave.Distance * amplitude, remainder);
@@ -123,24 +122,24 @@ FRACTAL_VORONOI_DISTANCE_TO_EDGE_FUNCTION(float)
 
 /* The fractalization logic is the same as for fBM Noise, except that some additions are replaced
  * by lerps. */
-VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, vec2 coord)
+VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, float2 coord)
 {
-  float amplitude = 1.0;
-  float max_amplitude = 0.0;
-  float scale = 1.0;
+  float amplitude = 1.0f;
+  float max_amplitude = 0.0f;
+  float scale = 1.0f;
 
   VoronoiOutput Output;
-  Output.Distance = 0.0;
-  Output.Color = vec3(0.0, 0.0, 0.0);
-  Output.Position = vec4(0.0, 0.0, 0.0, 0.0);
-  bool zero_input = params.detail == 0.0 || params.roughness == 0.0;
+  Output.Distance = 0.0f;
+  Output.Color = float3(0.0f, 0.0f, 0.0f);
+  Output.Position = float4(0.0f, 0.0f, 0.0f, 0.0f);
+  bool zero_input = params.detail == 0.0f || params.roughness == 0.0f;
 
   for (int i = 0; i <= ceil(params.detail); ++i) {
     VoronoiOutput octave;
     if (params.feature == SHD_VORONOI_F2) {
       octave = voronoi_f2(params, coord * scale);
     }
-    else if (params.feature == SHD_VORONOI_SMOOTH_F1 && params.smoothness != 0.0) {
+    else if (params.feature == SHD_VORONOI_SMOOTH_F1 && params.smoothness != 0.0f) {
       octave = voronoi_smooth_f1(params, coord * scale);
     }
     else {
@@ -148,7 +147,7 @@ VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, vec2 coord)
     }
 
     if (zero_input) {
-      max_amplitude = 1.0;
+      max_amplitude = 1.0f;
       Output = octave;
       break;
     }
@@ -162,7 +161,7 @@ VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, vec2 coord)
     }
     else {
       float remainder = params.detail - floor(params.detail);
-      if (remainder != 0.0) {
+      if (remainder != 0.0f) {
         max_amplitude = mix(max_amplitude, max_amplitude + amplitude, remainder);
         Output.Distance = mix(
             Output.Distance, Output.Distance + octave.Distance * amplitude, remainder);
@@ -183,30 +182,30 @@ VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, vec2 coord)
   return Output;
 }
 
-FRACTAL_VORONOI_DISTANCE_TO_EDGE_FUNCTION(vec2)
+FRACTAL_VORONOI_DISTANCE_TO_EDGE_FUNCTION(float2)
 
 /* **** 3D Fractal Voronoi **** */
 
 /* The fractalization logic is the same as for fBM Noise, except that some additions are replaced
  * by lerps. */
-VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, vec3 coord)
+VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, float3 coord)
 {
-  float amplitude = 1.0;
-  float max_amplitude = 0.0;
-  float scale = 1.0;
+  float amplitude = 1.0f;
+  float max_amplitude = 0.0f;
+  float scale = 1.0f;
 
   VoronoiOutput Output;
-  Output.Distance = 0.0;
-  Output.Color = vec3(0.0, 0.0, 0.0);
-  Output.Position = vec4(0.0, 0.0, 0.0, 0.0);
-  bool zero_input = params.detail == 0.0 || params.roughness == 0.0;
+  Output.Distance = 0.0f;
+  Output.Color = float3(0.0f, 0.0f, 0.0f);
+  Output.Position = float4(0.0f, 0.0f, 0.0f, 0.0f);
+  bool zero_input = params.detail == 0.0f || params.roughness == 0.0f;
 
   for (int i = 0; i <= ceil(params.detail); ++i) {
     VoronoiOutput octave;
     if (params.feature == SHD_VORONOI_F2) {
       octave = voronoi_f2(params, coord * scale);
     }
-    else if (params.feature == SHD_VORONOI_SMOOTH_F1 && params.smoothness != 0.0) {
+    else if (params.feature == SHD_VORONOI_SMOOTH_F1 && params.smoothness != 0.0f) {
       octave = voronoi_smooth_f1(params, coord * scale);
     }
     else {
@@ -214,7 +213,7 @@ VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, vec3 coord)
     }
 
     if (zero_input) {
-      max_amplitude = 1.0;
+      max_amplitude = 1.0f;
       Output = octave;
       break;
     }
@@ -228,7 +227,7 @@ VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, vec3 coord)
     }
     else {
       float remainder = params.detail - floor(params.detail);
-      if (remainder != 0.0) {
+      if (remainder != 0.0f) {
         max_amplitude = mix(max_amplitude, max_amplitude + amplitude, remainder);
         Output.Distance = mix(
             Output.Distance, Output.Distance + octave.Distance * amplitude, remainder);
@@ -249,30 +248,30 @@ VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, vec3 coord)
   return Output;
 }
 
-FRACTAL_VORONOI_DISTANCE_TO_EDGE_FUNCTION(vec3)
+FRACTAL_VORONOI_DISTANCE_TO_EDGE_FUNCTION(float3)
 
 /* **** 4D Fractal Voronoi **** */
 
 /* The fractalization logic is the same as for fBM Noise, except that some additions are replaced
  * by lerps. */
-VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, vec4 coord)
+VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, float4 coord)
 {
-  float amplitude = 1.0;
-  float max_amplitude = 0.0;
-  float scale = 1.0;
+  float amplitude = 1.0f;
+  float max_amplitude = 0.0f;
+  float scale = 1.0f;
 
   VoronoiOutput Output;
-  Output.Distance = 0.0;
-  Output.Color = vec3(0.0, 0.0, 0.0);
-  Output.Position = vec4(0.0, 0.0, 0.0, 0.0);
-  bool zero_input = params.detail == 0.0 || params.roughness == 0.0;
+  Output.Distance = 0.0f;
+  Output.Color = float3(0.0f, 0.0f, 0.0f);
+  Output.Position = float4(0.0f, 0.0f, 0.0f, 0.0f);
+  bool zero_input = params.detail == 0.0f || params.roughness == 0.0f;
 
   for (int i = 0; i <= ceil(params.detail); ++i) {
     VoronoiOutput octave;
     if (params.feature == SHD_VORONOI_F2) {
       octave = voronoi_f2(params, coord * scale);
     }
-    else if (params.feature == SHD_VORONOI_SMOOTH_F1 && params.smoothness != 0.0) {
+    else if (params.feature == SHD_VORONOI_SMOOTH_F1 && params.smoothness != 0.0f) {
       octave = voronoi_smooth_f1(params, coord * scale);
     }
     else {
@@ -280,7 +279,7 @@ VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, vec4 coord)
     }
 
     if (zero_input) {
-      max_amplitude = 1.0;
+      max_amplitude = 1.0f;
       Output = octave;
       break;
     }
@@ -294,7 +293,7 @@ VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, vec4 coord)
     }
     else {
       float remainder = params.detail - floor(params.detail);
-      if (remainder != 0.0) {
+      if (remainder != 0.0f) {
         max_amplitude = mix(max_amplitude, max_amplitude + amplitude, remainder);
         Output.Distance = mix(
             Output.Distance, Output.Distance + octave.Distance * amplitude, remainder);
@@ -315,4 +314,4 @@ VoronoiOutput fractal_voronoi_x_fx(VoronoiParams params, vec4 coord)
   return Output;
 }
 
-FRACTAL_VORONOI_DISTANCE_TO_EDGE_FUNCTION(vec4)
+FRACTAL_VORONOI_DISTANCE_TO_EDGE_FUNCTION(float4)

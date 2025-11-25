@@ -10,10 +10,6 @@
 
 #include "BLI_sys_types.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -41,7 +37,6 @@ PyDoc_STRVAR(
     "   :type inter: :class:`freestyle.types.Interface1D`\n"
     "   :return: True if the time stamp is equal to a user-defined value.\n"
     "   :rtype: bool\n");
-
 static int EqualToTimeStampUP1D___init__(BPy_EqualToTimeStampUP1D *self,
                                          PyObject *args,
                                          PyObject *kwds)
@@ -100,7 +95,3 @@ PyTypeObject EqualToTimeStampUP1D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

@@ -2,7 +2,8 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BKE_mesh.hh"
+#include "DNA_mesh_types.h"
+
 #include "BKE_volume_grid.hh"
 
 #include "GEO_mesh_to_volume.hh"
@@ -15,7 +16,9 @@ NODE_STORAGE_FUNCS(NodeGeometryMeshToVolume)
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Geometry>("Mesh").supported_type(GeometryComponent::Type::Mesh);
+  b.add_input<decl::Geometry>("Mesh")
+      .supported_type(GeometryComponent::Type::Mesh)
+      .description("Mesh whose inner volume is converted to a density grid");
   b.add_input<decl::Float>("Density").default_value(1.0f).min(0.01f).max(FLT_MAX);
   b.add_input<decl::Float>("Voxel Size")
       .default_value(0.3f)
@@ -28,7 +31,7 @@ static void node_declare(NodeDeclarationBuilder &b)
       .max(FLT_MAX)
       .subtype(PROP_DISTANCE)
       .description("Width of the gradient inside of the mesh");
-  b.add_output<decl::Float>("Density Grid");
+  b.add_output<decl::Float>("Density Grid").structure_type(StructureType::Grid);
 }
 
 static void node_geo_exec(GeoNodeExecParams params)
@@ -47,6 +50,10 @@ static void node_geo_exec(GeoNodeExecParams params)
       params.extract_input<float>("Voxel Size"),
       params.extract_input<float>("Gradient Width"),
       params.extract_input<float>("Density"));
+  if (!grid) {
+    params.set_default_remaining_outputs();
+    return;
+  }
   params.set_output("Density Grid", std::move(grid));
 #else
   node_geo_exec_with_missing_openvdb(params);
@@ -64,8 +71,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
-  ntype.gather_link_search_ops = search_link_ops_for_volume_grid_node;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

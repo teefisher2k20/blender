@@ -6,12 +6,7 @@
  * \ingroup RNA
  */
 
-#include <cstdio>
 #include <cstdlib>
-
-#include "BLI_utildefines.h"
-
-#include "ED_text.hh"
 
 #include "RNA_define.hh"
 
@@ -91,7 +86,7 @@ void RNA_api_text(StructRNA *srna)
                           RNA_def_boolean(func, "is_syntax_highlight_supported", false, "", ""));
   RNA_def_function_ui_description(func,
                                   "Returns True if the editor supports syntax highlighting "
-                                  "for the current text datablock");
+                                  "for the current text data-block");
 
   func = RNA_def_function(srna, "select_set", "rna_Text_select_set");
   RNA_def_function_ui_description(func, "Set selection range by line and character index");

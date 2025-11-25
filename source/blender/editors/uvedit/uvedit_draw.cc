@@ -6,13 +6,14 @@
  * \ingroup eduv
  */
 
-#include "BLI_utildefines.h"
+#include "BLI_math_vector.h"
 
 #include "DNA_screen_types.h"
 #include "DNA_userdef_types.h"
 
 #include "GPU_immediate.hh"
 #include "GPU_matrix.hh"
+#include "GPU_state.hh"
 
 #include "UI_view2d.hh"
 
@@ -35,7 +36,7 @@ void ED_image_draw_cursor(ARegion *region, const float cursor[2])
   GPU_matrix_translate_2fv(cursor);
 
   const uint shdr_pos = GPU_vertformat_attr_add(
-      immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
 
   immBindBuiltinProgram(GPU_SHADER_3D_LINE_DASHED_UNIFORM_COLOR);
 

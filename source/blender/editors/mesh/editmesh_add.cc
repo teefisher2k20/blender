@@ -74,6 +74,8 @@ static void make_prim_finish(bContext *C,
   /* Primitive has all verts selected, use vert select flush
    * to push this up to edges & faces. */
   EDBM_selectmode_flush_ex(em, SCE_SELECT_VERTEX);
+  /* TODO(@ideasman42): maintain UV sync for newly created data. */
+  EDBM_uvselect_clear(em);
 
   /* Only recalculate edit-mode tessellation if we are staying in edit-mode. */
   EDBMUpdate_Params params{};
@@ -90,7 +92,7 @@ static void make_prim_finish(bContext *C,
   WM_event_add_notifier(C, NC_OBJECT | ND_DRAW, obedit);
 }
 
-static int add_primitive_plane_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus add_primitive_plane_exec(bContext *C, wmOperator *op)
 {
   MakePrimitiveData creation_data;
   Object *obedit;
@@ -144,7 +146,7 @@ void MESH_OT_primitive_plane_add(wmOperatorType *ot)
   ot->description = "Construct a filled planar mesh with 4 vertices";
   ot->idname = "MESH_OT_primitive_plane_add";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = add_primitive_plane_exec;
   ot->poll = ED_operator_scene_editable;
 
@@ -156,7 +158,7 @@ void MESH_OT_primitive_plane_add(wmOperatorType *ot)
   blender::ed::object::add_generic_props(ot, true);
 }
 
-static int add_primitive_cube_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus add_primitive_cube_exec(bContext *C, wmOperator *op)
 {
   MakePrimitiveData creation_data;
   Object *obedit;
@@ -208,7 +210,7 @@ void MESH_OT_primitive_cube_add(wmOperatorType *ot)
   ot->description = "Construct a cube mesh that consists of six square faces";
   ot->idname = "MESH_OT_primitive_cube_add";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = add_primitive_cube_exec;
   ot->poll = ED_operator_scene_editable;
 
@@ -227,7 +229,7 @@ static const EnumPropertyItem fill_type_items[] = {
     {0, nullptr, 0, nullptr, nullptr},
 };
 
-static int add_primitive_circle_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus add_primitive_circle_exec(bContext *C, wmOperator *op)
 {
   MakePrimitiveData creation_data;
   Object *obedit;
@@ -286,7 +288,7 @@ void MESH_OT_primitive_circle_add(wmOperatorType *ot)
   ot->description = "Construct a circle mesh";
   ot->idname = "MESH_OT_primitive_circle_add";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = add_primitive_circle_exec;
   ot->poll = ED_operator_scene_editable;
 
@@ -302,7 +304,7 @@ void MESH_OT_primitive_circle_add(wmOperatorType *ot)
   blender::ed::object::add_generic_props(ot, true);
 }
 
-static int add_primitive_cylinder_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus add_primitive_cylinder_exec(bContext *C, wmOperator *op)
 {
   MakePrimitiveData creation_data;
   Object *obedit;
@@ -361,7 +363,7 @@ void MESH_OT_primitive_cylinder_add(wmOperatorType *ot)
   ot->description = "Construct a cylinder mesh";
   ot->idname = "MESH_OT_primitive_cylinder_add";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = add_primitive_cylinder_exec;
   ot->poll = ED_operator_scene_editable;
 
@@ -379,7 +381,7 @@ void MESH_OT_primitive_cylinder_add(wmOperatorType *ot)
   blender::ed::object::add_generic_props(ot, true);
 }
 
-static int add_primitive_cone_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus add_primitive_cone_exec(bContext *C, wmOperator *op)
 {
   MakePrimitiveData creation_data;
   Object *obedit;
@@ -438,7 +440,7 @@ void MESH_OT_primitive_cone_add(wmOperatorType *ot)
   ot->description = "Construct a conic mesh";
   ot->idname = "MESH_OT_primitive_cone_add";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = add_primitive_cone_exec;
   ot->poll = ED_operator_scene_editable;
 
@@ -459,7 +461,7 @@ void MESH_OT_primitive_cone_add(wmOperatorType *ot)
   blender::ed::object::add_generic_props(ot, true);
 }
 
-static int add_primitive_grid_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus add_primitive_grid_exec(bContext *C, wmOperator *op)
 {
   MakePrimitiveData creation_data;
   Object *obedit;
@@ -512,7 +514,7 @@ void MESH_OT_primitive_grid_add(wmOperatorType *ot)
   ot->description = "Construct a subdivided plane mesh";
   ot->idname = "MESH_OT_primitive_grid_add";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = add_primitive_grid_exec;
   ot->poll = ED_operator_scene_editable;
 
@@ -532,7 +534,7 @@ void MESH_OT_primitive_grid_add(wmOperatorType *ot)
   blender::ed::object::add_generic_props(ot, true);
 }
 
-static int add_primitive_monkey_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus add_primitive_monkey_exec(bContext *C, wmOperator *op)
 {
   MakePrimitiveData creation_data;
   Object *obedit;
@@ -586,7 +588,7 @@ void MESH_OT_primitive_monkey_add(wmOperatorType *ot)
   ot->description = "Construct a Suzanne mesh";
   ot->idname = "MESH_OT_primitive_monkey_add";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = add_primitive_monkey_exec;
   ot->poll = ED_operator_scene_editable;
 
@@ -599,7 +601,7 @@ void MESH_OT_primitive_monkey_add(wmOperatorType *ot)
   blender::ed::object::add_generic_props(ot, true);
 }
 
-static int add_primitive_uvsphere_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus add_primitive_uvsphere_exec(bContext *C, wmOperator *op)
 {
   MakePrimitiveData creation_data;
   Object *obedit;
@@ -654,7 +656,7 @@ void MESH_OT_primitive_uv_sphere_add(wmOperatorType *ot)
       "bottom";
   ot->idname = "MESH_OT_primitive_uv_sphere_add";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = add_primitive_uvsphere_exec;
   ot->poll = ED_operator_scene_editable;
 
@@ -670,7 +672,7 @@ void MESH_OT_primitive_uv_sphere_add(wmOperatorType *ot)
   blender::ed::object::add_generic_props(ot, true);
 }
 
-static int add_primitive_icosphere_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus add_primitive_icosphere_exec(bContext *C, wmOperator *op)
 {
   MakePrimitiveData creation_data;
   Object *obedit;
@@ -722,7 +724,7 @@ void MESH_OT_primitive_ico_sphere_add(wmOperatorType *ot)
   ot->description = "Construct a spherical mesh that consists of equally sized triangles";
   ot->idname = "MESH_OT_primitive_ico_sphere_add";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = add_primitive_icosphere_exec;
   ot->poll = ED_operator_scene_editable;
 

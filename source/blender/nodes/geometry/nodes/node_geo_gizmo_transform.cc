@@ -4,11 +4,9 @@
 
 #include "node_geometry_util.hh"
 
-#include "NOD_rna_define.hh"
-
 #include "RNA_enum_types.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 namespace blender::nodes::node_geo_gizmo_transform_cc {
@@ -28,7 +26,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
 {
-  NodeGeometryTransformGizmo *storage = MEM_cnew<NodeGeometryTransformGizmo>(__func__);
+  NodeGeometryTransformGizmo *storage = MEM_callocN<NodeGeometryTransformGizmo>(__func__);
   storage->flag = (GEO_NODE_TRANSFORM_GIZMO_USE_TRANSLATION_X |
                    GEO_NODE_TRANSFORM_GIZMO_USE_TRANSLATION_Y |
                    GEO_NODE_TRANSFORM_GIZMO_USE_TRANSLATION_Z |
@@ -41,26 +39,26 @@ static void node_init(bNodeTree * /*tree*/, bNode *node)
 
 static void node_layout_ex(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout->use_property_split_set(true);
+  layout->use_property_decorate_set(false);
 
   {
-    uiLayout *row = uiLayoutColumnWithHeading(layout, true, IFACE_("Translation"));
-    uiItemR(row, ptr, "use_translation_x", UI_ITEM_NONE, IFACE_("X"), ICON_NONE);
-    uiItemR(row, ptr, "use_translation_y", UI_ITEM_NONE, IFACE_("Y"), ICON_NONE);
-    uiItemR(row, ptr, "use_translation_z", UI_ITEM_NONE, IFACE_("Z"), ICON_NONE);
+    uiLayout *row = &layout->column(true, IFACE_("Translation"));
+    row->prop(ptr, "use_translation_x", UI_ITEM_NONE, IFACE_("X"), ICON_NONE);
+    row->prop(ptr, "use_translation_y", UI_ITEM_NONE, IFACE_("Y"), ICON_NONE);
+    row->prop(ptr, "use_translation_z", UI_ITEM_NONE, IFACE_("Z"), ICON_NONE);
   }
   {
-    uiLayout *row = uiLayoutColumnWithHeading(layout, true, IFACE_("Rotation"));
-    uiItemR(row, ptr, "use_rotation_x", UI_ITEM_NONE, IFACE_("X"), ICON_NONE);
-    uiItemR(row, ptr, "use_rotation_y", UI_ITEM_NONE, IFACE_("Y"), ICON_NONE);
-    uiItemR(row, ptr, "use_rotation_z", UI_ITEM_NONE, IFACE_("Z"), ICON_NONE);
+    uiLayout *row = &layout->column(true, IFACE_("Rotation"));
+    row->prop(ptr, "use_rotation_x", UI_ITEM_NONE, IFACE_("X"), ICON_NONE);
+    row->prop(ptr, "use_rotation_y", UI_ITEM_NONE, IFACE_("Y"), ICON_NONE);
+    row->prop(ptr, "use_rotation_z", UI_ITEM_NONE, IFACE_("Z"), ICON_NONE);
   }
   {
-    uiLayout *row = uiLayoutColumnWithHeading(layout, true, IFACE_("Scale"));
-    uiItemR(row, ptr, "use_scale_x", UI_ITEM_NONE, IFACE_("X"), ICON_NONE);
-    uiItemR(row, ptr, "use_scale_y", UI_ITEM_NONE, IFACE_("Y"), ICON_NONE);
-    uiItemR(row, ptr, "use_scale_z", UI_ITEM_NONE, IFACE_("Z"), ICON_NONE);
+    uiLayout *row = &layout->column(true, IFACE_("Scale"));
+    row->prop(ptr, "use_scale_x", UI_ITEM_NONE, IFACE_("X"), ICON_NONE);
+    row->prop(ptr, "use_scale_y", UI_ITEM_NONE, IFACE_("Y"), ICON_NONE);
+    row->prop(ptr, "use_scale_z", UI_ITEM_NONE, IFACE_("Z"), ICON_NONE);
   }
 }
 
@@ -72,14 +70,12 @@ static void node_register()
   ntype.ui_description = "Show a transform gizmo in the viewport";
   ntype.enum_name_legacy = "GIZMO_TRANSFORM";
   ntype.nclass = NODE_CLASS_INTERFACE;
-  bke::node_type_storage(&ntype,
-                         "NodeGeometryTransformGizmo",
-                         node_free_standard_storage,
-                         node_copy_standard_storage);
+  bke::node_type_storage(
+      ntype, "NodeGeometryTransformGizmo", node_free_standard_storage, node_copy_standard_storage);
   ntype.declare = node_declare;
   ntype.draw_buttons_ex = node_layout_ex;
   ntype.initfunc = node_init;
-  bke::node_register_type(&ntype);
+  bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

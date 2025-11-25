@@ -3,13 +3,11 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 
 #include "RNA_enum_types.hh"
 
-#include "BKE_mesh.hh"
 #include "BKE_node.hh"
-
-#include "DNA_meshdata_types.h"
 
 #include "NOD_rna_define.hh"
 
@@ -32,9 +30,9 @@ static void node_init(bNodeTree * /*tree*/, bNode *node)
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
-  uiItemR(layout, ptr, "domain", UI_ITEM_NONE, "", ICON_NONE);
+  layout->use_property_split_set(true);
+  layout->use_property_decorate_set(false);
+  layout->prop(ptr, "domain", UI_ITEM_NONE, "", ICON_NONE);
 }
 
 static void node_exec(GeoNodeExecParams params)
@@ -43,14 +41,18 @@ static void node_exec(GeoNodeExecParams params)
     return;
   }
 
-  if (params.user_data()->call_data->operator_data->mode != OB_MODE_EDIT) {
+  const GeoNodesOperatorData *operator_data = params.user_data()->call_data->operator_data;
+  const AttrDomain domain = static_cast<AttrDomain>(params.node().custom1);
+
+  /* Active Point, Edge, and Face are only supported in Edit Mode. */
+  if (operator_data->mode != OB_MODE_EDIT &&
+      ELEM(domain, AttrDomain::Point, AttrDomain::Edge, AttrDomain::Face))
+  {
     params.set_default_remaining_outputs();
     return;
   }
 
-  const GeoNodesOperatorData *operator_data = params.user_data()->call_data->operator_data;
-
-  switch (static_cast<AttrDomain>(params.node().custom1)) {
+  switch (domain) {
     case AttrDomain::Point:
       params.set_output("Exists", operator_data->active_point_index >= 0);
       params.set_output("Index", std::max(0, operator_data->active_point_index));
@@ -63,6 +65,10 @@ static void node_exec(GeoNodeExecParams params)
       params.set_output("Exists", operator_data->active_face_index >= 0);
       params.set_output("Index", std::max(0, operator_data->active_face_index));
       break;
+    case AttrDomain::Layer:
+      params.set_output("Exists", operator_data->active_layer_index >= 0);
+      params.set_output("Index", std::max(0, operator_data->active_layer_index));
+      break;
     default:
       params.set_default_remaining_outputs();
       BLI_assert_unreachable();
@@ -72,11 +78,19 @@ static void node_exec(GeoNodeExecParams params)
 
 static void node_rna(StructRNA *srna)
 {
+  static const EnumPropertyItem rna_domain_items[] = {
+      {int(AttrDomain::Point), "POINT", 0, "Point", ""},
+      {int(AttrDomain::Edge), "EDGE", 0, "Edge", ""},
+      {int(AttrDomain::Face), "FACE", 0, "Face", ""},
+      {int(AttrDomain::Layer), "LAYER", 0, "Layer", ""},
+      {0, nullptr, 0, nullptr, nullptr},
+  };
+
   RNA_def_node_enum(srna,
                     "domain",
                     "Domain",
                     "",
-                    rna_enum_attribute_domain_only_mesh_no_corner_items,
+                    rna_domain_items,
                     NOD_inline_enum_accessors(custom1),
                     int(AttrDomain::Point));
 }
@@ -94,7 +108,7 @@ static void node_register()
   ntype.declare = node_declare;
   ntype.gather_link_search_ops = search_link_ops_for_tool_node;
   ntype.draw_buttons = node_layout;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

@@ -89,7 +89,7 @@ bool ED_lattice_deselect_all_multi(bContext *C)
 /** \name Select Random Operator
  * \{ */
 
-static int lattice_select_random_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus lattice_select_random_exec(bContext *C, wmOperator *op)
 {
   const bool select = (RNA_enum_get(op->ptr, "action") == SEL_SELECT);
   const float randfac = RNA_float_get(op->ptr, "ratio");
@@ -111,7 +111,7 @@ static int lattice_select_random_exec(bContext *C, wmOperator *op)
 
     int a = lt->pntsu * lt->pntsv * lt->pntsw;
     int elem_map_len = 0;
-    BPoint **elem_map = static_cast<BPoint **>(MEM_mallocN(sizeof(*elem_map) * a, __func__));
+    BPoint **elem_map = MEM_malloc_arrayN<BPoint *>(a, __func__);
     BPoint *bp = lt->def;
 
     while (a--) {
@@ -146,7 +146,7 @@ void LATTICE_OT_select_random(wmOperatorType *ot)
   ot->description = "Randomly select UVW control points";
   ot->idname = "LATTICE_OT_select_random";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = lattice_select_random_exec;
   ot->poll = ED_operator_editlattice;
 
@@ -198,7 +198,7 @@ static void ed_lattice_select_mirrored(Lattice *lt, const int axis, const bool e
   MEM_freeN(selpoints);
 }
 
-static int lattice_select_mirror_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus lattice_select_mirror_exec(bContext *C, wmOperator *op)
 {
   const int axis_flag = RNA_enum_get(op->ptr, "axis");
   const bool extend = RNA_boolean_get(op->ptr, "extend");
@@ -232,7 +232,7 @@ void LATTICE_OT_select_mirror(wmOperatorType *ot)
   ot->description = "Select mirrored lattice points";
   ot->idname = "LATTICE_OT_select_mirror";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = lattice_select_mirror_exec;
   ot->poll = ED_operator_editlattice;
 
@@ -265,7 +265,7 @@ static bool lattice_test_bitmap_uvw(
   return false;
 }
 
-static int lattice_select_more_less(bContext *C, const bool select)
+static wmOperatorStatus lattice_select_more_less(bContext *C, const bool select)
 {
   const Scene *scene = CTX_data_scene(C);
   ViewLayer *view_layer = CTX_data_view_layer(C);
@@ -315,12 +315,12 @@ static int lattice_select_more_less(bContext *C, const bool select)
   return changed ? OPERATOR_FINISHED : OPERATOR_CANCELLED;
 }
 
-static int lattice_select_more_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus lattice_select_more_exec(bContext *C, wmOperator * /*op*/)
 {
   return lattice_select_more_less(C, true);
 }
 
-static int lattice_select_less_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus lattice_select_less_exec(bContext *C, wmOperator * /*op*/)
 {
   return lattice_select_more_less(C, false);
 }
@@ -332,7 +332,7 @@ void LATTICE_OT_select_more(wmOperatorType *ot)
   ot->description = "Select vertex directly linked to already selected ones";
   ot->idname = "LATTICE_OT_select_more";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = lattice_select_more_exec;
   ot->poll = ED_operator_editlattice;
 
@@ -347,7 +347,7 @@ void LATTICE_OT_select_less(wmOperatorType *ot)
   ot->description = "Deselect vertices at the boundary of each selection region";
   ot->idname = "LATTICE_OT_select_less";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = lattice_select_less_exec;
   ot->poll = ED_operator_editlattice;
 
@@ -389,7 +389,7 @@ bool ED_lattice_flags_set(Object *obedit, int flag)
   return changed;
 }
 
-static int lattice_select_all_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus lattice_select_all_exec(bContext *C, wmOperator *op)
 {
   const Scene *scene = CTX_data_scene(C);
   ViewLayer *view_layer = CTX_data_view_layer(C);
@@ -458,7 +458,7 @@ void LATTICE_OT_select_all(wmOperatorType *ot)
   ot->description = "Change selection of all UVW control points";
   ot->idname = "LATTICE_OT_select_all";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = lattice_select_all_exec;
   ot->poll = ED_operator_editlattice;
 
@@ -474,7 +474,7 @@ void LATTICE_OT_select_all(wmOperatorType *ot)
 /** \name Select Ungrouped Verts Operator
  * \{ */
 
-static int lattice_select_ungrouped_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus lattice_select_ungrouped_exec(bContext *C, wmOperator *op)
 {
   const Scene *scene = CTX_data_scene(C);
   ViewLayer *view_layer = CTX_data_view_layer(C);
@@ -527,7 +527,7 @@ void LATTICE_OT_select_ungrouped(wmOperatorType *ot)
   ot->idname = "LATTICE_OT_select_ungrouped";
   ot->description = "Select vertices without a group";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = lattice_select_ungrouped_exec;
   ot->poll = ED_operator_editlattice;
 
@@ -597,7 +597,7 @@ static BPoint *findnearestLattvert(ViewContext *vc, bool select, Base **r_base)
   return data.bp;
 }
 
-bool ED_lattice_select_pick(bContext *C, const int mval[2], const SelectPick_Params *params)
+bool ED_lattice_select_pick(bContext *C, const int mval[2], const SelectPick_Params &params)
 {
   Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
   BPoint *bp = nullptr;
@@ -611,11 +611,11 @@ bool ED_lattice_select_pick(bContext *C, const int mval[2], const SelectPick_Par
   bp = findnearestLattvert(&vc, true, &basact);
   bool found = (bp != nullptr);
 
-  if (params->sel_op == SEL_OP_SET) {
-    if ((found && params->select_passthrough) && (bp->f1 & SELECT)) {
+  if (params.sel_op == SEL_OP_SET) {
+    if ((found && params.select_passthrough) && (bp->f1 & SELECT)) {
       found = false;
     }
-    else if (found || params->deselect_all) {
+    else if (found || params.deselect_all) {
       /* Deselect everything. */
       Vector<Object *> objects = BKE_view_layer_array_from_objects_in_edit_mode_unique_data(
           vc.scene, vc.view_layer, vc.v3d);
@@ -633,7 +633,7 @@ bool ED_lattice_select_pick(bContext *C, const int mval[2], const SelectPick_Par
     ED_view3d_viewcontext_init_object(&vc, basact->object);
     Lattice *lt = ((Lattice *)vc.obedit->data)->editlatt->latt;
 
-    switch (params->sel_op) {
+    switch (params.sel_op) {
       case SEL_OP_ADD: {
         bp->f1 |= SELECT;
         break;

@@ -8,6 +8,7 @@
 
 #include "vk_batch.hh"
 
+#include "render_graph/nodes/vk_pipeline_data.hh"
 #include "vk_context.hh"
 #include "vk_framebuffer.hh"
 #include "vk_index_buffer.hh"
@@ -38,14 +39,19 @@ void VKBatch::draw(int vertex_first, int vertex_count, int instance_first, int i
     render_graph::VKDrawIndexedNode::CreateInfo draw_indexed(resource_access_info);
     draw_indexed.node_data.index_count = vertex_count;
     draw_indexed.node_data.instance_count = instance_count;
-    draw_indexed.node_data.first_index = vertex_first;
-    draw_indexed.node_data.vertex_offset = index_buffer->index_start_get();
+    draw_indexed.node_data.first_index = index_buffer->index_start_get() + vertex_first;
+    draw_indexed.node_data.vertex_offset = index_buffer->index_base_get();
     draw_indexed.node_data.first_instance = instance_first;
+
+    context.active_framebuffer_get()->vk_viewports_append(
+        draw_indexed.node_data.graphics.viewport.viewports);
+    context.active_framebuffer_get()->vk_render_areas_append(
+        draw_indexed.node_data.graphics.viewport.scissors);
 
     draw_indexed.node_data.index_buffer.buffer = index_buffer->vk_handle();
     draw_indexed.node_data.index_buffer.index_type = index_buffer->vk_index_type();
     vao.bind(draw_indexed.node_data.vertex_buffers);
-    context.update_pipeline_data(prim_type, vao, draw_indexed.node_data.pipeline_data);
+    context.update_pipeline_data(prim_type, vao, draw_indexed.node_data.graphics);
 
     context.render_graph().add_node(draw_indexed);
   }
@@ -55,19 +61,24 @@ void VKBatch::draw(int vertex_first, int vertex_count, int instance_first, int i
     draw.node_data.instance_count = instance_count;
     draw.node_data.first_vertex = vertex_first;
     draw.node_data.first_instance = instance_first;
+    context.active_framebuffer_get()->vk_viewports_append(
+        draw.node_data.graphics.viewport.viewports);
+    context.active_framebuffer_get()->vk_render_areas_append(
+        draw.node_data.graphics.viewport.scissors);
+
     vao.bind(draw.node_data.vertex_buffers);
-    context.update_pipeline_data(prim_type, vao, draw.node_data.pipeline_data);
+    context.update_pipeline_data(prim_type, vao, draw.node_data.graphics);
 
     context.render_graph().add_node(draw);
   }
 }
 
-void VKBatch::draw_indirect(GPUStorageBuf *indirect_buf, intptr_t offset)
+void VKBatch::draw_indirect(StorageBuf *indirect_buf, intptr_t offset)
 {
   multi_draw_indirect(indirect_buf, 1, offset, 0);
 }
 
-void VKBatch::multi_draw_indirect(GPUStorageBuf *indirect_buf,
+void VKBatch::multi_draw_indirect(StorageBuf *indirect_buf,
                                   const int count,
                                   const intptr_t offset,
                                   const intptr_t stride)
@@ -103,10 +114,15 @@ void VKBatch::multi_draw_indirect(const VkBuffer indirect_buffer,
     draw_indexed_indirect.node_data.draw_count = count;
     draw_indexed_indirect.node_data.stride = stride;
 
+    context.active_framebuffer_get()->vk_viewports_append(
+        draw_indexed_indirect.node_data.graphics.viewport.viewports);
+    context.active_framebuffer_get()->vk_render_areas_append(
+        draw_indexed_indirect.node_data.graphics.viewport.scissors);
+
     draw_indexed_indirect.node_data.index_buffer.buffer = index_buffer->vk_handle();
     draw_indexed_indirect.node_data.index_buffer.index_type = index_buffer->vk_index_type();
     vao.bind(draw_indexed_indirect.node_data.vertex_buffers);
-    context.update_pipeline_data(prim_type, vao, draw_indexed_indirect.node_data.pipeline_data);
+    context.update_pipeline_data(prim_type, vao, draw_indexed_indirect.node_data.graphics);
 
     context.render_graph().add_node(draw_indexed_indirect);
   }
@@ -116,26 +132,16 @@ void VKBatch::multi_draw_indirect(const VkBuffer indirect_buffer,
     draw.node_data.offset = offset;
     draw.node_data.draw_count = count;
     draw.node_data.stride = stride;
+    context.active_framebuffer_get()->vk_viewports_append(
+        draw.node_data.graphics.viewport.viewports);
+    context.active_framebuffer_get()->vk_render_areas_append(
+        draw.node_data.graphics.viewport.scissors);
+
     vao.bind(draw.node_data.vertex_buffers);
-    context.update_pipeline_data(prim_type, vao, draw.node_data.pipeline_data);
+    context.update_pipeline_data(prim_type, vao, draw.node_data.graphics);
 
     context.render_graph().add_node(draw);
   }
-}
-
-VKVertexBuffer *VKBatch::vertex_buffer_get(int index)
-{
-  return unwrap(verts_(index));
-}
-
-VKVertexBuffer *VKBatch::instance_buffer_get(int index)
-{
-  return unwrap(inst_(index));
-}
-
-VKIndexBuffer *VKBatch::index_buffer_get()
-{
-  return unwrap(unwrap(elem));
 }
 
 }  // namespace blender::gpu

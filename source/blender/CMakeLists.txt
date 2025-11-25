@@ -6,9 +6,11 @@ set(SRC_DNA_INC
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_ID.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_ID_enums.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_action_types.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_anim_enums.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_anim_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_armature_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_asset_types.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_attribute_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_boid_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_brush_enums.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_brush_types.h
@@ -17,7 +19,9 @@ set(SRC_DNA_INC
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_cloth_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_collection_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_color_types.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_colorband_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_constraint_types.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_curve_enums.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_curve_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_curveprofile_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_curves_types.h
@@ -35,7 +39,6 @@ set(SRC_DNA_INC
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_gpu_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_grease_pencil_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_image_types.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_ipo_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_key_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_lattice_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_layer_types.h
@@ -49,6 +52,7 @@ set(SRC_DNA_INC
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_mesh_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_meshdata_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_meta_types.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_modifier_enums.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_modifier_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_movieclip_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_nla_types.h
@@ -72,10 +76,12 @@ set(SRC_DNA_INC
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_session_uid_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_shader_fx_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_sound_types.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_space_enums.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_space_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_speaker_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_text_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_texture_types.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_theme_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_tracking_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_userdef_enums.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_userdef_types.h
@@ -87,6 +93,7 @@ set(SRC_DNA_INC
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_view3d_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_viewer_path_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_volume_types.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_windowmanager_enums.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_windowmanager_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_workspace_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_world_types.h
@@ -109,6 +116,7 @@ set(SRC_DNA_DEFAULTS_INC
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_grease_pencil_defaults.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_image_defaults.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_lattice_defaults.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_layer_defaults.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_light_defaults.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_lightprobe_defaults.h
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_linestyle_defaults.h
@@ -134,6 +142,8 @@ set(SRC_DNA_DEFAULTS_INC
 # Utility & other headers.
 set(SRC_DNA_OTHER_INC
   ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_array_utils.hh
+  ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_print.hh
+  ${CMAKE_CURRENT_SOURCE_DIR}/makesdna/DNA_sdna_type_ids.hh
 )
 
 add_subdirectory(datatoc)
@@ -147,19 +157,22 @@ add_subdirectory(blenlib)
 add_subdirectory(bmesh)
 add_subdirectory(draw)
 add_subdirectory(draw/intern/shaders)
-add_subdirectory(draw/engines/eevee_next/shaders)
+add_subdirectory(draw/engines/eevee/shaders)
 add_subdirectory(draw/engines/gpencil/shaders)
+add_subdirectory(draw/engines/overlay/shaders)
 add_subdirectory(draw/engines/workbench/shaders)
 add_subdirectory(render)
 add_subdirectory(blenfont)
 add_subdirectory(blentranslation)
 add_subdirectory(blenloader)
+add_subdirectory(blenloader_core)
 add_subdirectory(depsgraph)
 add_subdirectory(ikplugin)
 add_subdirectory(simulation)
 add_subdirectory(geometry)
 add_subdirectory(gpu)
 add_subdirectory(gpu/shaders)
+add_subdirectory(gpu/tests/shaders)
 add_subdirectory(imbuf)
 add_subdirectory(imbuf/intern/oiio)
 add_subdirectory(nodes)
@@ -171,6 +184,7 @@ add_subdirectory(functions)
 add_subdirectory(makesdna)
 add_subdirectory(makesrna)
 add_subdirectory(compositor)
+add_subdirectory(compositor/shaders)
 
 if(WITH_BLENDER_THUMBNAILER)
   add_subdirectory(blendthumb)

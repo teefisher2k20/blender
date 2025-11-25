@@ -21,7 +21,7 @@ using namespace blender::gpu;
 
 void GPU_debug_group_begin(const char *name)
 {
-  if (!(G.debug & G_DEBUG_GPU)) {
+  if (!(G.debug & G_DEBUG_GPU) && !G.profile_gpu) {
     return;
   }
   Context *ctx = Context::get();
@@ -32,7 +32,7 @@ void GPU_debug_group_begin(const char *name)
 
 void GPU_debug_group_end()
 {
-  if (!(G.debug & G_DEBUG_GPU)) {
+  if (!(G.debug & G_DEBUG_GPU) && !G.profile_gpu) {
     return;
   }
   Context *ctx = Context::get();
@@ -56,6 +56,28 @@ void GPU_debug_get_groups_names(int name_buf_len, char *r_name_buf)
     len += BLI_snprintf_rlen(r_name_buf + len, name_buf_len - len, "%s > ", name.data());
   }
   r_name_buf[len - 3] = '\0';
+}
+
+std::string GPU_debug_get_groups_names(IndexRange levels)
+{
+  Context *ctx = Context::get();
+  if (ctx == nullptr) {
+    return "";
+  }
+  DebugStack &stack = ctx->debug_stack;
+  if (stack.is_empty()) {
+    return "";
+  }
+  std::string result;
+
+  int i = 0;
+  for (StringRef &name : stack) {
+    if (levels.contains(i++)) {
+      result += name;
+      result += " > ";
+    }
+  }
+  return result.substr(0, result.size() - 3);
 }
 
 bool GPU_debug_group_match(const char *ref)
@@ -164,3 +186,39 @@ void GPU_debug_capture_scope_end(void *scope)
   /* Declare end of capture scope region. */
   ctx->debug_capture_scope_end(scope);
 }
+
+namespace blender::gpu {
+
+void debug_validate_binding_image_format()
+{
+  if (!(G.debug & G_DEBUG_GPU)) {
+    return;
+  }
+
+  const auto &texture_formats_state = Context::get()->state_manager->image_formats;
+  const auto &texture_formats_shader = Context::get()->shader->interface->image_formats_;
+  for (int image_unit = 0; image_unit < GPU_MAX_IMAGE; image_unit++) {
+    TextureWriteFormat format_state = texture_formats_state[image_unit];
+    TextureWriteFormat format_shader = texture_formats_shader[image_unit];
+    if (format_state != TextureWriteFormat::Invalid &&
+        format_shader == TextureWriteFormat::Invalid)
+    {
+      /* It is allowed for an image to be bound in the state manager but to be unused in the
+       * shader. */
+      continue;
+    }
+    if (UNLIKELY(texture_formats_shader[image_unit] != texture_formats_state[image_unit])) {
+      fprintf(
+          stderr,
+          "Error in GPU_debug_validate_binding_image_format: Image format mismatch detected for "
+          "shader '%s' at binding %d (shader format '%s' vs. bound texture format '%s').\n",
+          Context::get()->shader->name_get().c_str(),
+          image_unit,
+          GPU_texture_format_name(to_texture_format(texture_formats_shader[image_unit])),
+          GPU_texture_format_name(to_texture_format(texture_formats_state[image_unit])));
+      BLI_assert_unreachable();
+    }
+  }
+}
+
+}  // namespace blender::gpu

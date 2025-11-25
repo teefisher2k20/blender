@@ -2,12 +2,17 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bli
+ */
+
 #pragma once
 
 #include <optional>
 
 #include "BLI_bit_ref.hh"
 #include "BLI_index_range.hh"
+#include "BLI_math_bits.h"
 #include "BLI_memory_utils.hh"
 
 namespace blender::bits {
@@ -57,6 +62,61 @@ class MutableBitIterator : public BitIteratorBase {
     return MutableBitRef(const_cast<BitInt *>(data_), bit_index_);
   }
 };
+
+class OneBitIterator {
+ private:
+  BitInt data_;
+  int current_bit_;
+
+ public:
+  explicit OneBitIterator(BitInt data) : data_(data)
+  {
+    this->operator++();
+  }
+
+  int operator*() const
+  {
+    return current_bit_;
+  }
+
+  OneBitIterator &operator++()
+  {
+    if (data_ > 0) {
+      current_bit_ = bitscan_forward_clear_uint64(&data_);
+    }
+    else {
+      current_bit_ = -1;
+    }
+    return *this;
+  }
+
+  friend bool operator!=(const OneBitIterator &a, const OneBitIterator &b)
+  {
+    return a.current_bit_ != b.current_bit_;
+  }
+};
+
+class OneBitIteratorRange {
+ private:
+  const BitInt data_;
+
+ public:
+  OneBitIteratorRange(BitInt data) : data_(data) {}
+
+  OneBitIterator begin() const
+  {
+    return OneBitIterator(data_);
+  }
+  OneBitIterator end() const
+  {
+    return OneBitIterator(0);
+  }
+};
+
+inline OneBitIteratorRange iter_1_indices(BitInt value)
+{
+  return OneBitIteratorRange(value);
+}
 
 /**
  * Similar to #Span, but references a range of bits instead of normal C++ types (which must be at
@@ -119,6 +179,16 @@ class BitSpan {
   BitSpan take_back(const int64_t n) const
   {
     return {data_, bit_range_.take_back(n)};
+  }
+
+  BitSpan drop_front(const int64_t n) const
+  {
+    return {data_, bit_range_.drop_front(n)};
+  }
+
+  BitSpan drop_back(const int64_t n) const
+  {
+    return {data_, bit_range_.drop_back(n)};
   }
 
   const BitInt *data() const

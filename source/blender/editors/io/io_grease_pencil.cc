@@ -10,6 +10,7 @@
 
 #  include "BLI_path_utils.hh"
 #  include "BLI_string.h"
+#  include "BLI_string_utf8.h"
 
 #  include "DNA_space_types.h"
 #  include "DNA_view3d_types.h"
@@ -27,6 +28,7 @@
 #  include "ED_fileselect.hh"
 
 #  include "UI_interface.hh"
+#  include "UI_interface_layout.hh"
 #  include "UI_resources.hh"
 
 #  include "WM_api.hh"
@@ -47,11 +49,19 @@ static void grease_pencil_export_common_props_definition(wmOperatorType *ot)
 {
   using blender::io::grease_pencil::ExportParams;
   using SelectMode = ExportParams::SelectMode;
+  using FrameMode = ExportParams::FrameMode;
 
   static const EnumPropertyItem select_mode_items[] = {
       {int(SelectMode::Active), "ACTIVE", 0, "Active", "Include only the active object"},
       {int(SelectMode::Selected), "SELECTED", 0, "Selected", "Include selected objects"},
       {int(SelectMode::Visible), "VISIBLE", 0, "Visible", "Include all visible objects"},
+      {0, nullptr, 0, nullptr, nullptr},
+  };
+
+  static const EnumPropertyItem frame_mode_items[] = {
+      {int(FrameMode::Active), "ACTIVE", 0, "Active", "Include only active frame"},
+      {int(FrameMode::Selected), "SELECTED", 0, "Selected", "Include selected frames"},
+      {int(FrameMode::Scene), "SCENE", 0, "Scene", "Include all scene frames"},
       {0, nullptr, 0, nullptr, nullptr},
   };
 
@@ -62,6 +72,12 @@ static void grease_pencil_export_common_props_definition(wmOperatorType *ot)
                int(SelectMode::Active),
                "Object",
                "Which objects to include in the export");
+  ot->prop = RNA_def_enum(ot->srna,
+                          "frame_mode",
+                          frame_mode_items,
+                          int(FrameMode::Active),
+                          "Frames",
+                          "Which frames to include in the export");
   RNA_def_float(ot->srna,
                 "stroke_sample",
                 0.0f,
@@ -124,7 +140,7 @@ static bool grease_pencil_import_svg_check(bContext * /*C*/, wmOperator *op)
   return false;
 }
 
-static int grease_pencil_import_svg_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus grease_pencil_import_svg_exec(bContext *C, wmOperator *op)
 {
   using blender::io::grease_pencil::ImportParams;
   using blender::io::grease_pencil::IOContext;
@@ -173,13 +189,12 @@ static int grease_pencil_import_svg_exec(bContext *C, wmOperator *op)
 
 static void grease_pencil_import_svg_draw(bContext * /*C*/, wmOperator *op)
 {
-  uiLayout *layout = op->layout;
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
-  uiLayout *box = uiLayoutBox(layout);
-  uiLayout *col = uiLayoutColumn(box, false);
-  uiItemR(col, op->ptr, "resolution", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, op->ptr, "scale", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  ui::Layout &layout = *op->layout;
+  layout.use_property_split_set(true);
+  layout.use_property_decorate_set(false);
+  ui::Layout &col = layout.box().column(false);
+  col.prop(op->ptr, "resolution", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col.prop(op->ptr, "scale", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
 static bool grease_pencil_import_svg_poll(bContext *C)
@@ -265,7 +280,9 @@ static bool grease_pencil_export_svg_check(bContext * /*C*/, wmOperator *op)
   return false;
 }
 
-static int grease_pencil_export_svg_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus grease_pencil_export_svg_invoke(bContext *C,
+                                                        wmOperator *op,
+                                                        const wmEvent * /*event*/)
 {
   ED_fileselect_ensure_default_filepath(C, op, ".svg");
 
@@ -274,9 +291,10 @@ static int grease_pencil_export_svg_invoke(bContext *C, wmOperator *op, const wm
   return OPERATOR_RUNNING_MODAL;
 }
 
-static int grease_pencil_export_svg_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus grease_pencil_export_svg_exec(bContext *C, wmOperator *op)
 {
   using blender::io::grease_pencil::ExportParams;
+  using blender::io::grease_pencil::ExportStatus;
   using blender::io::grease_pencil::IOContext;
 
   Scene *scene = CTX_data_scene(C);
@@ -303,7 +321,8 @@ static int grease_pencil_export_svg_exec(bContext *C, wmOperator *op)
   const bool use_uniform_width = RNA_boolean_get(op->ptr, "use_uniform_width");
   const ExportParams::SelectMode select_mode = ExportParams::SelectMode(
       RNA_enum_get(op->ptr, "selected_object_type"));
-  const ExportParams::FrameMode frame_mode = ExportParams::FrameMode::Active;
+  const ExportParams::FrameMode frame_mode = ExportParams::FrameMode(
+      RNA_enum_get(op->ptr, "frame_mode"));
   const bool use_clip_camera = RNA_boolean_get(op->ptr, "use_clip_camera");
   const float stroke_sample = RNA_float_get(op->ptr, "stroke_sample");
 
@@ -318,41 +337,78 @@ static int grease_pencil_export_svg_exec(bContext *C, wmOperator *op)
                                stroke_sample};
 
   WM_cursor_wait(true);
-  const bool done = blender::io::grease_pencil::export_svg(io_context, params, *scene, filepath);
+  ExportStatus status = blender::io::grease_pencil::export_svg(
+      io_context, params, *scene, filepath);
   WM_cursor_wait(false);
 
-  if (!done) {
-    BKE_report(op->reports, RPT_WARNING, "Unable to export SVG");
+  switch (status) {
+    case ExportStatus::Ok:
+      break;
+    case ExportStatus::InvalidActiveObjectType:
+      BKE_report(op->reports, RPT_WARNING, "Active object is not a Grease Pencil object");
+      break;
+    case ExportStatus::NoFramesSelected:
+      BKE_report(op->reports, RPT_WARNING, "No frames selected in the Grease Pencil object");
+      break;
+    case ExportStatus::FileWriteError:
+      BKE_reportf(op->reports, RPT_WARNING, "Error during file write for \"%s\"", filepath);
+      break;
+    case ExportStatus::UnknownError:
+      BLI_assert_unreachable();
+      break;
   }
 
   return OPERATOR_FINISHED;
 }
 
+enum class GreasePencilExportFiletype {
+  SVG = 0,
+  PDF = 1,
+};
+
+/**
+ * Defines the layout of the exporter properties.
+ *
+ * \param ptr: RNA pointer to access the export operator's properties.
+ */
+static void ui_gpencil_export_settings(blender::ui::Layout &layout,
+                                       PointerRNA *ptr,
+                                       GreasePencilExportFiletype file_type)
+{
+  layout.use_property_split_set(true);
+  layout.use_property_decorate_set(false);
+
+  blender::ui::Layout *box = &layout.box();
+
+  blender::ui::Layout *row = &box->row(false);
+  row->label(IFACE_("Scene Options"), ICON_NONE);
+
+  row = &box->row(false);
+  row->prop(ptr, "selected_object_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+
+  box = &layout.box();
+  row = &box->row(false);
+  row->label(IFACE_("Export Options"), ICON_NONE);
+
+  blender::ui::Layout &col = box->column(false);
+  blender::ui::Layout *sub = &col.column(false);
+  sub->prop(ptr, "frame_mode", UI_ITEM_NONE, IFACE_("Frame"), ICON_NONE);
+
+  box->use_property_split_set(true);
+
+  sub = &col.column(true);
+  sub->prop(ptr, "stroke_sample", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  sub->prop(ptr, "use_fill", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  sub->prop(ptr, "use_uniform_width", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+
+  if (file_type == GreasePencilExportFiletype::SVG) {
+    col.prop(ptr, "use_clip_camera", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  }
+}
+
 static void grease_pencil_export_svg_draw(bContext * /*C*/, wmOperator *op)
 {
-  uiLayout *layout = op->layout;
-  uiLayout *box, *row;
-
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
-
-  box = uiLayoutBox(layout);
-
-  row = uiLayoutRow(box, false);
-  uiItemL(row, IFACE_("Scene Options"), ICON_NONE);
-
-  row = uiLayoutRow(box, false);
-  uiItemR(row, op->ptr, "selected_object_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-
-  box = uiLayoutBox(layout);
-  row = uiLayoutRow(box, false);
-  uiItemL(row, IFACE_("Export Options"), ICON_NONE);
-
-  uiLayout *col = uiLayoutColumn(box, false);
-  uiItemR(col, op->ptr, "stroke_sample", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, op->ptr, "use_fill", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, op->ptr, "use_uniform_width", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, op->ptr, "use_clip_camera", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  ui_gpencil_export_settings(*op->layout, op->ptr, GreasePencilExportFiletype::SVG);
 }
 
 static bool grease_pencil_export_svg_poll(bContext *C)
@@ -422,7 +478,9 @@ static bool grease_pencil_export_pdf_check(bContext * /*C*/, wmOperator *op)
   return false;
 }
 
-static int grease_pencil_export_pdf_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus grease_pencil_export_pdf_invoke(bContext *C,
+                                                        wmOperator *op,
+                                                        const wmEvent * /*event*/)
 {
   ED_fileselect_ensure_default_filepath(C, op, ".pdf");
 
@@ -431,7 +489,7 @@ static int grease_pencil_export_pdf_invoke(bContext *C, wmOperator *op, const wm
   return OPERATOR_RUNNING_MODAL;
 }
 
-static int grease_pencil_export_pdf_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus grease_pencil_export_pdf_exec(bContext *C, wmOperator *op)
 {
   using blender::io::grease_pencil::ExportParams;
   using blender::io::grease_pencil::IOContext;
@@ -486,40 +544,9 @@ static int grease_pencil_export_pdf_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static void ui_gpencil_export_pdf_settings(uiLayout *layout, PointerRNA *imfptr)
-{
-  uiLayout *box, *row, *col, *sub;
-
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
-
-  box = uiLayoutBox(layout);
-
-  row = uiLayoutRow(box, false);
-  uiItemL(row, IFACE_("Scene Options"), ICON_NONE);
-
-  row = uiLayoutRow(box, false);
-  uiItemR(row, imfptr, "selected_object_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-
-  box = uiLayoutBox(layout);
-  row = uiLayoutRow(box, false);
-  uiItemL(row, IFACE_("Export Options"), ICON_NONE);
-
-  col = uiLayoutColumn(box, false);
-  sub = uiLayoutColumn(col, true);
-  uiItemR(sub, imfptr, "frame_mode", UI_ITEM_NONE, IFACE_("Frame"), ICON_NONE);
-
-  uiLayoutSetPropSep(box, true);
-
-  sub = uiLayoutColumn(col, true);
-  uiItemR(sub, imfptr, "stroke_sample", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(sub, imfptr, "use_fill", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(sub, imfptr, "use_uniform_width", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-}
-
 static void grease_pencil_export_pdf_draw(bContext * /*C*/, wmOperator *op)
 {
-  ui_gpencil_export_pdf_settings(op->layout, op->ptr);
+  ui_gpencil_export_settings(*op->layout, op->ptr, GreasePencilExportFiletype::PDF);
 }
 
 static bool grease_pencil_export_pdf_poll(bContext *C)
@@ -555,24 +582,7 @@ void WM_OT_grease_pencil_export_pdf(wmOperatorType *ot)
 
   using blender::io::grease_pencil::ExportParams;
 
-  static const EnumPropertyItem frame_mode_items[] = {
-      {int(ExportParams::FrameMode::Active), "ACTIVE", 0, "Active", "Include only active frame"},
-      {int(ExportParams::FrameMode::Selected),
-       "SELECTED",
-       0,
-       "Selected",
-       "Include selected frames"},
-      {int(ExportParams::FrameMode::Scene), "SCENE", 0, "Scene", "Include all scene frames"},
-      {0, nullptr, 0, nullptr, nullptr},
-  };
-
   blender::ed::io::grease_pencil_export_common_props_definition(ot);
-  ot->prop = RNA_def_enum(ot->srna,
-                          "frame_mode",
-                          frame_mode_items,
-                          int(ExportParams::FrameMode::Active),
-                          "Frames",
-                          "Which frames to include in the export");
 }
 
 #  endif /* WITH_HARU */
@@ -584,10 +594,10 @@ namespace blender::ed::io {
 void grease_pencil_file_handler_add()
 {
   auto fh = std::make_unique<blender::bke::FileHandlerType>();
-  STRNCPY(fh->idname, "IO_FH_grease_pencil_svg");
-  STRNCPY(fh->import_operator, "WM_OT_grease_pencil_import_svg");
-  STRNCPY(fh->label, "SVG as Grease Pencil");
-  STRNCPY(fh->file_extensions_str, ".svg");
+  STRNCPY_UTF8(fh->idname, "IO_FH_grease_pencil_svg");
+  STRNCPY_UTF8(fh->import_operator, "WM_OT_grease_pencil_import_svg");
+  STRNCPY_UTF8(fh->label, "SVG as Grease Pencil");
+  STRNCPY_UTF8(fh->file_extensions_str, ".svg");
   fh->poll_drop = poll_file_object_drop;
   bke::file_handler_add(std::move(fh));
 }

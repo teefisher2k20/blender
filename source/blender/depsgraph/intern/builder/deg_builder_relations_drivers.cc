@@ -11,10 +11,14 @@
 #include "intern/builder/deg_builder_relations_drivers.h"
 
 #include <cstring>
+#include <deque>
 
 #include "BLI_listbase.h"
 
 #include "DNA_anim_types.h"
+
+#include "RNA_access.hh"
+#include "RNA_path.hh"
 
 #include "BKE_anim_data.hh"
 
@@ -113,7 +117,7 @@ static bool is_reachable(const Node *const from, const Node *const to)
 
   /* Perform a graph walk from 'to' towards its incoming connections.
    * Walking from 'from' towards its outgoing connections is 10x slower on the Spring rig. */
-  deque<const Node *> queue;
+  std::deque<const Node *> queue;
   Set<const Node *> seen;
   queue.push_back(to);
   while (!queue.empty()) {
@@ -164,7 +168,7 @@ void DepsgraphRelationBuilder::build_driver_relations(IDNode *id_node)
   }
 
   /* Mapping from RNA prefix -> set of driver descriptors: */
-  Map<string, Vector<DriverDescriptor>> driver_groups;
+  Map<std::string, Vector<DriverDescriptor>> driver_groups;
 
   PointerRNA id_ptr = RNA_id_pointer_create(id_orig);
 
@@ -234,6 +238,34 @@ void DepsgraphRelationBuilder::build_driver_relations(IDNode *id_node)
       }
     }
   }
+}
+
+bool data_path_maybe_shared(const ID &id, const StringRef data_path)
+{
+  /* As it is hard to generally detect implicit sharing, this is implemented as
+   * a 'known to not share' list. */
+
+  /* Allow concurrent writes to custom properties. #140706 shows that this
+   * shouldn't be a problem in practice. */
+  if (data_path.startswith("[\"") && data_path.endswith("\"]")) {
+    return false;
+  }
+
+  if (GS(id.name) == ID_OB) {
+    const Object &ob = *reinterpret_cast<const Object *>(&id);
+    const bool is_thread_safe = (ob.type == OB_ARMATURE && data_path.startswith("pose.bones["));
+    return !is_thread_safe;
+  }
+
+  /* Allow concurrent writes to shape-key values. #140706 shows that this
+   * shouldn't be a problem in practice. */
+  if (GS(id.name) == ID_KE) {
+    const bool is_thread_safe = data_path.startswith("key_blocks[") &&
+                                data_path.endswith("].value");
+    return !is_thread_safe;
+  }
+
+  return true;
 }
 
 }  // namespace blender::deg

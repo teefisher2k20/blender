@@ -15,7 +15,6 @@ from .search_node_tree import \
     from_socket, \
     FilterByType, \
     previous_node, \
-    get_const_from_socket, \
     NodeSocket, \
     get_texture_transform_from_mapping_node
 
@@ -122,7 +121,7 @@ def gather_udim_texture_info(
     if tex in ["normalTexture", "clearcoatNormalTexture"]:
         fields['scale'] = __gather_normal_scale(primary_socket, export_settings)
         texture_info = gltf2_io.MaterialNormalTextureInfoClass(**fields)
-    elif tex in "occlusionTexture":
+    elif tex == "occlusionTexture":
         fields['strength'] = __gather_occlusion_strength(primary_socket, export_settings)
         texture_info = gltf2_io.MaterialOcclusionTextureInfoClass(**fields)
     else:
@@ -236,7 +235,8 @@ def __gather_texture_transform_and_tex_coord(primary_socket, export_settings):
     result_tex = get_texture_node_from_socket(primary_socket, export_settings)
     blender_shader_node = result_tex.shader_node
 
-    blender_shader_node['used'] = True
+    nodes_used = export_settings.get('nodes_used', {})
+    nodes_used[blender_shader_node.name] = True
 
     # Skip over UV wrapping stuff (it goes in the sampler)
     result = detect_manual_uv_wrapping(blender_shader_node, result_tex.group_path)

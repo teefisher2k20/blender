@@ -10,20 +10,13 @@
 
 #include "intern/builder/deg_builder_relations.h"
 
-#include <cstdio>
 #include <cstdlib>
 #include <cstring> /* required for STREQ later on. */
 
-#include "MEM_guardedalloc.h"
-
-#include "BLI_blenlib.h"
-#include "BLI_utildefines.h"
-
 #include "DNA_collection_types.h"
-#include "DNA_linestyle_types.h"
-#include "DNA_node_types.h"
-#include "DNA_object_types.h"
 #include "DNA_scene_types.h"
+
+#include "BLI_listbase.h"
 
 #include "BKE_layer.hh"
 #include "BKE_main.hh"
@@ -33,14 +26,11 @@
 #include "DEG_depsgraph_build.hh"
 
 #include "intern/builder/deg_builder.h"
-#include "intern/builder/deg_builder_pchanmap.h"
 
 #include "intern/node/deg_node.hh"
 #include "intern/node/deg_node_component.hh"
 #include "intern/node/deg_node_id.hh"
 #include "intern/node/deg_node_operation.hh"
-
-#include "intern/depsgraph_type.hh"
 
 namespace blender::deg {
 

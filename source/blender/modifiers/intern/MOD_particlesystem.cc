@@ -24,10 +24,11 @@
 #include "BKE_modifier.hh"
 #include "BKE_particle.h"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "RNA_prototypes.hh"
+#include "RNA_types.hh"
 
 #include "DEG_depsgraph_query.hh"
 
@@ -202,7 +203,7 @@ static void deform_verts(ModifierData *md,
   }
 
   if (DEG_is_active(ctx->depsgraph)) {
-    Object *object_orig = DEG_get_original_object(ctx->object);
+    Object *object_orig = DEG_get_original(ctx->object);
     ModifierData *md_orig = BKE_modifiers_findby_name(object_orig, psmd->modifier.name);
     BLI_assert(md_orig != nullptr);
     ParticleSystemModifierData *psmd_orig = (ParticleSystemModifierData *)md_orig;
@@ -221,24 +222,22 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   ModifierData *md = (ModifierData *)ptr->data;
   ParticleSystem *psys = ((ParticleSystemModifierData *)md)->psys;
 
-  uiItemL(layout, RPT_("Settings are inside the Particles tab"), ICON_NONE);
+  layout->label(RPT_("Settings are inside the Particles tab"), ICON_NONE);
 
   if (!(ob->mode & OB_MODE_PARTICLE_EDIT)) {
     if (ELEM(psys->part->ren_as, PART_DRAW_GR, PART_DRAW_OB)) {
-      uiItemO(layout,
-              CTX_IFACE_(BLT_I18NCONTEXT_OPERATOR_DEFAULT, "Make Instances Real"),
-              ICON_NONE,
-              "OBJECT_OT_duplicates_make_real");
+      layout->op("OBJECT_OT_duplicates_make_real",
+                 CTX_IFACE_(BLT_I18NCONTEXT_OPERATOR_DEFAULT, "Make Instances Real"),
+                 ICON_NONE);
     }
     else if (psys->part->ren_as == PART_DRAW_PATH) {
-      uiItemO(layout,
-              CTX_IFACE_(BLT_I18NCONTEXT_OPERATOR_DEFAULT, "Convert to Mesh"),
-              ICON_NONE,
-              "OBJECT_OT_modifier_convert");
+      layout->op("OBJECT_OT_modifier_convert",
+                 CTX_IFACE_(BLT_I18NCONTEXT_OPERATOR_DEFAULT, "Convert to Mesh"),
+                 ICON_NONE);
     }
   }
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void panel_register(ARegionType *region_type)
@@ -292,4 +291,5 @@ ModifierTypeInfo modifierType_ParticleSystem = {
     /*blend_write*/ nullptr,
     /*blend_read*/ blend_read,
     /*foreach_cache*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
 };

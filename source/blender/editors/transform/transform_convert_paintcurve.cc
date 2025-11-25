@@ -19,6 +19,8 @@
 #include "transform.hh"
 #include "transform_convert.hh"
 
+namespace blender::ed::transform {
+
 struct TransDataPaintCurve {
   PaintCurvePoint *pcp; /* Initial curve point. */
   char id;
@@ -46,7 +48,6 @@ static void PaintCurveConvertHandle(
   memset(td->axismtx, 0, sizeof(td->axismtx));
   td->axismtx[2][2] = 1.0f;
 
-  td->ext = nullptr;
   td->val = nullptr;
   td->flag |= TD_SELECTED;
   td->dist = 0.0;
@@ -80,7 +81,6 @@ static void PaintCurvePointToTransData(PaintCurvePoint *pcp,
       memset(td->axismtx, 0, sizeof(td->axismtx));
       td->axismtx[2][2] = 1.0f;
 
-      td->ext = nullptr;
       td->val = nullptr;
       td->flag |= TD_SELECTED;
       td->dist = 0.0;
@@ -152,12 +152,10 @@ static void createTransPaintCurveVerts(bContext *C, TransInfo *t)
   }
 
   tc->data_len = total;
-  td2d = tc->data_2d = static_cast<TransData2D *>(
-      MEM_callocN(tc->data_len * sizeof(TransData2D), "TransData2D"));
-  td = tc->data = static_cast<TransData *>(
-      MEM_callocN(tc->data_len * sizeof(TransData), "TransData"));
-  tc->custom.type.data = tdpc = static_cast<TransDataPaintCurve *>(
-      MEM_callocN(tc->data_len * sizeof(TransDataPaintCurve), "TransDataPaintCurve"));
+  td2d = tc->data_2d = MEM_calloc_arrayN<TransData2D>(tc->data_len, "TransData2D");
+  td = tc->data = MEM_calloc_arrayN<TransData>(tc->data_len, "TransData");
+  tc->custom.type.data = tdpc = MEM_calloc_arrayN<TransDataPaintCurve>(tc->data_len,
+                                                                       "TransDataPaintCurve");
   tc->custom.type.use_free = true;
 
   for (pcp = pc->points, i = 0; i < pc->tot_points; i++, pcp++) {
@@ -220,3 +218,5 @@ TransConvertTypeInfo TransConvertType_PaintCurve = {
     /*recalc_data*/ flushTransPaintCurve,
     /*special_aftertrans_update*/ nullptr,
 };
+
+}  // namespace blender::ed::transform

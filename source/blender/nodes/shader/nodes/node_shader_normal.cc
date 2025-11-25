@@ -44,7 +44,7 @@ NODE_SHADER_MATERIALX_BEGIN
 {
   NodeItem res = get_output_default("Normal", NodeItem::Type::Vector3);
 
-  if (STREQ(socket_out_->name, "Dot")) {
+  if (STREQ(socket_out_->identifier, "Dot")) {
     return res.dotproduct(get_input_value("Normal", NodeItem::Type::Vector3));
   }
 
@@ -70,5 +70,5 @@ void register_node_type_sh_normal()
   ntype.gpu_fn = file_ns::gpu_shader_normal;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

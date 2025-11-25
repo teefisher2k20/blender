@@ -10,10 +10,6 @@
 
 #include "../../../view_map/Functions0D.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -42,7 +38,6 @@ PyDoc_STRVAR(
     "   :return: The 2D curvature of the 1D element evaluated at the\n"
     "      pointed Interface0D.\n"
     "   :rtype: float\n");
-
 static int Curvature2DAngleF0D___init__(BPy_Curvature2DAngleF0D *self,
                                         PyObject *args,
                                         PyObject *kwds)
@@ -101,7 +96,3 @@ PyTypeObject Curvature2DAngleF0D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

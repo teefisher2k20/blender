@@ -11,7 +11,7 @@
 
 #include "RNA_access.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 namespace blender::nodes::node_shader_vertex_color_cc {
@@ -25,25 +25,26 @@ static void node_declare(NodeDeclarationBuilder &b)
 static void node_shader_buts_vertex_color(uiLayout *layout, bContext *C, PointerRNA *ptr)
 {
   PointerRNA obptr = CTX_data_pointer_get(C, "active_object");
-  if (obptr.data && RNA_enum_get(&obptr, "type") == OB_MESH) {
-    PointerRNA eval_obptr;
+  Object *object = static_cast<Object *>(obptr.data);
 
+  if (object && object->type == OB_MESH) {
     Depsgraph *depsgraph = CTX_data_depsgraph_pointer(C);
+
     if (depsgraph) {
-      DEG_get_evaluated_rna_pointer(depsgraph, &obptr, &eval_obptr);
-      PointerRNA dataptr = RNA_pointer_get(&eval_obptr, "data");
-      uiItemPointerR(layout, ptr, "layer_name", &dataptr, "color_attributes", "", ICON_GROUP_VCOL);
+      Object *object_eval = DEG_get_evaluated(depsgraph, object);
+      PointerRNA dataptr = RNA_id_pointer_create(static_cast<ID *>(object_eval->data));
+      layout->prop_search(ptr, "layer_name", &dataptr, "color_attributes", "", ICON_GROUP_VCOL);
       return;
     }
   }
 
-  uiItemR(layout, ptr, "layer_name", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_GROUP_VCOL);
-  uiItemL(layout, RPT_("No mesh in active object"), ICON_ERROR);
+  layout->prop(ptr, "layer_name", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_GROUP_VCOL);
+  layout->label(RPT_("No mesh in active object"), ICON_ERROR);
 }
 
 static void node_shader_init_vertex_color(bNodeTree * /*ntree*/, bNode *node)
 {
-  NodeShaderVertexColor *vertexColor = MEM_cnew<NodeShaderVertexColor>("NodeShaderVertexColor");
+  NodeShaderVertexColor *vertexColor = MEM_callocN<NodeShaderVertexColor>("NodeShaderVertexColor");
   node->storage = vertexColor;
 }
 
@@ -75,7 +76,7 @@ NODE_SHADER_MATERIALX_BEGIN
 {
   /* TODO: some output expected be implemented within the next iteration
    * (see node-definition `<geomcolor>`). */
-  return get_output_default(socket_out_->name, NodeItem::Type::Any);
+  return get_output_default(socket_out_->identifier, NodeItem::Type::Any);
 }
 #endif
 NODE_SHADER_MATERIALX_END
@@ -98,9 +99,9 @@ void register_node_type_sh_vertex_color()
   ntype.draw_buttons = file_ns::node_shader_buts_vertex_color;
   ntype.initfunc = file_ns::node_shader_init_vertex_color;
   blender::bke::node_type_storage(
-      &ntype, "NodeShaderVertexColor", node_free_standard_storage, node_copy_standard_storage);
+      ntype, "NodeShaderVertexColor", node_free_standard_storage, node_copy_standard_storage);
   ntype.gpu_fn = file_ns::node_shader_gpu_vertex_color;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

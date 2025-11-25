@@ -5,6 +5,7 @@
 set(INC
   .
   ..
+  include
   ../intern
   ../../editors/include
   ../../compositor
@@ -13,6 +14,7 @@ set(INC
   ../../compositor/cached_resources
   ../../compositor/derived_resources
   ../../compositor/utilities
+  ../../sequencer
 
   # RNA_prototypes.hh
   ${CMAKE_BINARY_DIR}/source/blender/makesrna
@@ -37,14 +39,16 @@ set(SRC
   nodes/node_composite_colorbalance.cc
   nodes/node_composite_colorcorrection.cc
   nodes/node_composite_common.cc
-  nodes/node_composite_composite.cc
   nodes/node_composite_convert_color_space.cc
+  nodes/node_composite_convert_to_display.cc
+  nodes/node_composite_convolve.cc
   nodes/node_composite_cornerpin.cc
   nodes/node_composite_crop.cc
   nodes/node_composite_cryptomatte.cc
   nodes/node_composite_curves.cc
   nodes/node_composite_defocus.cc
   nodes/node_composite_denoise.cc
+  nodes/node_composite_depth_combine.cc
   nodes/node_composite_despeckle.cc
   nodes/node_composite_diff_matte.cc
   nodes/node_composite_dilate.cc
@@ -57,12 +61,15 @@ set(SRC
   nodes/node_composite_file_output.cc
   nodes/node_composite_filter.cc
   nodes/node_composite_flip.cc
-  nodes/node_composite_gamma.cc
   nodes/node_composite_glare.cc
+  nodes/node_composite_group_input.cc
+  nodes/node_composite_group_output.cc
   nodes/node_composite_hue_sat_val.cc
   nodes/node_composite_huecorrect.cc
   nodes/node_composite_id_mask.cc
   nodes/node_composite_image.cc
+  nodes/node_composite_image_coordinates.cc
+  nodes/node_composite_image_info.cc
   nodes/node_composite_inpaint.cc
   nodes/node_composite_invert.cc
   nodes/node_composite_keying.cc
@@ -71,12 +78,8 @@ set(SRC
   nodes/node_composite_lensdist.cc
   nodes/node_composite_levels.cc
   nodes/node_composite_luma_matte.cc
-  nodes/node_composite_map_range.cc
   nodes/node_composite_map_uv.cc
-  nodes/node_composite_map_value.cc
   nodes/node_composite_mask.cc
-  nodes/node_composite_math.cc
-  nodes/node_composite_mixrgb.cc
   nodes/node_composite_movieclip.cc
   nodes/node_composite_moviedistortion.cc
   nodes/node_composite_normal.cc
@@ -85,38 +88,31 @@ set(SRC
   nodes/node_composite_planetrackdeform.cc
   nodes/node_composite_posterize.cc
   nodes/node_composite_premulkey.cc
+  nodes/node_composite_relative_to_pixel.cc
+  nodes/node_composite_render_layers.cc
   nodes/node_composite_rgb.cc
   nodes/node_composite_rotate.cc
   nodes/node_composite_scale.cc
   nodes/node_composite_scene_time.cc
   nodes/node_composite_sepcomb_color.cc
-  nodes/node_composite_sepcomb_hsva.cc
-  nodes/node_composite_sepcomb_rgba.cc
-  nodes/node_composite_sepcomb_xyz.cc
-  nodes/node_composite_sepcomb_ycca.cc
-  nodes/node_composite_sepcomb_yuva.cc
   nodes/node_composite_setalpha.cc
   nodes/node_composite_split.cc
   nodes/node_composite_stabilize2d.cc
-  nodes/node_composite_sunbeams.cc
+  nodes/node_composite_strip_info.cc
   nodes/node_composite_switch.cc
   nodes/node_composite_switchview.cc
-  nodes/node_composite_texture.cc
   nodes/node_composite_tonemap.cc
   nodes/node_composite_trackpos.cc
   nodes/node_composite_transform.cc
   nodes/node_composite_translate.cc
   nodes/node_composite_val_to_rgb.cc
-  nodes/node_composite_value.cc
   nodes/node_composite_vec_blur.cc
   nodes/node_composite_viewer.cc
-  nodes/node_composite_zcombine.cc
 
-  node_composite_register.cc
   node_composite_tree.cc
   node_composite_util.cc
 
-  node_composite_register.hh
+  include/NOD_compositor_file_output.hh
   node_composite_util.hh
 )
 
@@ -124,6 +120,7 @@ set(LIB
   PRIVATE bf::blenkernel
   PRIVATE bf::blenlib
   PRIVATE bf::blentranslation
+  PRIVATE bf::blenloader
   PRIVATE bf::depsgraph
   PRIVATE bf::dna
   PRIVATE bf::functions
@@ -134,14 +131,23 @@ set(LIB
   bf_compositor
   PRIVATE bf::render
   PRIVATE bf::windowmanager
+  PRIVATE bf::dependencies::optional::opencolorio
+  PRIVATE bf::sequencer
 )
 
-if(WITH_OPENCOLORIO)
-  add_definitions(-DWITH_OCIO)
-endif()
+add_node_discovery(
+  bf_nodes_compositor_generated
+  "${SRC}"
+  ${CMAKE_CURRENT_BINARY_DIR}/register_compositor_nodes.cc
+  register_compositor_nodes
+)
+
+list(APPEND LIB
+  bf_nodes_compositor_generated
+)
 
 if(WITH_IMAGE_OPENEXR)
-  add_definitions(-DWITH_OPENEXR)
+  add_definitions(-DWITH_IMAGE_OPENEXR)
 endif()
 
 if(WITH_OPENIMAGEDENOISE)
@@ -169,6 +175,7 @@ if(WITH_FFTW3)
 endif()
 
 blender_add_lib(bf_nodes_composite "${SRC}" "${INC}" "${INC_SYS}" "${LIB}")
+target_link_libraries(bf_nodes_compositor_generated bf_nodes_composite)
 
 blender_set_target_unity_build(bf_nodes_composite 10)
 

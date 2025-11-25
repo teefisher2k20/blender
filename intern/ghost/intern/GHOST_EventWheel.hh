@@ -22,16 +22,17 @@ class GHOST_EventWheel : public GHOST_Event {
    * Constructor.
    * \param msec: The time this event was generated.
    * \param window: The window of this event.
-   * \param z: The displacement of the mouse wheel.
+   * \param axis: The axis of the mouse wheel.
+   * \param value: The displacement of the mouse wheel.
    */
-  GHOST_EventWheel(uint64_t msec, GHOST_IWindow *window, int32_t z)
+  GHOST_EventWheel(uint64_t msec, GHOST_IWindow *window, GHOST_TEventWheelAxis axis, int32_t value)
       : GHOST_Event(msec, GHOST_kEventWheel, window)
   {
-    m_wheelEventData.z = z;
-    m_data = &m_wheelEventData;
+    wheel_event_data_.axis = axis;
+    wheel_event_data_.value = value;
+    data_ = &wheel_event_data_;
   }
 
  protected:
-  /** The z-displacement of the mouse wheel. */
-  GHOST_TEventWheelData m_wheelEventData;
+  GHOST_TEventWheelData wheel_event_data_;
 };

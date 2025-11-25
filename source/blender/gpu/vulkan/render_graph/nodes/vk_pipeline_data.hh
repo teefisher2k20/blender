@@ -24,8 +24,48 @@ struct VKPipelineData {
   VkPipeline vk_pipeline;
   VkPipelineLayout vk_pipeline_layout;
   VkDescriptorSet vk_descriptor_set;
+
   uint32_t push_constants_size;
   const void *push_constants_data;
+};
+
+/**
+ * Container for storing viewport and scissor data used for
+ * draw nodes.
+ */
+struct VKViewportData {
+  Vector<VkViewport> viewports;
+  Vector<VkRect2D> scissors;
+
+  bool operator==(const VKViewportData &other) const
+  {
+    if (viewports.size() != other.viewports.size() && scissors.size() != other.scissors.size()) {
+      return false;
+    }
+
+    if (memcmp(viewports.data(), other.viewports.data(), viewports.size() * sizeof(VkViewport)) !=
+        0)
+    {
+      return false;
+    }
+
+    if (memcmp(scissors.data(), other.scissors.data(), scissors.size() * sizeof(VkRect2D)) != 0) {
+      return false;
+    }
+
+    return true;
+  }
+
+  bool operator!=(const VKViewportData &other) const
+  {
+    return !(*this == other);
+  }
+};
+
+struct VKPipelineDataGraphics {
+  VKPipelineData pipeline_data;
+  VKViewportData viewport;
+  std::optional<float> line_width;
 };
 
 /** Resources bound for a compute/graphics pipeline. */
@@ -79,6 +119,8 @@ struct VKBoundPipelines {
     VKBoundPipeline pipeline;
     VKIndexBufferBinding index_buffer;
     VKVertexBufferBindings vertex_buffers;
+    VKViewportData viewport_state;
+    std::optional<float> line_width;
   } graphics;
 };
 
@@ -90,6 +132,23 @@ struct VKBoundPipelines {
  * guardedalloc.
  */
 void vk_pipeline_data_copy(VKPipelineData &dst, const VKPipelineData &src);
+static inline void vk_pipeline_data_copy(VKPipelineDataGraphics &dst,
+                                         const VKPipelineDataGraphics &src)
+{
+  vk_pipeline_data_copy(dst.pipeline_data, src.pipeline_data);
+}
+
+/**
+ * Record commands that update the dynamic state.
+ *
+ * - viewports
+ * - scissors
+ * - line width
+ */
+void vk_pipeline_dynamic_graphics_build_commands(VKCommandBufferInterface &command_buffer,
+                                                 const VKViewportData &viewport,
+                                                 const std::optional<float> line_width,
+                                                 VKBoundPipelines &r_bound_pipelines);
 
 /**
  * Record the commands to the given command buffer to bind the descriptor set, pipeline and push
@@ -112,6 +171,10 @@ void vk_pipeline_data_build_commands(VKCommandBufferInterface &command_buffer,
  * Free localized data created by `vk_pipeline_data_copy`.
  */
 void vk_pipeline_data_free(VKPipelineData &data);
+static inline void vk_pipeline_data_free(VKPipelineDataGraphics &data)
+{
+  vk_pipeline_data_free(data.pipeline_data);
+}
 
 void vk_index_buffer_binding_build_links(VKResourceStateTracker &resources,
                                          VKRenderGraphNodeLinks &node_links,

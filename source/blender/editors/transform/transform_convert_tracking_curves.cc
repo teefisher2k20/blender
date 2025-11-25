@@ -10,6 +10,7 @@
 
 #include "MEM_guardedalloc.h"
 
+#include "BLI_listbase.h"
 #include "BLI_math_vector.h"
 
 #include "BKE_context.hh"
@@ -24,6 +25,8 @@
 
 #include "transform.hh"
 #include "transform_convert.hh"
+
+namespace blender::ed::transform {
 
 struct TransDataTrackingCurves {
   int flag;
@@ -74,7 +77,6 @@ static void markerToTransCurveDataInit(TransData *td,
   memset(td->axismtx, 0, sizeof(td->axismtx));
   td->axismtx[2][2] = 1.0f;
 
-  td->ext = nullptr;
   td->val = nullptr;
 
   td->flag |= TD_SELECTED;
@@ -130,12 +132,10 @@ static void createTransTrackingCurvesData(bContext *C, TransInfo *t)
     return;
   }
 
-  td = tc->data = static_cast<TransData *>(
-      MEM_callocN(tc->data_len * sizeof(TransData), "TransTracking TransData"));
-  td2d = tc->data_2d = static_cast<TransData2D *>(
-      MEM_callocN(tc->data_len * sizeof(TransData2D), "TransTracking TransData2D"));
-  tc->custom.type.data = tdt = static_cast<TransDataTrackingCurves *>(MEM_callocN(
-      tc->data_len * sizeof(TransDataTrackingCurves), "TransTracking TransDataTracking"));
+  td = tc->data = MEM_calloc_arrayN<TransData>(tc->data_len, "TransTracking TransData");
+  td2d = tc->data_2d = MEM_calloc_arrayN<TransData2D>(tc->data_len, "TransTracking TransData2D");
+  tc->custom.type.data = tdt = MEM_calloc_arrayN<TransDataTrackingCurves>(
+      tc->data_len, "TransTracking TransDataTracking");
   tc->custom.type.free_cb = nullptr;
 
   /* Create actual data. */
@@ -284,7 +284,7 @@ static void special_aftertrans_update__movieclip_for_curves(bContext *C, TransIn
 {
   SpaceClip *sc = static_cast<SpaceClip *>(t->area->spacedata.first);
   MovieClip *clip = ED_space_clip_get_clip(sc);
-  if (t->scene->nodetree != nullptr) {
+  if (t->scene->compositing_node_group != nullptr) {
     /* Tracks can be used for stabilization nodes,
      * flush update for such nodes.
      */
@@ -305,3 +305,5 @@ TransConvertTypeInfo TransConvertType_TrackingCurves = {
     /*recalc_data*/ recalcData_tracking_curves,
     /*special_aftertrans_update*/ special_aftertrans_update__movieclip_for_curves,
 };
+
+}  // namespace blender::ed::transform

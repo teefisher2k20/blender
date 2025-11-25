@@ -16,6 +16,7 @@
 #include "MEM_guardedalloc.h"
 
 #include "BLI_math_matrix.h"
+#include "BLI_math_vector.h"
 #include "BLI_math_vector_types.hh"
 
 #include "BKE_context.hh"
@@ -24,7 +25,6 @@
 #include "GPU_immediate_util.hh"
 #include "GPU_matrix.hh"
 #include "GPU_select.hh"
-#include "GPU_shader.hh"
 #include "GPU_state.hh"
 
 #include "RNA_access.hh"
@@ -124,7 +124,8 @@ static void cage3d_draw_box_corners(const float r[3],
                                     const float color[3],
                                     const float line_width)
 {
-  uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
+  uint pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32_32);
   UNUSED_VARS(margin);
 
   immBindBuiltinProgram(GPU_SHADER_3D_POLYLINE_UNIFORM_COLOR);
@@ -172,7 +173,7 @@ static void cage3d_draw_box_interaction(const RegionView3D *rv3d,
 
     {
       uint pos = GPU_vertformat_attr_add(
-          immVertexFormat(), "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
+          immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32_32);
       immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
       immUniformColor3fv(color);
       imm_draw_cube_fill_3d(pos, co, rad_scale);
@@ -206,7 +207,8 @@ static void cage3d_draw_circle_wire(const float r[3],
                                     const int draw_options,
                                     const float line_width)
 {
-  uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
+  uint pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32_32);
 
   immBindBuiltinProgram(GPU_SHADER_3D_POLYLINE_UNIFORM_COLOR);
   immUniformColor3fv(color);
@@ -247,7 +249,8 @@ static void cage3d_draw_circle_handles(const RegionView3D *rv3d,
                                        bool solid,
                                        const float handle_scale)
 {
-  uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
+  uint pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32_32);
   const float rad[3] = {margin[0] / 3, margin[1] / 3, margin[2] / 3};
 
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
@@ -300,7 +303,8 @@ static void gizmo_cage3d_draw_intern(
   /* Handy for quick testing draw (if it's outside bounds). */
   if (false) {
     GPU_blend(GPU_BLEND_ALPHA);
-    uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
+    uint pos = GPU_vertformat_attr_add(
+        immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32_32);
     immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
     immUniformColor4f(1, 1, 1, 0.5f);
     float s = 0.5f;
@@ -429,11 +433,15 @@ static int gizmo_cage3d_get_cursor(wmGizmo *gz)
   return WM_CURSOR_DEFAULT;
 }
 
+namespace {
+
 struct RectTransformInteraction {
   float orig_mouse[3];
   float orig_matrix_offset[4][4];
   float orig_matrix_final_no_offset[4][4];
 };
+
+}  // namespace
 
 static void gizmo_cage3d_setup(wmGizmo *gz)
 {
@@ -441,10 +449,9 @@ static void gizmo_cage3d_setup(wmGizmo *gz)
       WM_GIZMO_DRAW_NO_SCALE;
 }
 
-static int gizmo_cage3d_invoke(bContext *C, wmGizmo *gz, const wmEvent *event)
+static wmOperatorStatus gizmo_cage3d_invoke(bContext *C, wmGizmo *gz, const wmEvent *event)
 {
-  RectTransformInteraction *data = static_cast<RectTransformInteraction *>(
-      MEM_callocN(sizeof(RectTransformInteraction), "cage_interaction"));
+  RectTransformInteraction *data = MEM_callocN<RectTransformInteraction>("cage_interaction");
 
   copy_m4_m4(data->orig_matrix_offset, gz->matrix_offset);
   gizmo_calc_matrix_final_no_offset(gz, data->orig_matrix_final_no_offset, true);
@@ -460,10 +467,10 @@ static int gizmo_cage3d_invoke(bContext *C, wmGizmo *gz, const wmEvent *event)
   return OPERATOR_RUNNING_MODAL;
 }
 
-static int gizmo_cage3d_modal(bContext *C,
-                              wmGizmo *gz,
-                              const wmEvent *event,
-                              eWM_GizmoFlagTweak /*tweak_flag*/)
+static wmOperatorStatus gizmo_cage3d_modal(bContext *C,
+                                           wmGizmo *gz,
+                                           const wmEvent *event,
+                                           eWM_GizmoFlagTweak /*tweak_flag*/)
 {
   if (event->type != MOUSEMOVE) {
     return OPERATOR_RUNNING_MODAL;
@@ -583,7 +590,6 @@ static int gizmo_cage3d_modal(bContext *C,
 
   /* tag the region for redraw */
   ED_region_tag_redraw_editor_overlays(CTX_wm_region(C));
-  WM_event_add_mousemove(CTX_wm_window(C));
 
   return OPERATOR_RUNNING_MODAL;
 }
@@ -631,7 +637,7 @@ static void GIZMO_GT_cage_3d(wmGizmoType *gzt)
   /* identifiers */
   gzt->idname = "GIZMO_GT_cage_3d";
 
-  /* api callbacks */
+  /* API callbacks. */
   gzt->draw = gizmo_cage3d_draw;
   gzt->draw_select = gizmo_cage3d_draw_select;
   gzt->setup = gizmo_cage3d_setup;

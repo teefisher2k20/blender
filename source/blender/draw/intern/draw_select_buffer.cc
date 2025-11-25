@@ -10,6 +10,7 @@
 
 #include <cfloat>
 
+#include "BLI_math_matrix.hh"
 #include "MEM_guardedalloc.h"
 
 #include "BLI_array_utils.h"
@@ -37,24 +38,26 @@
 using blender::int2;
 using blender::Span;
 
-bool SELECTID_Context::is_dirty(RegionView3D *rv3d)
+bool SELECTID_Context::is_dirty(Depsgraph *depsgraph, RegionView3D *rv3d)
 {
-  /* Check if the viewport has changed. */
-  float(*persmat)[4] = rv3d->persmat;
-  bool is_dirty = !compare_m4m4(this->persmat, persmat, FLT_EPSILON);
+  uint64_t last_update = this->depsgraph_last_update;
+  this->depsgraph_last_update = DEG_get_update_count(depsgraph);
 
-  if (!is_dirty) {
-    /* Check if any of the drawn objects have been transformed. */
-    for (Object *obj_eval : this->objects) {
-      DrawData *data = DRW_drawdata_get(&obj_eval->id, &draw_engine_select_type);
-      if (!data || (data->recalc & ID_RECALC_TRANSFORM)) {
-        is_dirty = true;
-        break;
-      }
+  /* Check if the viewport has changed.
+   * This can happen when triggering the selection operator *while* playing back animation and
+   * looking through an animated camera. */
+  if (!blender::math::is_equal(this->persmat, blender::float4x4(rv3d->persmat), FLT_EPSILON)) {
+    return true;
+  }
+  /* Check if any of the drawn objects have been transformed.
+   * This can happen when triggering the selection operator *while* playing back animation on an
+   * edited mesh. */
+  for (Object *obj_eval : this->objects) {
+    if (obj_eval->runtime->last_update_transform > last_update) {
+      return true;
     }
   }
-
-  return is_dirty;
+  return false;
 }
 
 /* -------------------------------------------------------------------- */
@@ -64,7 +67,7 @@ bool SELECTID_Context::is_dirty(RegionView3D *rv3d)
 uint *DRW_select_buffer_read(
     Depsgraph *depsgraph, ARegion *region, View3D *v3d, const rcti *rect, uint *r_buf_len)
 {
-  uint *r_buf = nullptr;
+  uint *buf = nullptr;
   uint buf_len = 0;
 
   /* Clamp rect. */
@@ -77,26 +80,26 @@ uint *DRW_select_buffer_read(
   /* Make sure that the rect is within the bounds of the viewport.
    * Some GPUs have problems reading pixels off limits. */
   rcti rect_clamp = *rect;
-  if (BLI_rcti_isect(&r, &rect_clamp, &rect_clamp)) {
+  if (BLI_rcti_isect(&r, &rect_clamp, &rect_clamp) && !BLI_rcti_is_empty(&rect_clamp)) {
     SELECTID_Context *select_ctx = DRW_select_engine_context_get();
     RegionView3D *rv3d = static_cast<RegionView3D *>(region->regiondata);
 
     DRW_gpu_context_enable();
 
-    if (select_ctx->is_dirty(rv3d)) {
+    if (select_ctx->is_dirty(depsgraph, rv3d)) {
       /* Update drawing. */
       DRW_draw_select_id(depsgraph, region, v3d);
     }
 
-    if (select_ctx->index_drawn_len > 1) {
+    if (select_ctx->max_index_drawn_len > 1) {
       BLI_assert(region->winx == GPU_texture_width(DRW_engine_select_texture_get()) &&
                  region->winy == GPU_texture_height(DRW_engine_select_texture_get()));
 
       /* Read the UI32 pixels. */
       buf_len = BLI_rcti_size_x(rect) * BLI_rcti_size_y(rect);
-      r_buf = static_cast<uint *>(MEM_mallocN(buf_len * sizeof(*r_buf), __func__));
+      buf = MEM_malloc_arrayN<uint>(buf_len, __func__);
 
-      GPUFrameBuffer *select_id_fb = DRW_engine_select_framebuffer_get();
+      blender::gpu::FrameBuffer *select_id_fb = DRW_engine_select_framebuffer_get();
       GPU_framebuffer_bind(select_id_fb);
       GPU_framebuffer_read_color(select_id_fb,
                                  rect_clamp.xmin,
@@ -106,11 +109,11 @@ uint *DRW_select_buffer_read(
                                  1,
                                  0,
                                  GPU_DATA_UINT,
-                                 r_buf);
+                                 buf);
 
       if (!BLI_rcti_compare(rect, &rect_clamp)) {
         /* The rect has been clamped so we need to realign the buffer and fill in the blanks */
-        GPU_select_buffer_stride_realign(rect, &rect_clamp, r_buf);
+        GPU_select_buffer_stride_realign(rect, &rect_clamp, buf);
       }
     }
 
@@ -122,7 +125,7 @@ uint *DRW_select_buffer_read(
     *r_buf_len = buf_len;
   }
 
-  return r_buf;
+  return buf;
 }
 
 /** \} */
@@ -150,8 +153,8 @@ uint *DRW_select_buffer_bitmap_from_rect(
     return nullptr;
   }
 
-  BLI_assert(select_ctx->index_drawn_len > 0);
-  const uint bitmap_len = select_ctx->index_drawn_len - 1;
+  BLI_assert(select_ctx->max_index_drawn_len > 0);
+  const uint bitmap_len = select_ctx->max_index_drawn_len - 1;
 
   BLI_bitmap *bitmap_buf = BLI_BITMAP_NEW(bitmap_len, __func__);
   const uint *buf_iter = buf;
@@ -162,7 +165,7 @@ uint *DRW_select_buffer_bitmap_from_rect(
     }
     buf_iter++;
   }
-  MEM_freeN((void *)buf);
+  MEM_freeN(buf);
 
   if (r_bitmap_len) {
     *r_bitmap_len = bitmap_len;
@@ -192,8 +195,8 @@ uint *DRW_select_buffer_bitmap_from_circle(Depsgraph *depsgraph,
     return nullptr;
   }
 
-  BLI_assert(select_ctx->index_drawn_len > 0);
-  const uint bitmap_len = select_ctx->index_drawn_len - 1;
+  BLI_assert(select_ctx->max_index_drawn_len > 0);
+  const uint bitmap_len = select_ctx->max_index_drawn_len - 1;
 
   BLI_bitmap *bitmap_buf = BLI_BITMAP_NEW(bitmap_len, __func__);
   const uint *buf_iter = buf;
@@ -209,7 +212,7 @@ uint *DRW_select_buffer_bitmap_from_circle(Depsgraph *depsgraph,
       }
     }
   }
-  MEM_freeN((void *)buf);
+  MEM_freeN(buf);
 
   if (r_bitmap_len) {
     *r_bitmap_len = bitmap_len;
@@ -267,8 +270,8 @@ uint *DRW_select_buffer_bitmap_from_poly(Depsgraph *depsgraph,
                                 drw_select_mask_px_cb,
                                 &poly_mask_data);
 
-  BLI_assert(select_ctx->index_drawn_len > 0);
-  const uint bitmap_len = select_ctx->index_drawn_len - 1;
+  BLI_assert(select_ctx->max_index_drawn_len > 0);
+  const uint bitmap_len = select_ctx->max_index_drawn_len - 1;
 
   BLI_bitmap *bitmap_buf = BLI_BITMAP_NEW(bitmap_len, __func__);
   const uint *buf_iter = buf;
@@ -281,7 +284,7 @@ uint *DRW_select_buffer_bitmap_from_poly(Depsgraph *depsgraph,
     buf_iter++;
     i++;
   }
-  MEM_freeN((void *)buf);
+  MEM_freeN(buf);
   MEM_freeN(buf_mask);
 
   if (r_bitmap_len) {
@@ -384,7 +387,7 @@ uint DRW_select_buffer_find_nearest_to_point(Depsgraph *depsgraph,
     *dist = uint(abs(hit_y - center_yx[0]) + abs(hit_x - center_yx[1]));
   }
 
-  MEM_freeN((void *)buf);
+  MEM_freeN(buf);
   return data.r_index;
 }
 
@@ -395,51 +398,38 @@ uint DRW_select_buffer_find_nearest_to_point(Depsgraph *depsgraph,
  * \{ */
 
 bool DRW_select_buffer_elem_get(const uint sel_id,
-                                uint *r_elem,
-                                uint *r_base_index,
-                                char *r_elem_type)
+                                uint &r_elem,
+                                uint &r_base_index,
+                                char &r_elem_type)
 {
   SELECTID_Context *select_ctx = DRW_select_engine_context_get();
 
-  char elem_type = 0;
-  uint elem_id = 0;
-  uint base_index = 0;
-
-  for (; base_index < select_ctx->objects.size(); base_index++) {
-    ObjectOffsets *base_ofs = &select_ctx->index_offsets[base_index];
-
-    if (base_ofs->face > sel_id) {
-      elem_id = sel_id - base_ofs->face_start;
-      elem_type = SCE_SELECT_FACE;
-      break;
+  for (const auto &item : select_ctx->elem_ranges.items()) {
+    const ElemIndexRanges &ranges = item.value;
+    Object *ob = item.key;
+    if (!ranges.total.contains(sel_id)) {
+      continue;
     }
-    if (base_ofs->edge > sel_id) {
-      elem_id = sel_id - base_ofs->edge_start;
-      elem_type = SCE_SELECT_EDGE;
-      break;
+    if (ranges.face.contains(sel_id)) {
+      r_elem = sel_id - ranges.face.start();
+      r_elem_type = SCE_SELECT_FACE;
+      r_base_index = select_ctx->objects.first_index_of_try(ob);
+      return r_base_index != -1;
     }
-    if (base_ofs->vert > sel_id) {
-      elem_id = sel_id - base_ofs->vert_start;
-      elem_type = SCE_SELECT_VERTEX;
-      break;
+    if (ranges.edge.contains(sel_id)) {
+      r_elem = sel_id - ranges.edge.start();
+      r_elem_type = SCE_SELECT_EDGE;
+      r_base_index = select_ctx->objects.first_index_of_try(ob);
+      return r_base_index != -1;
+    }
+    if (ranges.vert.contains(sel_id)) {
+      r_elem = sel_id - ranges.vert.start();
+      r_elem_type = SCE_SELECT_VERTEX;
+      r_base_index = select_ctx->objects.first_index_of_try(ob);
+      return r_base_index != -1;
     }
   }
-
-  if (base_index == select_ctx->objects.size()) {
-    return false;
-  }
-
-  *r_elem = elem_id;
-
-  if (r_base_index) {
-    *r_base_index = base_index;
-  }
-
-  if (r_elem_type) {
-    *r_elem_type = elem_type;
-  }
-
-  return true;
+  return false;
 }
 
 uint DRW_select_buffer_context_offset_for_object_elem(Depsgraph *depsgraph,
@@ -448,25 +438,19 @@ uint DRW_select_buffer_context_offset_for_object_elem(Depsgraph *depsgraph,
 {
   SELECTID_Context *select_ctx = DRW_select_engine_context_get();
 
-  Object *ob_eval = DEG_get_evaluated_object(depsgraph, object);
+  Object *ob_eval = DEG_get_evaluated(depsgraph, object);
 
-  SELECTID_ObjectData *sel_data = (SELECTID_ObjectData *)DRW_drawdata_get(
-      &ob_eval->id, &draw_engine_select_type);
-
-  if (!sel_data) {
-    return 0;
-  }
-
-  ObjectOffsets *base_ofs = &select_ctx->index_offsets[sel_data->drawn_index];
+  const ElemIndexRanges base_ofs = select_ctx->elem_ranges.lookup_default(ob_eval,
+                                                                          ElemIndexRanges{});
 
   if (elem_type == SCE_SELECT_VERTEX) {
-    return base_ofs->vert_start;
+    return base_ofs.vert.start();
   }
   if (elem_type == SCE_SELECT_EDGE) {
-    return base_ofs->edge_start;
+    return base_ofs.edge.start();
   }
   if (elem_type == SCE_SELECT_FACE) {
-    return base_ofs->face_start;
+    return base_ofs.face.start();
   }
   BLI_assert(0);
   return 0;
@@ -485,15 +469,14 @@ void DRW_select_buffer_context_create(Depsgraph *depsgraph,
   SELECTID_Context *select_ctx = DRW_select_engine_context_get();
 
   select_ctx->objects.reinitialize(bases.size());
-  select_ctx->index_offsets.reinitialize(bases.size());
 
   for (const int i : bases.index_range()) {
     Object *obj = bases[i]->object;
-    select_ctx->objects[i] = DEG_get_evaluated_object(depsgraph, obj);
+    select_ctx->objects[i] = DEG_get_evaluated(depsgraph, obj);
   }
 
   select_ctx->select_mode = select_mode;
-  memset(select_ctx->persmat, 0, sizeof(select_ctx->persmat));
+  select_ctx->persmat = blender::float4x4::zero();
 }
 
 /** \} */

@@ -16,8 +16,21 @@
 
 struct AnimData;
 struct Object;
+#ifdef __cplusplus
+namespace blender::gpu {
+class Texture;
+}  // namespace blender::gpu
+using GPUTexture = blender::gpu::Texture;
+#else
+typedef struct GPUTexture GPUTexture;
+#endif
 
 typedef struct LightProbe {
+#ifdef __cplusplus
+  /** See #ID_Type comment for why this is here. */
+  static constexpr ID_Type id_type = ID_LP;
+#endif
+
   ID id;
   /** Animation data (must be immediately after id for utilities to use it). */
   struct AnimData *adt;
@@ -98,6 +111,7 @@ enum {
   LIGHTPROBE_FLAG_SHOW_CLIP_DIST = (1 << 3),
   LIGHTPROBE_FLAG_SHOW_DATA = (1 << 4),
   LIGHTPROBE_FLAG_INVERT_GROUP = (1 << 5),
+  LIGHTPROBE_DS_EXPAND = (1 << 6),
 };
 
 /* Probe->grid_flag */
@@ -157,7 +171,7 @@ BLI_STATIC_ASSERT_ALIGN(LightGridCache, 16)
 /* ------ Eevee Lightcache ------- */
 
 typedef struct LightCacheTexture {
-  struct GPUTexture *tex;
+  GPUTexture *tex;
   /** Copy of GPU data to create GPUTextures on file read. */
   char *data;
   int tex_size[3];
@@ -186,7 +200,7 @@ typedef struct LightCache {
   LightCacheTexture grid_tx;
   /** Contains data for mipmap level 0. */
   LightCacheTexture cube_tx;
-  /** Does not contains valid GPUTexture, only data. */
+  /** Does not contains valid blender::gpu::Texture, only data. */
   LightCacheTexture *cube_mips;
   /* All light-probes data contained in the cache. */
   LightProbeCache *cube_data;

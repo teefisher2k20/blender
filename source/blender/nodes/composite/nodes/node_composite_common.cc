@@ -16,14 +16,14 @@
 
 #include "RNA_access.hh"
 
-void register_node_type_cmp_group()
+static void register_node_type_cmp_group()
 {
   static blender::bke::bNodeType ntype;
 
   /* NOTE: Cannot use sh_node_type_base for node group, because it would map the node type
    * to the shared NODE_GROUP integer type id. */
   blender::bke::node_type_base_custom(
-      &ntype, "CompositorNodeGroup", "Group", "GROUP", NODE_CLASS_GROUP);
+      ntype, "CompositorNodeGroup", "Group", "GROUP", NODE_CLASS_GROUP);
   ntype.enum_name_legacy = "GROUP";
   ntype.type_legacy = NODE_GROUP;
   ntype.poll = cmp_node_poll_default;
@@ -35,12 +35,14 @@ void register_node_type_cmp_group()
   BLI_assert(ntype.rna_ext.srna != nullptr);
   RNA_struct_blender_type_set(ntype.rna_ext.srna, &ntype);
 
-  blender::bke::node_type_size(&ntype, 140, 60, 400);
+  blender::bke::node_type_size(
+      ntype, GROUP_NODE_DEFAULT_WIDTH, GROUP_NODE_MIN_WIDTH, GROUP_NODE_MAX_WIDTH);
   ntype.labelfunc = node_group_label;
   ntype.declare = blender::nodes::node_group_declare;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
+NOD_REGISTER_NODE(register_node_type_cmp_group)
 
 void register_node_type_cmp_custom_group(blender::bke::bNodeType *ntype)
 {

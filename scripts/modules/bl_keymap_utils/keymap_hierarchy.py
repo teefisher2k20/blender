@@ -78,6 +78,7 @@ _km_hierarchy = [
             _km_expand_from_toolsystem('VIEW_3D', 'EDIT_TEXT'),
         ]),
         ('Grease Pencil', 'EMPTY', 'WINDOW', []),
+        ('Point Cloud', 'EMPTY', 'WINDOW', []),
         ('Pose', 'EMPTY', 'WINDOW', [
             _km_expand_from_toolsystem('VIEW_3D', 'POSE'),
         ]),
@@ -107,6 +108,7 @@ _km_hierarchy = [
         ]),
 
         ('Primitive Tool Modal Map', 'EMPTY', 'WINDOW', []),
+        ('Pen Tool Modal Map', 'EMPTY', 'WINDOW', []),
         ('Knife Tool Modal Map', 'EMPTY', 'WINDOW', []),
         ('Custom Normals Modal Map', 'EMPTY', 'WINDOW', []),
         ('Bevel Modal Map', 'EMPTY', 'WINDOW', []),
@@ -173,11 +175,14 @@ _km_hierarchy = [
         ('Node Tool: Select Circle', 'NODE_EDITOR', 'WINDOW', []),
         ('Node Tool: Select Circle (fallback)', 'NODE_EDITOR', 'WINDOW', []),
     ]),
-    ('SequencerCommon', 'SEQUENCE_EDITOR', 'WINDOW', [
+
+    ('Spreadsheet Generic', 'SPREADSHEET', 'WINDOW', []),
+
+    ('Video Sequence Editor', 'SEQUENCE_EDITOR', 'WINDOW', [
         ('Sequencer', 'SEQUENCE_EDITOR', 'WINDOW', [
             _km_expand_from_toolsystem('SEQUENCE_EDITOR', 'SEQUENCER'),
         ]),
-        ('SequencerPreview', 'SEQUENCE_EDITOR', 'WINDOW', [
+        ('Preview', 'SEQUENCE_EDITOR', 'WINDOW', [
             _km_expand_from_toolsystem('SEQUENCE_EDITOR', 'PREVIEW'),
         ]),
     ]),

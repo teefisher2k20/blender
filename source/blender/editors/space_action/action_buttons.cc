@@ -7,13 +7,8 @@
  */
 
 #include <cfloat>
-#include <cmath>
-#include <cstdio>
 #include <cstring>
 
-#include "BLI_utildefines.h"
-
-#include "BKE_context.hh"
 #include "BKE_screen.hh"
 
 #include "action_intern.hh" /* own include */
@@ -29,26 +24,26 @@ void action_buttons_register(ARegionType * /*art*/)
 
   /* TODO: AnimData / Actions List */
 
-  pt = MEM_cnew<PanelType>("spacetype action panel properties");
-  STRNCPY(pt->idname, "ACTION_PT_properties");
-  STRNCPY(pt->label, N_("Active F-Curve"));
-  STRNCPY(pt->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
+  pt = MEM_callocN<PanelType>("spacetype action panel properties");
+  STRNCPY_UTF8(pt->idname, "ACTION_PT_properties");
+  STRNCPY_UTF8(pt->label, N_("Active F-Curve"));
+  STRNCPY_UTF8(pt->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
   pt->draw = action_anim_panel_properties;
   pt->poll = action_anim_panel_poll;
   BLI_addtail(&art->paneltypes, pt);
 
-  pt = MEM_cnew<PanelType>("spacetype action panel properties");
-  STRNCPY(pt->idname, "ACTION_PT_key_properties");
-  STRNCPY(pt->label, N_("Active Keyframe"));
-  STRNCPY(pt->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
+  pt = MEM_callocN<PanelType>("spacetype action panel properties");
+  STRNCPY_UTF8(pt->idname, "ACTION_PT_key_properties");
+  STRNCPY_UTF8(pt->label, N_("Active Keyframe"));
+  STRNCPY_UTF8(pt->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
   pt->draw = action_anim_panel_key_properties;
   pt->poll = action_anim_panel_poll;
   BLI_addtail(&art->paneltypes, pt);
 
   pt = MEM_callocN(sizeof(PanelType), "spacetype action panel modifiers");
-  STRNCPY(pt->idname, "ACTION_PT_modifiers");
-  STRNCPY(pt->label, N_("Modifiers"));
-  STRNCPY(pt->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
+  STRNCPY_UTF8(pt->idname, "ACTION_PT_modifiers");
+  STRNCPY_UTF8(pt->label, N_("Modifiers"));
+  STRNCPY_UTF8(pt->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
   pt->draw = action_anim_panel_modifiers;
   pt->poll = action_anim_panel_poll;
   BLI_addtail(&art->paneltypes, pt);

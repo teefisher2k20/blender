@@ -7,7 +7,6 @@ import typing
 import numpy as np
 from ......blender.com.data_path import get_sk_exported
 from ....cache import cached
-from ....tree import VExportNode
 from ...keyframes import Keyframe
 from ...fcurves.channels import get_channel_groups
 from ...fcurves.keyframes import gather_non_keyed_values
@@ -18,7 +17,7 @@ from ..sampling_cache import get_cache_data
 @cached
 def gather_sk_sampled_keyframes(obj_uuid,
                                 action_name,
-                                slot_handle,
+                                slot_identifier, #TODOSLOT
                                 export_settings):
 
     start_frame = export_settings['ranges'][obj_uuid][action_name]['start']
@@ -37,21 +36,21 @@ def gather_sk_sampled_keyframes(obj_uuid,
 
         if channels is None:
 
-            if slot_handle is not None:
+            if slot_identifier is not None:
 
                 # If we are here because of a shapekey animation, we need to get the fcurves
                 if action_name in bpy.data.actions:
                     channel_group, _, _ = get_channel_groups(
-                        obj_uuid, bpy.data.actions[action_name], slot_handle, export_settings, no_sample_option=True)
+                        obj_uuid, bpy.data.actions[action_name], bpy.data.actions[action_name].slots[slot_identifier], export_settings, no_sample_option=True)
                 elif blender_obj.data.shape_keys.animation_data and blender_obj.data.shape_keys.animation_data.action:
                     channel_group, _, _ = get_channel_groups(
-                        obj_uuid, blender_obj.data.shape_keys.animation_data.action, slot_handle, export_settings, no_sample_option=True)
+                        obj_uuid, blender_obj.data.shape_keys.animation_data.action, blender_obj.data.shape_keys.animation_data.action.slots[slot_identifier], export_settings, no_sample_option=True)
                 else:
                     channel_group = {}
                     channels = [None] * len(get_sk_exported(blender_obj.data.shape_keys.key_blocks))
 
             else:
-                # No slot handle, we are in a bake situation
+                # No slot identifier, we are in a bake situation
                 # So consider no channels are animated
                 channel_group = {}
                 channels = [None] * len(get_sk_exported(blender_obj.data.shape_keys.key_blocks))
@@ -87,7 +86,7 @@ def gather_sk_sampled_keyframes(obj_uuid,
                     action_name,
                     frame,
                     step,
-                    slot_handle,
+                    slot_identifier,
                     export_settings
                 )
 
@@ -106,7 +105,7 @@ def gather_sk_sampled_keyframes(obj_uuid,
                 action_name,
                 frame,
                 step,
-                slot_handle,
+                slot_identifier,
                 export_settings
             )
 

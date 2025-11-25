@@ -8,6 +8,7 @@
 
 #include "kernel/light/distribution.h"
 #include "kernel/light/light.h"
+#include "kernel/types.h"
 
 #ifdef __LIGHT_TREE__
 #  include "kernel/light/tree.h"
@@ -56,7 +57,7 @@ light_sample_shader_eval(KernelGlobals kg,
                                ls->t,
                                time,
                                false,
-                               ls->lamp);
+                               ls->type != LIGHT_TRIANGLE);
 
       ls->Ng = emission_sd->Ng;
     }
@@ -80,8 +81,8 @@ light_sample_shader_eval(KernelGlobals kg,
 
   eval *= ls->eval_fac;
 
-  if (ls->lamp != LAMP_NONE) {
-    const ccl_global KernelLight *klight = &kernel_data_fetch(lights, ls->lamp);
+  if (ls->type != LIGHT_TRIANGLE) {
+    const ccl_global KernelLight *klight = &kernel_data_fetch(lights, ls->prim);
     eval *= rgb_to_spectrum(
         make_float3(klight->strength[0], klight->strength[1], klight->strength[2]));
   }
@@ -232,7 +233,7 @@ ccl_device_inline void shadow_ray_setup(const ccl_private ShaderData *ccl_restri
     else {
       /* other lights, avoid self-intersection */
       ray->D = ls->P - P;
-      ray->D = normalize_len(ray->D, &ray->tmax);
+      ray->D = safe_normalize_len(ray->D, &ray->tmax);
     }
   }
   else {
@@ -251,7 +252,6 @@ ccl_device_inline void shadow_ray_setup(const ccl_private ShaderData *ccl_restri
   ray->self.prim = (skip_self) ? sd->prim : PRIM_NONE;
   ray->self.light_object = ls->object;
   ray->self.light_prim = ls->prim;
-  ray->self.light = ls->lamp;
 }
 
 /* Create shadow ray towards light sample. */
@@ -268,7 +268,6 @@ ccl_device_inline void light_sample_to_surface_shadow_ray(
 
 /* Create shadow ray towards light sample. */
 ccl_device_inline void light_sample_to_volume_shadow_ray(
-    KernelGlobals kg,
     const ccl_private ShaderData *ccl_restrict sd,
     const ccl_private LightSample *ccl_restrict ls,
     const float3 P,
@@ -287,12 +286,13 @@ ccl_device_inline float light_sample_mis_weight_forward(KernelGlobals kg,
   if (kernel_data.integrator.direct_light_sampling_type == DIRECT_LIGHT_SAMPLING_FORWARD) {
     return 1.0f;
   }
-  else if (kernel_data.integrator.direct_light_sampling_type == DIRECT_LIGHT_SAMPLING_NEE) {
+  if (kernel_data.integrator.direct_light_sampling_type == DIRECT_LIGHT_SAMPLING_NEE) {
     return 0.0f;
   }
-  else
+#else
+  (void)kg;
 #endif
-    return power_heuristic(forward_pdf, nee_pdf);
+  return power_heuristic(forward_pdf, nee_pdf);
 }
 
 ccl_device_inline float light_sample_mis_weight_nee(KernelGlobals kg,
@@ -306,12 +306,13 @@ ccl_device_inline float light_sample_mis_weight_nee(KernelGlobals kg,
      * result. */
     return (forward_pdf == 0.0f);
   }
-  else if (kernel_data.integrator.direct_light_sampling_type == DIRECT_LIGHT_SAMPLING_NEE) {
+  if (kernel_data.integrator.direct_light_sampling_type == DIRECT_LIGHT_SAMPLING_NEE) {
     return 1.0f;
   }
-  else
+#else
+  (void)kg;
 #endif
-    return power_heuristic(nee_pdf, forward_pdf);
+  return power_heuristic(nee_pdf, forward_pdf);
 }
 
 /* Next event estimation sampling.
@@ -392,13 +393,13 @@ ccl_device_forceinline void light_sample_update(KernelGlobals kg,
                                                 const float3 N,
                                                 const uint32_t path_flag)
 {
-  const ccl_global KernelLight *klight = &kernel_data_fetch(lights, ls->lamp);
+  const ccl_global KernelLight *klight = &kernel_data_fetch(lights, ls->prim);
 
   if (ls->type == LIGHT_POINT) {
-    point_light_mnee_sample_update(klight, ls, P, N, path_flag);
+    point_light_mnee_sample_update(kg, klight, ls, P, N, path_flag);
   }
   else if (ls->type == LIGHT_SPOT) {
-    spot_light_mnee_sample_update(klight, ls, P, N, path_flag);
+    spot_light_mnee_sample_update(kg, klight, ls, P, N, path_flag);
   }
   else if (ls->type == LIGHT_AREA) {
     area_light_mnee_sample_update(klight, ls, P);
@@ -487,7 +488,7 @@ ccl_device_inline float light_sample_mis_weight_forward_lamp(KernelGlobals kg,
                           dt,
                           path_flag,
                           0,
-                          kernel_data_fetch(light_to_tree, ls->lamp),
+                          kernel_data_fetch(light_to_tree, ls->prim),
                           light_link_receiver_forward(kg, state));
   }
   else

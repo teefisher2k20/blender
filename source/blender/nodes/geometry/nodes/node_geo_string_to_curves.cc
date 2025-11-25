@@ -16,6 +16,7 @@
 #include "BLI_task.hh"
 
 #include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "GEO_randomize.hh"
@@ -28,7 +29,7 @@ NODE_STORAGE_FUNCS(NodeGeometryStringToCurves)
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::String>("String").hide_label();
+  b.add_input<decl::String>("String").optional_label();
   b.add_input<decl::Float>("Size").default_value(1.0f).min(0.0f).subtype(PROP_DISTANCE);
   b.add_input<decl::Float>("Character Spacing").default_value(1.0f).min(0.0f);
   b.add_input<decl::Float>("Word Spacing").default_value(1.0f).min(0.0f);
@@ -45,7 +46,7 @@ static void node_declare(NodeDeclarationBuilder &b)
   auto &remainder = b.add_output<decl::String>("Remainder").make_available([](bNode &node) {
     node_storage(node).overflow = GEO_NODE_STRING_TO_CURVES_MODE_TRUNCATE;
   });
-  b.add_output<decl::Int>("Line").field_on_all();
+  b.add_output<decl::Int>("Line").field_on_all().translation_context(BLT_I18NCONTEXT_ID_TEXT);
   b.add_output<decl::Vector>("Pivot Point").field_on_all();
 
   const bNode *node = b.node_or_null();
@@ -61,18 +62,18 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_layout(uiLayout *layout, bContext *C, PointerRNA *ptr)
 {
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout->use_property_split_set(true);
+  layout->use_property_decorate_set(false);
   uiTemplateID(layout, C, ptr, "font", nullptr, "FONT_OT_open", "FONT_OT_unlink");
-  uiItemR(layout, ptr, "overflow", UI_ITEM_NONE, "", ICON_NONE);
-  uiItemR(layout, ptr, "align_x", UI_ITEM_NONE, "", ICON_NONE);
-  uiItemR(layout, ptr, "align_y", UI_ITEM_NONE, "", ICON_NONE);
-  uiItemR(layout, ptr, "pivot_mode", UI_ITEM_NONE, IFACE_("Pivot Point"), ICON_NONE);
+  layout->prop(ptr, "overflow", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "align_x", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "align_y", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "pivot_mode", UI_ITEM_NONE, IFACE_("Pivot Point"), ICON_NONE);
 }
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
 {
-  NodeGeometryStringToCurves *data = MEM_cnew<NodeGeometryStringToCurves>(__func__);
+  NodeGeometryStringToCurves *data = MEM_callocN<NodeGeometryStringToCurves>(__func__);
 
   data->overflow = GEO_NODE_STRING_TO_CURVES_MODE_OVERFLOW;
   data->align_x = GEO_NODE_STRING_TO_CURVES_ALIGN_X_LEFT;
@@ -126,16 +127,16 @@ struct TextLayout {
   /* Map of Pivot point for each character code. */
   Map<int, float3> pivot_points;
 
-  /* UTF-32 Character codes. */
+  /* UTF32 Character codes. */
   Vector<char32_t> char_codes;
 
   /* The text that fit into the text box, with newline character sequences replaced. */
   std::string text;
 
-  /* The text that didn't fit into the text box in 'Truncate' mode. May be empty. */
+  /* The text that didn't fit into the text box in "Truncate" mode. May be empty. */
   std::string truncated_text;
 
-  /* Font size could be modified if in 'Scale to fit'-mode. */
+  /* Font size could be modified if in "Scale to fit"-mode. */
   float final_font_size;
 };
 
@@ -171,7 +172,7 @@ static std::optional<TextLayout> get_text_layout(GeoNodeExecParams &params)
                               params.extract_input<float>("Text Box Height");
 
   Curve cu = dna::shallow_zero_initialize();
-  cu.type = OB_FONT;
+  cu.ob_type = OB_FONT;
   /* Set defaults */
   cu.resolu = 12;
   cu.smallcaps_scale = 0.75f;
@@ -185,7 +186,7 @@ static std::optional<TextLayout> get_text_layout(GeoNodeExecParams &params)
   cu.linedist = line_spacing;
   cu.vfont = vfont;
   cu.overflow = overflow;
-  cu.tb = static_cast<TextBox *>(MEM_calloc_arrayN(MAXTEXTBOX, sizeof(TextBox), __func__));
+  cu.tb = MEM_calloc_arrayN<TextBox>(MAXTEXTBOX, __func__);
   cu.tb->w = textbox_w;
   cu.tb->h = textbox_h;
   cu.totbox = 1;
@@ -195,31 +196,39 @@ static std::optional<TextLayout> get_text_layout(GeoNodeExecParams &params)
   cu.len = len_bytes;
   cu.pos = len_chars;
   /* The reason for the additional character here is unknown, but reflects other code elsewhere. */
-  cu.str = static_cast<char *>(MEM_mallocN(len_bytes + sizeof(char32_t), __func__));
+  cu.str = MEM_malloc_arrayN<char>(len_bytes + sizeof(char32_t), __func__);
   memcpy(cu.str, layout.text.c_str(), len_bytes + 1);
-  cu.strinfo = static_cast<CharInfo *>(MEM_callocN((len_chars + 1) * sizeof(CharInfo), __func__));
+  cu.strinfo = MEM_calloc_arrayN<CharInfo>(len_chars + 1, __func__);
 
   CharTrans *chartransdata = nullptr;
   int text_len;
   bool text_free;
   const char32_t *r_text = nullptr;
+  float final_font_size = 0.0f;
   /* Mode FO_DUPLI used because it doesn't create curve splines. */
-  BKE_vfont_to_curve_ex(
-      nullptr, &cu, FO_DUPLI, nullptr, &r_text, &text_len, &text_free, &chartransdata);
+  BKE_vfont_to_curve_ex(nullptr,
+                        cu,
+                        FO_DUPLI,
+                        nullptr,
+                        &r_text,
+                        &text_len,
+                        &text_free,
+                        &chartransdata,
+                        &final_font_size);
 
   if (text_free) {
-    MEM_freeN(const_cast<char32_t *>(r_text));
+    MEM_freeN(r_text);
   }
 
   Span<CharInfo> info{cu.strinfo, text_len};
-  layout.final_font_size = cu.fsize_realtime;
+  layout.final_font_size = final_font_size;
   layout.positions.reserve(text_len);
 
   for (const int i : IndexRange(text_len)) {
     CharTrans &ct = chartransdata[i];
-    layout.positions.append(float2(ct.xof, ct.yof) * layout.final_font_size);
+    layout.positions.append(ct.offset * layout.final_font_size);
 
-    if ((info[i].flag & CU_CHINFO_OVERFLOW) && (cu.overflow == CU_OVERFLOW_TRUNCATE)) {
+    if (ct.is_overflow && (cu.overflow == CU_OVERFLOW_TRUNCATE)) {
       const int offset = BLI_str_utf8_offset_from_index(
           layout.text.c_str(), layout.text.size(), i + 1);
       layout.truncated_text = layout.text.substr(offset);
@@ -236,7 +245,7 @@ static std::optional<TextLayout> get_text_layout(GeoNodeExecParams &params)
     }
   }
 
-  /* Convert UTF-8 encoded string to UTF-32. */
+  /* Convert UTF8 encoded string to UTF32. */
   len_chars = BLI_strlen_utf8_ex(layout.text.c_str(), &len_bytes);
   layout.char_codes.resize(len_chars + 1);
   BLI_str_utf8_as_utf32(layout.char_codes.data(), layout.text.c_str(), layout.char_codes.size());
@@ -250,7 +259,7 @@ static std::optional<TextLayout> get_text_layout(GeoNodeExecParams &params)
   return layout;
 }
 
-/* Returns a mapping of UTF-32 character code to instance handle. */
+/** Returns a mapping of UTF32 character code to instance handle. */
 static Map<int, int> create_curve_instances(GeoNodeExecParams &params,
                                             TextLayout &layout,
                                             bke::Instances &instances)
@@ -264,13 +273,15 @@ static Map<int, int> create_curve_instances(GeoNodeExecParams &params,
       continue;
     }
     Curve cu = dna::shallow_zero_initialize();
-    cu.type = OB_FONT;
+    cu.ob_type = OB_FONT;
     cu.resolu = 12;
     cu.vfont = vfont;
     CharInfo charinfo = {0};
     charinfo.mat_nr = 1;
 
-    BKE_vfont_char_build(&cu, &cu.nurb, layout.char_codes[i], &charinfo, 0, 0, 0, i, 1);
+    const float2 char_offset = {0, 0};
+    BKE_vfont_char_build(
+        cu, &cu.nurb, layout.char_codes[i], &charinfo, false, char_offset, 0, i, 1);
     Curves *curves_id = bke::curve_legacy_to_curves(cu);
     if (curves_id == nullptr) {
       if (pivot_required) {
@@ -294,6 +305,14 @@ static Map<int, int> create_curve_instances(GeoNodeExecParams &params,
     }
 
     GeometrySet geometry_set = GeometrySet::from_curves(curves_id);
+
+    {
+      const char32_t char_code[2] = {layout.char_codes[i], 0};
+      char inserted_utf8[8] = {0};
+      const size_t len = BLI_str_utf32_as_utf8(inserted_utf8, char_code, sizeof(inserted_utf8));
+      geometry_set.name = std::string(inserted_utf8, len);
+    }
+
     handles.add_new(layout.char_codes[i], instances.add_reference(std::move(geometry_set)));
   }
   return handles;
@@ -388,13 +407,11 @@ static void node_register()
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.initfunc = node_init;
-  blender::bke::node_type_size(&ntype, 190, 120, 700);
-  blender::bke::node_type_storage(&ntype,
-                                  "NodeGeometryStringToCurves",
-                                  node_free_standard_storage,
-                                  node_copy_standard_storage);
+  blender::bke::node_type_size(ntype, 190, 120, 700);
+  blender::bke::node_type_storage(
+      ntype, "NodeGeometryStringToCurves", node_free_standard_storage, node_copy_standard_storage);
   ntype.draw_buttons = node_layout;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

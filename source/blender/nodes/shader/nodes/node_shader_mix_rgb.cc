@@ -22,7 +22,11 @@ namespace blender::nodes::node_shader_mix_rgb_cc {
 static void sh_node_mix_rgb_declare(NodeDeclarationBuilder &b)
 {
   b.is_function_node();
-  b.add_input<decl::Float>("Fac").default_value(0.5f).min(0.0f).max(1.0f).subtype(PROP_FACTOR);
+  b.add_input<decl::Float>("Factor", "Fac")
+      .default_value(0.5f)
+      .min(0.0f)
+      .max(1.0f)
+      .subtype(PROP_FACTOR);
   b.add_input<decl::Color>("Color1").default_value({0.5f, 0.5f, 0.5f, 1.0f});
   b.add_input<decl::Color>("Color2").default_value({0.5f, 0.5f, 0.5f, 1.0f});
   b.add_output<decl::Color>("Color");
@@ -137,7 +141,7 @@ class MixRGBFunction : public mf::MultiFunction {
     });
 
     if (clamp_) {
-      mask.foreach_index([&](const int64_t i) { clamp_v3(results[i], 0.0f, 1.0f); });
+      mask.foreach_index([&](const int64_t i) { clamp_v4(results[i], 0.0f, 1.0f); });
     }
   }
 };
@@ -158,7 +162,7 @@ void register_node_type_sh_mix_rgb()
 
   static blender::bke::bNodeType ntype;
 
-  sh_fn_node_type_base(&ntype, "ShaderNodeMixRGB", SH_NODE_MIX_RGB_LEGACY);
+  common_node_type_base(&ntype, "ShaderNodeMixRGB", SH_NODE_MIX_RGB_LEGACY);
   ntype.ui_name = "Mix (Legacy)";
   ntype.ui_description = "Mix two input colors";
   ntype.enum_name_legacy = "MIX_RGB";
@@ -168,5 +172,5 @@ void register_node_type_sh_mix_rgb()
   ntype.gpu_fn = file_ns::gpu_shader_mix_rgb;
   ntype.build_multi_function = file_ns::sh_node_mix_rgb_build_multi_function;
   ntype.gather_link_search_ops = nullptr;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }

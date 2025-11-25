@@ -8,14 +8,8 @@
 
 #include <cstdlib>
 
-#include "DNA_mesh_types.h"
 #include "DNA_meta_types.h"
 
-#include "BLI_math_rotation.h"
-#include "BLI_math_vector.h"
-#include "BLI_utildefines.h"
-
-#include "RNA_access.hh"
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
 
@@ -26,6 +20,9 @@
 #  include <fmt/format.h>
 
 #  include "MEM_guardedalloc.h"
+
+#  include "BLI_math_rotation.h"
+#  include "BLI_math_vector.h"
 
 #  include "DNA_object_types.h"
 #  include "DNA_scene_types.h"
@@ -132,7 +129,7 @@ static void rna_MetaBall_elements_remove(MetaBall *mb, ReportList *reports, Poin
   }
 
   MEM_freeN(ml);
-  RNA_POINTER_INVALIDATE(ml_ptr);
+  ml_ptr->invalidate();
 
   /* cheating way for importers to avoid slow updates */
   if (mb->id.us > 0) {

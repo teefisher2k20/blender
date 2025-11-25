@@ -10,21 +10,27 @@
 
 #include "GPU_capabilities.hh"
 #include "GPU_compute.hh"
+#include "GPU_state.hh"
 #include "GPU_storage_buffer.hh"
 #include "GPU_texture.hh"
 
 namespace blender::gpu::tests {
 static void test_compute_direct()
 {
-  static constexpr uint SIZE = 32;
+  static constexpr uint SIZE = 4;
 
   /* Build compute shader. */
-  GPUShader *shader = GPU_shader_create_from_info_name("gpu_compute_2d_test");
+  gpu::Shader *shader = GPU_shader_create_from_info_name("gpu_compute_2d_test");
   EXPECT_NE(shader, nullptr);
 
   /* Create texture to store result and attach to shader. */
-  GPUTexture *texture = GPU_texture_create_2d(
-      "gpu_shader_compute_2d", SIZE, SIZE, 1, GPU_RGBA32F, GPU_TEXTURE_USAGE_GENERAL, nullptr);
+  blender::gpu::Texture *texture = GPU_texture_create_2d("gpu_shader_compute_2d",
+                                                         SIZE,
+                                                         SIZE,
+                                                         1,
+                                                         TextureFormat::SFLOAT_32_32_32_32,
+                                                         GPU_TEXTURE_USAGE_GENERAL,
+                                                         nullptr);
   EXPECT_NE(texture, nullptr);
 
   GPU_shader_bind(shader);
@@ -53,15 +59,20 @@ GPU_TEST(compute_direct)
 
 static void test_compute_indirect()
 {
-  static constexpr uint SIZE = 32;
+  static constexpr uint SIZE = 4;
 
   /* Build compute shader. */
-  GPUShader *shader = GPU_shader_create_from_info_name("gpu_compute_2d_test");
+  gpu::Shader *shader = GPU_shader_create_from_info_name("gpu_compute_2d_test");
   EXPECT_NE(shader, nullptr);
 
   /* Create texture to store result and attach to shader. */
-  GPUTexture *texture = GPU_texture_create_2d(
-      "gpu_shader_compute_2d", SIZE, SIZE, 1, GPU_RGBA32F, GPU_TEXTURE_USAGE_GENERAL, nullptr);
+  blender::gpu::Texture *texture = GPU_texture_create_2d("gpu_shader_compute_2d",
+                                                         SIZE,
+                                                         SIZE,
+                                                         1,
+                                                         TextureFormat::SFLOAT_32_32_32_32,
+                                                         GPU_TEXTURE_USAGE_GENERAL,
+                                                         nullptr);
   EXPECT_NE(texture, nullptr);
   GPU_texture_clear(texture, GPU_DATA_FLOAT, float4(0.0f));
 
@@ -72,7 +83,7 @@ static void test_compute_indirect()
   uint4 commands[1] = {
       {SIZE, SIZE, 1, 0},
   };
-  GPUStorageBuf *compute_commands = GPU_storagebuf_create_ex(
+  StorageBuf *compute_commands = GPU_storagebuf_create_ex(
       sizeof(commands), &commands, GPU_USAGE_STATIC, __func__);
 
   /* Dispatch compute task. */

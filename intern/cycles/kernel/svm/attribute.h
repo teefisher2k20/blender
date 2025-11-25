@@ -25,8 +25,9 @@ ccl_device AttributeDescriptor svm_node_attr_init(KernelGlobals kg,
                                                   ccl_private NodeAttributeOutputType *type,
                                                   ccl_private uint *out_offset)
 {
-  *out_offset = node.z;
-  *type = (NodeAttributeOutputType)node.w;
+  uint type_value;
+  svm_unpack_node_uchar2(node.z, out_offset, &type_value);
+  *type = (NodeAttributeOutputType)type_value;
 
   AttributeDescriptor desc;
 
@@ -35,17 +36,122 @@ ccl_device AttributeDescriptor svm_node_attr_init(KernelGlobals kg,
     if (desc.offset == ATTR_STD_NOT_FOUND) {
       desc = attribute_not_found();
       desc.offset = 0;
-      desc.type = (NodeAttributeType)node.w;
+      desc.type = (NodeAttributeType)type_value;
     }
   }
   else {
     /* background */
     desc = attribute_not_found();
     desc.offset = 0;
-    desc.type = (NodeAttributeType)node.w;
+    desc.type = (NodeAttributeType)type_value;
   }
 
   return desc;
+}
+
+ccl_device_inline void svm_node_attr_store(const NodeAttributeOutputType type,
+                                           ccl_private float *stack,
+                                           const uint out_offset,
+                                           const float f)
+{
+  if (type == NODE_ATTR_OUTPUT_FLOAT) {
+    stack_store_float(stack, out_offset, f);
+  }
+  else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
+    stack_store_float3(stack, out_offset, make_float3(f));
+  }
+  else {
+    stack_store_float(stack, out_offset, 1.0f);
+  }
+}
+
+ccl_device_inline void svm_node_attr_store(const NodeAttributeOutputType type,
+                                           ccl_private float *stack,
+                                           const uint out_offset,
+                                           const ccl_private float2 &f)
+{
+  if (type == NODE_ATTR_OUTPUT_FLOAT) {
+    stack_store_float(stack, out_offset, f.x);
+  }
+  else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
+    stack_store_float3(stack, out_offset, make_float3(f));
+  }
+  else {
+    stack_store_float(stack, out_offset, 1.0f);
+  }
+}
+
+ccl_device_inline void svm_node_attr_store(const NodeAttributeOutputType type,
+                                           ccl_private float *stack,
+                                           const uint out_offset,
+                                           const ccl_private float3 &f)
+{
+  if (type == NODE_ATTR_OUTPUT_FLOAT) {
+    stack_store_float(stack, out_offset, average(f));
+  }
+  else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
+    stack_store_float3(stack, out_offset, f);
+  }
+  else {
+    stack_store_float(stack, out_offset, 1.0f);
+  }
+}
+
+ccl_device_inline void svm_node_attr_store(const NodeAttributeOutputType type,
+                                           ccl_private float *stack,
+                                           const uint out_offset,
+                                           const ccl_private float4 &f)
+{
+  if (type == NODE_ATTR_OUTPUT_FLOAT) {
+    stack_store_float(stack, out_offset, average(make_float3(f)));
+  }
+  else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
+    stack_store_float3(stack, out_offset, make_float3(f));
+  }
+  else {
+    kernel_assert(type == NODE_ATTR_OUTPUT_FLOAT_ALPHA);
+    stack_store_float(stack, out_offset, f.w);
+  }
+}
+
+template<class T>
+ccl_device_inline void svm_surface_attr(KernelGlobals kg,
+                                        const ccl_private ShaderData *sd,
+                                        const AttributeDescriptor desc,
+                                        const NodeAttributeOutputType type,
+                                        ccl_private float *stack,
+                                        const uint out_offset)
+{
+  T f = primitive_surface_attribute<T>(kg, sd, desc).val;
+  svm_node_attr_store(type, stack, out_offset, f);
+}
+
+template<class T>
+ccl_device_inline void svm_surface_attr_dx(KernelGlobals kg,
+                                           const ccl_private ShaderData *sd,
+                                           const AttributeDescriptor desc,
+                                           const float bump_filter_width,
+                                           const NodeAttributeOutputType type,
+                                           ccl_private float *stack,
+                                           const uint out_offset)
+{
+  dual<T> f = primitive_surface_attribute<T>(kg, sd, desc, true, false);
+  f.val += f.dx * bump_filter_width;
+  svm_node_attr_store(type, stack, out_offset, f.val);
+}
+
+template<class T>
+ccl_device_inline void svm_surface_attr_dy(KernelGlobals kg,
+                                           const ccl_private ShaderData *sd,
+                                           const AttributeDescriptor desc,
+                                           const float bump_filter_width,
+                                           const NodeAttributeOutputType type,
+                                           ccl_private float *stack,
+                                           const uint out_offset)
+{
+  dual<T> f = primitive_surface_attribute<T>(kg, sd, desc, false, true);
+  f.val += f.dy * bump_filter_width;
+  svm_node_attr_store(type, stack, out_offset, f.val);
 }
 
 template<uint node_feature_mask>
@@ -63,19 +169,20 @@ ccl_device_noinline void svm_node_attr(KernelGlobals kg,
   {
     /* Volumes
      * NOTE: moving this into its own node type might help improve performance. */
-    if (primitive_is_volume_attribute(sd, desc)) {
-      const float4 value = volume_attribute_float4(kg, sd, desc);
+    if (primitive_is_volume_attribute(sd)) {
+      const bool stochastic_sample = node.w;
+      const float4 value = volume_attribute_float4(kg, sd, desc, stochastic_sample);
 
       if (type == NODE_ATTR_OUTPUT_FLOAT) {
-        const float f = volume_attribute_value_to_float(value);
+        const float f = volume_attribute_value<float>(value);
         stack_store_float(stack, out_offset, f);
       }
       else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-        const float3 f = volume_attribute_value_to_float3(value);
+        const float3 f = volume_attribute_value<float3>(value);
         stack_store_float3(stack, out_offset, f);
       }
       else {
-        const float f = volume_attribute_value_to_alpha(value);
+        const float f = volume_attribute_alpha(value);
         stack_store_float(stack, out_offset, f);
       }
       return;
@@ -94,79 +201,40 @@ ccl_device_noinline void svm_node_attr(KernelGlobals kg,
     if (sd->object != OBJECT_NONE) {
       object_inverse_position_transform(kg, sd, &f);
     }
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, average(f));
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, f);
-    }
-    else {
-      stack_store_float(stack, out_offset, 1.0f);
-    }
+    svm_node_attr_store(type, stack, out_offset, f);
     return;
   }
 
   /* Surface. */
   if (desc.type == NODE_ATTR_FLOAT) {
-    const float f = primitive_surface_attribute_float(kg, sd, desc, nullptr, nullptr);
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, f);
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, make_float3(f, f, f));
-    }
-    else {
-      stack_store_float(stack, out_offset, 1.0f);
-    }
+    svm_surface_attr<float>(kg, sd, desc, type, stack, out_offset);
   }
   else if (desc.type == NODE_ATTR_FLOAT2) {
-    const float2 f = primitive_surface_attribute_float2(kg, sd, desc, nullptr, nullptr);
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, f.x);
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, make_float3(f.x, f.y, 0.0f));
-    }
-    else {
-      stack_store_float(stack, out_offset, 1.0f);
-    }
+    svm_surface_attr<float2>(kg, sd, desc, type, stack, out_offset);
   }
   else if (desc.type == NODE_ATTR_FLOAT4 || desc.type == NODE_ATTR_RGBA) {
-    const float4 f = primitive_surface_attribute_float4(kg, sd, desc, nullptr, nullptr);
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, average(make_float3(f)));
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, make_float3(f));
-    }
-    else {
-      stack_store_float(stack, out_offset, f.w);
-    }
+    svm_surface_attr<float4>(kg, sd, desc, type, stack, out_offset);
   }
   else {
-    const float3 f = primitive_surface_attribute_float3(kg, sd, desc, nullptr, nullptr);
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, average(f));
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, f);
-    }
-    else {
-      stack_store_float(stack, out_offset, 1.0f);
-    }
+    svm_surface_attr<float3>(kg, sd, desc, type, stack, out_offset);
   }
 }
 
-ccl_device_forceinline float3 svm_node_bump_P_dx(const ccl_private ShaderData *sd)
+/* Position offsetted in x direction. */
+ccl_device_forceinline float3 svm_node_bump_P_dx(const ccl_private ShaderData *sd,
+                                                 const float bump_filter_width)
 {
-  return sd->P + differential_from_compact(sd->Ng, sd->dP).dx;
+  return sd->P + dPdx(sd) * bump_filter_width;
 }
 
-ccl_device_forceinline float3 svm_node_bump_P_dy(const ccl_private ShaderData *sd)
+/* Position offsetted in y direction. */
+ccl_device_forceinline float3 svm_node_bump_P_dy(const ccl_private ShaderData *sd,
+                                                 const float bump_filter_width)
 {
-  return sd->P + differential_from_compact(sd->Ng, sd->dP).dy;
+  return sd->P + dPdy(sd) * bump_filter_width;
 }
 
+/* Evaluate attributes at a position shifted in x direction. */
 ccl_device_noinline void svm_node_attr_bump_dx(KernelGlobals kg,
                                                ccl_private ShaderData *sd,
                                                ccl_private float *stack,
@@ -175,96 +243,42 @@ ccl_device_noinline void svm_node_attr_bump_dx(KernelGlobals kg,
   NodeAttributeOutputType type = NODE_ATTR_OUTPUT_FLOAT;
   uint out_offset = 0;
   const AttributeDescriptor desc = svm_node_attr_init(kg, sd, node, &type, &out_offset);
+  const float bump_filter_width = __uint_as_float(node.w);
 
 #ifdef __VOLUME__
   /* Volume */
-  if (primitive_is_volume_attribute(sd, desc)) {
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, 0.0f);
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, make_float3(0.0f, 0.0f, 0.0f));
-    }
-    else {
-      stack_store_float(stack, out_offset, 1.0f);
-    }
+  if (primitive_is_volume_attribute(sd)) {
+    svm_node_attr_store(type, stack, out_offset, 0.0f);
     return;
   }
 #endif
 
   if (node.y == ATTR_STD_GENERATED && desc.element == ATTR_ELEMENT_NONE) {
     /* No generated attribute, fall back to object coordinates. */
-    float3 f = svm_node_bump_P_dx(sd);
+    float3 f_x = svm_node_bump_P_dx(sd, bump_filter_width);
     if (sd->object != OBJECT_NONE) {
-      object_inverse_position_transform(kg, sd, &f);
+      object_inverse_position_transform(kg, sd, &f_x);
     }
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, average(f));
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, f);
-    }
-    else {
-      stack_store_float(stack, out_offset, 1.0f);
-    }
+    svm_node_attr_store(type, stack, out_offset, f_x);
     return;
   }
 
   /* Surface */
   if (desc.type == NODE_ATTR_FLOAT) {
-    float dx;
-    const float f = primitive_surface_attribute_float(kg, sd, desc, &dx, nullptr);
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, f + dx);
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, make_float3(f + dx, f + dx, f + dx));
-    }
-    else {
-      stack_store_float(stack, out_offset, 1.0f);
-    }
+    svm_surface_attr_dx<float>(kg, sd, desc, bump_filter_width, type, stack, out_offset);
   }
   else if (desc.type == NODE_ATTR_FLOAT2) {
-    float2 dx;
-    const float2 f = primitive_surface_attribute_float2(kg, sd, desc, &dx, nullptr);
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, f.x + dx.x);
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, make_float3(f.x + dx.x, f.y + dx.y, 0.0f));
-    }
-    else {
-      stack_store_float(stack, out_offset, 1.0f);
-    }
+    svm_surface_attr_dx<float2>(kg, sd, desc, bump_filter_width, type, stack, out_offset);
   }
   else if (desc.type == NODE_ATTR_FLOAT4 || desc.type == NODE_ATTR_RGBA) {
-    float4 dx;
-    const float4 f = primitive_surface_attribute_float4(kg, sd, desc, &dx, nullptr);
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, average(make_float3(f + dx)));
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, make_float3(f + dx));
-    }
-    else {
-      stack_store_float(stack, out_offset, f.w + dx.w);
-    }
+    svm_surface_attr_dx<float4>(kg, sd, desc, bump_filter_width, type, stack, out_offset);
   }
   else {
-    float3 dx;
-    const float3 f = primitive_surface_attribute_float3(kg, sd, desc, &dx, nullptr);
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, average(f + dx));
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, f + dx);
-    }
-    else {
-      stack_store_float(stack, out_offset, 1.0f);
-    }
+    svm_surface_attr_dx<float3>(kg, sd, desc, bump_filter_width, type, stack, out_offset);
   }
 }
 
+/* Evaluate attributes at a position shifted in y direction. */
 ccl_device_noinline void svm_node_attr_bump_dy(KernelGlobals kg,
                                                ccl_private ShaderData *sd,
                                                ccl_private float *stack,
@@ -273,93 +287,39 @@ ccl_device_noinline void svm_node_attr_bump_dy(KernelGlobals kg,
   NodeAttributeOutputType type = NODE_ATTR_OUTPUT_FLOAT;
   uint out_offset = 0;
   const AttributeDescriptor desc = svm_node_attr_init(kg, sd, node, &type, &out_offset);
+  const float bump_filter_width = __uint_as_float(node.w);
 
 #ifdef __VOLUME__
   /* Volume */
-  if (primitive_is_volume_attribute(sd, desc)) {
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, 0.0f);
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, make_float3(0.0f, 0.0f, 0.0f));
-    }
-    else {
-      stack_store_float(stack, out_offset, 1.0f);
-    }
+  if (primitive_is_volume_attribute(sd)) {
+    svm_node_attr_store(type, stack, out_offset, 0.0f);
     return;
   }
 #endif
 
   if (node.y == ATTR_STD_GENERATED && desc.element == ATTR_ELEMENT_NONE) {
     /* No generated attribute, fall back to object coordinates. */
-    float3 f = svm_node_bump_P_dy(sd);
+    /* TODO:(weizhen) */
+    float3 f_y = svm_node_bump_P_dy(sd, bump_filter_width);
     if (sd->object != OBJECT_NONE) {
-      object_inverse_position_transform(kg, sd, &f);
+      object_inverse_position_transform(kg, sd, &f_y);
     }
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, average(f));
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, f);
-    }
-    else {
-      stack_store_float(stack, out_offset, 1.0f);
-    }
+    svm_node_attr_store(type, stack, out_offset, f_y);
     return;
   }
 
   /* Surface */
   if (desc.type == NODE_ATTR_FLOAT) {
-    float dy;
-    const float f = primitive_surface_attribute_float(kg, sd, desc, nullptr, &dy);
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, f + dy);
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, make_float3(f + dy, f + dy, f + dy));
-    }
-    else {
-      stack_store_float(stack, out_offset, 1.0f);
-    }
+    svm_surface_attr_dy<float>(kg, sd, desc, bump_filter_width, type, stack, out_offset);
   }
   else if (desc.type == NODE_ATTR_FLOAT2) {
-    float2 dy;
-    const float2 f = primitive_surface_attribute_float2(kg, sd, desc, nullptr, &dy);
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, f.x + dy.x);
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, make_float3(f.x + dy.x, f.y + dy.y, 0.0f));
-    }
-    else {
-      stack_store_float(stack, out_offset, 1.0f);
-    }
+    svm_surface_attr_dy<float2>(kg, sd, desc, bump_filter_width, type, stack, out_offset);
   }
   else if (desc.type == NODE_ATTR_FLOAT4 || desc.type == NODE_ATTR_RGBA) {
-    float4 dy;
-    const float4 f = primitive_surface_attribute_float4(kg, sd, desc, nullptr, &dy);
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, average(make_float3(f + dy)));
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, make_float3(f + dy));
-    }
-    else {
-      stack_store_float(stack, out_offset, f.w + dy.w);
-    }
+    svm_surface_attr_dy<float4>(kg, sd, desc, bump_filter_width, type, stack, out_offset);
   }
   else {
-    float3 dy;
-    const float3 f = primitive_surface_attribute_float3(kg, sd, desc, nullptr, &dy);
-    if (type == NODE_ATTR_OUTPUT_FLOAT) {
-      stack_store_float(stack, out_offset, average(f + dy));
-    }
-    else if (type == NODE_ATTR_OUTPUT_FLOAT3) {
-      stack_store_float3(stack, out_offset, f + dy);
-    }
-    else {
-      stack_store_float(stack, out_offset, 1.0f);
-    }
+    svm_surface_attr_dy<float3>(kg, sd, desc, bump_filter_width, type, stack, out_offset);
   }
 }
 

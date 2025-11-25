@@ -21,38 +21,43 @@
 #include "BKE_deform.hh"
 #include "BKE_modifier.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "RNA_prototypes.hh"
+#include "RNA_types.hh"
 
 #include "MOD_ui_common.hh"
 #include "MOD_util.hh"
 
 #include "eigen_capi.h"
 
+namespace {
+
 struct LaplacianSystem {
-  float *eweights;      /* Length weights per Edge */
-  float (*fweights)[3]; /* Cotangent weights per face */
-  float *ring_areas;    /* Total area per ring. */
-  float *vlengths;      /* Total sum of lengths(edges) per vertex. */
-  float *vweights;      /* Total sum of weights per vertex. */
-  int verts_num;        /* Number of verts. */
-  short *ne_fa_num;     /* Number of neighbors faces around vertex. */
-  short *ne_ed_num;     /* Number of neighbors Edges around vertex. */
-  bool *zerola;         /* Is zero area or length. */
+  float *eweights = nullptr;      /* Length weights per Edge */
+  float (*fweights)[3] = nullptr; /* Cotangent weights per face */
+  float *ring_areas = nullptr;    /* Total area per ring. */
+  float *vlengths = nullptr;      /* Total sum of lengths(edges) per vertex. */
+  float *vweights = nullptr;      /* Total sum of weights per vertex. */
+  int verts_num = 0;              /* Number of verts. */
+  short *ne_fa_num = nullptr;     /* Number of neighbors faces around vertex. */
+  short *ne_ed_num = nullptr;     /* Number of neighbors Edges around vertex. */
+  bool *zerola = nullptr;         /* Is zero area or length. */
 
   /* Pointers to data. */
-  float (*vertexCos)[3];
-  blender::Span<blender::int2> edges;
-  blender::OffsetIndices<int> faces;
-  blender::Span<int> corner_verts;
-  LinearSolver *context;
+  float (*vertexCos)[3] = nullptr;
+  blender::Span<blender::int2> edges = {};
+  blender::OffsetIndices<int> faces = {};
+  blender::Span<int> corner_verts = {};
+  LinearSolver *context = nullptr;
 
   /* Data. */
-  float min_area;
-  float vert_centroid[3];
+  float min_area = 0.0f;
+  float vert_centroid[3] = {};
 };
+
+};  // namespace
 
 static void delete_laplacian_system(LaplacianSystem *sys)
 {
@@ -69,7 +74,7 @@ static void delete_laplacian_system(LaplacianSystem *sys)
     EIG_linear_solver_delete(sys->context);
   }
   sys->vertexCos = nullptr;
-  MEM_freeN(sys);
+  MEM_delete(sys);
 }
 
 static void memset_laplacian_system(LaplacianSystem *sys, int val)
@@ -87,17 +92,17 @@ static void memset_laplacian_system(LaplacianSystem *sys, int val)
 static LaplacianSystem *init_laplacian_system(int a_numEdges, int a_numLoops, int a_numVerts)
 {
   LaplacianSystem *sys;
-  sys = static_cast<LaplacianSystem *>(MEM_callocN(sizeof(LaplacianSystem), __func__));
+  sys = MEM_new<LaplacianSystem>(__func__);
   sys->verts_num = a_numVerts;
 
-  sys->eweights = MEM_cnew_array<float>(a_numEdges, __func__);
-  sys->fweights = MEM_cnew_array<float[3]>(a_numLoops, __func__);
-  sys->ne_ed_num = MEM_cnew_array<short>(sys->verts_num, __func__);
-  sys->ne_fa_num = MEM_cnew_array<short>(sys->verts_num, __func__);
-  sys->ring_areas = MEM_cnew_array<float>(sys->verts_num, __func__);
-  sys->vlengths = MEM_cnew_array<float>(sys->verts_num, __func__);
-  sys->vweights = MEM_cnew_array<float>(sys->verts_num, __func__);
-  sys->zerola = MEM_cnew_array<bool>(sys->verts_num, __func__);
+  sys->eweights = MEM_calloc_arrayN<float>(a_numEdges, __func__);
+  sys->fweights = MEM_calloc_arrayN<float[3]>(a_numLoops, __func__);
+  sys->ne_ed_num = MEM_calloc_arrayN<short>(sys->verts_num, __func__);
+  sys->ne_fa_num = MEM_calloc_arrayN<short>(sys->verts_num, __func__);
+  sys->ring_areas = MEM_calloc_arrayN<float>(sys->verts_num, __func__);
+  sys->vlengths = MEM_calloc_arrayN<float>(sys->verts_num, __func__);
+  sys->vweights = MEM_calloc_arrayN<float>(sys->verts_num, __func__);
+  sys->zerola = MEM_calloc_arrayN<bool>(sys->verts_num, __func__);
 
   return sys;
 }
@@ -506,7 +511,7 @@ static void deform_verts(ModifierData *md,
   laplaciansmoothModifier_do((LaplacianSmoothModifierData *)md,
                              ctx->object,
                              mesh,
-                             reinterpret_cast<float(*)[3]>(positions.data()),
+                             reinterpret_cast<float (*)[3]>(positions.data()),
                              positions.size());
 }
 
@@ -519,24 +524,24 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   PointerRNA ob_ptr;
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, &ob_ptr);
 
-  uiLayoutSetPropSep(layout, true);
+  layout->use_property_split_set(true);
 
-  uiItemR(layout, ptr, "iterations", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "iterations", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  row = uiLayoutRowWithHeading(layout, true, IFACE_("Axis"));
-  uiItemR(row, ptr, "use_x", toggles_flag, std::nullopt, ICON_NONE);
-  uiItemR(row, ptr, "use_y", toggles_flag, std::nullopt, ICON_NONE);
-  uiItemR(row, ptr, "use_z", toggles_flag, std::nullopt, ICON_NONE);
+  row = &layout->row(true, IFACE_("Axis"));
+  row->prop(ptr, "use_x", toggles_flag, std::nullopt, ICON_NONE);
+  row->prop(ptr, "use_y", toggles_flag, std::nullopt, ICON_NONE);
+  row->prop(ptr, "use_z", toggles_flag, std::nullopt, ICON_NONE);
 
-  uiItemR(layout, ptr, "lambda_factor", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(layout, ptr, "lambda_border", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "lambda_factor", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "lambda_border", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  uiItemR(layout, ptr, "use_volume_preserve", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(layout, ptr, "use_normalized", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "use_volume_preserve", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "use_normalized", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   modifier_vgroup_ui(layout, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", std::nullopt);
 
-  modifier_panel_end(layout, ptr);
+  modifier_error_message_draw(layout, ptr);
 }
 
 static void panel_register(ARegionType *region_type)
@@ -577,4 +582,5 @@ ModifierTypeInfo modifierType_LaplacianSmooth = {
     /*blend_write*/ nullptr,
     /*blend_read*/ nullptr,
     /*foreach_cache*/ nullptr,
+    /*foreach_working_space_color*/ nullptr,
 };

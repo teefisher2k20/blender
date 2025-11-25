@@ -6,7 +6,6 @@
  * \ingroup bli
  */
 
-#include "BLI_array.hh"
 #include "BLI_math_color.h"
 #include "BLI_math_color.hh"
 #include "BLI_math_matrix.hh"
@@ -14,9 +13,10 @@
 #include "BLI_simd.hh"
 #include "BLI_utildefines.h"
 
-#include <string.h>
+#include <algorithm>
+#include <cstring>
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 void hsv_to_rgb(float h, float s, float v, float *r_r, float *r_g, float *r_b)
 {
@@ -291,22 +291,32 @@ void rgb_to_hsl(float r, float g, float b, float *r_h, float *r_s, float *r_l)
 
 void rgb_to_hsl_compat(float r, float g, float b, float *r_h, float *r_s, float *r_l)
 {
+  /* Convert RGB to HSL, while staying as close as possible to existing HSL values.
+   * Uses a threshold as there can be small errors introduced by color space conversions
+   * or other operations. */
   const float orig_s = *r_s;
   const float orig_h = *r_h;
+  const float threshold = 1e-5f;
 
   rgb_to_hsl(r, g, b, r_h, r_s, r_l);
 
-  if (*r_l <= 0.0f) {
+  /* For (near) zero lightness or saturation, keep the other values unchanged,
+   * as they are either undefined or very sensitive to small lightness changes. */
+  if (*r_l <= threshold) {
     *r_h = orig_h;
     *r_s = orig_s;
   }
-  else if (*r_s <= 0.0f) {
+  else if (*r_s <= threshold) {
     *r_h = orig_h;
     *r_s = orig_s;
   }
 
-  if (*r_h == 0.0f && orig_h >= 1.0f) {
+  /* Hue wraps around, keep it on the same side. */
+  if (fabsf(*r_h) <= threshold && fabsf(orig_h - 1.0f) <= threshold) {
     *r_h = 1.0f;
+  }
+  else if (fabsf(*r_h - 1.0f) <= threshold && fabsf(orig_h) <= threshold) {
+    *r_h = 0.0f;
   }
 }
 
@@ -322,22 +332,31 @@ void rgb_to_hsl_v(const float rgb[3], float r_hsl[3])
 
 void rgb_to_hsv_compat(float r, float g, float b, float *r_h, float *r_s, float *r_v)
 {
+  /* Convert RGB to HSV, while staying as close as possible to existing HSV values.
+   * Uses a threshold as there can be small errors introduced by color space conversions
+   * or other operations. */
   const float orig_h = *r_h;
   const float orig_s = *r_s;
+  const float threshold = 1e-5f;
 
   rgb_to_hsv(r, g, b, r_h, r_s, r_v);
 
-  if (*r_v <= 1e-8) {
-    /* Very low V values will affect the HS values, correct them in post. */
+  /* For (near) zero values or saturation, keep the other values unchanged,
+   * as they are either undefined or very sensitive to small value changes. */
+  if (*r_v <= threshold) {
     *r_h = orig_h;
     *r_s = orig_s;
   }
-  else if (*r_s <= 1e-8) {
+  else if (*r_s <= threshold) {
     *r_h = orig_h;
   }
 
-  if (*r_h == 0.0f && orig_h >= 1.0f) {
+  /* Hue wraps around, keep it on the same side. */
+  if (fabsf(*r_h) <= threshold && fabsf(orig_h - 1.0f) <= threshold) {
     *r_h = 1.0f;
+  }
+  else if (fabsf(*r_h - 1.0f) <= threshold && fabsf(orig_h) <= threshold) {
+    *r_h = 0.0f;
   }
 }
 
@@ -379,15 +398,9 @@ uint rgb_to_cpack(float r, float g, float b)
   ig = uint(floorf(255.0f * max_ff(g, 0.0f)));
   ib = uint(floorf(255.0f * max_ff(b, 0.0f)));
 
-  if (ir > 255) {
-    ir = 255;
-  }
-  if (ig > 255) {
-    ig = 255;
-  }
-  if (ib > 255) {
-    ib = 255;
-  }
+  ir = std::min<uint>(ir, 255);
+  ig = std::min<uint>(ig, 255);
+  ib = std::min<uint>(ib, 255);
 
   return (ir + (ig * 256) + (ib * 256 * 256));
 }
@@ -397,31 +410,6 @@ void cpack_to_rgb(uint col, float *r_r, float *r_g, float *r_b)
   *r_r = float(col & 0xFF) * (1.0f / 255.0f);
   *r_g = float((col >> 8) & 0xFF) * (1.0f / 255.0f);
   *r_b = float((col >> 16) & 0xFF) * (1.0f / 255.0f);
-}
-
-void rgb_uchar_to_float(float r_col[3], const uchar col_ub[3])
-{
-  r_col[0] = float(col_ub[0]) * (1.0f / 255.0f);
-  r_col[1] = float(col_ub[1]) * (1.0f / 255.0f);
-  r_col[2] = float(col_ub[2]) * (1.0f / 255.0f);
-}
-
-void rgba_uchar_to_float(float r_col[4], const uchar col_ub[4])
-{
-  r_col[0] = float(col_ub[0]) * (1.0f / 255.0f);
-  r_col[1] = float(col_ub[1]) * (1.0f / 255.0f);
-  r_col[2] = float(col_ub[2]) * (1.0f / 255.0f);
-  r_col[3] = float(col_ub[3]) * (1.0f / 255.0f);
-}
-
-void rgb_float_to_uchar(uchar r_col[3], const float col_f[3])
-{
-  unit_float_to_uchar_clamp_v3(r_col, col_f);
-}
-
-void rgba_float_to_uchar(uchar r_col[4], const float col_f[4])
-{
-  unit_float_to_uchar_clamp_v4(r_col, col_f);
 }
 
 /* ********************************* color transforms ********************************* */
@@ -727,11 +715,8 @@ static ushort hipart(const float f)
 
   tmp.f = f;
 
-#ifdef __BIG_ENDIAN__
-  return tmp.us[0];
-#else
+  /* NOTE: this is endianness-sensitive. */
   return tmp.us[1];
-#endif
 }
 
 static float index_to_float(const ushort i)
@@ -754,13 +739,9 @@ static float index_to_float(const ushort i)
     return -FLT_MAX;
   }
 
-#ifdef __BIG_ENDIAN__
-  tmp.us[0] = i;
-  tmp.us[1] = 0x8000;
-#else
+  /* NOTE: this is endianness-sensitive. */
   tmp.us[0] = 0x8000;
   tmp.us[1] = i;
-#endif
 
   return tmp.f;
 }

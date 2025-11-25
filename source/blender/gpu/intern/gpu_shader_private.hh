@@ -8,16 +8,16 @@
 
 #pragma once
 
+#include "BLI_map.hh"
 #include "BLI_span.hh"
 #include "BLI_string_ref.hh"
 
 #include "GPU_shader.hh"
+#include "GPU_worker.hh"
 #include "gpu_shader_create_info.hh"
 #include "gpu_shader_interface.hh"
 
-#include "BLI_map.hh"
-
-#include <mutex>
+#include <deque>
 #include <string>
 
 namespace blender::gpu {
@@ -36,6 +36,13 @@ class Context;
 #define SOURCES_INDEX_VERSION 0
 #define SOURCES_INDEX_SPECIALIZATION_CONSTANTS 1
 
+struct PatchedShaderCreateInfo {
+  shader::ShaderCreateInfo info;
+  shader::ShaderCreateInfoStringCache names;
+
+  PatchedShaderCreateInfo(const shader::ShaderCreateInfo &info_) : info(info_) {}
+};
+
 /**
  * Implementation of shader compilation and uniforms handling.
  * Base class which is then specialized for each implementation (GL, VK, ...).
@@ -47,24 +54,9 @@ class Shader {
   /** Bit-set indicating the frame-buffer color attachments that this shader writes to. */
   uint16_t fragment_output_bits = 0;
 
-  /**
-   * Specialization constants as a Struct-of-Arrays. Allow simpler comparison and reset.
-   * The backend is free to implement their support as they see fit.
-   */
-  struct Constants {
-    using Value = shader::SpecializationConstant::Value;
-    Vector<gpu::shader::Type> types;
-    /* Current values set by `GPU_shader_constant_*()` call. The backend can choose to interpret
-     * that however it wants (i.e: bind another shader instead). */
-    Vector<Value> values;
-
-    /**
-     * OpenGL needs to know if a different program needs to be attached when constants are
-     * changed. Vulkan and Metal uses pipelines and don't have this issue. Attribute can be
-     * removed after the OpenGL backend has been phased out.
-     */
-    bool is_dirty;
-  } constants;
+  /* Default specialization constants state as defined inside ShaderCreateInfo.
+   * Should be considered as const after init(). */
+  std::unique_ptr<const shader::SpecializationConstants> constants;
 
   /* WORKAROUND: True if this shader is a polyline shader and needs an appropriate setup to render.
    * Eventually, in the future, we should modify the user code instead of relying on such hacks. */
@@ -80,18 +72,28 @@ class Shader {
    * when updating new materials. */
   Shader *parent_shader_ = nullptr;
 
+  /* In some situation, a backend might want to transform the create infos before it is being
+   * parsed. */
+  std::unique_ptr<PatchedShaderCreateInfo> patched_info_;
+
  public:
   Shader(const char *name);
   virtual ~Shader();
 
-  /* `is_batch_compilation` is true when the shader is being compiled as part of a
-   * `GPU_shader_batch`. Backends that use the `ShaderCompilerGeneric` can ignore it. */
-  virtual void init(const shader::ShaderCreateInfo &info, bool is_batch_compilation) = 0;
+  virtual void init(const shader::ShaderCreateInfo &info, bool is_codegen_only) = 0;
 
-  virtual void vertex_shader_from_glsl(MutableSpan<StringRefNull> sources) = 0;
-  virtual void geometry_shader_from_glsl(MutableSpan<StringRefNull> sources) = 0;
-  virtual void fragment_shader_from_glsl(MutableSpan<StringRefNull> sources) = 0;
-  virtual void compute_shader_from_glsl(MutableSpan<StringRefNull> sources) = 0;
+  /* Patch create infos for any additional resources that could be needed. */
+  virtual const shader::ShaderCreateInfo &patch_create_info(
+      const shader::ShaderCreateInfo &original_info) = 0;
+
+  virtual void vertex_shader_from_glsl(const shader::ShaderCreateInfo &info,
+                                       MutableSpan<StringRefNull> sources) = 0;
+  virtual void geometry_shader_from_glsl(const shader::ShaderCreateInfo &info,
+                                         MutableSpan<StringRefNull> sources) = 0;
+  virtual void fragment_shader_from_glsl(const shader::ShaderCreateInfo &info,
+                                         MutableSpan<StringRefNull> sources) = 0;
+  virtual void compute_shader_from_glsl(const shader::ShaderCreateInfo &info,
+                                        MutableSpan<StringRefNull> sources) = 0;
   virtual bool finalize(const shader::ShaderCreateInfo *info = nullptr) = 0;
   /* Pre-warms PSOs using parent shader's cached PSO descriptors. Limit specifies maximum PSOs to
    * warm. If -1, compiles all PSO permutations in parent shader.
@@ -99,12 +101,7 @@ class Shader {
    * See `GPU_shader_warm_cache(..)` in `GPU_shader.hh` for more information. */
   virtual void warm_cache(int limit) = 0;
 
-  virtual void transform_feedback_names_set(Span<const char *> name_list,
-                                            eGPUShaderTFBType geom_type) = 0;
-  virtual bool transform_feedback_enable(VertBuf *) = 0;
-  virtual void transform_feedback_disable() = 0;
-
-  virtual void bind() = 0;
+  virtual void bind(const shader::SpecializationConstants *constants_state) = 0;
   virtual void unbind() = 0;
 
   virtual void uniform_float(int location, int comp_len, int array_size, const float *data) = 0;
@@ -113,7 +110,7 @@ class Shader {
   /* Add specialization constant declarations to shader instance. */
   void specialization_constants_init(const shader::ShaderCreateInfo &info);
 
-  std::string defines_declare(const shader::ShaderCreateInfo &info) const;
+  static std::string defines_declare(const shader::ShaderCreateInfo &info);
   virtual std::string resources_declare(const shader::ShaderCreateInfo &info) const = 0;
   virtual std::string vertex_interface_declare(const shader::ShaderCreateInfo &info) const = 0;
   virtual std::string fragment_interface_declare(const shader::ShaderCreateInfo &info) const = 0;
@@ -121,27 +118,29 @@ class Shader {
   virtual std::string geometry_layout_declare(const shader::ShaderCreateInfo &info) const = 0;
   virtual std::string compute_layout_declare(const shader::ShaderCreateInfo &info) const = 0;
 
-  /* DEPRECATED: Kept only because of BGL API. */
-  virtual int program_handle_get() const = 0;
-
-  inline StringRefNull name_get() const
+  StringRefNull name_get() const
   {
     return name;
   }
 
-  inline void parent_set(Shader *parent)
+  void parent_set(Shader *parent)
   {
     parent_shader_ = parent;
   }
 
-  inline Shader *parent_get() const
+  Shader *parent_get() const
   {
     return parent_shader_;
   }
 
-  static bool srgb_uniform_dirty_get();
-  static void set_srgb_uniform(GPUShader *shader);
+  static void set_scene_linear_to_xyz_uniform(gpu::Shader *shader);
+  static void set_srgb_uniform(Context *ctx, gpu::Shader *shader);
   static void set_framebuffer_srgb_target(int use_srgb_to_linear);
+
+  static void dump_source_to_disk(StringRef shader_name,
+                                  StringRef shader_name_with_stage_name,
+                                  StringRef extension,
+                                  StringRef source);
 
  protected:
   void print_log(Span<StringRefNull> sources,
@@ -151,22 +150,7 @@ class Shader {
                  GPULogParser *parser);
 };
 
-/* Syntactic sugar. */
-static inline GPUShader *wrap(Shader *vert)
-{
-  return reinterpret_cast<GPUShader *>(vert);
-}
-static inline Shader *unwrap(GPUShader *vert)
-{
-  return reinterpret_cast<Shader *>(vert);
-}
-static inline const Shader *unwrap(const GPUShader *vert)
-{
-  return reinterpret_cast<const Shader *>(vert);
-}
-
 class ShaderCompiler {
- protected:
   struct Sources {
     std::string vert;
     std::string geom;
@@ -174,47 +158,79 @@ class ShaderCompiler {
     std::string comp;
   };
 
- public:
-  virtual ~ShaderCompiler() = default;
+  struct AsyncCompilation;
+  struct ParallelWork {
+    ShaderCompiler *compiler = nullptr;
+    ShaderCompiler::AsyncCompilation *compilation = nullptr;
+    WorkID id = 0;
+  };
 
-  Shader *compile(const shader::ShaderCreateInfo &info, bool is_batch_compilation);
+  struct AsyncCompilation {
+    Shader *shader = nullptr;
+    const shader::ShaderCreateInfo *info = nullptr;
 
-  virtual BatchHandle batch_compile(Span<const shader::ShaderCreateInfo *> &infos) = 0;
-  virtual bool batch_is_ready(BatchHandle handle) = 0;
-  virtual Vector<Shader *> batch_finalize(BatchHandle &handle) = 0;
+    std::unique_ptr<ShaderSpecialization> specialization = nullptr;
 
-  virtual SpecializationBatchHandle precompile_specializations(
-      Span<ShaderSpecialization> /*specializations*/)
+    std::unique_ptr<ParallelWork> work;
+
+    std::atomic<bool> is_ready = false;
+
+    bool is_specialization()
+    {
+      return specialization != nullptr;
+    }
+  };
+  Map<AsyncCompilationHandle, AsyncCompilation *> async_compilations_;
+  std::mutex mutex_;
+  std::condition_variable compilation_finished_notification_;
+
+  std::unique_ptr<GPUWorker> compilation_worker_;
+
+  bool support_specializations_;
+
+  static void do_work_static_cb(void *payload);
+  void do_work(ParallelWork &work);
+
+  AsyncCompilationHandle next_handle_ = 1;
+
+  bool is_compiling_impl();
+
+  bool is_paused_ = false;
+  std::condition_variable pause_finished_notification_;
+
+ protected:
+  /* Must be called earlier from the destructor of the subclass if the compilation process relies
+   * on subclass resources. */
+  void destruct_compilation_worker()
   {
-    /* No-op. */
-    return 0;
-  };
-
-  virtual bool specialization_batch_is_ready(SpecializationBatchHandle &handle)
-  {
-    handle = 0;
-    return true;
-  };
-};
-
-/* Generic (fully synchronous) implementation for backends that don't implement their own
- * ShaderCompiler. Used by Vulkan and Metal. */
-class ShaderCompilerGeneric : public ShaderCompiler {
- private:
-  struct Batch {
-    Vector<Shader *> shaders;
-    Vector<const shader::ShaderCreateInfo *> infos;
-    bool is_ready = false;
-  };
-  BatchHandle next_batch_handle = 1;
-  Map<BatchHandle, Batch> batches;
+    compilation_worker_.reset();
+  }
 
  public:
-  ~ShaderCompilerGeneric() override;
+  ShaderCompiler(uint32_t threads_count = 1,
+                 GPUWorker::ContextType context_type = GPUWorker::ContextType::PerThread,
+                 bool support_specializations = false);
+  virtual ~ShaderCompiler();
 
-  BatchHandle batch_compile(Span<const shader::ShaderCreateInfo *> &infos) override;
-  bool batch_is_ready(BatchHandle handle) override;
-  Vector<Shader *> batch_finalize(BatchHandle &handle) override;
+  Shader *compile(const shader::ShaderCreateInfo &info, bool is_codegen_only);
+
+  virtual Shader *compile_shader(const shader::ShaderCreateInfo &info);
+  virtual void specialize_shader(const ShaderSpecialization & /*specialization*/) {};
+
+  AsyncCompilationHandle async_compilation(const shader::ShaderCreateInfo *info,
+                                           CompilationPriority priority);
+  void asyc_compilation_cancel(AsyncCompilationHandle &handle);
+  bool async_compilation_is_ready(AsyncCompilationHandle handle);
+  Shader *async_compilation_finalize(AsyncCompilationHandle &handle);
+
+  AsyncSpecializationHandle async_specialization(const ShaderSpecialization &specialization,
+                                                 CompilationPriority priority);
+  bool async_specialization_is_ready(AsyncSpecializationHandle &handle);
+
+  bool is_compiling();
+  void wait_for_all();
+  void pause_all();
+  void continue_all();
 };
 
 enum class Severity {
@@ -228,7 +244,7 @@ struct LogCursor {
   int source = -1;
   int row = -1;
   int column = -1;
-  StringRef file_name_and_error_line = {};
+  std::string file_name_and_error_line;
 };
 
 struct GPULogItem {
@@ -254,6 +270,10 @@ class GPULogParser {
   bool at_any(const char *log_line, const StringRef chars) const;
   int parse_number(const char *log_line, const char **r_new_position) const;
 
+  static size_t line_start_get(StringRefNull source_combined, size_t target_line);
+  static StringRef filename_get(StringRefNull source_combined, size_t pos);
+  static size_t source_line_get(StringRefNull source_combined, size_t pos);
+
   MEM_CXX_CLASS_ALLOC_FUNCS("GPULogParser");
 };
 
@@ -263,4 +283,4 @@ void printf_end(Context *ctx);
 }  // namespace blender::gpu
 
 /* XXX do not use it. Special hack to use OCIO with batch API. */
-GPUShader *immGetShader();
+blender::gpu::Shader *immGetShader();

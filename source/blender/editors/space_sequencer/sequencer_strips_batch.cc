@@ -20,7 +20,7 @@
 
 #include "UI_resources.hh"
 
-namespace blender::ed::seq {
+namespace blender::ed::vse {
 
 uint color_pack(const uchar rgba[4])
 {
@@ -45,7 +45,7 @@ float calc_strip_round_radius(float pixely)
 StripsDrawBatch::StripsDrawBatch(const View2D *v2d) : strips_(GPU_SEQ_STRIP_DRAW_DATA_LEN)
 {
   view_mask_min_ = float2(v2d->mask.xmin, v2d->mask.ymin);
-  view_mask_size_ = float2(BLI_rcti_size_x(&v2d->mask), BLI_rcti_size_y(&v2d->mask));
+  view_mask_size_ = float2(BLI_rcti_size_x(&v2d->mask) + 1, BLI_rcti_size_y(&v2d->mask) + 1);
   view_cur_min_ = float2(v2d->cur.xmin, v2d->cur.ymin);
   float2 view_cur_size = float2(BLI_rctf_size_x(&v2d->cur), BLI_rctf_size_y(&v2d->cur));
   view_cur_inv_size_ = 1.0f / view_cur_size;
@@ -128,4 +128,4 @@ void StripsDrawBatch::flush_batch()
   strips_count_ = 0;
 }
 
-}  // namespace blender::ed::seq
+}  // namespace blender::ed::vse

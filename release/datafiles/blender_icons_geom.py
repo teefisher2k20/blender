@@ -94,7 +94,7 @@ def object_material_colors(ob):
     for slot in ob.material_slots:
         material = slot.material
         color = color_default
-        if material is not None and material.use_nodes:
+        if material is not None:
             node_tree = material.node_tree
             if node_tree is not None:
                 color = next((
@@ -137,7 +137,7 @@ def mesh_data_lists_from_mesh(me, material_colors):
     tris_data = []
 
     for p in me_polys:
-        # Note, all faces are handled, backfacing/zero area is checked just before writing.
+        # Note, all faces are handled, back-facing/zero area is checked just before writing.
         material_index = p.material_index
         if material_index < len(material_colors):
             base_color = material_colors[p.material_index]

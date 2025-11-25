@@ -13,7 +13,7 @@
 #include "MEM_guardedalloc.h"
 
 #include "BLI_path_utils.hh"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_utildefines.h"
 
 #include "IMB_imbuf.hh"
@@ -37,6 +37,7 @@
 #include "RNA_prototypes.hh"
 
 #include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 
 #include "WM_api.hh"
 #include "WM_types.hh"
@@ -65,8 +66,7 @@ static int screenshot_data_create(bContext *C, wmOperator *op, ScrArea *area)
   uint8_t *dumprect = WM_window_pixels_read(C, win, dumprect_size);
 
   if (dumprect) {
-    ScreenshotData *scd = static_cast<ScreenshotData *>(
-        MEM_callocN(sizeof(ScreenshotData), "screenshot"));
+    ScreenshotData *scd = MEM_callocN<ScreenshotData>("screenshot");
 
     scd->dumpsx = dumprect_size[0];
     scd->dumpsy = dumprect_size[1];
@@ -75,7 +75,7 @@ static int screenshot_data_create(bContext *C, wmOperator *op, ScrArea *area)
       scd->crop = area->totrct;
     }
 
-    BKE_image_format_init(&scd->im_format, false);
+    BKE_image_format_init(&scd->im_format);
 
     op->customdata = scd;
 
@@ -98,7 +98,7 @@ static void screenshot_data_free(wmOperator *op)
   }
 }
 
-static int screenshot_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus screenshot_exec(bContext *C, wmOperator *op)
 {
   const bool use_crop = STREQ(op->idname, "SCREEN_OT_screenshot_area");
   ScreenshotData *scd = static_cast<ScreenshotData *>(op->customdata);
@@ -150,7 +150,7 @@ static int screenshot_exec(bContext *C, wmOperator *op)
   return ok ? OPERATOR_FINISHED : OPERATOR_CANCELLED;
 }
 
-static int screenshot_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus screenshot_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
   const bool use_crop = STREQ(op->idname, "SCREEN_OT_screenshot_area");
   ScrArea *area = nullptr;
@@ -177,7 +177,7 @@ static int screenshot_invoke(bContext *C, wmOperator *op, const wmEvent *event)
     }
     else {
       /* As the file isn't saved, only set the name and let the file selector pick a directory. */
-      STRNCPY(filepath, DATA_("screen"));
+      STRNCPY_UTF8(filepath, DATA_("screen"));
     }
     RNA_string_set(op->ptr, "filepath", filepath);
 
@@ -208,20 +208,20 @@ static bool screenshot_draw_check_prop(PointerRNA * /*ptr*/,
   return !STREQ(prop_id, "filepath");
 }
 
-static void screenshot_draw(bContext * /*C*/, wmOperator *op)
+static void screenshot_draw(bContext *C, wmOperator *op)
 {
-  uiLayout *layout = op->layout;
+  blender::ui::Layout &layout = *op->layout;
   ScreenshotData *scd = static_cast<ScreenshotData *>(op->customdata);
 
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout.use_property_split_set(true);
+  layout.use_property_decorate_set(false);
 
   /* image template */
   PointerRNA ptr = RNA_pointer_create_discrete(nullptr, &RNA_ImageFormatSettings, &scd->im_format);
-  uiTemplateImageSettings(layout, &ptr, false);
+  uiTemplateImageSettings(&layout, C, &ptr, false);
 
   /* main draw call */
-  uiDefAutoButsRNA(layout,
+  uiDefAutoButsRNA(&layout,
                    op->ptr,
                    screenshot_draw_check_prop,
                    nullptr,

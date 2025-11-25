@@ -81,9 +81,9 @@ class BoneCollectionDragController : public AbstractViewItemDragController {
                                bArmature &armature,
                                const int bcoll_index);
 
-  eWM_DragDataType get_drag_type() const override;
+  std::optional<eWM_DragDataType> get_drag_type() const override;
   void *create_drag_data() const override;
-  void on_drag_start() override;
+  void on_drag_start(bContext &C) override;
 };
 
 class BoneCollectionDropTarget : public TreeViewItemDropTarget {
@@ -217,7 +217,7 @@ class BoneCollectionItem : public AbstractTreeViewItem {
 
   void build_row(uiLayout &row) override
   {
-    uiLayout *sub = uiLayoutRow(&row, true);
+    uiLayout *sub = &row.row(true);
 
     uiBut *name_label = uiItemL_ex(sub, bone_collection_.name, ICON_NONE, false, false);
     if (!ANIM_armature_bonecoll_is_editable(&armature_, &bone_collection_)) {
@@ -238,26 +238,25 @@ class BoneCollectionItem : public AbstractTreeViewItem {
       else {
         icon = ICON_BLANK1;
       }
-      uiItemL(sub, "", icon);
+      sub->label("", icon);
     }
 
     /* Visibility eye icon. */
     {
       const bool is_solo_active = armature_.flag & ARM_BCOLL_SOLO_ACTIVE;
-      uiLayout *visibility_sub = uiLayoutRow(sub, true);
-      uiLayoutSetActive(visibility_sub,
-                        !is_solo_active && bone_collection_.is_visible_ancestors());
+      uiLayout *visibility_sub = &sub->row(true);
+      visibility_sub->active_set(!is_solo_active && bone_collection_.is_visible_ancestors());
 
       const int icon = bone_collection_.is_visible() ? ICON_HIDE_OFF : ICON_HIDE_ON;
       PointerRNA bcoll_ptr = rna_pointer();
-      uiItemR(visibility_sub, &bcoll_ptr, "is_visible", UI_ITEM_R_ICON_ONLY, "", icon);
+      visibility_sub->prop(&bcoll_ptr, "is_visible", UI_ITEM_R_ICON_ONLY, "", icon);
     }
 
     /* Solo icon. */
     {
       const int icon = bone_collection_.is_solo() ? ICON_SOLO_ON : ICON_SOLO_OFF;
       PointerRNA bcoll_ptr = rna_pointer();
-      uiItemR(sub, &bcoll_ptr, "is_solo", UI_ITEM_R_ICON_ONLY, "", icon);
+      sub->prop(&bcoll_ptr, "is_solo", UI_ITEM_R_ICON_ONLY, "", icon);
     }
   }
 
@@ -284,9 +283,9 @@ class BoneCollectionItem : public AbstractTreeViewItem {
     PropertyRNA *prop = RNA_struct_find_property(&bcolls_ptr, "active_index");
 
     RNA_property_int_set(&bcolls_ptr, prop, bcoll_index_);
-    RNA_property_update(&const_cast<bContext &>(C), &bcolls_ptr, prop);
+    RNA_property_update(&C, &bcolls_ptr, prop);
 
-    ED_undo_push(&const_cast<bContext &>(C), "Change Armature's Active Bone Collection");
+    ED_undo_push(&C, "Change Armature's Active Bone Collection");
   }
 
   std::optional<bool> should_be_collapsed() const override
@@ -344,6 +343,11 @@ class BoneCollectionItem : public AbstractTreeViewItem {
     return bone_collection_.name;
   }
 
+  void delete_item(bContext *C) override
+  {
+    ANIM_armature_bonecoll_remove(&armature_, &bone_collection_);
+    ED_undo_push(C, "Delete Bone Collection");
+  }
   std::unique_ptr<AbstractViewItemDragController> create_drag_controller() const override
   {
     /* Reject dragging linked (or otherwise uneditable) bone collections. */
@@ -439,19 +443,19 @@ BoneCollectionDragController::BoneCollectionDragController(BoneCollectionTreeVie
 {
 }
 
-eWM_DragDataType BoneCollectionDragController::get_drag_type() const
+std::optional<eWM_DragDataType> BoneCollectionDragController::get_drag_type() const
 {
   return WM_DRAG_BONE_COLLECTION;
 }
 
 void *BoneCollectionDragController::create_drag_data() const
 {
-  ArmatureBoneCollection *drag_data = MEM_cnew<ArmatureBoneCollection>(__func__);
+  ArmatureBoneCollection *drag_data = MEM_callocN<ArmatureBoneCollection>(__func__);
   *drag_data = drag_arm_bcoll_;
   return drag_data;
 }
 
-void BoneCollectionDragController::on_drag_start()
+void BoneCollectionDragController::on_drag_start(bContext & /*C*/)
 {
   ANIM_armature_bonecoll_active_index_set(drag_arm_bcoll_.armature, drag_arm_bcoll_.bcoll_index);
 }
@@ -468,14 +472,14 @@ void uiTemplateBoneCollectionTree(uiLayout *layout, bContext *C)
   }
   BLI_assert(GS(armature->id.name) == ID_AR);
 
-  uiBlock *block = uiLayoutGetBlock(layout);
+  uiBlock *block = layout->block();
 
   ui::AbstractTreeView *tree_view = UI_block_add_view(
       *block,
       "Bone Collection Tree View",
       std::make_unique<blender::ui::bonecollections::BoneCollectionTreeView>(*armature));
   tree_view->set_context_menu_title("Bone Collection");
-  tree_view->set_default_rows(3);
+  tree_view->set_default_rows(5);
 
   ui::TreeViewBuilder::build_tree_view(*C, *tree_view, *layout);
 }

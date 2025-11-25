@@ -20,13 +20,15 @@
 
 #include "UI_interface.hh"
 #include "UI_interface_icons.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 #include "UI_view2d.hh"
 
 #include "DNA_scene_types.h"
 
+#include "BLI_math_base.h"
 #include "BLI_rect.h"
-#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_timecode.h"
 
 #include "RNA_access.hh"
@@ -47,7 +49,8 @@ static int get_centered_text_y(const rcti *rect)
 
 static void draw_background(const rcti *rect)
 {
-  uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+  uint pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
 
   immUniformThemeColor(TH_TIME_SCRUB_BACKGROUND);
@@ -65,10 +68,11 @@ static void get_current_time_str(
     const Scene *scene, bool display_seconds, int frame, char *r_str, uint str_maxncpy)
 {
   if (display_seconds) {
-    BLI_timecode_string_from_time(r_str, str_maxncpy, -1, FRA2TIME(frame), FPS, U.timecode_style);
+    BLI_timecode_string_from_time(
+        r_str, str_maxncpy, -1, FRA2TIME(frame), scene->frames_per_second(), U.timecode_style);
   }
   else {
-    BLI_snprintf(r_str, str_maxncpy, "%d", frame);
+    BLI_snprintf_utf8(r_str, str_maxncpy, "%d", frame);
   }
 }
 
@@ -76,72 +80,99 @@ static void draw_current_frame(const Scene *scene,
                                bool display_seconds,
                                const View2D *v2d,
                                const rcti *scrub_region_rect,
-                               int current_frame)
+                               int current_frame,
+                               bool display_stalk = true)
 {
   const uiFontStyle *fstyle = UI_FSTYLE_WIDGET;
-  int frame_x = UI_view2d_view_to_region_x(v2d, current_frame);
-
+  const int frame_x = UI_view2d_view_to_region_x(v2d, current_frame);
+  const float subframe_x = UI_view2d_view_to_region_x(v2d, BKE_scene_ctime_get(scene));
   char frame_str[64];
   get_current_time_str(scene, display_seconds, current_frame, frame_str, sizeof(frame_str));
-  float text_width = UI_fontstyle_string_width(fstyle, frame_str);
-  float box_width = std::max(text_width + 8 * UI_SCALE_FAC, 24 * UI_SCALE_FAC);
-  float box_padding = 3 * UI_SCALE_FAC;
-  const int line_outline = max_ii(1, round_fl_to_int(1 * UI_SCALE_FAC));
-
-  float bg_color[4];
-  UI_GetThemeColorShade4fv(TH_CFRAME, -5, bg_color);
-
-  /* Draw vertical line from the bottom of the current frame box to the bottom of the screen. */
-  const float subframe_x = UI_view2d_view_to_region_x(v2d, BKE_scene_ctime_get(scene));
-  GPUVertFormat *format = immVertexFormat();
-  uint pos = GPU_vertformat_attr_add(format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
-
-  GPU_blend(GPU_BLEND_ALPHA);
-  immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
-
-  /* Outline. */
-  immUniformThemeColorShadeAlpha(TH_BACK, -25, -100);
-  immRectf(pos,
-           subframe_x - (line_outline + U.pixelsize),
-           scrub_region_rect->ymax - box_padding,
-           subframe_x + (line_outline + U.pixelsize),
-           0.0f);
-
-  /* Line. */
-  immUniformThemeColor(TH_CFRAME);
-  immRectf(pos,
-           subframe_x - U.pixelsize,
-           scrub_region_rect->ymax - box_padding,
-           subframe_x + U.pixelsize,
-           0.0f);
-  immUnbindProgram();
-  GPU_blend(GPU_BLEND_NONE);
-
-  UI_draw_roundbox_corner_set(UI_CNR_ALL);
-
-  float outline_color[4];
-  UI_GetThemeColorShade4fv(TH_CFRAME, 5, outline_color);
-
+  const float text_width = UI_fontstyle_string_width(fstyle, frame_str);
+  const float text_padding = 4.0f * UI_SCALE_FAC;
+  const float box_min_width = 24.0f * UI_SCALE_FAC;
+  const float box_width = std::max(text_width + (2.0f * text_padding), box_min_width);
+  const float box_margin = 2.0f * UI_SCALE_FAC;
+  float shadow_width = UI_SCALE_FAC;
+  const float tri_top = ceil(scrub_region_rect->ymin + box_margin);
+  const float tri_half_width = 6.0f * UI_SCALE_FAC;
+  const float tri_height = 6.0f * UI_SCALE_FAC;
   rctf rect{};
-  rect.xmin = frame_x - box_width / 2 + U.pixelsize / 2;
-  rect.xmax = frame_x + box_width / 2 + U.pixelsize / 2;
-  rect.ymin = scrub_region_rect->ymin + box_padding;
-  rect.ymax = scrub_region_rect->ymax - box_padding;
-  UI_draw_roundbox_4fv_ex(
-      &rect, bg_color, nullptr, 1.0f, outline_color, U.pixelsize, 4 * UI_SCALE_FAC);
+  uint pos;
 
+  float fg_color[4];
+  UI_GetThemeColor4fv(TH_CFRAME, fg_color);
+  float bg_color[4];
+  UI_GetThemeColorShade4fv(TH_BACK, -20, bg_color);
+
+  if (display_stalk) {
+    /* Shadow for triangle below frame box. */
+    GPUVertFormat *format = immVertexFormat();
+    pos = GPU_vertformat_attr_add(format, "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
+    GPU_blend(GPU_BLEND_ALPHA);
+    immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
+    GPU_polygon_smooth(true);
+    immUniformColor4fv(bg_color);
+    immBegin(GPU_PRIM_TRIS, 3);
+    const float diag_offset = 0.4f * UI_SCALE_FAC;
+    immVertex2f(pos, floor(frame_x - tri_half_width - shadow_width - diag_offset), tri_top);
+    immVertex2f(pos, floor(frame_x + tri_half_width + shadow_width + 1.0f + diag_offset), tri_top);
+    immVertex2f(pos, frame_x + 0.5f, tri_top - tri_height - diag_offset - shadow_width);
+    GPU_polygon_smooth(false);
+    immEnd();
+    immUnbindProgram();
+
+    /* Vertical line. */
+    if (UI_SCALE_FAC < 0.91f) {
+      shadow_width = 1.0f;
+      rect.xmin = floor(subframe_x) - shadow_width;
+      rect.xmax = rect.xmin + U.pixelsize + shadow_width + shadow_width;
+    }
+    else {
+      rect.xmin = floor(subframe_x - U.pixelsize) - shadow_width;
+      rect.xmax = floor(subframe_x + U.pixelsize + 1.0f) + shadow_width;
+    }
+    rect.ymin = 0.0f;
+    rect.ymax = ceil(scrub_region_rect->ymax - box_margin + shadow_width);
+    UI_draw_roundbox_4fv_ex(&rect, fg_color, nullptr, 1.0f, bg_color, shadow_width, 0.0f);
+  }
+
+  /* Box. */
+  UI_draw_roundbox_corner_set(UI_CNR_ALL);
+  const float box_corner_radius = 4.0f * UI_SCALE_FAC;
+  rect.xmin = frame_x - (box_width / 2.0f);
+  rect.xmax = frame_x + (box_width / 2.0f) + 1.0f;
+  rect.ymin = floor(scrub_region_rect->ymin + (box_margin - shadow_width));
+  rect.ymax = ceil(scrub_region_rect->ymax - box_margin + shadow_width);
+  UI_draw_roundbox_4fv_ex(
+      &rect, fg_color, nullptr, 1.0f, bg_color, shadow_width, box_corner_radius);
+
+  /* Frame number text. */
   uchar text_color[4];
   UI_GetThemeColor4ubv(TH_HEADER_TEXT_HI, text_color);
+  const int y = BLI_rcti_cent_y(scrub_region_rect) - int(fstyle->points * UI_SCALE_FAC * 0.38f);
+  UI_fontstyle_draw_simple(fstyle, frame_x - (text_width / 2.0f), y, frame_str, text_color);
 
-  const int y = BLI_rcti_cent_y(scrub_region_rect) - int(fstyle->points * UI_SCALE_FAC * 0.35f);
-
-  UI_fontstyle_draw_simple(
-      +fstyle, frame_x - text_width / 2 + U.pixelsize / 2, y, frame_str, text_color);
+  if (display_stalk) {
+    /* Triangular base under frame number. */
+    immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
+    GPU_polygon_smooth(true);
+    immBegin(GPU_PRIM_TRIS, 3);
+    immUniformColor4fv(fg_color);
+    immVertex2f(pos, frame_x - tri_half_width, tri_top);
+    immVertex2f(pos, frame_x + tri_half_width + 1, tri_top);
+    immVertex2f(pos, frame_x + 0.5f, tri_top - tri_height);
+    immEnd();
+    immUnbindProgram();
+    GPU_polygon_smooth(false);
+    GPU_blend(GPU_BLEND_NONE);
+  }
 }
 
 void ED_time_scrub_draw_current_frame(const ARegion *region,
                                       const Scene *scene,
-                                      bool display_seconds)
+                                      bool display_seconds,
+                                      bool display_stalk)
 {
   const View2D *v2d = &region->v2d;
   GPU_matrix_push_projection();
@@ -150,14 +181,16 @@ void ED_time_scrub_draw_current_frame(const ARegion *region,
   rcti scrub_region_rect;
   ED_time_scrub_region_rect_get(region, &scrub_region_rect);
 
-  draw_current_frame(scene, display_seconds, v2d, &scrub_region_rect, scene->r.cfra);
+  draw_current_frame(
+      scene, display_seconds, v2d, &scrub_region_rect, scene->r.cfra, display_stalk);
   GPU_matrix_pop_projection();
 }
 
 void ED_time_scrub_draw(const ARegion *region,
                         const Scene *scene,
                         bool display_seconds,
-                        bool discrete_frames)
+                        bool discrete_frames,
+                        const int base)
 {
   const View2D *v2d = &region->v2d;
 
@@ -173,11 +206,11 @@ void ED_time_scrub_draw(const ARegion *region,
   numbers_rect.ymin = get_centered_text_y(&scrub_region_rect) - 4 * UI_SCALE_FAC;
   if (discrete_frames) {
     UI_view2d_draw_scale_x__discrete_frames_or_seconds(
-        region, v2d, &numbers_rect, scene, display_seconds, TH_TEXT);
+        region, v2d, &numbers_rect, scene, display_seconds, TH_TIME_SCRUB_TEXT, base);
   }
   else {
     UI_view2d_draw_scale_x__frames_or_seconds(
-        region, v2d, &numbers_rect, scene, display_seconds, TH_TEXT);
+        region, v2d, &numbers_rect, scene, display_seconds, TH_TIME_SCRUB_TEXT, base);
   }
 
   GPU_matrix_pop_projection();
@@ -216,7 +249,8 @@ void ED_time_scrub_channel_search_draw(const bContext *C, ARegion *region, bDope
   rect.ymin = region->winy - UI_TIME_SCRUB_MARGIN_Y;
   rect.ymax = region->winy;
 
-  uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
+  uint pos = GPU_vertformat_attr_add(
+      immVertexFormat(), "pos", blender::gpu::VertAttrType::SFLOAT_32_32);
   immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
   immUniformThemeColor(TH_BACK);
   immRectf(pos, rect.xmin, rect.ymin, rect.xmax, rect.ymax);
@@ -228,23 +262,23 @@ void ED_time_scrub_channel_search_draw(const bContext *C, ARegion *region, bDope
   const float padding_x = 2 * UI_SCALE_FAC;
   const float padding_y = UI_SCALE_FAC;
 
-  uiBlock *block = UI_block_begin(C, region, __func__, UI_EMBOSS);
-  uiLayout *layout = UI_block_layout(block,
-                                     UI_LAYOUT_VERTICAL,
-                                     UI_LAYOUT_HEADER,
-                                     rect.xmin + padding_x,
-                                     rect.ymin + UI_UNIT_Y + padding_y,
-                                     BLI_rcti_size_x(&rect) - 2 * padding_x,
-                                     1,
-                                     0,
-                                     style);
-  uiLayoutSetScaleY(layout, (UI_UNIT_Y - padding_y) / UI_UNIT_Y);
-  UI_block_layout_set_current(block, layout);
+  uiBlock *block = UI_block_begin(C, region, __func__, blender::ui::EmbossType::Emboss);
+  blender::ui::Layout &layout = blender::ui::block_layout(block,
+                                                          blender::ui::LayoutDirection::Vertical,
+                                                          blender::ui::LayoutType::Header,
+                                                          rect.xmin + padding_x,
+                                                          rect.ymin + UI_UNIT_Y + padding_y,
+                                                          BLI_rcti_size_x(&rect) - 2 * padding_x,
+                                                          1,
+                                                          0,
+                                                          style);
+  layout.scale_y_set((UI_UNIT_Y - padding_y) / UI_UNIT_Y);
+  blender::ui::block_layout_set_current(block, &layout);
   UI_block_align_begin(block);
-  uiItemR(layout, &ptr, "filter_text", UI_ITEM_NONE, "", ICON_NONE);
-  uiItemR(layout, &ptr, "use_filter_invert", UI_ITEM_NONE, "", ICON_ARROW_LEFTRIGHT);
+  layout.prop(&ptr, "filter_text", UI_ITEM_NONE, "", ICON_NONE);
+  layout.prop(&ptr, "use_filter_invert", UI_ITEM_NONE, "", ICON_ARROW_LEFTRIGHT);
   UI_block_align_end(block);
-  UI_block_layout_resolve(block, nullptr, nullptr);
+  blender::ui::block_layout_resolve(block);
 
   /* Make sure the events are consumed from the search and don't reach other UI blocks since this
    * is drawn on top of animation-channels. */

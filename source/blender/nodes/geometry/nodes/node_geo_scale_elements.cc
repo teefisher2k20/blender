@@ -14,11 +14,10 @@
 
 #include "DNA_mesh_types.h"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
-#include "BKE_mesh.hh"
-
+#include "GEO_foreach_geometry.hh"
 #include "GEO_mesh_selection.hh"
 
 #include "NOD_rna_define.hh"
@@ -27,42 +26,57 @@
 
 namespace blender::nodes::node_geo_scale_elements_cc {
 
+static const EnumPropertyItem scale_mode_items[] = {
+    {GEO_NODE_SCALE_ELEMENTS_UNIFORM,
+     "UNIFORM",
+     ICON_NONE,
+     N_("Uniform"),
+     N_("Scale elements by the same factor in every direction")},
+    {GEO_NODE_SCALE_ELEMENTS_SINGLE_AXIS,
+     "SINGLE_AXIS",
+     ICON_NONE,
+     N_("Single Axis"),
+     N_("Scale elements in a single direction")},
+    {0, nullptr, 0, nullptr, nullptr},
+};
+
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::Geometry>("Geometry").supported_type(GeometryComponent::Type::Mesh);
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
+  b.add_default_layout();
+  b.add_input<decl::Geometry>("Geometry")
+      .supported_type(GeometryComponent::Type::Mesh)
+      .description("Geometry to scale elements of");
+  b.add_output<decl::Geometry>("Geometry").propagate_all().align_with_previous();
   b.add_input<decl::Bool>("Selection").default_value(true).hide_value().field_on_all();
+
   b.add_input<decl::Float>("Scale", "Scale").default_value(1.0f).min(0.0f).field_on_all();
   b.add_input<decl::Vector>("Center")
       .subtype(PROP_TRANSLATION)
-      .implicit_field_on_all(implicit_field_inputs::position)
+      .implicit_field_on_all(NODE_DEFAULT_INPUT_POSITION_FIELD)
       .description(
           "Origin of the scaling for each element. If multiple elements are connected, their "
           "center is averaged");
-  auto &axis = b.add_input<decl::Vector>("Axis")
-                   .default_value({1.0f, 0.0f, 0.0f})
-                   .field_on_all()
-                   .description("Direction in which to scale the element")
-                   .make_available(
-                       [](bNode &node) { node.custom2 = GEO_NODE_SCALE_ELEMENTS_SINGLE_AXIS; });
-  b.add_output<decl::Geometry>("Geometry").propagate_all();
-
-  const bNode *node = b.node_or_null();
-  if (node != nullptr) {
-    const GeometryNodeScaleElementsMode mode = GeometryNodeScaleElementsMode(node->custom2);
-    axis.available(mode == GEO_NODE_SCALE_ELEMENTS_SINGLE_AXIS);
-  }
+  b.add_input<decl::Menu>("Scale Mode")
+      .static_items(scale_mode_items)
+      .default_value(GEO_NODE_SCALE_ELEMENTS_UNIFORM)
+      .optional_label();
+  b.add_input<decl::Vector>("Axis")
+      .default_value({1.0f, 0.0f, 0.0f})
+      .field_on_all()
+      .description("Direction in which to scale the element")
+      .usage_by_single_menu(GEO_NODE_SCALE_ELEMENTS_SINGLE_AXIS);
 };
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "domain", UI_ITEM_NONE, "", ICON_NONE);
-  uiItemR(layout, ptr, "scale_mode", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "domain", UI_ITEM_NONE, "", ICON_NONE);
 }
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
 {
   node->custom1 = int16_t(AttrDomain::Face);
-  node->custom2 = GEO_NODE_SCALE_ELEMENTS_UNIFORM;
 }
 
 static Array<int> create_reverse_offsets(const Span<int> indices, const int items_num)
@@ -138,7 +152,7 @@ static Array<int> reverse_indices_in_groups(const Span<int> group_indices,
    * atomically by many threads in parallel. `calloc` can be measurably faster than a parallel fill
    * of zero. Alternatively the offsets could be copied and incremented directly, but the cost of
    * the copy is slightly higher than the cost of `calloc`. */
-  int *counts = MEM_cnew_array<int>(size_t(offsets.size()), __func__);
+  int *counts = MEM_calloc_arrayN<int>(offsets.size(), __func__);
   BLI_SCOPED_DEFER([&]() { MEM_freeN(counts); })
   Array<int> results(group_indices.size());
   threading::parallel_for(group_indices.index_range(), 1024, [&](const IndexRange range) {
@@ -184,7 +198,7 @@ template<typename T> static T gather_mean(const VArray<T> &values, const Span<in
 
   T value;
   devirtualize_varray(values, [&](const auto values) {
-    const auto accumulator = threading::parallel_reduce<MeanAccumulator>(
+    const auto accumulator = threading::parallel_deterministic_reduce<MeanAccumulator>(
         indices.index_range(),
         2048,
         MeanAccumulator(T(), 0),
@@ -454,7 +468,7 @@ static void node_geo_exec(GeoNodeExecParams params)
 {
   const bNode &node = params.node();
   const AttrDomain domain = AttrDomain(node.custom1);
-  const GeometryNodeScaleElementsMode scale_mode = GeometryNodeScaleElementsMode(node.custom2);
+  const auto scale_mode = params.get_input<GeometryNodeScaleElementsMode>("Scale Mode");
 
   GeometrySet geometry = params.extract_input<GeometrySet>("Geometry");
 
@@ -462,7 +476,7 @@ static void node_geo_exec(GeoNodeExecParams params)
   const Field<float> scale_field = params.extract_input<Field<float>>("Scale");
   const Field<float3> center_field = params.extract_input<Field<float3>>("Center");
 
-  geometry.modify_geometry_sets([&](GeometrySet &geometry) {
+  geometry::foreach_real_geometry(geometry, [&](GeometrySet &geometry) {
     if (Mesh *mesh = geometry.get_mesh_for_write()) {
       const bke::MeshFieldContext context{*mesh, domain};
       FieldEvaluator evaluator{context, mesh->attributes().domain_size(domain)};
@@ -535,20 +549,6 @@ static void node_rna(StructRNA *srna)
       {0, nullptr, 0, nullptr, nullptr},
   };
 
-  static const EnumPropertyItem scale_mode_items[] = {
-      {GEO_NODE_SCALE_ELEMENTS_UNIFORM,
-       "UNIFORM",
-       ICON_NONE,
-       "Uniform",
-       "Scale elements by the same factor in every direction"},
-      {GEO_NODE_SCALE_ELEMENTS_SINGLE_AXIS,
-       "SINGLE_AXIS",
-       ICON_NONE,
-       "Single Axis",
-       "Scale elements in a single direction"},
-      {0, nullptr, 0, nullptr, nullptr},
-  };
-
   RNA_def_node_enum(srna,
                     "domain",
                     "Domain",
@@ -556,9 +556,6 @@ static void node_rna(StructRNA *srna)
                     domain_items,
                     NOD_inline_enum_accessors(custom1),
                     int(AttrDomain::Face));
-
-  RNA_def_node_enum(
-      srna, "scale_mode", "Scale Mode", "", scale_mode_items, NOD_inline_enum_accessors(custom2));
 }
 
 static void node_register()
@@ -574,7 +571,7 @@ static void node_register()
   ntype.declare = node_declare;
   ntype.draw_buttons = node_layout;
   ntype.initfunc = node_init;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

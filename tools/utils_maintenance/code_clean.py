@@ -24,6 +24,7 @@ import string
 
 from typing import (
     Any,
+    NamedTuple,
 )
 from collections.abc import (
     Iterator,
@@ -91,6 +92,8 @@ BUILT_IN_NUMERIC_TYPES = (
 )
 
 IDENTIFIER_CHARS = set(string.ascii_letters + "_" + string.digits)
+
+RE_IDENTIFIER_CHARS = re.compile(r"[" + "".join(list(IDENTIFIER_CHARS)) + "]+")
 
 
 # -----------------------------------------------------------------------------
@@ -231,6 +234,39 @@ def text_prev_eol_nonblank(data: str, pos: int, limit: int) -> int:
     while pos_next > limit and data[pos_next] in " \t":
         pos_next -= 1
     return pos_next
+
+
+def text_is_symbol_or_symbol_fragment(symbol: str) -> bool:
+    """
+    Return true if this can be a symbol or part of a symbol.
+    """
+    return RE_IDENTIFIER_CHARS.fullmatch(symbol) is not None
+
+
+def text_symbol_begins_at(data: str, beg: int, symbol: str) -> bool:
+    if beg + len(symbol) <= len(data):
+        if (data[beg: beg + len(symbol)] == symbol):
+            if beg + len(symbol) == len(data):
+                return True
+            # If it begins with a delimiter, no need to perform other checks.
+            if not text_is_symbol_or_symbol_fragment(symbol[0]):
+                return True
+            if not text_is_symbol_or_symbol_fragment(data[beg + len(symbol)]):
+                return True
+    return False
+
+
+def text_symbol_ends_at(data: str, end: int, symbol: str) -> bool:
+    if end >= len(symbol):
+        if (data[end - len(symbol): end] == symbol):
+            if end == len(symbol):
+                return True
+            # If it ends with a delimiter, no need to perform other checks.
+            if not text_is_symbol_or_symbol_fragment(symbol[-1]):
+                return True
+            if not text_is_symbol_or_symbol_fragment(data[end - (len(symbol) + 1)]):
+                return True
+    return False
 
 
 # -----------------------------------------------------------------------------
@@ -406,25 +442,14 @@ def find_build_args_make(build_dir: str) -> ProcessedCommands | None:
 #
 # Although this seems like it's not a common use-case.
 
-from collections import namedtuple
-Edit = namedtuple(
-    "Edit", (
-        # Keep first, for sorting.
-        "span",
 
-        "content",
-        "content_fail",
+class Edit(NamedTuple):
+    span: tuple[int, int]
+    content: str
+    content_fail: str
 
-        # Optional.
-        "extra_build_args",
-    ),
-
-    defaults=(
-        # `extra_build_args`.
-        None,
-    )
-)
-del namedtuple
+    # Optional.
+    extra_build_args: tuple[str, ...] | None = None
 
 
 class EditGenerator:
@@ -478,7 +503,7 @@ class edit_generators:
         """
 
         # Not default because there are times when the literal sizes don't represent extra dimensions on an array,
-        # where making this edit would be misleading as it would indicate a matrix (for e.g.) when a vector is intended.
+        # where making this edit would be misleading as it would indicate a matrix e.g. when a vector is intended.
         is_default = False
 
         @staticmethod
@@ -992,9 +1017,15 @@ class edit_generators:
                 span_skip.add(match.span(1))
 
             # Remove `struct`
-            for match in re.finditer(r"\b(struct)\s+[a-zA-Z0-9_]+", data):
+            for match in re.finditer(r"\b(struct)\s+([a-zA-Z0-9_]+)", data):
                 span = match.span(1)
                 if span in span_skip:
+                    continue
+
+                if match.group(2) in {
+                        # macOS requires a leading `struct` while Linux doesn't.
+                        "timezone",
+                }:
                     continue
 
                 edits.append(Edit(
@@ -1158,12 +1189,40 @@ class edit_generators:
                         content_fail='__ALWAYS_FAIL__',
                     ))
 
+            # `BLI_strnlen(a, sizeof(a))` -> `STRNLEN(a)`
+            # `BLI_strnlen(a, SOME_ID)` -> `STRNLEN(a)`
+            for src, dst in (
+                    ("BLI_strnlen", "STRNLEN"),
+                    ("BLI_strnlen_utf8", "STRNLEN_UTF8"),
+            ):
+                for match in re.finditer(
+                        (r"\b" + src + (
+                            r"\(([^,]+),\s+" r"("
+                            r"sizeof\([^\(\)]+\)"  # Trailing `sizeof(..)`.
+                            r"|"
+                            r"[a-zA-Z0-9_]+"  # Trailing identifier (typically a define).
+                            r")" r"\)"
+                        )),
+                        data,
+                        flags=re.MULTILINE,
+                ):
+                    edits.append(Edit(
+                        span=match.span(),
+                        content='{:s}({:s})'.format(dst, match.group(1)),
+                        content_fail='__ALWAYS_FAIL__',
+                    ))
+
             # `BLI_snprintf(a, SOME_SIZE, ...` -> `SNPRINTF(a, ...`
             for src, dst in (
                     ("BLI_snprintf", "SNPRINTF"),
                     ("BLI_snprintf_rlen", "SNPRINTF_RLEN"),
                     ("BLI_vsnprintf", "VSNPRINTF"),
                     ("BLI_vsnprintf_rlen", "VSNPRINTF_RLEN"),
+
+                    ("BLI_snprintf_utf8", "SNPRINTF_UTF8"),
+                    ("BLI_snprintf_utf8_rlen", "SNPRINTF_UTF8_RLEN"),
+                    ("BLI_vsnprintf_utf8", "VSNPRINTF_UTF8"),
+                    ("BLI_vsnprintf_utf8_rlen", "VSNPRINTF_UTF8_RLEN"),
             ):
                 for match in re.finditer(
                         r"\b" + src + r"\(([^,]+),\s+([^,]+),",
@@ -1579,6 +1638,34 @@ class edit_generators:
 
             any_number_re = "(" + "|".join(BUILT_IN_NUMERIC_TYPES) + ")"
 
+            # These can be safely ignored, but `sizeof` accounts for such a large number
+            # of cases that should be left as-is, that it's best to explicitly ignore them.
+            # Otherwise a lot of time is wasted testing changes that don't make sense.
+            ignore_prefix = (
+                "sizeof",
+                "alignof",
+            )
+            ignore_suffix = (
+                "\\n",
+            )
+
+            ignore_suffix_chars = {
+                # Used in templates.
+                ">",
+                # Used in contexts when not casting.
+                ")",
+                ",",
+                ";",
+                # Ending a string with a quote.
+                "\"",
+                # Typically in code-comments.
+                "`",
+                # Inside a string.
+                " ",
+                "'",
+                ".",
+            }
+
             # Handle both:
             # - Simple case:  `(float)(a + b)` -> `float(a + b)`.
             # - Complex Case: `(float)foo(a + b) + c` -> `float(foo(a + b)) + c`
@@ -1589,16 +1676,16 @@ class edit_generators:
                     data,
             ):
                 beg, end = match.span()
-                # This could be ignored, but `sizeof` accounts for such a large number
-                # of cases that should be left as-is, that it's best to explicitly ignore them.
-                if (
-                    (beg > 6) and
-                    (data[beg - 6: beg] == 'sizeof') and
-                    (not data[beg - 7].isalpha())
-                ):
+
+                if any(text_symbol_begins_at(data, end, text) for text in ignore_suffix):
+                    continue
+                if any(text_symbol_ends_at(data, beg, text) for text in ignore_prefix):
                     continue
 
                 char_after = data[end]
+                if char_after in ignore_suffix_chars:
+                    continue
+
                 if char_after == "(":
                     # Simple case.
                     edits.append(Edit(
@@ -1884,29 +1971,35 @@ def wash_source_with_edit(
                 pass
 
 
+class FileBuildConfig(NamedTuple):
+    build_args: Sequence[str]
+    build_cwd: str | None
+    output_path: str
+
+
 def wash_source_with_edit_list(
         source: str,
-        output: str,
-        build_args: Sequence[str],
-        build_cwd: str | None,
+        build_configs: Sequence[FileBuildConfig],
         skip_test: bool,
         verbose_compile: bool,
         verbose_edit_actions: bool,
         shared_edit_data: Any,
         edit_list: Sequence[str],
 ) -> None:
-    for edit_to_apply in edit_list:
-        wash_source_with_edit(
-            source,
-            output,
-            build_args,
-            build_cwd,
-            skip_test,
-            verbose_compile,
-            verbose_edit_actions,
-            shared_edit_data,
-            edit_to_apply,
-        )
+    assert len(build_configs) > 0
+    for build_cfg in build_configs:
+        for edit_to_apply in edit_list:
+            wash_source_with_edit(
+                source,
+                build_cfg.output_path,
+                build_cfg.build_args,
+                build_cfg.build_cwd,
+                skip_test,
+                verbose_compile,
+                verbose_edit_actions,
+                shared_edit_data,
+                edit_to_apply,
+            )
 
 
 # -----------------------------------------------------------------------------
@@ -1949,7 +2042,7 @@ def run_edits_on_directory(
     # needed for when arguments are referenced relatively
     os.chdir(build_dir)
 
-    # Weak, but we probably don't want to handle extern.
+    # Weak, but we probably don't want to handle `./extern/`.
     # this limit could be removed.
     source_paths = (
         os.path.join("intern", "ghost"),
@@ -1998,18 +2091,32 @@ def run_edits_on_directory(
                         return True
         return False
 
-    # Filter out build args.
-    args_orig_len = len(args)
-    args_with_cwd = [
-        (c, *split_build_args_with_cwd(build_args_str))
-        for (c, build_args_str) in args
+    filepaths_unique = {c for c, _ in args}
+
+    # Filter out paths.
+    # NOTE: the same source file may be referenced from multiple `build_args`,
+    # when running multiple processes it's important that each file references all it's arguments,
+    # so different processes don't try to manipulate the same file at once.
+    args_from_file_map: dict[str, list[FileBuildConfig]] = {
+        c: []
+        for c in sorted(filepaths_unique)
         if test_path(c)
-    ]
+    }
+
+    for (c, build_args_str) in args:
+        if c not in args_from_file_map:
+            continue
+        build_args, build_cwd = split_build_args_with_cwd(build_args_str)
+        args_from_file_map[c].append(FileBuildConfig(
+            build_args=build_args,
+            build_cwd=build_cwd,
+            output_path=output_from_build_args(build_args, build_cwd),
+        ))
+
     del args
-    print("Operating on {:d} of {:d} files...".format(len(args_with_cwd), args_orig_len))
-    for (c, build_args, build_cwd) in args_with_cwd:
+    print("Operating on {:d} of {:d} files...".format(len(args_from_file_map), len(filepaths_unique)))
+    for c in args_from_file_map.keys():
         print(" ", c)
-    del args_orig_len
 
     if jobs > 1:
         # Group edits to avoid one file holding up the queue before other edits can be worked on.
@@ -2029,26 +2136,22 @@ def run_edits_on_directory(
             if jobs > 1:
                 args_expanded = [(
                     c,
-                    output_from_build_args(build_args, build_cwd),
-                    build_args,
-                    build_cwd,
+                    build_configs,
                     skip_test,
                     verbose_compile,
                     verbose_edit_actions,
                     shared_edit_data,
                     edits_group,
-                ) for (c, build_args, build_cwd) in args_with_cwd]
+                ) for c, build_configs in args_from_file_map.items()]
                 pool = multiprocessing.Pool(processes=jobs)
                 pool.starmap(wash_source_with_edit_list, args_expanded)
                 del args_expanded
             else:
                 # now we have commands
-                for c, build_args, build_cwd in args_with_cwd:
+                for c, build_configs in args_from_file_map.items():
                     wash_source_with_edit_list(
                         c,
-                        output_from_build_args(build_args, build_cwd),
-                        build_args,
-                        build_cwd,
+                        build_configs,
                         skip_test,
                         verbose_compile,
                         verbose_edit_actions,

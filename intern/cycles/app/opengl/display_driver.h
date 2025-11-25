@@ -39,7 +39,8 @@ class OpenGLDisplayDriver : public DisplayDriver {
   half4 *map_texture_buffer() override;
   void unmap_texture_buffer() override;
 
-  GraphicsInterop graphics_interop_get() override;
+  GraphicsInteropDevice graphics_interop_get_device() override;
+  void graphics_interop_update_buffer() override;
 
   void draw(const Params &params) override;
 
@@ -84,7 +85,7 @@ class OpenGLDisplayDriver : public DisplayDriver {
     bool need_update = false;
 
     /* Content of the texture is to be filled with zeroes. */
-    std::atomic<bool> need_clear = true;
+    std::atomic<bool> need_zero = true;
 
     /* Dimensions of the texture in pixels. */
     int width = 0;

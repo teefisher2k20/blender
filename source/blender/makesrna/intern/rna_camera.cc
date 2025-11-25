@@ -9,12 +9,12 @@
 #include <cstdlib>
 
 #include "DNA_camera_types.h"
+#include "DNA_text_types.h"
 
 #include "BLI_math_rotation.h"
 
 #include "BLT_translation.hh"
 
-#include "RNA_access.hh"
 #include "RNA_define.hh"
 
 #include "rna_internal.hh"
@@ -28,11 +28,14 @@
 
 #  include "BKE_camera.h"
 #  include "BKE_object.hh"
+#  include "BKE_report.hh"
 
 #  include "DEG_depsgraph.hh"
 #  include "DEG_depsgraph_build.hh"
 
 #  include "SEQ_relations.hh"
+
+#  include "RE_engine.h"
 
 static float rna_Camera_angle_get(PointerRNA *ptr)
 {
@@ -86,6 +89,79 @@ static void rna_Camera_dependency_update(Main *bmain, Scene * /*scene*/, Pointer
   DEG_id_tag_update(&camera->id, 0);
 }
 
+static void rna_Camera_custom_update(Main * /*bmain*/, Scene *scene, PointerRNA *ptr)
+{
+  Camera *camera = (Camera *)ptr->owner_id;
+  RenderEngineType *engine_type = (scene != nullptr) ? RE_engines_find(scene->r.engine) : nullptr;
+
+  if (engine_type && engine_type->update_custom_camera) {
+    /* auto update camera */
+    RenderEngine *engine = RE_engine_create(engine_type);
+    engine_type->update_custom_camera(engine, camera);
+    RE_engine_free(engine);
+  }
+
+  DEG_id_tag_update(&camera->id, 0);
+}
+
+static void rna_Camera_custom_mode_set(PointerRNA *ptr, int value)
+{
+  Camera *camera = (Camera *)ptr->owner_id;
+
+  if (camera->custom_mode != value) {
+    camera->custom_mode = value;
+    camera->custom_filepath[0] = '\0';
+
+    /* replace text data-block by filepath */
+    if (camera->custom_shader) {
+      Text *text = reinterpret_cast<Text *>(camera->custom_shader);
+
+      if (value == CAM_CUSTOM_SHADER_EXTERNAL && text->filepath) {
+        STRNCPY(camera->custom_filepath, text->filepath);
+        BLI_path_abs(camera->custom_filepath, ID_BLEND_PATH_FROM_GLOBAL(&text->id));
+        BLI_path_rel(camera->custom_filepath, ID_BLEND_PATH_FROM_GLOBAL(&camera->id));
+      }
+
+      id_us_min(&camera->custom_shader->id);
+      camera->custom_shader = nullptr;
+    }
+
+    /* remove any bytecode */
+    if (camera->custom_bytecode) {
+      MEM_freeN(camera->custom_bytecode);
+      camera->custom_bytecode = nullptr;
+    }
+    camera->custom_bytecode_hash[0] = '\0';
+  }
+}
+
+static void rna_Camera_custom_bytecode_get(PointerRNA *ptr, char *value)
+{
+  Camera *camera = (Camera *)ptr->owner_id;
+  strcpy(value, (camera->custom_bytecode) ? camera->custom_bytecode : "");
+}
+
+static int rna_Camera_custom_bytecode_length(PointerRNA *ptr)
+{
+  Camera *camera = (Camera *)ptr->owner_id;
+  return (camera->custom_bytecode) ? strlen(camera->custom_bytecode) : 0;
+}
+
+static void rna_Camera_custom_bytecode_set(PointerRNA *ptr, const char *value)
+{
+  Camera *camera = (Camera *)ptr->owner_id;
+  if (camera->custom_bytecode) {
+    MEM_freeN(camera->custom_bytecode);
+  }
+
+  if (value && value[0]) {
+    camera->custom_bytecode = BLI_strdup(value);
+  }
+  else {
+    camera->custom_bytecode = nullptr;
+  }
+}
+
 static CameraBGImage *rna_Camera_background_images_new(Camera *cam)
 {
   CameraBGImage *bgpic = BKE_camera_background_image_new(cam);
@@ -105,7 +181,7 @@ static void rna_Camera_background_images_remove(Camera *cam,
   }
 
   BKE_camera_background_image_remove(cam, bgpic);
-  RNA_POINTER_INVALIDATE(bgpic_ptr);
+  bgpic_ptr->invalidate();
 
   WM_main_add_notifier(NC_CAMERA | ND_DRAW_RENDER_VIEWPORT, cam);
 }
@@ -190,7 +266,7 @@ static bool rna_Camera_background_images_override_apply(
 
 static void rna_Camera_dof_update(Main *bmain, Scene *scene, PointerRNA * /*ptr*/)
 {
-  SEQ_relations_invalidate_scene_strips(bmain, scene);
+  blender::seq::relations_invalidate_scene_strips(bmain, scene);
   WM_main_add_notifier(NC_SCENE | ND_SEQUENCER, scene);
 }
 
@@ -378,6 +454,7 @@ static void rna_def_camera_background_image(BlenderRNA *brna)
   prop = RNA_def_property(srna, "frame_method", PROP_ENUM, PROP_NONE);
   RNA_def_property_enum_bitflag_sdna(prop, nullptr, "flag");
   RNA_def_property_enum_items(prop, bgpic_camera_frame_items);
+  RNA_def_property_enum_default(prop, CAM_BGIMG_FLAG_CAMERA_ASPECT);
   RNA_def_property_ui_text(prop, "Frame Method", "How the image fits in the camera frame");
   RNA_def_property_update(prop, NC_CAMERA | ND_DRAW_RENDER_VIEWPORT, nullptr);
 
@@ -578,6 +655,7 @@ void RNA_def_camera(BlenderRNA *brna)
       {CAM_PERSP, "PERSP", 0, "Perspective", ""},
       {CAM_ORTHO, "ORTHO", 0, "Orthographic", ""},
       {CAM_PANO, "PANO", 0, "Panoramic", ""},
+      {CAM_CUSTOM, "CUSTOM", 0, "Custom", ""},
       {0, nullptr, 0, nullptr, nullptr},
   };
   static const EnumPropertyItem prop_lens_unit_items[] = {
@@ -638,6 +716,12 @@ void RNA_def_camera(BlenderRNA *brna)
        "Central Cylindrical",
        "Projection onto a virtual cylinder from its center, similar as a rotating panoramic "
        "camera"},
+      {0, nullptr, 0, nullptr, nullptr},
+  };
+
+  static const EnumPropertyItem custom_mode_items[] = {
+      {CAM_CUSTOM_SHADER_INTERNAL, "INTERNAL", 0, "Internal", "Use internal text data-block"},
+      {CAM_CUSTOM_SHADER_EXTERNAL, "EXTERNAL", 0, "External", "Use external file"},
       {0, nullptr, 0, nullptr, nullptr},
   };
 
@@ -816,6 +900,11 @@ void RNA_def_camera(BlenderRNA *brna)
   RNA_def_property_ui_text(prop, "Lens Unit", "Unit to edit lens in for the user interface");
 
   /* dtx */
+  prop = RNA_def_property(srna, "composition_guide_color", PROP_FLOAT, PROP_COLOR);
+  RNA_def_property_ui_text(
+      prop, "Composition Guide Color", "Color and alpha for compositional guide overlays");
+  RNA_def_property_update(prop, NC_CAMERA | ND_DRAW_RENDER_VIEWPORT, nullptr);
+
   prop = RNA_def_property(srna, "show_composition_center", PROP_BOOLEAN, PROP_NONE);
   RNA_def_property_boolean_sdna(prop, nullptr, "dtx", CAM_DTX_CENTER);
   RNA_def_property_ui_text(
@@ -963,6 +1052,39 @@ void RNA_def_camera(BlenderRNA *brna)
   RNA_def_property_range(prop, 0.00001f, FLT_MAX);
   RNA_def_property_ui_range(prop, 0.00001f, 10.0f, 0.1f, 3);
   RNA_def_property_ui_text(prop, "Cylinder Radius", "Radius of the virtual cylinder");
+  RNA_def_property_update(prop, NC_OBJECT | ND_DRAW, "rna_Camera_update");
+
+  /* Custom camera. */
+  prop = RNA_def_property(srna, "custom_filepath", PROP_STRING, PROP_FILEPATH);
+  RNA_def_property_ui_text(
+      prop, "Custom File Path", "Path to the shader defining the custom camera");
+  RNA_def_property_update(prop, NC_OBJECT | ND_DRAW, "rna_Camera_custom_update");
+
+  prop = RNA_def_property(srna, "custom_shader", PROP_POINTER, PROP_NONE);
+  RNA_def_property_struct_type(prop, "Text");
+  RNA_def_property_flag(prop, PROP_EDITABLE | PROP_ID_REFCOUNT);
+  RNA_def_property_ui_text(prop, "Custom Shader", "Shader defining the custom camera");
+  RNA_def_property_update(prop, NC_OBJECT | ND_DRAW, "rna_Camera_custom_update");
+
+  prop = RNA_def_property(srna, "custom_mode", PROP_ENUM, PROP_NONE);
+  RNA_def_property_enum_funcs(prop, nullptr, "rna_Camera_custom_mode_set", nullptr);
+  RNA_def_property_enum_items(prop, custom_mode_items);
+  RNA_def_property_ui_text(prop, "Custom shader source", "");
+  RNA_def_property_update(prop, NC_OBJECT | ND_DRAW, "rna_Camera_update");
+
+  prop = RNA_def_property(srna, "custom_bytecode", PROP_STRING, PROP_NONE);
+  RNA_def_property_string_funcs(prop,
+                                "rna_Camera_custom_bytecode_get",
+                                "rna_Camera_custom_bytecode_length",
+                                "rna_Camera_custom_bytecode_set");
+  RNA_def_property_ui_text(prop, "Custom Bytecode", "Compiled bytecode of the custom shader");
+  RNA_def_property_update(prop, NC_OBJECT | ND_DRAW, "rna_Camera_update");
+
+  prop = RNA_def_property(srna, "custom_bytecode_hash", PROP_STRING, PROP_NONE);
+  RNA_def_property_ui_text(
+      prop,
+      "Custom Bytecode Hash",
+      "Hash of the compiled bytecode of the custom shader, for quick equality checking");
   RNA_def_property_update(prop, NC_OBJECT | ND_DRAW, "rna_Camera_update");
 
   /* pointers */

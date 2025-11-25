@@ -15,7 +15,6 @@
 #include "BKE_lib_id.hh"
 #include "BKE_main.hh"
 
-#include "BLI_bounds.hh"
 #include "BLI_math_base.h"
 #include "BLI_rect.h"
 
@@ -167,9 +166,6 @@ void WM_operator_properties_filesel(wmOperatorType *ot,
   RNA_def_property_flag(prop, PROP_HIDDEN | PROP_SKIP_SAVE);
   prop = RNA_def_boolean(
       ot->srna, "filter_btx", (filter & FILE_TYPE_BTX) != 0, "Filter btx files", "");
-  RNA_def_property_flag(prop, PROP_HIDDEN | PROP_SKIP_SAVE);
-  prop = RNA_def_boolean(
-      ot->srna, "filter_collada", (filter & FILE_TYPE_COLLADA) != 0, "Filter COLLADA files", "");
   RNA_def_property_flag(prop, PROP_HIDDEN | PROP_SKIP_SAVE);
   prop = RNA_def_boolean(
       ot->srna, "filter_alembic", (filter & FILE_TYPE_ALEMBIC) != 0, "Filter Alembic files", "");
@@ -514,6 +510,16 @@ void WM_operator_properties_generic_select(wmOperatorType *ot)
    * mouse release event to do this part. */
   PropertyRNA *prop = RNA_def_boolean(
       ot->srna, "wait_to_deselect_others", false, "Wait to Deselect Others", "");
+  RNA_def_property_flag(prop, PROP_HIDDEN | PROP_SKIP_SAVE);
+
+  /* Force the selection to act on mouse click, not press.
+   * Necessary for some cases, but isn't used much. */
+  prop = RNA_def_boolean(ot->srna,
+                         "use_select_on_click",
+                         false,
+                         "Act on Click",
+                         "Instead of selecting on mouse press, wait to see if there's drag event. "
+                         "Otherwise select on mouse release");
   RNA_def_property_flag(prop, PROP_HIDDEN | PROP_SKIP_SAVE);
 
   RNA_def_int(ot->srna, "mouse_x", 0, INT_MIN, INT_MAX, "Mouse X", "", INT_MIN, INT_MAX);

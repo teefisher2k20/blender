@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BLI_kdtree.h"
+#include "BLI_kdtree.hh"
 #include "BLI_math_geom.h"
 #include "BLI_math_quaternion.hh"
 #include "BLI_math_rotation.h"
@@ -17,9 +17,10 @@
 #include "BKE_mesh_sample.hh"
 #include "BKE_pointcloud.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
+#include "GEO_foreach_geometry.hh"
 #include "GEO_randomize.hh"
 
 #include "node_geometry_util.hh"
@@ -35,7 +36,9 @@ static void node_declare(NodeDeclarationBuilder &b)
     node.custom1 = GEO_NODE_POINT_DISTRIBUTE_POINTS_ON_FACES_POISSON;
   };
 
-  b.add_input<decl::Geometry>("Mesh").supported_type(GeometryComponent::Type::Mesh);
+  b.add_input<decl::Geometry>("Mesh")
+      .supported_type(GeometryComponent::Type::Mesh)
+      .description("Mesh on whose faces to distribute points on");
   b.add_input<decl::Bool>("Selection").default_value(true).hide_value().field_on_all();
   auto &distance_min = b.add_input<decl::Float>("Distance Min")
                            .min(0.0f)
@@ -84,12 +87,12 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "distribute_method", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "distribute_method", UI_ITEM_NONE, "", ICON_NONE);
 }
 
 static void node_layout_ex(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "use_legacy_normal", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "use_legacy_normal", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
 /**
@@ -287,7 +290,7 @@ BLI_NOINLINE static void interpolate_attribute(const Mesh &mesh,
 
 BLI_NOINLINE static void propagate_existing_attributes(
     const Mesh &mesh,
-    const Map<StringRef, AttributeDomainAndType> &attributes,
+    const GeometrySet::GatheredAttributes &attributes,
     PointCloud &points,
     const Span<float3> bary_coords,
     const Span<int> tri_indices)
@@ -295,9 +298,12 @@ BLI_NOINLINE static void propagate_existing_attributes(
   const AttributeAccessor mesh_attributes = mesh.attributes();
   MutableAttributeAccessor point_attributes = points.attributes_for_write();
 
-  for (MapItem<StringRef, AttributeDomainAndType> entry : attributes.items()) {
-    const StringRef attribute_id = entry.key;
-    const eCustomDataType output_data_type = entry.value.data_type;
+  for (const int i : attributes.names.index_range()) {
+    const StringRef attribute_id = attributes.names[i];
+    const bke::AttrType output_data_type = attributes.kinds[i].data_type;
+    if (attribute_id == "position") {
+      continue;
+    }
 
     GAttributeReader src = mesh_attributes.lookup(attribute_id);
     if (!src) {
@@ -343,7 +349,7 @@ static void compute_normal_outputs(const Mesh &mesh,
     }
     case bke::MeshNormalDomain::Face: {
       const Span<int> tri_faces = mesh.corner_tri_faces();
-      VArray<float3> face_normals = VArray<float3>::ForSpan(mesh.face_normals());
+      VArray<float3> face_normals = VArray<float3>::from_span(mesh.face_normals());
       threading::parallel_for(bary_coords.index_range(), 512, [&](const IndexRange range) {
         bke::mesh_surface_sample::sample_face_attribute(
             tri_faces, tri_indices, face_normals, range, r_normals);
@@ -556,15 +562,12 @@ static void point_distribution_calculate(GeometrySet &geometry_set,
 
   geometry_set.replace_pointcloud(pointcloud);
 
-  Map<StringRef, AttributeDomainAndType> attributes;
+  GeometrySet::GatheredAttributes attributes;
   geometry_set.gather_attributes_for_propagation({GeometryComponent::Type::Mesh},
                                                  GeometryComponent::Type::PointCloud,
                                                  false,
                                                  params.get_attribute_filter("Points"),
                                                  attributes);
-
-  /* Position is set separately. */
-  attributes.remove("position");
 
   propagate_existing_attributes(mesh, attributes, *pointcloud, bary_coords, tri_indices);
 
@@ -582,7 +585,7 @@ static void node_geo_exec(GeoNodeExecParams params)
   const GeometryNodeDistributePointsOnFacesMode method = GeometryNodeDistributePointsOnFacesMode(
       params.node().custom1);
 
-  const int seed = params.get_input<int>("Seed") * 5383843;
+  const int seed = params.extract_input<int>("Seed") * 5383843;
   const Field<bool> selection_field = params.extract_input<Field<bool>>("Selection");
 
   AttributeOutputs attribute_outputs;
@@ -592,12 +595,12 @@ static void node_geo_exec(GeoNodeExecParams params)
 
   lazy_threading::send_hint();
 
-  geometry_set.modify_geometry_sets([&](GeometrySet &geometry_set) {
+  geometry::foreach_real_geometry(geometry_set, [&](GeometrySet &geometry_set) {
     point_distribution_calculate(
         geometry_set, selection_field, method, seed, attribute_outputs, params);
     /* Keep instances because the original geometry set may contain instances that are processed as
      * well. */
-    geometry_set.keep_only_during_modify({GeometryComponent::Type::PointCloud});
+    geometry_set.keep_only({GeometryComponent::Type::PointCloud, GeometryComponent::Type::Edit});
   });
 
   params.set_output("Points", std::move(geometry_set));
@@ -613,12 +616,12 @@ static void node_register()
   ntype.ui_description = "Generate points spread out on the surface of a mesh";
   ntype.enum_name_legacy = "DISTRIBUTE_POINTS_ON_FACES";
   ntype.nclass = NODE_CLASS_GEOMETRY;
-  blender::bke::node_type_size(&ntype, 170, 100, 320);
+  blender::bke::node_type_size(ntype, 170, 100, 320);
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.draw_buttons = node_layout;
   ntype.draw_buttons_ex = node_layout_ex;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

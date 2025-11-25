@@ -12,7 +12,7 @@
 
 #include <array>
 
-typedef enum {
+enum NDOF_DeviceT {
   NDOF_UnknownDevice = 0,
 
   /* Current devices. */
@@ -31,16 +31,22 @@ typedef enum {
   NDOF_Spaceball5000,
   NDOF_SpaceTraveler
 
-} NDOF_DeviceT;
+};
 
-typedef std::array<GHOST_NDOF_ButtonT, 6> NDOF_Button_Array;
+/**
+ * The dummy time delta to use for starting events.
+ * 1/80th of a second (12.5ms).
+ */
+#define NDOF_TIME_DELTA_STARTING 0.0125f
 
-typedef enum { ShortButton, LongButton } NDOF_Button_Type;
+using NDOF_Button_Array = std::array<GHOST_NDOF_ButtonT, 6>;
+
+enum NDOF_Button_Type { ShortButton, LongButton };
 
 class GHOST_NDOFManager {
  public:
   GHOST_NDOFManager(GHOST_System &);
-  virtual ~GHOST_NDOFManager() {}
+  virtual ~GHOST_NDOFManager() = default;
 
   /**
    * Whether multi-axis functionality is available (via the OS or driver)
@@ -81,7 +87,11 @@ class GHOST_NDOFManager {
    * The latest raw button data from the device
    * use HID button encoding (not #NDOF_ButtonT).
    */
-  void updateButton(int button_number, bool press, uint64_t time);
+  void updateButtonRAW(int button_number, bool press, uint64_t time);
+  /**
+   * Add the button event which has already been mapped to #GHOST_NDOF_ButtonT.
+   */
+  void updateButton(GHOST_NDOF_ButtonT button, bool press, uint64_t time);
   void updateButtonsBitmask(int button_bits, uint64_t time);
   void updateButtonsArray(NDOF_Button_Array buttons, uint64_t time, NDOF_Button_Type type);
   /* #NDOFButton events are sent immediately */

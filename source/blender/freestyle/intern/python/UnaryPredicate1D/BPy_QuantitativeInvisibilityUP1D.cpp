@@ -8,10 +8,6 @@
 
 #include "BPy_QuantitativeInvisibilityUP1D.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 using namespace Freestyle;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -44,7 +40,6 @@ PyDoc_STRVAR(
     "   :return: True if Quantitative Invisibility equals a user-defined\n"
     "      value.\n"
     "   :rtype: bool\n");
-
 static int QuantitativeInvisibilityUP1D___init__(BPy_QuantitativeInvisibilityUP1D *self,
                                                  PyObject *args,
                                                  PyObject *kwds)
@@ -103,7 +98,3 @@ PyTypeObject QuantitativeInvisibilityUP1D_Type = {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef __cplusplus
-}
-#endif

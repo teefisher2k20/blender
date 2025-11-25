@@ -12,7 +12,7 @@
 #include "GEO_uv_parametrizer.hh"
 
 #include "BLI_array.hh"
-#include "BLI_convexhull_2d.h"
+#include "BLI_convexhull_2d.hh"
 #include "BLI_ghash.h"
 #include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
@@ -37,7 +37,7 @@ namespace blender::geometry {
 #define param_warning(message) \
   {/* `printf("Warning %s:%d: %s\n", __FILE__, __LINE__, message);` */}(void)0
 
-/* Prevent unused function warnings when slim is disabled.  */
+/* Prevent unused function warnings when slim is disabled. */
 #ifdef WITH_UV_SLIM
 #  define UNUSED_FUNCTION_NO_SLIM(x) x
 #else
@@ -187,7 +187,7 @@ static int PHashSizes[] = {
 
 static PHash *phash_new(PHashLink **list, int sizehint)
 {
-  PHash *ph = (PHash *)MEM_callocN(sizeof(PHash), "PHash");
+  PHash *ph = MEM_callocN<PHash>("PHash");
   ph->size = 0;
   ph->cursize_id = 0;
   ph->list = list;
@@ -197,7 +197,7 @@ static PHash *phash_new(PHashLink **list, int sizehint)
   }
 
   ph->cursize = PHashSizes[ph->cursize_id];
-  ph->buckets = (PHashLink **)MEM_callocN(ph->cursize * sizeof(*ph->buckets), "PHashBuckets");
+  ph->buckets = MEM_calloc_arrayN<PHashLink *>(ph->cursize, "PHashBuckets");
 
   return ph;
 }
@@ -297,7 +297,7 @@ static void fix_large_angle(const float v_fix[3],
                             double *r_a1,
                             double *r_a2)
 {
-  const double max_angle = DEG2RADF(179.0);
+  const double max_angle = DEG2RAD(179.0);
   const double fix_amount = *r_fix - max_angle;
   if (fix_amount < 0.0f) {
     return; /* angle is reasonable, i.e. less than 179 degrees. */
@@ -489,7 +489,7 @@ static void p_chart_uv_transform(PChart *chart, const float mat[2][2])
   }
 }
 
-static void p_chart_uv_to_array(PChart *chart, float (*points)[2])
+static void p_chart_uv_to_array(PChart *chart, MutableSpan<float2> points)
 {
   PVert *v;
   uint i = 0;
@@ -922,8 +922,8 @@ static bool p_edge_connect_pair(ParamHandle *handle,
 
 static int p_connect_pairs(ParamHandle *handle, bool topology_from_uvs)
 {
-  PEdge **stackbase = (PEdge **)MEM_mallocN(sizeof(*stackbase) * phash_size(handle->hash_faces),
-                                            "Pstackbase");
+  PEdge **stackbase = MEM_malloc_arrayN<PEdge *>(size_t(phash_size(handle->hash_faces)),
+                                                 "Pstackbase");
   PEdge **stack = stackbase;
   PFace *f, *first;
   PEdge *e, *e1, *e2;
@@ -1029,10 +1029,10 @@ static void p_split_vert(ParamHandle *handle, PChart *chart, PEdge *e)
 
 static PChart **p_split_charts(ParamHandle *handle, PChart *chart, int ncharts)
 {
-  PChart **charts = (PChart **)MEM_callocN(sizeof(*charts) * ncharts, "PCharts");
+  PChart **charts = MEM_calloc_arrayN<PChart *>(ncharts, "PCharts");
 
   for (int i = 0; i < ncharts; i++) {
-    charts[i] = (PChart *)MEM_callocN(sizeof(*chart), "PChart");
+    charts[i] = MEM_callocN<PChart>("PChart");
   }
 
   PFace *f = chart->faces;
@@ -1420,8 +1420,8 @@ static void p_polygon_kernel_center(float (*points)[2], int npoints, float *cent
   float(*oldpoints)[2], (*newpoints)[2], *p1, *p2;
 
   size = npoints * 3;
-  oldpoints = MEM_mallocN(sizeof(float[2]) * size, "PPolygonOldPoints");
-  newpoints = MEM_mallocN(sizeof(float[2]) * size, "PPolygonNewPoints");
+  oldpoints = MEM_malloc_arrayN<float[2]>(size_t(size), "PPolygonOldPoints");
+  newpoints = MEM_malloc_arrayN<float[2]>(size_t(size), "PPolygonNewPoints");
 
   memcpy(oldpoints, points, sizeof(float[2]) * npoints);
 
@@ -1611,7 +1611,7 @@ static void p_vert_harmonic_insert(PVert *v)
       npoints++;
     }
 
-    points = MEM_mallocN(sizeof(float[2]) * npoints, "PHarmonicPoints");
+    points = MEM_malloc_arrayN<float[2]>(size_t(npoints), "PHarmonicPoints");
 
     e = v->edge;
     i = 0;
@@ -1834,7 +1834,7 @@ static bool p_collapse_allowed_topologic(PEdge *edge, PEdge *pair)
     if (edge && !edge->next->pair && !edge->next->next->pair) {
       return false;
     }
-    else if (pair && !pair->next->pair && !pair->next->next->pair) {
+    if (pair && !pair->next->pair && !pair->next->next->pair) {
       return false;
     }
   }
@@ -2355,23 +2355,23 @@ static void p_abf_setup_system(PAbfSystem *sys)
 {
   int i;
 
-  sys->alpha = (float *)MEM_mallocN(sizeof(float) * sys->nangles, "ABFalpha");
-  sys->beta = (float *)MEM_mallocN(sizeof(float) * sys->nangles, "ABFbeta");
-  sys->sine = (float *)MEM_mallocN(sizeof(float) * sys->nangles, "ABFsine");
-  sys->cosine = (float *)MEM_mallocN(sizeof(float) * sys->nangles, "ABFcosine");
-  sys->weight = (float *)MEM_mallocN(sizeof(float) * sys->nangles, "ABFweight");
+  sys->alpha = MEM_malloc_arrayN<float>(size_t(sys->nangles), "ABFalpha");
+  sys->beta = MEM_malloc_arrayN<float>(size_t(sys->nangles), "ABFbeta");
+  sys->sine = MEM_malloc_arrayN<float>(size_t(sys->nangles), "ABFsine");
+  sys->cosine = MEM_malloc_arrayN<float>(size_t(sys->nangles), "ABFcosine");
+  sys->weight = MEM_malloc_arrayN<float>(size_t(sys->nangles), "ABFweight");
 
-  sys->bAlpha = (float *)MEM_mallocN(sizeof(float) * sys->nangles, "ABFbalpha");
-  sys->bTriangle = (float *)MEM_mallocN(sizeof(float) * sys->nfaces, "ABFbtriangle");
-  sys->bInterior = (float *)MEM_mallocN(sizeof(float[2]) * sys->ninterior, "ABFbinterior");
+  sys->bAlpha = MEM_malloc_arrayN<float>(size_t(sys->nangles), "ABFbalpha");
+  sys->bTriangle = MEM_malloc_arrayN<float>(size_t(sys->nfaces), "ABFbtriangle");
+  sys->bInterior = MEM_malloc_arrayN<float>(2 * size_t(sys->ninterior), "ABFbinterior");
 
-  sys->lambdaTriangle = (float *)MEM_callocN(sizeof(float) * sys->nfaces, "ABFlambdatri");
-  sys->lambdaPlanar = (float *)MEM_callocN(sizeof(float) * sys->ninterior, "ABFlamdaplane");
-  sys->lambdaLength = (float *)MEM_mallocN(sizeof(float) * sys->ninterior, "ABFlambdalen");
+  sys->lambdaTriangle = MEM_calloc_arrayN<float>(sys->nfaces, "ABFlambdatri");
+  sys->lambdaPlanar = MEM_calloc_arrayN<float>(sys->ninterior, "ABFlamdaplane");
+  sys->lambdaLength = MEM_malloc_arrayN<float>(sys->ninterior, "ABFlambdalen");
 
-  sys->J2dt = static_cast<float(*)[3]>(MEM_mallocN(sizeof(float) * sys->nangles * 3, "ABFj2dt"));
-  sys->bstar = (float *)MEM_mallocN(sizeof(float) * sys->nfaces, "ABFbstar");
-  sys->dstar = (float *)MEM_mallocN(sizeof(float) * sys->nfaces, "ABFdstar");
+  sys->J2dt = MEM_malloc_arrayN<float[3]>(size_t(sys->nangles), "ABFj2dt");
+  sys->bstar = MEM_malloc_arrayN<float>(size_t(sys->nfaces), "ABFbstar");
+  sys->dstar = MEM_malloc_arrayN<float>(size_t(sys->nfaces), "ABFdstar");
 
   for (i = 0; i < sys->ninterior; i++) {
     sys->lambdaLength[i] = 1.0;
@@ -3495,9 +3495,9 @@ static bool p_chart_convex_hull(PChart *chart, PVert ***r_verts, int *r_nverts, 
     e = p_boundary_edge_next(e);
   } while (e != be);
 
-  p = points = (PVert **)MEM_mallocN(sizeof(PVert *) * npoints * 2, "PCHullpoints");
-  U = (PVert **)MEM_mallocN(sizeof(PVert *) * npoints, "PCHullU");
-  L = (PVert **)MEM_mallocN(sizeof(PVert *) * npoints, "PCHullL");
+  p = points = MEM_malloc_arrayN<PVert *>(2 * size_t(npoints), "PCHullpoints");
+  U = MEM_malloc_arrayN<PVert *>(size_t(npoints), "PCHullU");
+  L = MEM_malloc_arrayN<PVert *>(size_t(npoints), "PCHullL");
 
   e = be;
   do {
@@ -3584,7 +3584,7 @@ static float p_chart_minimum_area_angle(PChart *chart)
   }
 
   /* find left/top/right/bottom points, and compute angle for each point */
-  angles = (float *)MEM_mallocN(sizeof(float) * npoints, "PMinAreaAngles");
+  angles = MEM_malloc_arrayN<float>(size_t(npoints), "PMinAreaAngles");
 
   i_min = i_max = 0;
   miny = 1e10;
@@ -3708,14 +3708,11 @@ static void p_chart_rotate_minimum_area(PChart *chart)
 
 static void p_chart_rotate_fit_aabb(PChart *chart)
 {
-  float(*points)[2] = static_cast<float(*)[2]>(
-      MEM_mallocN(sizeof(*points) * chart->nverts, __func__));
+  Array<float2> points(chart->nverts);
 
   p_chart_uv_to_array(chart, points);
 
-  float angle = BLI_convexhull_aabb_fit_points_2d(points, chart->nverts);
-
-  MEM_freeN(points);
+  float angle = BLI_convexhull_aabb_fit_points_2d(points);
 
   if (angle != 0.0f) {
     float mat[2][2];
@@ -3730,7 +3727,7 @@ ParamHandle::ParamHandle()
   polyfill_arena = BLI_memarena_new(BLI_MEMARENA_STD_BUFSIZE, "param polyfill arena");
   polyfill_heap = BLI_heap_new_ex(BLI_POLYFILL_ALLOC_NGON_RESERVE);
 
-  construction_chart = (PChart *)MEM_callocN(sizeof(PChart), "PChart");
+  construction_chart = MEM_callocN<PChart>("PChart");
 
   hash_verts = phash_new((PHashLink **)&construction_chart->verts, 1);
   hash_edges = phash_new((PHashLink **)&construction_chart->edges, 1);
@@ -3858,7 +3855,7 @@ static void p_add_ngon(ParamHandle *handle,
   uint nfilltri = nverts - 2;
   uint(*tris)[3] = static_cast<uint(*)[3]>(
       BLI_memarena_alloc(arena, sizeof(*tris) * size_t(nfilltri)));
-  float(*projverts)[2] = static_cast<float(*)[2]>(
+  float (*projverts)[2] = static_cast<float (*)[2]>(
       BLI_memarena_alloc(arena, sizeof(*projverts) * size_t(nverts)));
 
   /* Calc normal, flipped: to get a positive 2d cross product. */
@@ -4179,7 +4176,7 @@ void uv_parametrizer_stretch_end(ParamHandle *phandle)
   phandle->state = PHANDLE_STATE_CONSTRUCTED;
 }
 
-void uv_parametrizer_pack(ParamHandle *handle, float margin, bool do_rotate, bool ignore_pinned)
+void uv_parametrizer_pack(ParamHandle *handle, const UVPackIsland_Params &params)
 {
   if (handle->ncharts == 0) {
     return;
@@ -4189,14 +4186,9 @@ void uv_parametrizer_pack(ParamHandle *handle, float margin, bool do_rotate, boo
 
   Vector<PackIsland *> pack_island_vector;
 
-  UVPackIsland_Params params;
-  params.rotate_method = do_rotate ? ED_UVPACK_ROTATION_ANY : ED_UVPACK_ROTATION_NONE;
-  params.margin = margin;
-  params.margin_method = ED_UVPACK_MARGIN_SCALED;
-
   for (int i = 0; i < handle->ncharts; i++) {
     PChart *chart = handle->charts[i];
-    if (ignore_pinned && chart->has_pins) {
+    if (params.pin_method == ED_UVPACK_PIN_NONE && chart->has_pins) {
       continue;
     }
 
@@ -4227,6 +4219,7 @@ void uv_parametrizer_pack(ParamHandle *handle, float margin, bool do_rotate, boo
     for (PVert *v = chart->verts; v; v = v->nextlink) {
       geometry::mul_v2_m2_add_v2v2(v->uv, matrix, v->uv, pack_island->pre_translate);
     }
+    geometry::p_chart_uv_translate(chart, params.udim_base_offset);
 
     pack_island_vector[i] = nullptr;
     delete pack_island;
@@ -4279,7 +4272,7 @@ void uv_parametrizer_average(ParamHandle *phandle, bool ignore_pinned, bool scal
           s[0][1] = va->uv[1] - vc->uv[1];
           s[1][0] = vb->uv[0] - vc->uv[0];
           s[1][1] = vb->uv[1] - vc->uv[1];
-          /* Find the "U" axis and "V" axis in triangle co-ordinates. Normally this would require
+          /* Find the "U" axis and "V" axis in triangle coordinates. Normally this would require
            * SVD, but in 2D we can use a cheaper matrix inversion instead. */
           if (!invert_m2_m2(m, s)) {
             continue;
@@ -5101,7 +5094,7 @@ static void slim_transfer_faces(const PChart *chart, slim::MatrixTransferChart *
 static void slim_convert_blender(ParamHandle *phandle, slim::MatrixTransfer *mt)
 {
   static const float SLIM_CORR_MIN_AREA = 1.0e-8;
-  static const float SLIM_CORR_MIN_ANGLE = DEG2RADF(1.0);
+  static const float SLIM_CORR_MIN_ANGLE = DEG2RADF(1.0f);
 
   mt->charts.resize(phandle->ncharts);
 

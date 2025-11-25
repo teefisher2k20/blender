@@ -131,6 +131,11 @@ bool AbstractView::supports_scrolling() const
   return false;
 }
 
+bool AbstractView::is_fully_visible() const
+{
+  return false;
+}
+
 void AbstractView::scroll(ViewScrollDirection /*direction*/)
 {
   BLI_assert_msg(false, "Unsupported for this view type");
@@ -165,6 +170,13 @@ void AbstractView::filter(std::optional<StringRef> filter_str)
   this->foreach_view_item([&](AbstractViewItem &item) {
     item.is_filtered_visible_ = is_empty ||
                                 item.should_be_filtered_visible(StringRefNull(*filter_str));
+
+    if (!is_empty) {
+      /* Allow view types to hook into the filtering. For example tree views ensure matching
+       * children have their parents visible and uncollapsed. If the search query is empty, all
+       * items are visible by default, and nothing has to be done. */
+      item.on_filter();
+    }
 
     if (filter_changed) {
       item.is_highlighted_search_ = false;
@@ -240,6 +252,16 @@ void AbstractView::set_popup_keep_open()
 void AbstractView::clear_search_highlight()
 {
   this->foreach_view_item([](AbstractViewItem &item) { item.is_highlighted_search_ = false; });
+}
+
+void AbstractView::allow_multiselect_items()
+{
+  is_multiselect_supported_ = true;
+}
+
+bool AbstractView::is_multiselect_supported() const
+{
+  return is_multiselect_supported_;
 }
 /** \} */
 

@@ -11,7 +11,11 @@
 #include "RNA_access.hh"
 #include "RNA_prototypes.hh"
 
-#include "UI_interface.hh"
+#include "BLT_translation.hh"
+
+#include "ANIM_action.hh"
+
+#include "UI_interface_layout.hh"
 #include "interface_intern.hh"
 #include "interface_templates_intern.hh"
 
@@ -64,7 +68,7 @@ static void template_search_add_button_searchmenu(const bContext *C,
                                                   const bool editable,
                                                   const bool live_icon)
 {
-  const char *ui_description = RNA_property_ui_description(
+  const StringRef ui_description = RNA_property_ui_description(
       template_search.search_data.target_prop);
 
   template_add_button_search_menu(C,
@@ -91,9 +95,14 @@ static void template_search_add_button_name(uiBlock *block,
     return;
   }
 
+  int iconid = ICON_NONE;
+
   PropertyRNA *name_prop;
   if (type == &RNA_ActionSlot) {
     name_prop = RNA_struct_find_property(active_ptr, "name_display");
+    /* Also show an icon for the data-block type that each slot is intended for. */
+    blender::animrig::Slot &slot = reinterpret_cast<ActionSlot *>(active_ptr->data)->wrap();
+    iconid = UI_icon_from_idcode(slot.idtype);
   }
   else {
     name_prop = RNA_struct_name_property(type);
@@ -101,21 +110,51 @@ static void template_search_add_button_name(uiBlock *block,
 
   const int width = template_search_textbut_width(active_ptr, name_prop);
   const int height = template_search_textbut_height();
-  uiDefAutoButR(block, active_ptr, name_prop, 0, "", ICON_NONE, 0, 0, width, height);
+  uiDefAutoButR(block, active_ptr, name_prop, 0, "", iconid, 0, 0, width, height);
 }
 
-static void template_search_add_button_operator(uiBlock *block,
-                                                const char *const operator_name,
-                                                const wmOperatorCallContext opcontext,
-                                                const int icon,
-                                                const bool editable)
+static void template_search_add_button_operator(
+    uiBlock *block,
+    const char *const operator_name,
+    const blender::wm::OpCallContext opcontext,
+    const int icon,
+    const bool editable,
+    const std::optional<StringRefNull> button_text = {})
 {
   if (!operator_name) {
     return;
   }
 
-  uiBut *but = uiDefIconButO(
-      block, UI_BTYPE_BUT, operator_name, opcontext, icon, 0, 0, UI_UNIT_X, UI_UNIT_Y, nullptr);
+  uiBut *but;
+  if (button_text) {
+    const int button_width = std::max(
+        UI_fontstyle_string_width(UI_FSTYLE_WIDGET, button_text->c_str()) + int(UI_UNIT_X * 1.5f),
+        UI_UNIT_X * 5);
+
+    but = uiDefIconTextButO(block,
+                            ButType::But,
+                            operator_name,
+                            opcontext,
+                            icon,
+                            *button_text,
+                            0,
+                            0,
+                            button_width,
+                            UI_UNIT_Y,
+                            std::nullopt);
+  }
+  else {
+    but = uiDefIconButO(block,
+                        ButType::But,
+                        operator_name,
+                        opcontext,
+                        icon,
+                        0,
+                        0,
+                        UI_UNIT_X,
+                        UI_UNIT_Y,
+                        std::nullopt);
+  }
 
   if (!editable) {
     UI_but_drawflag_enable(but, UI_BUT_DISABLED);
@@ -129,7 +168,7 @@ static void template_search_buttons(const bContext *C,
                                     const char *unlinkop,
                                     const std::optional<StringRef> text)
 {
-  uiBlock *block = uiLayoutGetBlock(layout);
+  uiBlock *block = layout->block();
   uiRNACollectionSearch *search_data = &template_search.search_data;
   const StructRNA *type = RNA_property_pointer_type(&search_data->target_ptr,
                                                     search_data->target_prop);
@@ -142,7 +181,7 @@ static void template_search_buttons(const bContext *C,
     type = active_ptr.type;
   }
 
-  uiLayout *row = uiLayoutRow(layout, true);
+  uiLayout *row = &layout->row(true);
   UI_block_align_begin(block);
 
   uiLayout *decorator_layout = nullptr;
@@ -153,14 +192,30 @@ static void template_search_buttons(const bContext *C,
 
   template_search_add_button_searchmenu(C, row, block, template_search, editable, false);
   template_search_add_button_name(block, &active_ptr, type);
-  template_search_add_button_operator(
-      block, newop, WM_OP_INVOKE_DEFAULT, ICON_DUPLICATE, editable);
-  template_search_add_button_operator(block, unlinkop, WM_OP_INVOKE_REGION_WIN, ICON_X, editable);
+
+  /* For Blender 4.4, the "New" button is only shown on Action Slot selectors.
+   * Blender 4.5 may have this enabled for all uses of this template, in which
+   * case this type-specific code will be removed. */
+  const bool may_show_new_button = (type == &RNA_ActionSlot);
+  if (may_show_new_button && !active_ptr.data) {
+    template_search_add_button_operator(block,
+                                        newop,
+                                        blender::wm::OpCallContext::InvokeDefault,
+                                        ICON_ADD,
+                                        editable,
+                                        IFACE_("New"));
+  }
+  else {
+    template_search_add_button_operator(
+        block, newop, blender::wm::OpCallContext::InvokeDefault, ICON_DUPLICATE, editable);
+    template_search_add_button_operator(
+        block, unlinkop, blender::wm::OpCallContext::InvokeRegionWin, ICON_X, editable);
+  }
 
   UI_block_align_end(block);
 
   if (decorator_layout) {
-    uiItemDecoratorR(decorator_layout, nullptr, "", RNA_NO_INDEX);
+    decorator_layout->decorator(nullptr, "", RNA_NO_INDEX);
   }
 }
 

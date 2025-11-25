@@ -6,13 +6,14 @@
  * \ingroup imbuf
  */
 
+#include <algorithm>
 #include <cstdlib>
 
 #include "BLI_math_base.h"
-#include "BLI_math_color.h"
 #include "BLI_math_color_blend.h"
 #include "BLI_math_vector.h"
 #include "BLI_rect.h"
+#include "BLI_task.hh"
 #include "BLI_utildefines.h"
 
 #include "IMB_imbuf.hh"
@@ -272,7 +273,7 @@ static void rect_realloc_4bytes(void **buf_p, const uint size[2])
     return;
   }
   MEM_freeN(*buf_p);
-  *buf_p = MEM_mallocN(sizeof(uint) * size[0] * size[1], __func__);
+  *buf_p = MEM_malloc_arrayN<uint>(size_t(size[0]) * size_t(size[1]), __func__);
 }
 
 static void rect_realloc_16bytes(void **buf_p, const uint size[2])
@@ -281,7 +282,7 @@ static void rect_realloc_16bytes(void **buf_p, const uint size[2])
     return;
   }
   MEM_freeN(*buf_p);
-  *buf_p = MEM_mallocN(sizeof(uint[4]) * size[0] * size[1], __func__);
+  *buf_p = MEM_malloc_arrayN<uint>(4 * size_t(size[0]) * size_t(size[1]), __func__);
 }
 
 void IMB_rect_size_set(ImBuf *ibuf, const uint size[2])
@@ -340,23 +341,15 @@ void IMB_rectclip(ImBuf *dbuf,
   }
 
   tmp = dbuf->x - *destx;
-  if (*width > tmp) {
-    *width = tmp;
-  }
+  *width = std::min(*width, tmp);
   tmp = dbuf->y - *desty;
-  if (*height > tmp) {
-    *height = tmp;
-  }
+  *height = std::min(*height, tmp);
 
   if (sbuf) {
     tmp = sbuf->x - *srcx;
-    if (*width > tmp) {
-      *width = tmp;
-    }
+    *width = std::min(*width, tmp);
     tmp = sbuf->y - *srcy;
-    if (*height > tmp) {
-      *height = tmp;
-    }
+    *height = std::min(*height, tmp);
   }
 
   if ((*height <= 0) || (*width <= 0)) {
@@ -422,34 +415,22 @@ static void imb_rectclip3(ImBuf *dbuf,
   }
 
   tmp = dbuf->x - *destx;
-  if (*width > tmp) {
-    *width = tmp;
-  }
+  *width = std::min(*width, tmp);
   tmp = dbuf->y - *desty;
-  if (*height > tmp) {
-    *height = tmp;
-  }
+  *height = std::min(*height, tmp);
 
   if (obuf) {
     tmp = obuf->x - *origx;
-    if (*width > tmp) {
-      *width = tmp;
-    }
+    *width = std::min(*width, tmp);
     tmp = obuf->y - *origy;
-    if (*height > tmp) {
-      *height = tmp;
-    }
+    *height = std::min(*height, tmp);
   }
 
   if (sbuf) {
     tmp = sbuf->x - *srcx;
-    if (*width > tmp) {
-      *width = tmp;
-    }
+    *width = std::min(*width, tmp);
     tmp = sbuf->y - *srcy;
-    if (*height > tmp) {
-      *height = tmp;
-    }
+    *height = std::min(*height, tmp);
   }
 
   if ((*height <= 0) || (*width <= 0)) {
@@ -813,7 +794,7 @@ void IMB_rectblend(ImBuf *dbuf,
           else {
             for (x = width; x > 0; x--, dr++, outr++, sr++, cmr++) {
               uchar *src = (uchar *)sr;
-              float mask = float(mask_max) * float(*cmr);
+              float mask = mask_max * float(*cmr);
 
               if (texmaskrect) {
                 mask *= (float(*tmr++) / 65535.0f);
@@ -911,7 +892,7 @@ void IMB_rectblend(ImBuf *dbuf,
           /* No destination mask buffer, do regular blend with mask-texture if present. */
           else {
             for (x = width; x > 0; x--, drf += 4, orf += 4, srf += 4, cmr++) {
-              float mask = float(mask_max) * float(*cmr);
+              float mask = mask_max * float(*cmr);
 
               if (texmaskrect) {
                 mask *= (float(*tmr++) / 65535.0f);
@@ -954,41 +935,6 @@ void IMB_rectblend(ImBuf *dbuf,
   }
 }
 
-struct RectBlendThreadData {
-  ImBuf *dbuf;
-  const ImBuf *obuf, *sbuf;
-  ushort *dmask;
-  const ushort *curvemask, *texmask;
-  float mask_max;
-  int destx, desty, origx, origy;
-  int srcx, srcy, width;
-  IMB_BlendMode mode;
-  bool accumulate;
-};
-
-static void rectblend_thread_do(void *data_v, int scanline)
-{
-  const int num_scanlines = 1;
-  RectBlendThreadData *data = (RectBlendThreadData *)data_v;
-  IMB_rectblend(data->dbuf,
-                data->obuf,
-                data->sbuf,
-                data->dmask,
-                data->curvemask,
-                data->texmask,
-                data->mask_max,
-                data->destx,
-                data->desty + scanline,
-                data->origx,
-                data->origy + scanline,
-                data->srcx,
-                data->srcy + scanline,
-                data->width,
-                num_scanlines,
-                data->mode,
-                data->accumulate);
-}
-
 void IMB_rectblend_threaded(ImBuf *dbuf,
                             const ImBuf *obuf,
                             const ImBuf *sbuf,
@@ -1007,7 +953,8 @@ void IMB_rectblend_threaded(ImBuf *dbuf,
                             IMB_BlendMode mode,
                             bool accumulate)
 {
-  if (size_t(width) * height < 64 * 64) {
+  using namespace blender;
+  threading::parallel_for(IndexRange(height), 16, [&](const IndexRange y_range) {
     IMB_rectblend(dbuf,
                   obuf,
                   sbuf,
@@ -1016,52 +963,29 @@ void IMB_rectblend_threaded(ImBuf *dbuf,
                   texmask,
                   mask_max,
                   destx,
-                  desty,
+                  desty + y_range.first(),
                   origx,
-                  origy,
+                  origy + y_range.first(),
                   srcx,
-                  srcy,
+                  srcy + y_range.first(),
                   width,
-                  height,
+                  y_range.size(),
                   mode,
                   accumulate);
-  }
-  else {
-    RectBlendThreadData data;
-    data.dbuf = dbuf;
-    data.obuf = obuf;
-    data.sbuf = sbuf;
-    data.dmask = dmask;
-    data.curvemask = curvemask;
-    data.texmask = texmask;
-    data.mask_max = mask_max;
-    data.destx = destx;
-    data.desty = desty;
-    data.origx = origx;
-    data.origy = origy;
-    data.srcx = srcx;
-    data.srcy = srcy;
-    data.width = width;
-    data.mode = mode;
-    data.accumulate = accumulate;
-    IMB_processor_apply_threaded_scanlines(height, rectblend_thread_do, &data);
-  }
+  });
 }
 
 void IMB_rectfill(ImBuf *drect, const float col[4])
 {
-  int num;
+  size_t num;
 
   if (drect->byte_buffer.data) {
     uint *rrect = (uint *)drect->byte_buffer.data;
+
     char ccol[4];
+    unit_float_to_uchar_clamp_v4(ccol, col);
 
-    ccol[0] = int(col[0] * 255);
-    ccol[1] = int(col[1] * 255);
-    ccol[2] = int(col[2] * 255);
-    ccol[3] = int(col[3] * 255);
-
-    num = drect->x * drect->y;
+    num = IMB_get_pixel_count(drect);
     for (; num > 0; num--) {
       *rrect++ = *((uint *)ccol);
     }
@@ -1070,7 +994,7 @@ void IMB_rectfill(ImBuf *drect, const float col[4])
   if (drect->float_buffer.data) {
     float *rrectf = drect->float_buffer.data;
 
-    num = drect->x * drect->y;
+    num = IMB_get_pixel_count(drect);
     for (; num > 0; num--) {
       *rrectf++ = col[0];
       *rrectf++ = col[1];
@@ -1080,69 +1004,19 @@ void IMB_rectfill(ImBuf *drect, const float col[4])
   }
 }
 
-void IMB_rectfill_area_replace(
-    const ImBuf *ibuf, const float col[4], int x1, int y1, int x2, int y2)
+void IMB_rectfill_area(
+    ImBuf *ibuf, const float scene_linear_color[4], int x1, int y1, int x2, int y2)
 {
-  /* Sanity checks. */
-  BLI_assert(ibuf->channels == 4);
-
-  if (ibuf->channels != 4) {
+  if (!ibuf) {
     return;
   }
 
-  int width = ibuf->x;
-  int height = ibuf->y;
-  CLAMP(x1, 0, width);
-  CLAMP(x2, 0, width);
-  CLAMP(y1, 0, height);
-  CLAMP(y2, 0, height);
+  uchar *rect = ibuf->byte_buffer.data;
+  float *rectf = ibuf->float_buffer.data;
+  const int width = ibuf->x;
+  const int height = ibuf->y;
 
-  if (x1 > x2) {
-    std::swap(x1, x2);
-  }
-  if (y1 > y2) {
-    std::swap(y1, y2);
-  }
-  if (x1 == x2 || y1 == y2) {
-    return;
-  }
-
-  const uchar col_char[4] = {
-      uchar(col[0] * 255), uchar(col[1] * 255), uchar(col[2] * 255), uchar(col[3] * 255)};
-
-  for (int y = y1; y < y2; y++) {
-    for (int x = x1; x < x2; x++) {
-      size_t offset = size_t(ibuf->x) * y * 4 + 4 * x;
-
-      if (ibuf->byte_buffer.data) {
-        uchar *rrect = ibuf->byte_buffer.data + offset;
-        memcpy(rrect, col_char, sizeof(uchar[4]));
-      }
-
-      if (ibuf->float_buffer.data) {
-        float *rrectf = ibuf->float_buffer.data + offset;
-        memcpy(rrectf, col, sizeof(float[4]));
-      }
-    }
-  }
-}
-
-void buf_rectfill_area(uchar *rect,
-                       float *rectf,
-                       int width,
-                       int height,
-                       const float col[4],
-                       ColorManagedDisplay *display,
-                       int x1,
-                       int y1,
-                       int x2,
-                       int y2)
-{
-  int i, j;
-  float a;    /* alpha */
-  float ai;   /* alpha inverted */
-  float aich; /* alpha, inverted, ai/255.0 - Convert char to float at the same time */
-  if ((!rect && !rectf) || (!col) || col[3] == 0.0f) {
+  if ((!rect && !rectf) || scene_linear_color[3] == 0.0f) {
     return;
   }
 
@@ -1161,10 +1035,15 @@ void buf_rectfill_area(uchar *rect,
   if (x1 == x2 || y1 == y2) {
     return;
   }
+  const int x_span = x2 - x1;
+  const int y_span = y2 - y1;
 
-  a = col[3];
-  ai = 1 - a;
-  aich = ai / 255.0f;
+  /* Alpha. */
+  const float a = scene_linear_color[3];
+  /* Alpha inverted. */
+  const float ai = 1 - a;
+  /* Alpha, inverted, ai/255.0 - Convert char to float at the same time. */
+  const float aich = ai / 255.0f;
 
   if (rect) {
     uchar *pixel;
@@ -1172,6 +1051,15 @@ void buf_rectfill_area(uchar *rect,
     float fr = 0, fg = 0, fb = 0;
 
     const int alphaint = unit_float_to_uchar_clamp(a);
+
+    float col[3];
+    copy_v3_v3(col, scene_linear_color);
+    if (ibuf->byte_buffer.colorspace) {
+      IMB_colormanagement_scene_linear_to_colorspace_v3(col, ibuf->byte_buffer.colorspace);
+    }
+    else {
+      IMB_colormanagement_scene_linear_to_srgb_v3(col, scene_linear_color);
+    }
 
     if (a == 1.0f) {
       chr = unit_float_to_uchar_clamp(col[0]);
@@ -1183,86 +1071,61 @@ void buf_rectfill_area(uchar *rect,
       fg = col[1] * a;
       fb = col[2] * a;
     }
-    for (j = 0; j < y2 - y1; j++) {
-      for (i = 0; i < x2 - x1; i++) {
-        pixel = rect + 4 * (((y1 + j) * width) + (x1 + i));
-        if (pixel >= rect && pixel < rect + (4 * (width * height))) {
-          if (a == 1.0f) {
-            pixel[0] = chr;
-            pixel[1] = chg;
-            pixel[2] = chb;
-            pixel[3] = 255;
-          }
-          else {
-            int alphatest;
-            pixel[0] = char((fr + (float(pixel[0]) * aich)) * 255.0f);
-            pixel[1] = char((fg + (float(pixel[1]) * aich)) * 255.0f);
-            pixel[2] = char((fb + (float(pixel[2]) * aich)) * 255.0f);
-            pixel[3] = char((alphatest = (int(pixel[3]) + alphaint)) < 255 ? alphatest : 255);
-          }
+    for (int j = 0; j < y_span; j++) {
+      pixel = rect + (4 * (((size_t(y1) + size_t(j)) * size_t(width)) + size_t(x1)));
+      for (int i = 0; i < x_span; i++) {
+        BLI_assert(pixel >= rect && pixel < rect + (4 * (size_t(width) * size_t(height))));
+        if (a == 1.0f) {
+          pixel[0] = chr;
+          pixel[1] = chg;
+          pixel[2] = chb;
+          pixel[3] = 255;
         }
+        else {
+          int alphatest;
+          pixel[0] = char((fr + (float(pixel[0]) * aich)) * 255.0f);
+          pixel[1] = char((fg + (float(pixel[1]) * aich)) * 255.0f);
+          pixel[2] = char((fb + (float(pixel[2]) * aich)) * 255.0f);
+          pixel[3] = char((alphatest = (int(pixel[3]) + alphaint)) < 255 ? alphatest : 255);
+        }
+        pixel += 4;
       }
     }
   }
 
   if (rectf) {
-    float col_conv[4];
     float *pixel;
 
-    if (display) {
-      copy_v4_v4(col_conv, col);
-      IMB_colormanagement_display_to_scene_linear_v3(col_conv, display);
-    }
-    else {
-      srgb_to_linearrgb_v4(col_conv, col);
-    }
-
-    for (j = 0; j < y2 - y1; j++) {
-      for (i = 0; i < x2 - x1; i++) {
-        pixel = rectf + 4 * (((y1 + j) * width) + (x1 + i));
+    for (int j = 0; j < y_span; j++) {
+      pixel = rectf + (4 * (((size_t(y1) + j) * size_t(width)) + size_t(x1)));
+      for (int i = 0; i < x_span; i++) {
+        BLI_assert(pixel >= rectf && pixel < rectf + (4 * (size_t(width) * size_t(height))));
         if (a == 1.0f) {
-          pixel[0] = col_conv[0];
-          pixel[1] = col_conv[1];
-          pixel[2] = col_conv[2];
+          pixel[0] = scene_linear_color[0];
+          pixel[1] = scene_linear_color[1];
+          pixel[2] = scene_linear_color[2];
           pixel[3] = 1.0f;
         }
         else {
           float alphatest;
-          pixel[0] = (col_conv[0] * a) + (pixel[0] * ai);
-          pixel[1] = (col_conv[1] * a) + (pixel[1] * ai);
-          pixel[2] = (col_conv[2] * a) + (pixel[2] * ai);
+          pixel[0] = (scene_linear_color[0] * a) + (pixel[0] * ai);
+          pixel[1] = (scene_linear_color[1] * a) + (pixel[1] * ai);
+          pixel[2] = (scene_linear_color[2] * a) + (pixel[2] * ai);
           pixel[3] = (alphatest = (pixel[3] + a)) < 1.0f ? alphatest : 1.0f;
         }
+        pixel += 4;
       }
     }
   }
 }
 
-void IMB_rectfill_area(
-    ImBuf *ibuf, const float col[4], int x1, int y1, int x2, int y2, ColorManagedDisplay *display)
-{
-  if (!ibuf) {
-    return;
-  }
-  buf_rectfill_area(ibuf->byte_buffer.data,
-                    ibuf->float_buffer.data,
-                    ibuf->x,
-                    ibuf->y,
-                    col,
-                    display,
-                    x1,
-                    y1,
-                    x2,
-                    y2);
-}
-
 void IMB_rectfill_alpha(ImBuf *ibuf, const float value)
 {
-  int i;
+  size_t i;
 
   if (ibuf->float_buffer.data && (ibuf->channels == 4)) {
     float *fbuf = ibuf->float_buffer.data + 3;
-    for (i = ibuf->x * ibuf->y; i > 0; i--, fbuf += 4) {
+    for (i = IMB_get_pixel_count(ibuf); i > 0; i--, fbuf += 4) {
       *fbuf = value;
     }
   }
@@ -1270,7 +1133,7 @@ void IMB_rectfill_alpha(ImBuf *ibuf, const float value)
   if (ibuf->byte_buffer.data) {
     const uchar cvalue = value * 255;
     uchar *cbuf = ibuf->byte_buffer.data + 3;
-    for (i = ibuf->x * ibuf->y; i > 0; i--, cbuf += 4) {
+    for (i = IMB_get_pixel_count(ibuf); i > 0; i--, cbuf += 4) {
       *cbuf = cvalue;
     }
   }

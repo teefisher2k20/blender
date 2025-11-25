@@ -370,6 +370,9 @@ static bke::CurvesGeometry fillet_curves(const bke::CurvesGeometry &src_curves,
                                          const bool use_bezier_mode,
                                          const bke::AttributeFilter &attribute_filter)
 {
+  if (src_curves.is_empty()) {
+    return src_curves;
+  }
   const OffsetIndices src_points_by_curve = src_curves.points_by_curve();
   const Span<float3> positions = src_curves.positions();
   const VArraySpan<bool> cyclic{src_curves.cyclic()};
@@ -407,8 +410,8 @@ static bke::CurvesGeometry fillet_curves(const bke::CurvesGeometry &src_curves,
   if (src_curves.has_curve_with_type(CURVE_TYPE_BEZIER)) {
     src_types_l = src_curves.handle_types_left();
     src_types_r = src_curves.handle_types_right();
-    src_handles_l = src_curves.handle_positions_left();
-    src_handles_r = src_curves.handle_positions_right();
+    src_handles_l = *src_curves.handle_positions_left();
+    src_handles_r = *src_curves.handle_positions_right();
 
     dst_types_l = dst_curves.handle_types_left_for_write();
     dst_types_r = dst_curves.handle_types_right_for_write();
@@ -488,7 +491,7 @@ static bke::CurvesGeometry fillet_curves(const bke::CurvesGeometry &src_curves,
   for (auto &attribute : bke::retrieve_attributes_for_transfer(
            src_attributes,
            dst_attributes,
-           ATTR_DOMAIN_MASK_POINT,
+           {bke::AttrDomain::Point},
            bke::attribute_filter_with_skip_ref(attribute_filter,
                                                {"position",
                                                 "handle_type_left",
@@ -513,7 +516,10 @@ static bke::CurvesGeometry fillet_curves(const bke::CurvesGeometry &src_curves,
                                       dst_points_by_curve,
                                       unselected,
                                       dst_attributes);
-
+  if (src_curves.nurbs_has_custom_knots()) {
+    bke::curves::nurbs::update_custom_knot_modes(
+        dst_curves.curves_range(), NURBS_KNOT_MODE_NORMAL, NURBS_KNOT_MODE_NORMAL, dst_curves);
+  }
   return dst_curves;
 }
 
@@ -537,7 +543,7 @@ bke::CurvesGeometry fillet_curves_bezier(const bke::CurvesGeometry &src_curves,
   return fillet_curves(src_curves,
                        curve_selection,
                        radius,
-                       VArray<int>::ForSingle(1, src_curves.points_num()),
+                       VArray<int>::from_single(1, src_curves.points_num()),
                        limit_radius,
                        true,
                        attribute_filter);

@@ -8,11 +8,7 @@
 
 #pragma once
 
-#include "DNA_listBase.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <string>
 
 struct bNodeTree;
 
@@ -32,10 +28,4 @@ int node_group_ui_class(const struct bNode *node);
  */
 void ntree_update_reroute_nodes(struct bNodeTree *ntree);
 
-#ifdef __cplusplus
-}
-
-#  include <string>
-
 std::string node_group_ui_description(const bNode &node);
-#endif

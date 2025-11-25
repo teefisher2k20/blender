@@ -12,6 +12,7 @@
 
 #include "util/boundbox.h"
 #include "util/set.h"
+#include "util/task.h"
 #include "util/transform.h"
 #include "util/types.h"
 #include "util/vector.h"
@@ -75,6 +76,7 @@ class Geometry : public Node {
     HAIR,
     VOLUME,
     POINTCLOUD,
+    LIGHT,
   };
 
   Type geometry_type;
@@ -162,7 +164,7 @@ class Geometry : public Node {
   bool is_instanced() const;
 
   bool has_true_displacement() const;
-  bool has_motion_blur() const;
+  virtual bool has_motion_blur() const;
   bool has_voxel_attributes() const;
 
   bool is_mesh() const
@@ -185,6 +187,11 @@ class Geometry : public Node {
     return geometry_type == VOLUME;
   }
 
+  bool is_light() const
+  {
+    return geometry_type == LIGHT;
+  }
+
   /* Updates */
   void tag_update(Scene *scene, bool rebuild);
 };
@@ -193,6 +200,11 @@ class Geometry : public Node {
 
 class GeometryManager {
   uint32_t update_flags;
+
+  /* Persistent task pool for BVH building, because the Embree scene creates its own
+   * task group that has a parent pointer to this one. And if we create a task pool
+   * on the stack, that becomes a dangling pointer. See #143662 for details. */
+  TaskPool bvh_task_pool_;
 
  public:
   enum : uint32_t {
@@ -273,23 +285,6 @@ class GeometryManager {
   void device_update_displacement_images(Device *device, Scene *scene, Progress &progress);
 
   void device_update_volume_images(Device *device, Scene *scene, Progress &progress);
-
- private:
-  static void update_attribute_element_offset(Geometry *geom,
-                                              device_vector<float> &attr_float,
-                                              size_t &attr_float_offset,
-                                              device_vector<float2> &attr_float2,
-                                              size_t &attr_float2_offset,
-                                              device_vector<packed_float3> &attr_float3,
-                                              size_t &attr_float3_offset,
-                                              device_vector<float4> &attr_float4,
-                                              size_t &attr_float4_offset,
-                                              device_vector<uchar4> &attr_uchar4,
-                                              size_t &attr_uchar4_offset,
-                                              Attribute *mattr,
-                                              AttributePrimitive prim,
-                                              TypeDesc &type,
-                                              AttributeDescriptor &desc);
 };
 
 CCL_NAMESPACE_END

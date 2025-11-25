@@ -128,12 +128,16 @@ struct MeshData {
   /** Total number of found uv islands. */
   int64_t uv_island_len;
 
- public:
   explicit MeshData(OffsetIndices<int> faces,
                     Span<int3> corner_tris,
                     Span<int> corner_verts,
                     Span<float2> uv_map,
                     Span<float3> vert_positions);
+
+  bool is_edge_manifold(const int edge_id) const
+  {
+    return edge_to_primitive_map[edge_id].size() == 2;
+  }
 };
 
 struct UVVertex {
@@ -155,7 +159,7 @@ struct UVVertex {
 
 struct UVEdge {
   std::array<UVVertex *, 2> vertices;
-  Vector<UVPrimitive *, 2> uv_primitives;
+  Vector<int, 2> uv_primitive_indices;
 
   UVVertex *get_other_uv_vertex(const int vertex_index);
   bool has_shared_edge(Span<float2> uv_map, const int loop_1, const int loop_2) const;
@@ -165,7 +169,7 @@ struct UVEdge {
 
  private:
   bool has_shared_edge(const UVVertex &v1, const UVVertex &v2) const;
-  bool has_same_vertices(const int v1, const int v2) const;
+  bool has_same_vertices(const int vert1, const int vert2) const;
   bool has_same_uv_vertices(const UVEdge &other) const;
 };
 

@@ -18,7 +18,7 @@
 
 #include "BKE_text.h"
 
-#include "../generic/python_compat.hh"
+#include "../generic/python_compat.hh" /* IWYU pragma: keep. */
 
 #include "bpy_rna.hh"
 #include "bpy_rna_text.hh" /* Declare #BPY_rna_region_as_string_method_def. */
@@ -46,7 +46,7 @@ struct TextRegion {
 PyDoc_STRVAR(
     /* Wrap. */
     bpy_rna_region_as_string_doc,
-    ".. method:: region_as_string(range=None)\n"
+    ".. method:: region_as_string(*, range=None)\n"
     "\n"
     "   :arg range: The region of text to be returned, "
     "defaulting to the selection when no range is passed.\n"
@@ -56,7 +56,7 @@ PyDoc_STRVAR(
     "(negative values count backwards from the end, the end value is not inclusive).\n"
     "   :type range: tuple[tuple[int, int], tuple[int, int]]\n"
     "   :return: The specified region as a string.\n"
-    "   :rtype: str.\n");
+    "   :rtype: str\n");
 /* Receive a Python Tuple as parameter to represent the region range. */
 static PyObject *bpy_rna_region_as_string(PyObject *self, PyObject *args, PyObject *kwds)
 {
@@ -95,9 +95,14 @@ static PyObject *bpy_rna_region_as_string(PyObject *self, PyObject *args, PyObje
   return sel_text;
 }
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic push
-#  pragma GCC diagnostic ignored "-Wcast-function-type"
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
 #endif
 
 PyMethodDef BPY_rna_region_as_string_method_def = {
@@ -107,14 +112,18 @@ PyMethodDef BPY_rna_region_as_string_method_def = {
     bpy_rna_region_as_string_doc,
 };
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic pop
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
 #endif
 
 PyDoc_STRVAR(
     /* Wrap. */
     bpy_rna_region_from_string_doc,
-    ".. method:: region_from_string(body, range=None)\n"
+    ".. method:: region_from_string(body, /, *, range=None)\n"
     "\n"
     "   :arg body: The text to be inserted.\n"
     "   :type body: str\n"
@@ -170,9 +179,14 @@ static PyObject *bpy_rna_region_from_string(PyObject *self, PyObject *args, PyOb
   Py_RETURN_NONE;
 }
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic push
-#  pragma GCC diagnostic ignored "-Wcast-function-type"
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
 #endif
 
 PyMethodDef BPY_rna_region_from_string_method_def = {
@@ -182,8 +196,12 @@ PyMethodDef BPY_rna_region_from_string_method_def = {
     bpy_rna_region_from_string_doc,
 };
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic pop
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
 #endif
 
 /** \} */

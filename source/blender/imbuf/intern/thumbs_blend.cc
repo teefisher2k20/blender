@@ -6,12 +6,8 @@
  * \ingroup imbuf
  */
 
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-#include "BLI_listbase.h" /* Needed due to import of BLO_readfile.hh */
-#include "BLI_utildefines.h"
 
 #include "BLO_readfile.hh"
 
@@ -46,7 +42,7 @@ static ImBuf *imb_thumb_load_from_blend_id(const char *blen_path,
 
   if (preview) {
     ima = BKE_previewimg_to_imbuf(preview, ICON_SIZE_PREVIEW);
-    BKE_previewimg_freefunc(preview);
+    BKE_previewimg_free(&preview);
   }
   return ima;
 }

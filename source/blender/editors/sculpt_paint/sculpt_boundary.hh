@@ -14,13 +14,20 @@
 #include "BLI_map.hh"
 #include "BLI_math_vector_types.hh"
 #include "BLI_offset_indices.hh"
+#include "BLI_ordered_edge.hh"
+#include "BLI_set.hh"
 #include "BLI_span.hh"
 #include "BLI_vector.hh"
+
+#include "BKE_paint.hh"
+
+#include "DNA_mesh_types.h"
 
 struct Brush;
 struct BMVert;
 struct Depsgraph;
 struct Object;
+struct Sculpt;
 struct SculptBoundaryPreview;
 struct SculptSession;
 struct SubdivCCG;
@@ -93,9 +100,10 @@ struct SculptBoundary {
 /**
  * Populates boundary information for a mesh.
  *
- * \see SculptVertexInfo
+ * \see SculptBoundaryInfo
  */
 void ensure_boundary_info(Object &object);
+SculptBoundaryInfoCache create_boundary_info(const Mesh &mesh);
 
 /**
  * Determine if a vertex is a boundary vertex.
@@ -104,11 +112,12 @@ void ensure_boundary_info(Object &object);
  */
 bool vert_is_boundary(GroupedSpan<int> vert_to_face_map,
                       Span<bool> hide_poly,
-                      BitSpan boundary,
+                      BitSpan boundary_verts,
                       int vert);
 bool vert_is_boundary(OffsetIndices<int> faces,
                       Span<int> corner_verts,
-                      BitSpan boundary,
+                      BitSpan boundary_verts,
+                      const Set<OrderedEdge> &boundary_edges,
                       const SubdivCCG &subdiv_ccg,
                       SubdivCCGCoord vert);
 bool vert_is_boundary(BMVert *vert);
@@ -145,5 +154,10 @@ void edges_preview_draw(uint gpuattr,
                         const float outline_col[3],
                         float outline_alpha);
 void pivot_line_preview_draw(uint gpuattr, SculptSession &ss);
+
+void do_boundary_brush(const Depsgraph &depsgraph,
+                       const Sculpt &sd,
+                       Object &object,
+                       const IndexMask &node_mask);
 
 }  // namespace blender::ed::sculpt_paint::boundary

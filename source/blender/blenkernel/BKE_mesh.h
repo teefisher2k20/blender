@@ -10,6 +10,7 @@
 #include <cstdint>
 
 #include "BLI_array.hh"
+#include "BLI_string_ref.hh"
 
 #include "DNA_mesh_types.h"
 
@@ -79,12 +80,6 @@ void BKE_mesh_ensure_default_orig_index_customdata(Mesh *mesh);
 void BKE_mesh_ensure_default_orig_index_customdata_no_check(Mesh *mesh);
 
 /**
- * Free (or release) any data used by this mesh (does not free the mesh itself).
- * Only use for undo, in most cases `BKE_id_free(nullptr, me)` should be used.
- */
-void BKE_mesh_free_data_for_undo(Mesh *mesh);
-
-/**
  * Remove all geometry and derived data like caches from the mesh.
  */
 void BKE_mesh_clear_geometry(Mesh *mesh);
@@ -137,7 +132,7 @@ Mesh *BKE_mesh_copy_for_eval(const Mesh &source);
 Mesh *BKE_mesh_new_nomain_from_curve(const Object *ob);
 Mesh *BKE_mesh_new_nomain_from_curve_displist(const Object *ob, const ListBase *dispbase);
 
-bool BKE_mesh_attribute_required(const char *name);
+bool BKE_mesh_attribute_required(blender::StringRef name);
 
 blender::Array<blender::float3> BKE_mesh_orco_verts_get(const Object *ob);
 void BKE_mesh_orco_verts_transform(Mesh *mesh,
@@ -182,7 +177,8 @@ void BKE_mesh_texspace_get_reference(Mesh *mesh,
 Mesh *BKE_mesh_new_from_object(Depsgraph *depsgraph,
                                Object *object,
                                bool preserve_all_data_layers,
-                               bool preserve_origindex);
+                               bool preserve_origindex,
+                               bool ensure_subdivision);
 
 /**
  * This is a version of BKE_mesh_new_from_object() which stores mesh in the given main database.
@@ -197,15 +193,18 @@ Mesh *BKE_mesh_new_from_object_to_bmain(Main *bmain,
 /**
  * Move data from a mesh outside of the main data-base into a mesh in the data-base.
  * Takes ownership of the source mesh.
+ *
+ * \param process_shape_keys: Whether to move #CD_SHAPEKEY layers to the destination mesh. If there
+ * are no such layers and the number of vertices changed, the shape key data will be lost. If this
+ * parameter is false, the caller is expected to handle shape keys itself.
  */
-void BKE_mesh_nomain_to_mesh(Mesh *mesh_src, Mesh *mesh_dst, Object *ob);
+void BKE_mesh_nomain_to_mesh(Mesh *mesh_src,
+                             Mesh *mesh_dst,
+                             Object *ob,
+                             bool process_shape_keys = true);
 void BKE_mesh_nomain_to_meshkey(Mesh *mesh_src, Mesh *mesh_dst, KeyBlock *kb);
 
 /* Vertex level transformations & checks (no evaluated mesh). */
-
-/* basic vertex data functions */
-void BKE_mesh_transform(Mesh *mesh, const float mat[4][4], bool do_keys);
-void BKE_mesh_translate(Mesh *mesh, const float offset[3], bool do_keys);
 
 void BKE_mesh_tessface_clear(Mesh *mesh);
 
@@ -264,10 +263,11 @@ struct MLoopNorSpace {
    * aligned).
    */
   float ref_beta;
-  /** All loops using this lnor space (i.e. smooth fan of loops),
+  /**
+   * All loops using this lnor space (i.e. smooth fan of loops),
    * as (depending on owning MLoopNorSpaceArrary.data_type):
-   *     - Indices (uint_in_ptr), or
-   *     - BMLoop pointers. */
+   * - Indices (uint_in_ptr), or
+   * - BMLoop pointers. */
   struct LinkNode *loops;
   char flags;
 };
@@ -282,11 +282,14 @@ enum {
  * Collection of #MLoopNorSpace basic storage & pre-allocation.
  */
 struct MLoopNorSpaceArray {
-  MLoopNorSpace **lspacearr; /* Face corner aligned array */
-  struct LinkNode
-      *loops_pool; /* Allocated once, avoids to call BLI_linklist_prepend_arena() for each loop! */
-  char data_type;  /* Whether we store loop indices, or pointers to BMLoop. */
-  int spaces_num;  /* Number of clnors spaces defined in this array. */
+  /** Face corner aligned array. */
+  MLoopNorSpace **lspacearr;
+  /** Allocated once, avoids to call #BLI_linklist_prepend_arena() for each loop! */
+  struct LinkNode *loops_pool;
+  /** Whether we store loop indices, or pointers to #BMLoop. */
+  char data_type;
+  /** Number of `clnors` spaces defined in this array. */
+  int spaces_num;
   struct MemArena *mem;
 };
 /**
@@ -351,18 +354,6 @@ void BKE_lnor_space_custom_data_to_normal(const MLoopNorSpace *lnor_space,
 void BKE_lnor_space_custom_normal_to_data(const MLoopNorSpace *lnor_space,
                                           const float custom_lnor[3],
                                           short r_clnor_data[2]);
-
-/**
- * Computes average per-vertex normals from given custom loop normals.
- *
- * \param clnors: The computed custom loop normals.
- * \param r_vert_clnors: The (already allocated) array where to store averaged per-vertex normals.
- */
-void BKE_mesh_normals_loop_to_vertex(int numVerts,
-                                     const int *corner_verts,
-                                     int numLoops,
-                                     const float (*clnors)[3],
-                                     float (*r_vert_clnors)[3]);
 
 /**
  * High-level custom normals functions.
@@ -438,65 +429,6 @@ void BKE_mesh_calc_relative_deform(const int *face_offsets,
 
                                    const float (*vert_cos_org)[3],
                                    float (*vert_cos_new)[3]);
-
-/* *** mesh_validate.cc *** */
-
-/**
- * Validates and corrects a Mesh.
- *
- * \returns true if a change is made.
- */
-bool BKE_mesh_validate(Mesh *mesh, bool do_verbose, bool cddata_check_mask);
-/**
- * Checks if a Mesh is valid without any modification. This is always verbose.
- * \returns True if the mesh is valid.
- */
-bool BKE_mesh_is_valid(Mesh *mesh);
-/**
- * Check all material indices of faces are valid, invalid ones are set to 0.
- * \returns True if the material indices are valid.
- */
-bool BKE_mesh_validate_material_indices(Mesh *mesh);
-
-/**
- * Validate the mesh, \a do_fixes requires \a mesh to be non-null.
- *
- * \return false if no changes needed to be made.
- */
-bool BKE_mesh_validate_arrays(Mesh *mesh,
-                              float (*vert_positions)[3],
-                              unsigned int verts_num,
-                              blender::int2 *edges,
-                              unsigned int edges_num,
-                              MFace *legacy_faces,
-                              unsigned int legacy_faces_num,
-                              const int *corner_verts,
-                              int *corner_edges,
-                              unsigned int corners_num,
-                              const int *face_offsets,
-                              unsigned int faces_num,
-                              MDeformVert *dverts, /* assume totvert length */
-                              bool do_verbose,
-                              bool do_fixes,
-                              bool *r_change);
-
-/**
- * \returns is_valid.
- */
-bool BKE_mesh_validate_all_customdata(CustomData *vert_data,
-                                      uint verts_num,
-                                      CustomData *edge_data,
-                                      uint edges_num,
-                                      CustomData *corner_data,
-                                      uint corners_num,
-                                      CustomData *face_data,
-                                      uint faces_num,
-                                      bool check_meshmask,
-                                      bool do_verbose,
-                                      bool do_fixes,
-                                      bool *r_change);
-
-void BKE_mesh_strip_loose_faces(Mesh *mesh);
 
 /* **** Depsgraph evaluation **** */
 

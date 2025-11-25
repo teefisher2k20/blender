@@ -4,7 +4,7 @@
 import bpy
 from bpy.types import Panel, Menu, UIList
 from rna_prop_ui import PropertyPanel
-from .space_properties import PropertiesAnimationMixin
+from bl_ui.space_properties import PropertiesAnimationMixin
 
 
 class DataButtonsPanel:
@@ -31,14 +31,10 @@ class LayerDataButtonsPanel:
 class GREASE_PENCIL_UL_masks(UIList):
     def draw_item(self, _context, layout, _data, item, icon, _active_data, _active_propname, _index):
         mask = item
-        if self.layout_type in {'DEFAULT', 'COMPACT'}:
-            row = layout.row(align=True)
-            row.prop(mask, "name", text="", emboss=False, icon_value=icon)
-            row.prop(mask, "invert", text="", emboss=False)
-            row.prop(mask, "hide", text="", emboss=False)
-        elif self.layout_type == 'GRID':
-            layout.alignment = 'CENTER'
-            layout.prop(mask, "name", text="", emboss=False, icon_value=icon)
+        row = layout.row(align=True)
+        row.prop(mask, "name", text="", emboss=False, icon_value=icon)
+        row.prop(mask, "invert", text="", emboss=False)
+        row.prop(mask, "hide", text="", emboss=False)
 
 
 class GreasePencil_LayerMaskPanel:
@@ -228,6 +224,10 @@ class GREASE_PENCIL_MT_grease_pencil_add_layer_extra(Menu):
         layout.operator("grease_pencil.layer_merge", text="Merge All").mode = 'ALL'
 
         layout.separator()
+        layout.operator("grease_pencil.relative_layer_mask_add", text="Mask with Layer Above").mode = 'ABOVE'
+        layout.operator("grease_pencil.relative_layer_mask_add", text="Mask with Layer Below").mode = 'BELOW'
+
+        layout.separator()
         layout.operator("grease_pencil.layer_duplicate_object", text="Copy Layer to Selected").only_active = True
         layout.operator("grease_pencil.layer_duplicate_object", text="Copy All Layers to Selected").only_active = False
 
@@ -334,6 +334,28 @@ class DATA_PT_grease_pencil_layer_display(LayerDataButtonsPanel, GreasePencil_La
     bl_options = {'DEFAULT_CLOSED'}
 
 
+class DATA_PT_grease_pencil_layer_group_display(Panel):
+    bl_label = "Display"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "data"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        grease_pencil = context.grease_pencil
+        return grease_pencil and grease_pencil.layer_groups.active
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+
+        grease_pencil = context.grease_pencil
+        group = grease_pencil.layer_groups.active
+
+        layout.prop(group, "channel_color", text="Channel Color")
+
+
 class DATA_PT_grease_pencil_onion_skinning(DataButtonsPanel, Panel):
     bl_label = "Onion Skinning"
 
@@ -419,7 +441,7 @@ class DATA_PT_grease_pencil_animation(DataButtonsPanel, PropertiesAnimationMixin
 
 class DATA_PT_grease_pencil_custom_props(DataButtonsPanel, PropertyPanel, Panel):
     _context_path = "object.data"
-    _property_type = bpy.types.GreasePencilv3
+    _property_type = bpy.types.GreasePencil
 
 
 class GREASE_PENCIL_UL_attributes(UIList):
@@ -494,6 +516,7 @@ classes = (
     DATA_PT_grease_pencil_layer_adjustments,
     DATA_PT_grease_pencil_layer_relations,
     DATA_PT_grease_pencil_layer_display,
+    DATA_PT_grease_pencil_layer_group_display,
     DATA_PT_grease_pencil_onion_skinning,
     DATA_PT_grease_pencil_onion_skinning_custom_colors,
     DATA_PT_grease_pencil_onion_skinning_display,

@@ -98,6 +98,8 @@ struct TraceJob {
   TraceMode mode;
   /* Custom source frame, allows overriding the default scene frame. */
   int frame_number;
+  int foreground_material_index;
+  int background_material_index;
 
   bool success;
   bool was_canceled;
@@ -207,17 +209,18 @@ static bke::CurvesGeometry grease_pencil_trace_image(TraceJob &trace_job, const 
 
   /* Assign different materials to foreground curves and hole curves. */
   bke::MutableAttributeAccessor attributes = trace_curves.attributes_for_write();
-  const int material_fg = ensure_foreground_material(
-      trace_job.bmain, trace_job.ob_grease_pencil, "Stroke");
-  const int material_bg = ensure_background_material(
-      trace_job.bmain, trace_job.ob_grease_pencil, "Holdout");
+  BLI_assert_msg(trace_job.foreground_material_index >= 0,
+                 "ensure_foreground_material must be called on the main thread");
+  BLI_assert_msg(trace_job.background_material_index >= 0,
+                 "ensure_background_material must be called on the main thread");
   const VArraySpan<bool> holes = *attributes.lookup<bool>(hole_attribute_id);
   bke::SpanAttributeWriter<int> material_indices = attributes.lookup_or_add_for_write_span<int>(
       "material_index", bke::AttrDomain::Curve);
   threading::parallel_for(trace_curves.curves_range(), 4096, [&](const IndexRange range) {
     for (const int curve_i : range) {
       const bool is_hole = holes[curve_i];
-      material_indices.span[curve_i] = (is_hole ? material_bg : material_fg);
+      material_indices.span[curve_i] = (is_hole ? trace_job.background_material_index :
+                                                  trace_job.foreground_material_index);
     }
   });
   material_indices.finish();
@@ -260,6 +263,9 @@ static void trace_start_job(void *customdata, wmJobWorkerStatus *worker_status)
       BKE_image_release_ibuf(trace_job.image, ibuf, lock);
       *(trace_job.progress) = 1.0f;
     }
+    /* If source type is not sequence, override `trace_job.mode` to single because we need the
+     * correct mode for finalization. */
+    trace_job.mode = TraceMode::Single;
   }
   /* Image sequence. */
   else if (trace_job.image->type == IMA_TYPE_IMAGE) {
@@ -374,7 +380,7 @@ static bool grease_pencil_trace_image_poll(bContext *C)
   return true;
 }
 
-static int grease_pencil_trace_image_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus grease_pencil_trace_image_exec(bContext *C, wmOperator *op)
 {
   TraceJob *job = MEM_new<TraceJob>("TraceJob");
   job->C = C;
@@ -421,6 +427,12 @@ static int grease_pencil_trace_image_exec(bContext *C, wmOperator *op)
   /* Back to active base. */
   blender::ed::object::base_activate(job->C, job->base_active);
 
+  /* Create materials on the main thread before starting the job. */
+  job->foreground_material_index = ensure_foreground_material(
+      job->bmain, job->ob_grease_pencil, "Stroke");
+  job->background_material_index = ensure_background_material(
+      job->bmain, job->ob_grease_pencil, "Holdout");
+
   if ((job->image->source == IMA_SRC_FILE) || (job->frame_number > 0)) {
     wmJobWorkerStatus worker_status = {};
     trace_start_job(job, &worker_status);
@@ -431,7 +443,7 @@ static int grease_pencil_trace_image_exec(bContext *C, wmOperator *op)
     wmJob *wm_job = WM_jobs_get(job->wm,
                                 CTX_wm_window(C),
                                 job->scene,
-                                "Trace Image",
+                                "Tracing image...",
                                 WM_JOB_PROGRESS,
                                 WM_JOB_TYPE_TRACE_IMAGE);
 
@@ -445,7 +457,9 @@ static int grease_pencil_trace_image_exec(bContext *C, wmOperator *op)
   return OPERATOR_FINISHED;
 }
 
-static int grease_pencil_trace_image_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
+static wmOperatorStatus grease_pencil_trace_image_invoke(bContext *C,
+                                                         wmOperator *op,
+                                                         const wmEvent * /*event*/)
 {
   /* Show popup dialog to allow editing. */
   /* FIXME: hard-coded dimensions here are just arbitrary. */

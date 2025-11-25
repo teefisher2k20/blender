@@ -14,6 +14,7 @@
 #include "BKE_context.hh"
 #include "BKE_curves.hh"
 #include "BKE_object.hh"
+#include "BKE_paint_types.hh"
 #include "BKE_report.hh"
 
 #include "ED_view3d.hh"
@@ -179,7 +180,7 @@ std::optional<CurvesBrush3D> sample_curves_3d_brush(const Depsgraph &depsgraph,
   const Curves &curves_id = *static_cast<Curves *>(curves_object.data);
   const CurvesGeometry &curves = curves_id.geometry.wrap();
   Object *surface_object = curves_id.surface;
-  Object *surface_object_eval = DEG_get_evaluated_object(&depsgraph, surface_object);
+  Object *surface_object_eval = DEG_get_evaluated(&depsgraph, surface_object);
 
   float3 center_ray_start_wo, center_ray_end_wo;
   ED_view3d_win_to_segment_clipped(
@@ -345,12 +346,12 @@ Vector<float4x4> get_symmetry_brush_transforms(const eCurvesSymmetryType symmetr
   return matrices;
 }
 
-void remember_stroke_position(Scene &scene, const float3 &brush_position_wo)
+void remember_stroke_position(CurvesSculpt &curves_sculpt, const float3 &brush_position_wo)
 {
-  UnifiedPaintSettings &ups = scene.toolsettings->unified_paint_settings;
-  copy_v3_v3(ups.average_stroke_accum, brush_position_wo);
-  ups.average_stroke_counter = 1;
-  ups.last_stroke_valid = true;
+  bke::PaintRuntime &paint_runtime = *curves_sculpt.paint.runtime;
+  copy_v3_v3(paint_runtime.average_stroke_accum, brush_position_wo);
+  paint_runtime.average_stroke_counter = 1;
+  paint_runtime.last_stroke_valid = true;
 }
 
 float transform_brush_radius(const float4x4 &transform,

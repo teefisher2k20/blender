@@ -21,7 +21,7 @@
 #include "bpy_utils_units.hh"
 
 #include "../generic/py_capi_utils.hh"
-#include "../generic/python_compat.hh"
+#include "../generic/python_compat.hh" /* IWYU pragma: keep. */
 
 #include "BKE_unit.hh"
 
@@ -146,7 +146,7 @@ static bool bpyunits_validate(const char *usys_str, const char *ucat_str, int *r
 PyDoc_STRVAR(
     /* Wrap. */
     bpyunits_to_value_doc,
-    ".. method:: to_value(unit_system, unit_category, str_input, str_ref_unit=None)\n"
+    ".. method:: to_value(unit_system, unit_category, str_input, *, str_ref_unit=None)\n"
     "\n"
     "   Convert a given input string into a float value.\n"
     "\n"
@@ -203,16 +203,15 @@ static PyObject *bpyunits_to_value(PyObject * /*self*/, PyObject *args, PyObject
     return nullptr;
   }
 
-  str_len = str_len * 2 + 64;
-  str = static_cast<char *>(PyMem_MALLOC(sizeof(*str) * size_t(str_len)));
-  BLI_strncpy(str, inpt, size_t(str_len));
+  const size_t str_maxncpy = str_len * 2 + 64;
+  str = static_cast<char *>(PyMem_MALLOC(sizeof(*str) * str_maxncpy));
+  BLI_strncpy(str, inpt, str_maxncpy);
 
-  BKE_unit_replace_string(str, int(str_len), uref, scale, usys, ucat);
+  BKE_unit_replace_string(str, int(str_maxncpy), uref, scale, usys, ucat);
 
   if (!PyC_RunString_AsNumber(nullptr, str, "<bpy_units_api>", &result)) {
     if (PyErr_Occurred()) {
       PyErr_Print();
-      PyErr_Clear();
     }
 
     PyErr_Format(
@@ -230,7 +229,7 @@ static PyObject *bpyunits_to_value(PyObject * /*self*/, PyObject *args, PyObject
 PyDoc_STRVAR(
     /* Wrap. */
     bpyunits_to_string_doc,
-    ".. method:: to_string(unit_system, unit_category, value, precision=3, "
+    ".. method:: to_string(unit_system, unit_category, value, *, precision=3, "
     "split_unit=False, compatible_unit=False)\n"
     "\n"
     "   Convert a given input float value into a string with units.\n"
@@ -249,7 +248,7 @@ PyDoc_STRVAR(
     "one (1.01m).\n"
     "   :type split_unit: bool\n"
     "   :arg compatible_unit: Whether to use keyboard-friendly units (1m2) or nicer "
-    "utf-8 ones (1m²).\n"
+    "UTF8 ones (1m²).\n"
     "   :type compatible_unit: bool\n"
     "   :return: The converted string.\n"
     "   :rtype: str\n"
@@ -308,8 +307,8 @@ static PyObject *bpyunits_to_string(PyObject * /*self*/, PyObject *args, PyObjec
     /* Maximum expected length of string result:
      * - Number itself: precision + decimal dot + up to four 'above dot' digits.
      * - Unit: up to ten chars
-     *   (six currently, let's be conservative, also because we use some utf8 chars).
-     * This can be repeated twice (e.g. 1m20cm), and we add ten more spare chars
+     *   (six currently, let's be conservative, also because we use some UTF8 chars).
+     * This can be repeated twice (e.g. `1m20cm`), and we add ten more spare chars
      * (spaces, trailing '\0'...).
      * So in practice, 64 should be more than enough.
      */
@@ -318,7 +317,7 @@ static PyObject *bpyunits_to_string(PyObject * /*self*/, PyObject *args, PyObjec
     PyObject *result;
 
     BKE_unit_value_as_string_adaptive(
-        buf1, sizeof(buf1), value, precision, usys, ucat, bool(split_unit), false);
+        buf1, sizeof(buf1), value, precision, usys, ucat, split_unit, false);
 
     if (compatible_unit) {
       BKE_unit_name_to_alt(buf2, sizeof(buf2), buf1, usys, ucat);
@@ -334,9 +333,14 @@ static PyObject *bpyunits_to_string(PyObject * /*self*/, PyObject *args, PyObjec
   }
 }
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic push
-#  pragma GCC diagnostic ignored "-Wcast-function-type"
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wcast-function-type"
+#  else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wcast-function-type"
+#  endif
 #endif
 
 static PyMethodDef bpyunits_methods[] = {
@@ -351,15 +355,18 @@ static PyMethodDef bpyunits_methods[] = {
     {nullptr, nullptr, 0, nullptr},
 };
 
-#if (defined(__GNUC__) && !defined(__clang__))
-#  pragma GCC diagnostic pop
+#ifdef __GNUC__
+#  ifdef __clang__
+#    pragma clang diagnostic pop
+#  else
+#    pragma GCC diagnostic pop
+#  endif
 #endif
 
 PyDoc_STRVAR(
     /* Wrap. */
     bpyunits_doc,
-    "This module contains some data/methods regarding units handling.");
-
+    "This module contains some data/methods regarding units handling.\n");
 static PyModuleDef bpyunits_module = {
     /*m_base*/ PyModuleDef_HEAD_INIT,
     /*m_name*/ "bpy.utils.units",

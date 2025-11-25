@@ -94,9 +94,11 @@ World *ED_preview_prepare_world(Main *pr_main,
                                 const World *world,
                                 ID_Type id_type,
                                 ePreviewRenderMethod pr_method);
+World *ED_preview_prepare_world_simple(Main *bmain);
+void ED_preview_world_simple_set_rgb(World *world, const float color[4]);
 
 void ED_preview_shader_job(const bContext *C,
-                           void *owner,
+                           const void *owner,
                            ID *id,
                            ID *parent,
                            MTex *slot,
@@ -113,6 +115,7 @@ void ED_preview_restart_queue_add(ID *id, enum eIconSizes size);
 void ED_preview_restart_queue_work(const bContext *C);
 
 void ED_preview_kill_jobs(wmWindowManager *wm, Main *bmain);
+void ED_preview_kill_jobs_for_id(wmWindowManager *wm, const ID *id);
 
 void ED_preview_draw(
     const bContext *C, void *idp, void *parentp, void *slotp, uiPreview *ui_preview, rcti *rect);

@@ -4,25 +4,37 @@
 
 #include "node_geometry_util.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
+#include "UI_resources.hh"
 
 namespace blender::nodes::node_geo_input_normal_cc {
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
   b.add_output<decl::Vector>("Normal").field_source();
+  b.add_output<decl::Vector>("True Normal")
+      .field_source()
+      .description(
+          "For meshes, outputs normals without custom normal attributes taken into account");
 }
 
 static void node_layout_ex(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "legacy_corner_normals", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout->prop(ptr, "legacy_corner_normals", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
 static void node_geo_exec(GeoNodeExecParams params)
 {
   const bool legacy_corner_normals = bool(params.node().custom1);
-  Field<float3> normal_field{std::make_shared<bke::NormalFieldInput>(legacy_corner_normals)};
-  params.set_output("Normal", std::move(normal_field));
+  if (params.output_is_required("Normal")) {
+    params.set_output(
+        "Normal",
+        Field<float3>{std::make_shared<bke::NormalFieldInput>(legacy_corner_normals, false)});
+  }
+  if (params.output_is_required("True Normal")) {
+    params.set_output("True Normal",
+                      Field<float3>{std::make_shared<bke::NormalFieldInput>(false, true)});
+  }
 }
 
 static void node_register()
@@ -39,7 +51,7 @@ static void node_register()
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
   ntype.draw_buttons_ex = node_layout_ex;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

@@ -36,10 +36,6 @@ struct ViewRender;
 struct bNode;
 struct bNodeTree;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /* External Engine */
 
 /** #RenderEngineType.flag */
@@ -54,8 +50,7 @@ enum RenderEngineTypeFlag {
   RE_USE_GPU_CONTEXT = (1 << 7),
   RE_USE_CUSTOM_FREESTYLE = (1 << 8),
   RE_USE_NO_IMAGE_SAVE = (1 << 9),
-  RE_USE_ALEMBIC_PROCEDURAL = (1 << 10),
-  RE_USE_MATERIALX = (1 << 11),
+  RE_USE_MATERIALX = (1 << 10),
 };
 
 /** #RenderEngine.flag */
@@ -71,11 +66,11 @@ enum RenderEngineFlag {
 
 extern ListBase R_engines;
 
-typedef struct RenderEngineType {
+struct RenderEngineType {
   struct RenderEngineType *next, *prev;
 
-  /* type info */
-  char idname[64]; /* best keep the same size as BKE_ST_MAXNAME. */
+  /* Type info. */
+  char idname[/*BKE_ST_MAXNAME*/ 64];
   char name[64];
   int flag;
 
@@ -115,22 +110,23 @@ typedef struct RenderEngineType {
   void (*update_render_passes)(struct RenderEngine *engine,
                                struct Scene *scene,
                                struct ViewLayer *view_layer);
+  void (*update_custom_camera)(struct RenderEngine *engine, struct Camera *cam);
 
   struct DrawEngineType *draw_engine;
 
   /* RNA integration */
   ExtensionRNA rna_ext;
-} RenderEngineType;
+};
 
-typedef void (*update_render_passes_cb_t)(void *userdata,
-                                          struct Scene *scene,
-                                          struct ViewLayer *view_layer,
-                                          const char *name,
-                                          int channels,
-                                          const char *chanid,
-                                          eNodeSocketDatatype type);
+using update_render_passes_cb_t = void (*)(void *userdata,
+                                           struct Scene *scene,
+                                           struct ViewLayer *view_layer,
+                                           const char *name,
+                                           int channels,
+                                           const char *chanid,
+                                           eNodeSocketDatatype type);
 
-typedef struct RenderEngine {
+struct RenderEngine {
   RenderEngineType *type;
   void *py_instance;
 
@@ -140,7 +136,7 @@ typedef struct RenderEngine {
 
   struct Render *re;
   ListBase fullresult;
-  char text[512]; /* IMA_MAX_RENDER_TEXT_SIZE */
+  char text[/*IMA_MAX_RENDER_TEXT_SIZE*/ 512];
 
   int resolution_x, resolution_y;
 
@@ -170,7 +166,7 @@ typedef struct RenderEngine {
   struct GPUContext *blender_gpu_context;
   /* Whether to restore DRWState after RenderEngine display pass. */
   bool gpu_restore_context;
-} RenderEngine;
+};
 
 RenderEngine *RE_engine_create(RenderEngineType *type);
 void RE_engine_free(RenderEngine *engine);
@@ -278,12 +274,6 @@ void RE_engines_init(void);
 void RE_engines_exit(void);
 void RE_engines_register(RenderEngineType *render_type);
 
-/**
- * Return true if the RenderEngineType has native support for direct loading of Alembic data. For
- * Cycles, this also checks that the experimental feature set is enabled.
- */
-bool RE_engine_supports_alembic_procedural(const RenderEngineType *render_type, Scene *scene);
-
 RenderEngineType *RE_engines_find(const char *idname);
 
 const rcti *RE_engine_get_current_tiles(struct Render *re, int *r_total_tiles);
@@ -297,7 +287,3 @@ void RE_engine_free_blender_memory(struct RenderEngine *engine);
 void RE_engine_tile_highlight_set(
     struct RenderEngine *engine, int x, int y, int width, int height, bool highlight);
 void RE_engine_tile_highlight_clear_all(struct RenderEngine *engine);
-
-#ifdef __cplusplus
-}
-#endif

@@ -30,7 +30,7 @@ class TOPBAR_HT_upper_bar(Header):
 
         TOPBAR_MT_editor_menus.draw_collapsible(context, layout)
 
-        layout.separator()
+        layout.separator(type='LINE')
 
         if not screen.show_fullscreen:
             layout.template_ID_tabs(window, "workspace", new="workspace.add", menu="TOPBAR_MT_workspace_menu")
@@ -241,34 +241,43 @@ class TOPBAR_MT_file_new(Menu):
 
         # Limit number of templates in splash screen, spill over into more menu.
         paths = TOPBAR_MT_file_new.app_template_paths()
-        splash_limit = 5
+        splash_limit = 6
 
         if use_splash:
-            icon = 'FILE_NEW'
             show_more = len(paths) > (splash_limit - 1)
             if show_more:
                 paths = paths[:splash_limit - 2]
         elif use_more:
-            icon = 'FILE_NEW'
             paths = paths[splash_limit - 2:]
             show_more = False
         else:
-            icon = 'NONE'
             show_more = False
 
         # Draw application templates.
         if not use_more:
-            props = layout.operator("wm.read_homefile", text="General", icon=icon)
+            props = layout.operator("wm.read_homefile", text="General", icon='FILE_NEW')
             props.app_template = ""
 
         for d in paths:
+            icon = 'FILE_NEW'
+            # Set icon per template.
+            if d == "2D_Animation":
+                icon = 'GREASEPENCIL_LAYER_GROUP'
+            elif d == "Sculpting":
+                icon = 'SCULPTMODE_HLT'
+            elif d == "Storyboarding":
+                icon = 'GREASEPENCIL'
+            elif d == "VFX":
+                icon = 'TRACKER'
+            elif d == "Video_Editing":
+                icon = 'SEQUENCE'
             props = layout.operator("wm.read_homefile", text=bpy.path.display_name(iface_(d)), icon=icon)
             props.app_template = d
 
         layout.operator_context = 'EXEC_DEFAULT'
 
         if show_more:
-            layout.menu("TOPBAR_MT_templates_more", text="...")
+            layout.menu("TOPBAR_MT_templates_more", text="More...")
 
     def draw(self, context):
         TOPBAR_MT_file_new.draw_ex(self.layout, context)
@@ -355,8 +364,6 @@ class TOPBAR_MT_file_import(Menu):
     bl_owner_use_filter = False
 
     def draw(self, _context):
-        if bpy.app.build_options.collada:
-            self.layout.operator("wm.collada_import", text="Collada (.dae) (Legacy)")
         if bpy.app.build_options.alembic:
             self.layout.operator("wm.alembic_import", text="Alembic (.abc)")
         if bpy.app.build_options.usd:
@@ -373,6 +380,9 @@ class TOPBAR_MT_file_import(Menu):
         if bpy.app.build_options.io_stl:
             self.layout.operator("wm.stl_import", text="STL (.stl)")
 
+        if bpy.app.build_options.io_fbx:
+            self.layout.operator("wm.fbx_import", text="FBX (.fbx)")
+
 
 class TOPBAR_MT_file_export(Menu):
     bl_idname = "TOPBAR_MT_file_export"
@@ -380,8 +390,6 @@ class TOPBAR_MT_file_export(Menu):
     bl_owner_use_filter = False
 
     def draw(self, _context):
-        if bpy.app.build_options.collada:
-            self.layout.operator("wm.collada_export", text="Collada (.dae) (Legacy)")
         if bpy.app.build_options.alembic:
             self.layout.operator("wm.alembic_export", text="Alembic (.abc)")
         if bpy.app.build_options.usd:
@@ -459,6 +467,11 @@ class TOPBAR_MT_render(Menu):
         layout = self.layout
 
         rd = context.scene.render
+        scene = context.scene
+        seq_scene = context.sequencer_scene
+        strips = getattr(context, "strips", ())
+
+        can_render_seq = seq_scene and seq_scene.render.use_sequencer and strips
 
         layout.operator("render.render", text="Render Image", icon='RENDER_STILL').use_viewport = True
         props = layout.operator("render.render", text="Render Animation", icon='RENDER_ANIMATION')
@@ -466,6 +479,18 @@ class TOPBAR_MT_render(Menu):
         props.use_viewport = True
 
         layout.separator()
+
+        if can_render_seq and (seq_scene != scene):
+            props = layout.operator("render.render", text="Render Sequencer Image", icon='RENDER_STILL')
+            props.use_viewport = True
+            props.use_sequencer_scene = True
+
+            props = layout.operator("render.render", text="Render Sequencer Animation", icon='RENDER_ANIMATION')
+            props.animation = True
+            props.use_viewport = True
+            props.use_sequencer_scene = True
+
+            layout.separator()
 
         layout.operator("sound.mixdown", text="Render Audio...")
 
@@ -487,8 +512,8 @@ class TOPBAR_MT_edit(Menu):
 
         show_developer = context.preferences.view.show_developer_ui
 
-        layout.operator("ed.undo")
-        layout.operator("ed.redo")
+        layout.operator("ed.undo", icon='LOOP_BACK')
+        layout.operator("ed.redo", icon='LOOP_FORWARDS')
         layout.menu("TOPBAR_MT_undo_history")
 
         layout.separator()
@@ -528,7 +553,7 @@ class TOPBAR_MT_window(Menu):
 
     def draw(self, context):
         import sys
-        from bl_ui_utils.layout import operator_context
+        from _bl_ui_utils.layout import operator_context
 
         layout = self.layout
 
@@ -577,10 +602,10 @@ class TOPBAR_MT_help(Menu):
         show_developer = context.preferences.view.show_developer_ui
 
         layout.operator("wm.url_open_preset", text="Manual", icon='URL').type = 'MANUAL'
-        layout.operator("wm.url_open_preset", text="Release Notes").type = 'RELEASE_NOTES'
-        layout.operator("wm.url_open", text="Tutorials").url = "https://www.blender.org/tutorials"
         layout.operator("wm.url_open", text="Support").url = "https://www.blender.org/support"
         layout.operator("wm.url_open", text="User Communities").url = "https://www.blender.org/community/"
+        layout.operator("wm.url_open", text="Get Involved").url = "https://www.blender.org/get-involved/"
+        layout.operator("wm.url_open_preset", text="Release Notes").type = 'RELEASE_NOTES'
 
         layout.separator()
 
@@ -633,8 +658,10 @@ class TOPBAR_MT_workspace_menu(Menu):
         layout = self.layout
 
         layout.operator("workspace.duplicate", text="Duplicate", icon='DUPLICATE')
-        if len(bpy.data.workspaces) > 1:
-            layout.operator("workspace.delete", text="Delete", icon='REMOVE')
+        if len(bpy.data.workspaces) <= 1:
+            return
+
+        layout.operator("workspace.delete", text="Delete", icon='REMOVE')
 
         layout.separator()
 
@@ -648,6 +675,10 @@ class TOPBAR_MT_workspace_menu(Menu):
         props.direction = 'PREV'
         props = layout.operator("screen.workspace_cycle", text="Next Workspace")
         props.direction = 'NEXT'
+
+        layout.separator()
+
+        layout.operator("workspace.delete_all_others")
 
 
 # Grease Pencil Object - Primitive curve
@@ -744,13 +775,22 @@ class TOPBAR_PT_name_marker(Panel):
     @staticmethod
     def is_using_pose_markers(context):
         sd = context.space_data
-        return (sd.type == 'DOPESHEET_EDITOR' and sd.mode in {'ACTION', 'SHAPEKEY'} and
-                sd.show_pose_markers and sd.action)
+        return (
+            sd.type == 'DOPESHEET_EDITOR' and sd.mode in {'ACTION', 'SHAPEKEY'} and
+            sd.show_pose_markers and context.active_action
+        )
+
+    @staticmethod
+    def is_using_sequencer(context):
+        sd = context.space_data
+        return sd.type == 'SEQUENCE_EDITOR'
 
     @staticmethod
     def get_selected_marker(context):
         if TOPBAR_PT_name_marker.is_using_pose_markers(context):
-            markers = context.space_data.action.pose_markers
+            markers = context.active_action.pose_markers
+        elif TOPBAR_PT_name_marker.is_using_sequencer(context):
+            markers = context.sequencer_scene.timeline_markers
         else:
             markers = context.scene.timeline_markers
 

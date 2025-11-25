@@ -6,26 +6,18 @@
  * \ingroup RNA
  */
 
-#include <climits>
 #include <cstdlib>
-
-#include "MEM_guardedalloc.h"
 
 #include "DNA_movieclip_types.h"
 #include "DNA_scene_types.h"
 
-#include "RNA_access.hh"
 #include "RNA_define.hh"
 
 #include "rna_internal.hh"
 
 #include "BKE_movieclip.h"
-#include "BKE_tracking.h"
 
 #include "WM_types.hh"
-
-#include "IMB_imbuf.hh"
-#include "IMB_imbuf_types.hh"
 
 #include "MOV_enums.hh"
 #include "MOV_read.hh"
@@ -38,6 +30,8 @@
 
 #  include "DNA_screen_types.h"
 #  include "DNA_space_types.h"
+
+#  include "BKE_scene.hh"
 
 #  include "SEQ_relations.hh"
 
@@ -66,7 +60,7 @@ static void rna_MovieClip_use_proxy_update(Main *bmain, Scene * /*scene*/, Point
 {
   MovieClip *clip = (MovieClip *)ptr->owner_id;
   BKE_movieclip_clear_cache(clip);
-  SEQ_relations_invalidate_movieclip_strips(bmain, clip);
+  blender::seq::relations_invalidate_movieclip_strips(bmain, clip);
 }
 
 static void rna_MovieClipUser_proxy_render_settings_update(Main *bmain,
@@ -95,7 +89,7 @@ static void rna_MovieClipUser_proxy_render_settings_update(Main *bmain,
 
             if (clip && (clip->flag & MCLIP_USE_PROXY)) {
               BKE_movieclip_clear_cache(clip);
-              SEQ_relations_invalidate_movieclip_strips(bmain, clip);
+              blender::seq::relations_invalidate_movieclip_strips(bmain, clip);
             }
 
             break;
@@ -242,6 +236,7 @@ static void rna_def_movieclip_proxy(BlenderRNA *brna)
   /* directory */
   prop = RNA_def_property(srna, "directory", PROP_STRING, PROP_DIRPATH);
   RNA_def_property_string_sdna(prop, nullptr, "dir");
+  RNA_def_property_flag(prop, PROP_PATH_SUPPORTS_BLEND_RELATIVE);
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
   RNA_def_property_ui_text(prop, "Directory", "Location to store the proxy files");
   RNA_def_property_update(prop, NC_MOVIECLIP | ND_DISPLAY, "rna_MovieClip_reload_update");
@@ -325,6 +320,7 @@ static void rna_def_movieclip(BlenderRNA *brna)
   prop = RNA_def_property(srna, "filepath", PROP_STRING, PROP_FILEPATH);
   RNA_def_property_string_sdna(prop, nullptr, "filepath");
   RNA_def_property_ui_text(prop, "File Path", "Filename of the movie or sequence file");
+  RNA_def_property_flag(prop, PROP_PATH_SUPPORTS_BLEND_RELATIVE);
   RNA_def_property_update(prop, NC_MOVIECLIP | ND_DISPLAY, "rna_MovieClip_reload_update");
 
   prop = RNA_def_property(srna, "tracking", PROP_POINTER, PROP_NONE);
@@ -348,7 +344,7 @@ static void rna_def_movieclip(BlenderRNA *brna)
                             0,
                             0,
                             "Size",
-                            "Width and height in pixels, zero when image data can't be loaded",
+                            "Width and height in pixels, zero when image data cannot be loaded",
                             0,
                             0);
   RNA_def_property_int_funcs(prop, "rna_MovieClip_size_get", nullptr, nullptr);
@@ -359,6 +355,7 @@ static void rna_def_movieclip(BlenderRNA *brna)
   RNA_def_property_array(prop, 2);
   RNA_def_property_range(prop, 0.1f, FLT_MAX);
   RNA_def_property_ui_range(prop, 0.1f, 5000.0f, 1, 2);
+  RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
   RNA_def_property_ui_text(
       prop, "Display Aspect", "Display Aspect for this clip, does not affect rendering");
   RNA_def_property_update(prop, NC_MOVIECLIP | ND_DISPLAY, nullptr);
@@ -379,14 +376,14 @@ static void rna_def_movieclip(BlenderRNA *brna)
       "Create proxy images in a custom directory (default is movie location)");
   RNA_def_property_update(prop, NC_MOVIECLIP | ND_DISPLAY, "rna_MovieClip_reload_update");
 
-  /* grease pencil */
-  prop = RNA_def_property(srna, "grease_pencil", PROP_POINTER, PROP_NONE);
+  /* annotations */
+  prop = RNA_def_property(srna, "annotation", PROP_POINTER, PROP_NONE);
   RNA_def_property_pointer_sdna(prop, nullptr, "gpd");
-  RNA_def_property_struct_type(prop, "GreasePencil");
+  RNA_def_property_struct_type(prop, "Annotation");
   RNA_def_property_pointer_funcs(
       prop, nullptr, nullptr, nullptr, "rna_GPencil_datablocks_annotations_poll");
   RNA_def_property_flag(prop, PROP_EDITABLE | PROP_ID_REFCOUNT);
-  RNA_def_property_ui_text(prop, "Grease Pencil", "Grease Pencil data for this movie clip");
+  RNA_def_property_ui_text(prop, "Annotation", "Annotation data for this movie clip");
   RNA_def_property_update(prop, NC_MOVIECLIP | ND_DISPLAY, nullptr);
 
   /* start_frame */

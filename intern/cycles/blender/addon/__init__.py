@@ -47,7 +47,6 @@ class CyclesRender(bpy.types.RenderEngine):
     bl_use_exclude_layers = True
     bl_use_spherical_stereo = True
     bl_use_custom_freestyle = True
-    bl_use_alembic_procedural = True
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -108,6 +107,13 @@ class CyclesRender(bpy.types.RenderEngine):
         if engine.with_osl():
             from . import osl
             osl.update_script_node(node, self.report)
+        else:
+            self.report({'ERROR'}, "OSL support disabled in this build")
+
+    def update_custom_camera(self, cam):
+        if engine.with_osl():
+            from . import osl
+            osl.update_custom_camera_shader(cam, self.report)
         else:
             self.report({'ERROR'}, "OSL support disabled in this build")
 

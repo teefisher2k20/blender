@@ -10,12 +10,12 @@
 #include "BLI_string.h"
 
 #include "BKE_attribute.hh"
+#include "BKE_attribute_legacy_convert.hh"
 #include "BKE_attribute_math.hh"
 #include "BKE_mesh.hh"
 
 #include "attribute_convert.hh"
 #include "draw_attributes.hh"
-#include "draw_cache_inline.hh"
 #include "draw_subdivision.hh"
 #include "extract_mesh.hh"
 
@@ -29,22 +29,23 @@ namespace blender::draw {
 
 static void init_vbo_for_attribute(const MeshRenderData &mr,
                                    gpu::VertBuf &vbo,
-                                   const DRW_AttributeRequest &request,
+                                   const StringRef name,
+                                   const bke::AttrType type,
                                    bool build_on_device,
                                    uint32_t len)
 {
   char attr_name[32], attr_safe_name[GPU_MAX_SAFE_ATTR_NAME];
-  GPU_vertformat_safe_attr_name(request.attribute_name, attr_safe_name, GPU_MAX_SAFE_ATTR_NAME);
+  GPU_vertformat_safe_attr_name(name, attr_safe_name, GPU_MAX_SAFE_ATTR_NAME);
   /* Attributes use auto-name. */
   SNPRINTF(attr_name, "a%s", attr_safe_name);
 
-  GPUVertFormat format = init_format_for_attribute(request.cd_type, attr_name);
+  GPUVertFormat format = init_format_for_attribute(type, attr_name);
   GPU_vertformat_deinterleave(&format);
 
-  if (mr.active_color_name && STREQ(request.attribute_name, mr.active_color_name)) {
+  if (mr.active_color_name && name == mr.active_color_name) {
     GPU_vertformat_alias_add(&format, "ac");
   }
-  if (mr.default_color_name && STREQ(request.attribute_name, mr.default_color_name)) {
+  if (mr.default_color_name && name == mr.default_color_name) {
     GPU_vertformat_alias_add(&format, "c");
   }
 
@@ -170,153 +171,160 @@ static void extract_data_bmesh_loop(const BMesh &bm, const int cd_offset, gpu::V
   }
 }
 
-static const CustomData *get_custom_data_for_domain(const BMesh &bm, bke::AttrDomain domain)
+static void extract_attribute_data(const MeshRenderData &mr,
+                                   const BMDataLayerLookup &attr,
+                                   gpu::VertBuf &vbo)
 {
-  switch (domain) {
-    case bke::AttrDomain::Point:
-      return &bm.vdata;
-    case bke::AttrDomain::Corner:
-      return &bm.ldata;
-    case bke::AttrDomain::Face:
-      return &bm.pdata;
-    case bke::AttrDomain::Edge:
-      return &bm.edata;
-    default:
-      return nullptr;
-  }
+  bke::attribute_math::convert_to_static_type(attr.type, [&](auto dummy) {
+    using T = decltype(dummy);
+    if constexpr (!std::is_void_v<typename AttributeConverter<T>::VBOType>) {
+      switch (attr.domain) {
+        case bke::AttrDomain::Point:
+          extract_data_bmesh_vert<T>(*mr.bm, attr.offset, vbo);
+          break;
+        case bke::AttrDomain::Edge:
+          extract_data_bmesh_edge<T>(*mr.bm, attr.offset, vbo);
+          break;
+        case bke::AttrDomain::Face:
+          extract_data_bmesh_face<T>(*mr.bm, attr.offset, vbo);
+          break;
+        case bke::AttrDomain::Corner:
+          extract_data_bmesh_loop<T>(*mr.bm, attr.offset, vbo);
+          break;
+        default:
+          BLI_assert_unreachable();
+      }
+    }
+  });
 }
 
-static void extract_attribute(const MeshRenderData &mr,
-                              const DRW_AttributeRequest &request,
-                              gpu::VertBuf &vbo)
+static void extract_attribute_data(const MeshRenderData &mr,
+                                   const bke::GAttributeReader &attr,
+                                   gpu::VertBuf &vbo)
 {
-  if (mr.extract_type == MeshExtractType::BMesh) {
-    const CustomData &custom_data = *get_custom_data_for_domain(*mr.bm, request.domain);
-    const char *name = request.attribute_name;
-    const int cd_offset = CustomData_get_offset_named(&custom_data, request.cd_type, name);
-
-    bke::attribute_math::convert_to_static_type(request.cd_type, [&](auto dummy) {
-      using T = decltype(dummy);
-      if constexpr (!std::is_void_v<typename AttributeConverter<T>::VBOType>) {
-        switch (request.domain) {
-          case bke::AttrDomain::Point:
-            extract_data_bmesh_vert<T>(*mr.bm, cd_offset, vbo);
-            break;
-          case bke::AttrDomain::Edge:
-            extract_data_bmesh_edge<T>(*mr.bm, cd_offset, vbo);
-            break;
-          case bke::AttrDomain::Face:
-            extract_data_bmesh_face<T>(*mr.bm, cd_offset, vbo);
-            break;
-          case bke::AttrDomain::Corner:
-            extract_data_bmesh_loop<T>(*mr.bm, cd_offset, vbo);
-            break;
-          default:
-            BLI_assert_unreachable();
-        }
+  bke::attribute_math::convert_to_static_type(attr.varray.type(), [&](auto dummy) {
+    using T = decltype(dummy);
+    if constexpr (!std::is_void_v<typename AttributeConverter<T>::VBOType>) {
+      switch (attr.domain) {
+        case bke::AttrDomain::Point:
+          extract_data_mesh_mapped_corner(GVArraySpan(*attr).typed<T>(), mr.corner_verts, vbo);
+          break;
+        case bke::AttrDomain::Edge:
+          extract_data_mesh_mapped_corner(GVArraySpan(*attr).typed<T>(), mr.corner_edges, vbo);
+          break;
+        case bke::AttrDomain::Face:
+          extract_data_mesh_face(mr.faces, GVArraySpan(*attr).typed<T>(), vbo);
+          break;
+        case bke::AttrDomain::Corner:
+          vertbuf_data_extract_direct(GVArraySpan(*attr).typed<T>(), vbo);
+          break;
+        default:
+          BLI_assert_unreachable();
       }
-    });
+    }
+  });
+}
+
+gpu::VertBufPtr extract_attribute(const MeshRenderData &mr, const StringRef name)
+{
+  gpu::VertBuf *vbo = GPU_vertbuf_calloc();
+  if (mr.extract_type == MeshExtractType::BMesh) {
+    const BMDataLayerLookup attr = BM_data_layer_lookup(*mr.bm, name);
+    if (!attr) {
+      return {};
+    }
+    const bke::AttrType type = attr.type;
+    init_vbo_for_attribute(mr, *vbo, name, type, false, uint32_t(mr.corners_num));
+    extract_attribute_data(mr, attr, *vbo);
   }
   else {
     const bke::AttributeAccessor attributes = mr.mesh->attributes();
-    const StringRef name = request.attribute_name;
-    const eCustomDataType data_type = request.cd_type;
-    const GVArraySpan attribute = *attributes.lookup_or_default(name, request.domain, data_type);
-
-    bke::attribute_math::convert_to_static_type(request.cd_type, [&](auto dummy) {
-      using T = decltype(dummy);
-      if constexpr (!std::is_void_v<typename AttributeConverter<T>::VBOType>) {
-        switch (request.domain) {
-          case bke::AttrDomain::Point:
-            extract_data_mesh_mapped_corner(attribute.typed<T>(), mr.corner_verts, vbo);
-            break;
-          case bke::AttrDomain::Edge:
-            extract_data_mesh_mapped_corner(attribute.typed<T>(), mr.corner_edges, vbo);
-            break;
-          case bke::AttrDomain::Face:
-            extract_data_mesh_face(mr.faces, attribute.typed<T>(), vbo);
-            break;
-          case bke::AttrDomain::Corner:
-            vertbuf_data_extract_direct(attribute.typed<T>(), vbo);
-            break;
-          default:
-            BLI_assert_unreachable();
-        }
-      }
-    });
-  }
-}
-
-void extract_attributes(const MeshRenderData &mr,
-                        const Span<DRW_AttributeRequest> requests,
-                        const Span<gpu::VertBuf *> vbos)
-{
-  for (const int i : vbos.index_range()) {
-    if (DRW_vbo_requested(vbos[i])) {
-      init_vbo_for_attribute(mr, *vbos[i], requests[i], false, uint32_t(mr.corners_num));
-      extract_attribute(mr, requests[i], *vbos[i]);
+    const bke::GAttributeReader attr = attributes.lookup(name);
+    if (!attr) {
+      return {};
     }
+    const bke::AttrType type = bke::cpp_type_to_attribute_type(attr.varray.type());
+    init_vbo_for_attribute(mr, *vbo, name, type, false, uint32_t(mr.corners_num));
+    extract_attribute_data(mr, attr, *vbo);
   }
+  return gpu::VertBufPtr(vbo);
 }
 
-void extract_attributes_subdiv(const MeshRenderData &mr,
-                               const DRWSubdivCache &subdiv_cache,
-                               const Span<DRW_AttributeRequest> requests,
-                               const Span<gpu::VertBuf *> vbos)
+static gpu::VertBufPtr init_coarse_data(const bke::AttrType type, const int coarse_corners_num)
 {
-  for (const int i : vbos.index_range()) {
-    if (DRW_vbo_requested(vbos[i])) {
-      const DRW_AttributeRequest &request = requests[i];
+  gpu::VertBuf *vbo = GPU_vertbuf_calloc();
+  GPUVertFormat coarse_format = draw::init_format_for_attribute(type, "data");
+  GPU_vertbuf_init_with_format_ex(*vbo, coarse_format, GPU_USAGE_STATIC);
+  GPU_vertbuf_data_alloc(*vbo, uint32_t(coarse_corners_num));
+  return gpu::VertBufPtr(vbo);
+}
 
-      const Mesh *coarse_mesh = subdiv_cache.mesh;
+gpu::VertBufPtr extract_attribute_subdiv(const MeshRenderData &mr,
+                                         const DRWSubdivCache &subdiv_cache,
+                                         const StringRef name)
+{
 
-      /* Prepare VBO for coarse data. The compute shader only expects floats. */
-      gpu::VertBuf *src_data = GPU_vertbuf_calloc();
-      GPUVertFormat coarse_format = draw::init_format_for_attribute(request.cd_type, "data");
-      GPU_vertbuf_init_with_format_ex(*src_data, coarse_format, GPU_USAGE_STATIC);
-      GPU_vertbuf_data_alloc(*src_data, uint32_t(coarse_mesh->corners_num));
+  const Mesh *coarse_mesh = subdiv_cache.mesh;
 
-      extract_attribute(mr, request, *src_data);
-
-      gpu::VertBuf &dst_buffer = *vbos[i];
-      init_vbo_for_attribute(mr, dst_buffer, request, true, subdiv_cache.num_subdiv_loops);
-
-      /* Ensure data is uploaded properly. */
-      GPU_vertbuf_tag_dirty(src_data);
-      bke::attribute_math::convert_to_static_type(request.cd_type, [&](auto dummy) {
-        using T = decltype(dummy);
-        using Converter = AttributeConverter<T>;
-        if constexpr (!std::is_void_v<typename Converter::VBOType>) {
-          draw_subdiv_interp_custom_data(subdiv_cache,
-                                         *src_data,
-                                         dst_buffer,
-                                         Converter::gpu_component_type,
-                                         Converter::gpu_component_len,
-                                         0);
-        }
-      });
-
-      GPU_vertbuf_discard(src_data);
+  /* Prepare VBO for coarse data. The compute shader only expects floats. */
+  gpu::VertBufPtr coarse_vbo;
+  bke::AttrType type;
+  if (mr.extract_type == MeshExtractType::BMesh) {
+    const BMDataLayerLookup attr = BM_data_layer_lookup(*mr.bm, name);
+    if (!attr) {
+      return {};
     }
+    type = attr.type;
+    coarse_vbo = init_coarse_data(type, coarse_mesh->corners_num);
+    extract_attribute_data(mr, attr, *coarse_vbo);
   }
+  else {
+    const bke::AttributeAccessor attributes = mr.mesh->attributes();
+    const bke::GAttributeReader attr = attributes.lookup(name);
+    if (!attr) {
+      return {};
+    }
+    type = bke::cpp_type_to_attribute_type(attr.varray.type());
+    coarse_vbo = init_coarse_data(type, coarse_mesh->corners_num);
+    extract_attribute_data(mr, attr, *coarse_vbo);
+  }
+
+  gpu::VertBuf *vbo = GPU_vertbuf_calloc();
+  init_vbo_for_attribute(mr, *vbo, name, type, true, subdiv_cache.num_subdiv_loops);
+
+  /* Ensure data is uploaded properly. */
+  GPU_vertbuf_tag_dirty(coarse_vbo.get());
+  bke::attribute_math::convert_to_static_type(type, [&](auto dummy) {
+    using T = decltype(dummy);
+    using Converter = AttributeConverter<T>;
+    if constexpr (!std::is_void_v<typename Converter::VBOType>) {
+      draw_subdiv_interp_custom_data(subdiv_cache,
+                                     *coarse_vbo,
+                                     *vbo,
+                                     Converter::gpu_component_type,
+                                     Converter::gpu_component_len,
+                                     0);
+    }
+  });
+
+  return gpu::VertBufPtr(vbo);
 }
 
-void extract_attr_viewer(const MeshRenderData &mr, gpu::VertBuf &vbo)
+gpu::VertBufPtr extract_attr_viewer(const MeshRenderData &mr)
 {
-  static GPUVertFormat format = {0};
-  if (format.attr_len == 0) {
-    GPU_vertformat_attr_add(&format, "attribute_value", GPU_COMP_F32, 4, GPU_FETCH_FLOAT);
-  }
+  static const GPUVertFormat format = GPU_vertformat_from_attribute(
+      "attribute_value", gpu::VertAttrType::SFLOAT_32_32_32_32);
 
-  GPU_vertbuf_init_with_format(vbo, format);
-  GPU_vertbuf_data_alloc(vbo, mr.corners_num);
-  MutableSpan vbo_data = vbo.data<ColorGeometry4f>();
+  gpu::VertBufPtr vbo = gpu::VertBufPtr(GPU_vertbuf_create_with_format(format));
+  GPU_vertbuf_data_alloc(*vbo, mr.corners_num);
+  MutableSpan vbo_data = vbo->data<ColorGeometry4f>();
 
   const StringRefNull attr_name = ".viewer";
   const bke::AttributeAccessor attributes = mr.mesh->attributes();
   const bke::AttributeReader attribute = attributes.lookup_or_default<ColorGeometry4f>(
       attr_name, bke::AttrDomain::Corner, {1.0f, 0.0f, 1.0f, 1.0f});
   attribute.varray.materialize(vbo_data);
+  return vbo;
 }
 
 /** \} */

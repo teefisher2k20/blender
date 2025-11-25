@@ -6,17 +6,20 @@
  * \ingroup edtransform
  */
 
-#include "BKE_armature.hh"
 #include "DNA_armature_types.h"
+
+#include "BLI_listbase.h"
+
+#include "BKE_armature.hh"
 
 #include "ED_armature.hh"
 #include "ED_transform_snap_object_context.hh"
 
-#include "ANIM_bone_collections.hh"
+#include "ANIM_armature.hh"
 
 #include "transform_snap_object.hh"
 
-using blender::float4x4;
+namespace blender::ed::transform {
 
 eSnapMode snapArmature(SnapObjectContext *sctx,
                        const Object *ob_eval,
@@ -46,7 +49,7 @@ eSnapMode snapArmature(SnapObjectContext *sctx,
 
   if (arm->edbo) {
     LISTBASE_FOREACH (EditBone *, eBone, arm->edbo) {
-      if (EBONE_VISIBLE(arm, eBone)) {
+      if (blender::animrig::bone_is_visible(arm, eBone)) {
         const bool is_selected = (eBone->flag & (BONE_ROOTSEL | BONE_TIPSEL)) != 0;
         if (is_selected && skip_selected) {
           continue;
@@ -61,13 +64,12 @@ eSnapMode snapArmature(SnapObjectContext *sctx,
   }
   else if (ob_eval->pose && ob_eval->pose->chanbase.first) {
     LISTBASE_FOREACH (bPoseChannel *, pchan, &ob_eval->pose->chanbase) {
-      Bone *bone = pchan->bone;
-      if (!bone || (bone->flag & (BONE_HIDDEN_P | BONE_HIDDEN_PG))) {
+      if (!blender::animrig::bone_is_visible(arm, pchan)) {
         /* Skip hidden bones. */
         continue;
       }
 
-      const bool is_selected = (bone->flag & (BONE_SELECTED | BONE_ROOTSEL | BONE_TIPSEL)) != 0;
+      const bool is_selected = (pchan->flag & POSE_SELECTED) != 0;
       if (is_selected && skip_selected) {
         continue;
       }
@@ -102,3 +104,5 @@ eSnapMode snapArmature(SnapObjectContext *sctx,
   }
   return retval;
 }
+
+}  // namespace blender::ed::transform

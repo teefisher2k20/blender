@@ -1,10 +1,10 @@
 
 msgid ""
 msgstr ""
-"Project-Id-Version: Blender 4.4.0 Alpha (b'efff379ea583')\n"
+"Project-Id-Version: Blender 5.1.0 Alpha (b'ef4e8fa75057')\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2025-01-27 10:58+0000\n"
-"PO-Revision-Date: 2024-11-08 04:56+0000\n"
+"POT-Creation-Date: 2025-11-24 08:35+0000\n"
+"PO-Revision-Date: 2025-07-23 15:34+0000\n"
 "Last-Translator: Just Adam <adam.abbas2009@gmail.com>\n"
 "Language-Team: Bulgarian <https://translate.blender.org/projects/blender-ui/ui/bg/>\n"
 "Language: bg\n"
@@ -12,7 +12,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
-"X-Generator: Weblate 5.7.2\n"
+"X-Generator: Weblate 5.12.1\n"
 "X-Poedit-Bookmarks: 4082,-1,-1,-1,-1,-1,-1,-1,-1,-1"
 
 
@@ -76,22 +76,6 @@ msgid "Select"
 msgstr "Избор"
 
 
-msgid "Replace"
-msgstr "Замени"
-
-
-msgid "Add"
-msgstr "Добави"
-
-
-msgid "Subtract"
-msgstr "Основа"
-
-
-msgid "Multiply"
-msgstr "Умножение"
-
-
 msgid "Module"
 msgstr "Модул"
 
@@ -116,6 +100,22 @@ msgid "Action"
 msgstr "Действие"
 
 
+msgid "Replace"
+msgstr "Замени"
+
+
+msgid "Add"
+msgstr "Добави"
+
+
+msgid "Subtract"
+msgstr "Основа"
+
+
+msgid "Multiply"
+msgstr "Умножение"
+
+
 msgid "Nothing"
 msgstr "Нищо"
 
@@ -124,16 +124,32 @@ msgid "Hold"
 msgstr "Задържане"
 
 
+msgid "Hide"
+msgstr "Скриване"
+
+
+msgid "Frames"
+msgstr "Кадри"
+
+
+msgid "Info"
+msgstr "Информация"
+
+
+msgid "Thickness"
+msgstr "Дебелина"
+
+
+msgid "Onion Skinning"
+msgstr "Onion Skinning"
+
+
 msgid "Empty"
 msgstr "Празно"
 
 
 msgid "Node Editor"
 msgstr "Възлов Редактор"
-
-
-msgid "Info"
-msgstr "Информация"
 
 
 msgid "Author"
@@ -148,6 +164,46 @@ msgid "Space Type"
 msgstr "Тип на Пространството"
 
 
+msgid "Cache Files"
+msgstr "Кешови файлове"
+
+
+msgid "Palettes"
+msgstr "Палитри"
+
+
+msgid "Scenes"
+msgstr "Сцени"
+
+
+msgid "Sounds"
+msgstr "Звуци"
+
+
+msgid "Speakers"
+msgstr "Високоговорители"
+
+
+msgid "Texts"
+msgstr "Текстове"
+
+
+msgid "Textures"
+msgstr "Текстури"
+
+
+msgid "Volumes"
+msgstr "Обеми"
+
+
+msgid "Workspaces"
+msgstr "Работни пространства"
+
+
+msgid "Worlds"
+msgstr "Светове"
+
+
 msgid "Point"
 msgstr "Точка"
 
@@ -156,12 +212,12 @@ msgid "Layer"
 msgstr "Слой"
 
 
-msgid "Extend"
-msgstr "Разширяване"
-
-
 msgid "Object"
 msgstr "Обект"
+
+
+msgid "Extend"
+msgstr "Разширяване"
 
 
 msgid "Emit"
@@ -172,20 +228,8 @@ msgid "Clear"
 msgstr "Изчистване"
 
 
-msgid "Hide"
-msgstr "Скриване"
-
-
 msgid "Tilt"
 msgstr "Наклон"
-
-
-msgid "Cache Files"
-msgstr "Кешови файлове"
-
-
-msgid "Palettes"
-msgstr "Палитри"
 
 
 msgid "Palette data-blocks"
@@ -200,10 +244,6 @@ msgid "Particle data-blocks"
 msgstr "Блокове данни на частиците"
 
 
-msgid "Scenes"
-msgstr "Сцени"
-
-
 msgid "Scene data-blocks"
 msgstr "Блокове данни на сцената"
 
@@ -216,32 +256,16 @@ msgid "Screen data-blocks"
 msgstr "Блокове данни на екраните"
 
 
-msgid "Sounds"
-msgstr "Звуци"
-
-
 msgid "Sound data-blocks"
 msgstr "Блокове данни на звуците"
-
-
-msgid "Speakers"
-msgstr "Високоговорители"
 
 
 msgid "Speaker data-blocks"
 msgstr "Блокове данни на високоговорителите"
 
 
-msgid "Texts"
-msgstr "Текстове"
-
-
 msgid "Text data-blocks"
 msgstr "Блокове данни на текстовете"
-
-
-msgid "Textures"
-msgstr "Текстури"
 
 
 msgid "Texture data-blocks"
@@ -260,10 +284,6 @@ msgid "File format version the .blend file was saved with"
 msgstr "Версия на файлов формат, в който .blend файла е бил запазен"
 
 
-msgid "Volumes"
-msgstr "Обеми"
-
-
 msgid "Volume data-blocks"
 msgstr "Блокове данни на обемите"
 
@@ -276,16 +296,8 @@ msgid "Window manager data-blocks"
 msgstr "Блокове данни на оправителите на прозорци"
 
 
-msgid "Workspaces"
-msgstr "Работни пространства"
-
-
 msgid "Workspace data-blocks"
 msgstr "Блокове данни на работните пространства"
-
-
-msgid "Worlds"
-msgstr "Светове"
 
 
 msgid "World data-blocks"
@@ -298,6 +310,14 @@ msgstr "Главни действия"
 
 msgid "Collection of actions"
 msgstr "Колекция от действия"
+
+
+msgid "Main Annotations"
+msgstr "Главни анотации"
+
+
+msgid "Collection of annotations"
+msgstr "Колекция от анотации"
 
 
 msgid "Main Brushes"
@@ -346,14 +366,6 @@ msgstr "Главни шрифтове"
 
 msgid "Collection of fonts"
 msgstr "Колекция от шрифтове"
-
-
-msgid "Main Annotations"
-msgstr "Главни анотации"
-
-
-msgid "Collection of annotations"
-msgstr "Колекция от анотации"
 
 
 msgid "Main Images"
@@ -548,6 +560,10 @@ msgid "Volume"
 msgstr "Обем"
 
 
+msgid "Wire"
+msgstr "Мрежа"
+
+
 msgid "Parent"
 msgstr "Родителска"
 
@@ -566,10 +582,6 @@ msgstr "Материал"
 
 msgid "All"
 msgstr "Всички"
-
-
-msgid "Thickness"
-msgstr "Дебелина"
 
 
 msgid "Active Layer"
@@ -634,6 +646,10 @@ msgstr "Плътност на външното лице"
 
 msgid "Gamma"
 msgstr "Гама"
+
+
+msgid "View"
+msgstr "Изглед"
 
 
 msgid "Mix"
@@ -702,10 +718,6 @@ msgstr "Разделяне"
 
 msgid "Plane"
 msgstr "Равнина"
-
-
-msgid "View"
-msgstr "Изглед"
 
 
 msgid "Render"
@@ -820,6 +832,10 @@ msgid "Append"
 msgstr "Добави"
 
 
+msgid "Pack"
+msgstr "Пакетирай"
+
+
 msgid "End"
 msgstr "Край"
 
@@ -864,14 +880,6 @@ msgid "Line Style"
 msgstr "Стил на линията"
 
 
-msgid "Frames"
-msgstr "Кадри"
-
-
-msgid "Onion Skinning"
-msgstr "Onion Skinning"
-
-
 msgid "Grid"
 msgstr "Мрежа"
 
@@ -886,10 +894,6 @@ msgstr "Библиотека"
 
 msgid "Layers"
 msgstr "Слоеве"
-
-
-msgid "Wire"
-msgstr "Мрежа"
 
 
 msgid "Box"
@@ -1024,10 +1028,6 @@ msgid "Hard"
 msgstr "Остр"
 
 
-msgid "Area"
-msgstr "Площ"
-
-
 msgid "Window Manager"
 msgstr "Управител на прозорците"
 
@@ -1140,18 +1140,6 @@ msgid "Mask"
 msgstr "Маскиране"
 
 
-msgid "UV Mapping"
-msgstr "UV Картиране"
-
-
-msgid "Light"
-msgstr "Светлина"
-
-
-msgid "Rigid Body"
-msgstr "Твърдо тяло"
-
-
 msgid "Apply"
 msgstr "Прилагане"
 
@@ -1172,24 +1160,36 @@ msgid "Merge"
 msgstr "Слей"
 
 
+msgid "UV Mapping"
+msgstr "UV Картиране"
+
+
 msgid "Text"
 msgstr "Текст"
-
-
-msgid "Languages..."
-msgstr "Езици..."
-
-
-msgid "Key"
-msgstr "Клавиш"
 
 
 msgid "Import"
 msgstr "Внеси"
 
 
+msgid "Light"
+msgstr "Светлина"
+
+
+msgid "Rigid Body"
+msgstr "Твърдо тяло"
+
+
+msgid "Languages..."
+msgstr "Езици..."
+
+
 msgid "Cache"
 msgstr "Кеш"
+
+
+msgid "Key"
+msgstr "Клавиш"
 
 
 msgid "System"
@@ -1260,24 +1260,12 @@ msgid "Even"
 msgstr "Равн"
 
 
+msgid "Edge Length"
+msgstr "Дължина на ръба"
+
+
 msgid "Lines"
 msgstr "Линии"
-
-
-msgid "Spin"
-msgstr "Завъртане"
-
-
-msgid "Soften"
-msgstr "Мекост"
-
-
-msgid "Shadow"
-msgstr "Сянка"
-
-
-msgid "Combined"
-msgstr "Комбиниран"
 
 
 msgid "Rotate"
@@ -1304,12 +1292,12 @@ msgid "Subsurface Scattering"
 msgstr "Подповърхностно Разпръскване"
 
 
-msgid "Turbidity"
-msgstr "Мътност"
-
-
 msgid "Triangle"
 msgstr "Триъгълник"
+
+
+msgid "Shadow"
+msgstr "Сянка"
 
 
 msgctxt "Operator"
@@ -1415,10 +1403,6 @@ msgstr "Филтрирай .blend файловете"
 
 msgid "Filter text files"
 msgstr "Филтрирай текстовите файлове"
-
-
-msgid "Set brush shape"
-msgstr "Задай форма на четка"
 
 
 msgctxt "Operator"
@@ -1571,10 +1555,6 @@ msgid "Flat"
 msgstr "Дъска"
 
 
-msgid "Join"
-msgstr "Събери"
-
-
 msgctxt "Operator"
 msgid "Merge"
 msgstr "Слей"
@@ -1656,11 +1636,6 @@ msgid "Fractal"
 msgstr "Фрактално"
 
 
-msgctxt "Operator"
-msgid "Tris to Quads"
-msgstr "Триъгълници към Четириъгълници"
-
-
 msgid "Smooth along the X axis"
 msgstr "Ограничение на въртенето по хоризонталната ос"
 
@@ -1683,13 +1658,12 @@ msgstr "Направи с Единствен Потребител"
 
 
 msgctxt "Operator"
-msgid "Hide"
-msgstr "Скриване"
-
-
-msgctxt "Operator"
 msgid "Bake"
 msgstr "Изпечи"
+
+
+msgid "Combined"
+msgstr "Комбиниран"
 
 
 msgctxt "Operator"
@@ -1709,10 +1683,6 @@ msgstr "Събери като Форми"
 
 msgid "Origin to Geometry"
 msgstr "Начало към Геометрия"
-
-
-msgid "Edge Length"
-msgstr "Дължина на ръба"
 
 
 msgid "Maximum scale randomization over each axis"
@@ -1754,6 +1724,11 @@ msgstr "Добавяне ключ на форма"
 
 msgid "Apply the relative positional offset"
 msgstr "Приложи осносителното отместване на местоположението"
+
+
+msgctxt "Operator"
+msgid "Hide"
+msgstr "Скриване"
 
 
 msgid "Unlink"
@@ -1852,6 +1827,10 @@ msgstr "Име на Menu ID"
 
 msgid "ID name of the menu this was called from"
 msgstr "ID име на менюто, от което се повиква"
+
+
+msgid "Join"
+msgstr "Събери"
 
 
 msgctxt "Operator"
@@ -2216,16 +2195,16 @@ msgid "Strand"
 msgstr "Нишка"
 
 
-msgid "Bias"
-msgstr "Отклонение"
-
-
 msgid "FPS"
 msgstr "FPS"
 
 
 msgid "Viscosity"
 msgstr "Вискозитет"
+
+
+msgid "Bias"
+msgstr "Отклонение"
 
 
 msgid "Edge spring friction"
@@ -2317,10 +2296,6 @@ msgid "Unpack"
 msgstr "Разпакетирай"
 
 
-msgid "Pack"
-msgstr "Пакетирай"
-
-
 msgid "Minimum Grid Spacing"
 msgstr "Минимален Интервал на Мрежата"
 
@@ -2365,16 +2340,8 @@ msgid "Fields"
 msgstr "Полета"
 
 
-msgid "{} (String)"
-msgstr "{} (String)"
-
-
-msgid "{} (Integer)"
-msgstr "{} (Integer)"
-
-
-msgid "Layer:"
-msgstr "Слой:"
+msgid "Soften"
+msgstr "Мекост"
 
 
 msgctxt "WorkSpace"
@@ -2384,64 +2351,4 @@ msgstr "Засенчване"
 
 msgid "Pose Library"
 msgstr "Библиотека с Пози"
-
-
-msgid "English (English)"
-msgstr "Английски (English)"
-
-
-msgid "Japanese (日本語)"
-msgstr "Японски (日本語)"
-
-
-msgid "Italian (Italiano)"
-msgstr "Италиански (Italiano)"
-
-
-msgid "German (Deutsch)"
-msgstr "Германски (Deutsch)"
-
-
-msgid "Swedish (Svenska)"
-msgstr "Шведски (Svenska)"
-
-
-msgid "Spanish (Español)"
-msgstr "Испански (Español)"
-
-
-msgid "Catalan (Català)"
-msgstr "Каталонски (Català)"
-
-
-msgid "Simplified Chinese (简体中文)"
-msgstr "Опростен Китайски (简体中文)"
-
-
-msgid "Traditional Chinese (繁體中文)"
-msgstr "Традиционен Китайски (繁體中文)"
-
-
-msgid "Russian (Русский)"
-msgstr "Руски (Русский)"
-
-
-msgid "Croatian (Hrvatski)"
-msgstr "Хърватски (Hrvatski)"
-
-
-msgid "Polish (Polski)"
-msgstr "Полски (Polski)"
-
-
-msgid "Romanian (Român)"
-msgstr "Румънски (Român)"
-
-
-msgid "Bulgarian (Български)"
-msgstr "Български (Български)"
-
-
-msgid "Greek (Ελληνικά)"
-msgstr "Гръцки (Ελληνικά)"
 

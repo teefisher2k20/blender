@@ -17,13 +17,14 @@
 
 #include "DNA_anim_types.h"
 #include "DNA_scene_types.h"
-#include "DNA_space_types.h"
+#include "DNA_userdef_types.h"
 
 #include "MEM_guardedalloc.h"
 
 #include "BLT_translation.hh"
 
-#include "BLI_blenlib.h"
+#include "BLI_listbase.h"
+#include "BLI_string_utf8.h"
 #include "BLI_utildefines.h"
 
 #include "BKE_context.hh"
@@ -37,6 +38,7 @@
 #include "RNA_prototypes.hh"
 
 #include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 #include "ED_anim_api.hh"
@@ -87,7 +89,7 @@ static PointerRNA *fmodifier_get_pointers(const bContext *C, const Panel *panel,
 
   if (C != nullptr && CTX_wm_space_graph(C)) {
     const FCurve *fcu = ANIM_graph_context_fcurve(C);
-    uiLayoutSetActive(panel->layout, !(fcu->flag & FCURVE_MOD_OFF));
+    panel->layout->active_set(!(fcu->flag & FCURVE_MOD_OFF));
   }
 
   return ptr;
@@ -105,7 +107,7 @@ static void fmodifier_reorder(bContext *C, Panel *panel, int new_index)
 
   /* Cycles modifier has to be the first, so make sure it's kept that way. */
   if (fmi->requires_flag & FMI_REQUIRES_ORIGINAL_DATA) {
-    WM_report(RPT_ERROR, "Modifier requires original data");
+    WM_global_report(RPT_ERROR, "Modifier requires original data");
     return;
   }
 
@@ -115,7 +117,7 @@ static void fmodifier_reorder(bContext *C, Panel *panel, int new_index)
   FModifier *fcm_first = static_cast<FModifier *>(modifiers->first);
   const FModifierTypeInfo *fmi_first = get_fmodifier_typeinfo(fcm_first->type);
   if (fmi_first->requires_flag & FMI_REQUIRES_ORIGINAL_DATA && new_index == 0) {
-    WM_report(RPT_ERROR, "Modifier requires original data");
+    WM_global_report(RPT_ERROR, "Modifier requires original data");
     return;
   }
 
@@ -140,7 +142,7 @@ static void fmodifier_reorder(bContext *C, Panel *panel, int new_index)
 static short get_fmodifier_expand_flag(const bContext * /*C*/, Panel *panel)
 {
   PointerRNA *ptr = fmodifier_get_pointers(nullptr, panel, nullptr);
-  FModifier *fcm = (FModifier *)ptr->data;
+  FModifier *fcm = static_cast<FModifier *>(ptr->data);
 
   return fcm->ui_expand_flag;
 }
@@ -148,7 +150,7 @@ static short get_fmodifier_expand_flag(const bContext * /*C*/, Panel *panel)
 static void set_fmodifier_expand_flag(const bContext * /*C*/, Panel *panel, short expand_flag)
 {
   PointerRNA *ptr = fmodifier_get_pointers(nullptr, panel, nullptr);
-  FModifier *fcm = (FModifier *)ptr->data;
+  FModifier *fcm = static_cast<FModifier *>(ptr->data);
 
   fcm->ui_expand_flag = expand_flag;
 }
@@ -159,13 +161,13 @@ static PanelType *fmodifier_panel_register(ARegionType *region_type,
                                            PanelTypePollFn poll,
                                            const char *id_prefix)
 {
-  PanelType *panel_type = static_cast<PanelType *>(MEM_callocN(sizeof(PanelType), __func__));
+  PanelType *panel_type = MEM_callocN<PanelType>(__func__);
 
   /* Intentionally leave the label field blank. The header is filled with buttons. */
   const FModifierTypeInfo *fmi = get_fmodifier_typeinfo(type);
-  SNPRINTF(panel_type->idname, "%s_PT_%s", id_prefix, fmi->name);
-  STRNCPY(panel_type->category, "Modifiers");
-  STRNCPY(panel_type->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
+  SNPRINTF_UTF8(panel_type->idname, "%s_PT_%s", id_prefix, fmi->name);
+  STRNCPY_UTF8(panel_type->category, "Modifiers");
+  STRNCPY_UTF8(panel_type->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
 
   panel_type->draw_header = fmodifier_panel_header;
   panel_type->draw = draw;
@@ -197,20 +199,20 @@ static PanelType *fmodifier_subpanel_register(ARegionType *region_type,
                                               PanelTypePollFn poll,
                                               PanelType *parent)
 {
-  PanelType *panel_type = static_cast<PanelType *>(MEM_callocN(sizeof(PanelType), __func__));
+  PanelType *panel_type = MEM_callocN<PanelType>(__func__);
 
   BLI_assert(parent != nullptr);
-  SNPRINTF(panel_type->idname, "%s_%s", parent->idname, name);
-  STRNCPY(panel_type->label, label);
-  STRNCPY(panel_type->category, "Modifiers");
-  STRNCPY(panel_type->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
+  SNPRINTF_UTF8(panel_type->idname, "%s_%s", parent->idname, name);
+  STRNCPY_UTF8(panel_type->label, label);
+  STRNCPY_UTF8(panel_type->category, "Modifiers");
+  STRNCPY_UTF8(panel_type->translation_context, BLT_I18NCONTEXT_DEFAULT_BPYRNA);
 
   panel_type->draw_header = draw_header;
   panel_type->draw = draw;
   panel_type->poll = poll;
   panel_type->flag = PANEL_TYPE_DEFAULT_CLOSED;
 
-  STRNCPY(panel_type->parent_id, parent->idname);
+  STRNCPY_UTF8(panel_type->parent_id, parent->idname);
   panel_type->parent = parent;
   BLI_addtail(&parent->children, BLI_genericNodeN(panel_type));
   BLI_addtail(&region_type->paneltypes, panel_type);
@@ -235,9 +237,9 @@ struct FModifierDeleteContext {
 
 static void delete_fmodifier_cb(bContext *C, void *ctx_v, void *fcm_v)
 {
-  FModifierDeleteContext *ctx = (FModifierDeleteContext *)ctx_v;
+  FModifierDeleteContext *ctx = static_cast<FModifierDeleteContext *>(ctx_v);
   ListBase *modifiers = ctx->modifiers;
-  FModifier *fcm = (FModifier *)fcm_v;
+  FModifier *fcm = static_cast<FModifier *>(fcm_v);
 
   /* remove the given F-Modifier from the active modifier-stack */
   remove_fmodifier(modifiers, fcm);
@@ -248,85 +250,83 @@ static void delete_fmodifier_cb(bContext *C, void *ctx_v, void *fcm_v)
   DEG_id_tag_update(ctx->owner_id, ID_RECALC_ANIMATION);
 }
 
-static void fmodifier_influence_draw(uiLayout *layout, PointerRNA *ptr)
+static void fmodifier_influence_draw(blender::ui::Layout &layout, PointerRNA *ptr)
 {
-  FModifier *fcm = (FModifier *)ptr->data;
-  uiItemS(layout);
+  FModifier *fcm = static_cast<FModifier *>(ptr->data);
+  layout.separator();
 
-  uiLayout *row = uiLayoutRowWithHeading(layout, true, IFACE_("Influence"));
-  uiItemR(row, ptr, "use_influence", UI_ITEM_NONE, "", ICON_NONE);
-  uiLayout *sub = uiLayoutRow(row, true);
+  blender::ui::Layout &row = layout.row(true, IFACE_("Influence"));
+  row.prop(ptr, "use_influence", UI_ITEM_NONE, "", ICON_NONE);
 
-  uiLayoutSetActive(sub, fcm->flag & FMODIFIER_FLAG_USEINFLUENCE);
-  uiItemR(sub, ptr, "influence", UI_ITEM_NONE, "", ICON_NONE);
+  blender::ui::Layout &sub = row.row(true);
+  sub.active_set(fcm->flag & FMODIFIER_FLAG_USEINFLUENCE);
+  sub.prop(ptr, "influence", UI_ITEM_NONE, "", ICON_NONE);
 }
 
 static void fmodifier_frame_range_header_draw(const bContext *C, Panel *panel)
 {
-  uiLayout *layout = panel->layout;
+  blender::ui::Layout &layout = *panel->layout;
 
   PointerRNA *ptr = fmodifier_get_pointers(C, panel, nullptr);
 
-  uiItemR(layout, ptr, "use_restricted_range", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout.prop(ptr, "use_restricted_range", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
 static void fmodifier_frame_range_draw(const bContext *C, Panel *panel)
 {
-  uiLayout *col;
-  uiLayout *layout = panel->layout;
+  blender::ui::Layout &layout = *panel->layout;
 
   PointerRNA *ptr = fmodifier_get_pointers(C, panel, nullptr);
 
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout.use_property_split_set(true);
+  layout.use_property_decorate_set(false);
 
-  FModifier *fcm = (FModifier *)ptr->data;
-  uiLayoutSetActive(layout, fcm->flag & FMODIFIER_FLAG_RANGERESTRICT);
+  FModifier *fcm = static_cast<FModifier *>(ptr->data);
+  layout.active_set(fcm->flag & FMODIFIER_FLAG_RANGERESTRICT);
 
-  col = uiLayoutColumn(layout, true);
-  uiItemR(col, ptr, "frame_start", UI_ITEM_NONE, IFACE_("Start"), ICON_NONE);
-  uiItemR(col, ptr, "frame_end", UI_ITEM_NONE, IFACE_("End"), ICON_NONE);
+  blender::ui::Layout *col = &layout.column(true);
+  col->prop(ptr, "frame_start", UI_ITEM_NONE, IFACE_("Start"), ICON_NONE);
+  col->prop(ptr, "frame_end", UI_ITEM_NONE, IFACE_("End"), ICON_NONE);
 
-  col = uiLayoutColumn(layout, true);
-  uiItemR(col, ptr, "blend_in", UI_ITEM_NONE, IFACE_("Blend In"), ICON_NONE);
-  uiItemR(col, ptr, "blend_out", UI_ITEM_NONE, IFACE_("Out"), ICON_NONE);
+  col = &layout.column(true);
+  col->prop(ptr, "blend_in", UI_ITEM_NONE, IFACE_("Blend In"), ICON_NONE);
+  col->prop(ptr, "blend_out", UI_ITEM_NONE, IFACE_("Out"), ICON_NONE);
 }
 
 static void fmodifier_panel_header(const bContext *C, Panel *panel)
 {
-  uiLayout *layout = panel->layout;
+  blender::ui::Layout &layout = *panel->layout;
 
   ID *owner_id;
   PointerRNA *ptr = fmodifier_get_pointers(C, panel, &owner_id);
-  FModifier *fcm = (FModifier *)ptr->data;
+  FModifier *fcm = static_cast<FModifier *>(ptr->data);
   const FModifierTypeInfo *fmi = fmodifier_get_typeinfo(fcm);
 
-  uiBlock *block = uiLayoutGetBlock(layout);
+  uiBlock *block = layout.block();
 
-  uiLayout *sub = uiLayoutRow(layout, true);
+  blender::ui::Layout *sub = &layout.row(true);
 
   /* Checkbox for 'active' status (for now). */
-  uiItemR(sub, ptr, "active", UI_ITEM_R_ICON_ONLY, "", ICON_NONE);
+  sub->prop(ptr, "active", UI_ITEM_R_ICON_ONLY, "", ICON_NONE);
 
   /* Name. */
   if (fmi) {
-    uiItemR(sub, ptr, "name", UI_ITEM_NONE, "", ICON_NONE);
+    sub->prop(ptr, "name", UI_ITEM_NONE, "", ICON_NONE);
   }
   else {
-    uiItemL(sub, IFACE_("<Unknown Modifier>"), ICON_NONE);
+    sub->label(IFACE_("<Unknown Modifier>"), ICON_NONE);
   }
   /* Right align. */
-  sub = uiLayoutRow(layout, true);
-  uiLayoutSetAlignment(sub, UI_LAYOUT_ALIGN_RIGHT);
-  uiLayoutSetEmboss(sub, UI_EMBOSS_NONE);
+  sub = &layout.row(true);
+  sub->alignment_set(blender::ui::LayoutAlign::Right);
+  sub->emboss_set(blender::ui::EmbossType::None);
 
   /* 'Mute' button. */
-  uiItemR(sub, ptr, "mute", UI_ITEM_R_ICON_ONLY, "", ICON_NONE);
+  sub->prop(ptr, "mute", UI_ITEM_R_ICON_ONLY, "", ICON_NONE);
 
   /* Delete button. */
   uiBut *but = uiDefIconBut(block,
-                            UI_BTYPE_BUT,
-                            B_REDR,
+                            ButType::But,
                             ICON_X,
                             0,
                             0,
@@ -336,15 +336,15 @@ static void fmodifier_panel_header(const bContext *C, Panel *panel)
                             0.0,
                             0.0,
                             TIP_("Delete Modifier"));
-  FModifierDeleteContext *ctx = static_cast<FModifierDeleteContext *>(
-      MEM_mallocN(sizeof(FModifierDeleteContext), __func__));
+  UI_but_retval_set(but, B_REDR);
+  FModifierDeleteContext *ctx = MEM_mallocN<FModifierDeleteContext>(__func__);
   ctx->owner_id = owner_id;
   ctx->modifiers = fmodifier_list_space_specific(C);
   BLI_assert(ctx->modifiers != nullptr);
 
   UI_but_funcN_set(but, delete_fmodifier_cb, ctx, fcm);
 
-  uiItemS(layout);
+  layout.separator();
 }
 
 /** \} */
@@ -355,24 +355,24 @@ static void fmodifier_panel_header(const bContext *C, Panel *panel)
 
 static void generator_panel_draw(const bContext *C, Panel *panel)
 {
-  uiLayout *layout = panel->layout;
+  blender::ui::Layout &layout = *panel->layout;
 
   ID *owner_id;
   PointerRNA *ptr = fmodifier_get_pointers(C, panel, &owner_id);
-  FModifier *fcm = (FModifier *)ptr->data;
-  FMod_Generator *data = (FMod_Generator *)fcm->data;
+  FModifier *fcm = static_cast<FModifier *>(ptr->data);
+  FMod_Generator *data = static_cast<FMod_Generator *>(fcm->data);
 
-  uiItemR(layout, ptr, "mode", UI_ITEM_NONE, "", ICON_NONE);
+  layout.prop(ptr, "mode", UI_ITEM_NONE, "", ICON_NONE);
 
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout.use_property_split_set(true);
+  layout.use_property_decorate_set(false);
 
-  uiItemR(layout, ptr, "use_additive", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout.prop(ptr, "use_additive", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  uiItemR(layout, ptr, "poly_order", UI_ITEM_NONE, IFACE_("Order"), ICON_NONE);
+  layout.prop(ptr, "poly_order", UI_ITEM_NONE, IFACE_("Order"), ICON_NONE);
 
   PropertyRNA *prop = RNA_struct_find_property(ptr, "coefficients");
-  uiLayout *col = uiLayoutColumn(layout, true);
+  blender::ui::Layout &col = layout.column(true);
   switch (data->mode) {
     case FCM_GENERATOR_POLYNOMIAL: /* Polynomial expression. */
     {
@@ -380,11 +380,11 @@ static void generator_panel_draw(const bContext *C, Panel *panel)
       char xval[32];
 
       /* The first value gets a "Coefficient" label. */
-      STRNCPY(xval, N_("Coefficient"));
+      STRNCPY_UTF8(xval, N_("Coefficient"));
 
       for (int i = 0; i < data->arraysize; i++) {
-        uiItemFullR(col, ptr, prop, i, 0, UI_ITEM_NONE, IFACE_(xval), ICON_NONE);
-        SNPRINTF(xval, "x^%d", i + 1);
+        col.prop(ptr, prop, i, 0, UI_ITEM_NONE, IFACE_(xval), ICON_NONE);
+        SNPRINTF_UTF8(xval, "x^%d", i + 1);
       }
       break;
     }
@@ -393,22 +393,22 @@ static void generator_panel_draw(const bContext *C, Panel *panel)
       {
         /* Add column labels above the buttons to prevent confusion.
          * Fake the property split layout, otherwise the labels use the full row. */
-        uiLayout *split = uiLayoutSplit(col, 0.4f, false);
-        uiLayoutColumn(split, false);
-        uiLayout *title_col = uiLayoutColumn(split, false);
-        uiLayout *title_row = uiLayoutRow(title_col, true);
-        uiItemL(title_row, CTX_IFACE_(BLT_I18NCONTEXT_ID_ACTION, "A"), ICON_NONE);
-        uiItemL(title_row, CTX_IFACE_(BLT_I18NCONTEXT_ID_ACTION, "B"), ICON_NONE);
+        blender::ui::Layout &split = col.split(0.4f, false);
+        split.column(false);
+        blender::ui::Layout &title_col = split.column(false);
+        blender::ui::Layout &title_row = title_col.row(true);
+        title_row.label(CTX_IFACE_(BLT_I18NCONTEXT_ID_ACTION, "A"), ICON_NONE);
+        title_row.label(CTX_IFACE_(BLT_I18NCONTEXT_ID_ACTION, "B"), ICON_NONE);
       }
 
-      uiLayout *first_row = uiLayoutRow(col, true);
-      uiItemFullR(first_row, ptr, prop, 0, 0, UI_ITEM_NONE, IFACE_("y = (Ax + B)"), ICON_NONE);
-      uiItemFullR(first_row, ptr, prop, 1, 0, UI_ITEM_NONE, "", ICON_NONE);
+      blender::ui::Layout &first_row = col.row(true);
+      first_row.prop(ptr, prop, 0, 0, UI_ITEM_NONE, IFACE_("y = (Ax + B)"), ICON_NONE);
+      first_row.prop(ptr, prop, 1, 0, UI_ITEM_NONE, "", ICON_NONE);
       for (int i = 2; i < data->arraysize - 1; i += 2) {
         /* \u00d7 is the multiplication symbol. */
-        uiLayout *row = uiLayoutRow(col, true);
-        uiItemFullR(row, ptr, prop, i, 0, UI_ITEM_NONE, IFACE_("\u00d7 (Ax + B)"), ICON_NONE);
-        uiItemFullR(row, ptr, prop, i + 1, 0, UI_ITEM_NONE, "", ICON_NONE);
+        blender::ui::Layout &row = col.row(true);
+        row.prop(ptr, prop, i, 0, UI_ITEM_NONE, IFACE_("\u00d7 (Ax + B)"), ICON_NONE);
+        row.prop(ptr, prop, i + 1, 0, UI_ITEM_NONE, "", ICON_NONE);
       }
       break;
     }
@@ -440,24 +440,23 @@ static void panel_register_generator(ARegionType *region_type,
 
 static void fn_generator_panel_draw(const bContext *C, Panel *panel)
 {
-  uiLayout *col;
-  uiLayout *layout = panel->layout;
+  blender::ui::Layout &layout = *panel->layout;
 
   PointerRNA *ptr = fmodifier_get_pointers(C, panel, nullptr);
 
-  uiItemR(layout, ptr, "function_type", UI_ITEM_NONE, "", ICON_NONE);
+  layout.prop(ptr, "function_type", UI_ITEM_NONE, "", ICON_NONE);
 
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout.use_property_split_set(true);
+  layout.use_property_decorate_set(false);
 
-  col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "use_additive", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  blender::ui::Layout *col = &layout.column(false);
+  col->prop(ptr, "use_additive", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "amplitude", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "phase_multiplier", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "phase_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "value_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col = &layout.column(false);
+  col->prop(ptr, "amplitude", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col->prop(ptr, "phase_multiplier", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col->prop(ptr, "phase_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col->prop(ptr, "value_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   fmodifier_influence_draw(layout, ptr);
 }
@@ -485,23 +484,22 @@ static void panel_register_fn_generator(ARegionType *region_type,
 
 static void cycles_panel_draw(const bContext *C, Panel *panel)
 {
-  uiLayout *col;
-  uiLayout *layout = panel->layout;
+  blender::ui::Layout &layout = *panel->layout;
 
   PointerRNA *ptr = fmodifier_get_pointers(C, panel, nullptr);
 
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout.use_property_split_set(true);
+  layout.use_property_decorate_set(false);
 
   /* Before. */
-  col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "mode_before", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "cycles_before", UI_ITEM_NONE, IFACE_("Count"), ICON_NONE);
+  blender::ui::Layout *col = &layout.column(false);
+  col->prop(ptr, "mode_before", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col->prop(ptr, "cycles_before", UI_ITEM_NONE, IFACE_("Count"), ICON_NONE);
 
   /* After. */
-  col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "mode_after", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "cycles_after", UI_ITEM_NONE, IFACE_("Count"), ICON_NONE);
+  col = &layout.column(false);
+  col->prop(ptr, "mode_after", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col->prop(ptr, "cycles_after", UI_ITEM_NONE, IFACE_("Count"), ICON_NONE);
 
   fmodifier_influence_draw(layout, ptr);
 }
@@ -529,28 +527,27 @@ static void panel_register_cycles(ARegionType *region_type,
 
 static void noise_panel_draw(const bContext *C, Panel *panel)
 {
-  uiLayout *col;
-  uiLayout *layout = panel->layout;
+  blender::ui::Layout &layout = *panel->layout;
 
   PointerRNA *ptr = fmodifier_get_pointers(C, panel, nullptr);
 
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout.use_property_split_set(true);
+  layout.use_property_decorate_set(false);
 
-  uiItemR(layout, ptr, "blend_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout.prop(ptr, "blend_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "scale", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "strength", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "phase", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "depth", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "use_legacy_noise", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  blender::ui::Layout &col = layout.column(false);
+  col.prop(ptr, "scale", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col.prop(ptr, "strength", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col.prop(ptr, "offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col.prop(ptr, "phase", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col.prop(ptr, "depth", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col.prop(ptr, "use_legacy_noise", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   PropertyRNA *prop = RNA_struct_find_property(ptr, "use_legacy_noise");
   const bool use_legacy_noise = RNA_property_boolean_get(ptr, prop);
   if (!use_legacy_noise) {
-    uiItemR(col, ptr, "lacunarity", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(col, ptr, "roughness", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col.prop(ptr, "lacunarity", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    col.prop(ptr, "roughness", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 
   fmodifier_influence_draw(layout, ptr);
@@ -580,7 +577,7 @@ static void panel_register_noise(ARegionType *region_type,
 static void fmod_envelope_addpoint_cb(bContext *C, void *fcm_dv, void * /*arg*/)
 {
   Scene *scene = CTX_data_scene(C);
-  FMod_Envelope *env = (FMod_Envelope *)fcm_dv;
+  FMod_Envelope *env = static_cast<FMod_Envelope *>(fcm_dv);
   FCM_EnvelopeData *fedn;
   FCM_EnvelopeData fed;
 
@@ -602,8 +599,7 @@ static void fmod_envelope_addpoint_cb(bContext *C, void *fcm_dv, void * /*arg*/)
     }
 
     /* add new */
-    fedn = static_cast<FCM_EnvelopeData *>(
-        MEM_callocN((env->totvert + 1) * sizeof(FCM_EnvelopeData), "FCM_EnvelopeData"));
+    fedn = MEM_calloc_arrayN<FCM_EnvelopeData>((env->totvert + 1), "FCM_EnvelopeData");
 
     /* add the points that should occur before the point to be pasted */
     if (i > 0) {
@@ -625,8 +621,7 @@ static void fmod_envelope_addpoint_cb(bContext *C, void *fcm_dv, void * /*arg*/)
     env->totvert++;
   }
   else {
-    env->data = static_cast<FCM_EnvelopeData *>(
-        MEM_callocN(sizeof(FCM_EnvelopeData), "FCM_EnvelopeData"));
+    env->data = MEM_callocN<FCM_EnvelopeData>("FCM_EnvelopeData");
     *(env->data) = fed;
 
     env->totvert = 1;
@@ -637,15 +632,14 @@ static void fmod_envelope_addpoint_cb(bContext *C, void *fcm_dv, void * /*arg*/)
 /* TODO: should we have a separate file for things like this? */
 static void fmod_envelope_deletepoint_cb(bContext * /*C*/, void *fcm_dv, void *ind_v)
 {
-  FMod_Envelope *env = (FMod_Envelope *)fcm_dv;
+  FMod_Envelope *env = static_cast<FMod_Envelope *>(fcm_dv);
   FCM_EnvelopeData *fedn;
   int index = POINTER_AS_INT(ind_v);
 
   /* check that no data exists for the current frame... */
   if (env->totvert > 1) {
     /* allocate a new smaller array */
-    fedn = static_cast<FCM_EnvelopeData *>(
-        MEM_callocN(sizeof(FCM_EnvelopeData) * (env->totvert - 1), "FCM_EnvelopeData"));
+    fedn = MEM_calloc_arrayN<FCM_EnvelopeData>((env->totvert - 1), "FCM_EnvelopeData");
 
     memcpy(fedn, env->data, sizeof(FCM_EnvelopeData) * (index));
     memcpy(fedn + index,
@@ -667,31 +661,29 @@ static void fmod_envelope_deletepoint_cb(bContext * /*C*/, void *fcm_dv, void *i
 /* draw settings for envelope modifier */
 static void envelope_panel_draw(const bContext *C, Panel *panel)
 {
-  uiLayout *row, *col;
-  uiLayout *layout = panel->layout;
+  blender::ui::Layout &layout = *panel->layout;
 
   ID *owner_id;
   PointerRNA *ptr = fmodifier_get_pointers(C, panel, &owner_id);
-  FModifier *fcm = (FModifier *)ptr->data;
-  FMod_Envelope *env = (FMod_Envelope *)fcm->data;
+  FModifier *fcm = static_cast<FModifier *>(ptr->data);
+  FMod_Envelope *env = static_cast<FMod_Envelope *>(fcm->data);
 
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout.use_property_split_set(true);
+  layout.use_property_decorate_set(false);
 
   /* General settings. */
-  col = uiLayoutColumn(layout, true);
-  uiItemR(col, ptr, "reference_value", UI_ITEM_NONE, IFACE_("Reference"), ICON_NONE);
-  uiItemR(col, ptr, "default_min", UI_ITEM_NONE, IFACE_("Min"), ICON_NONE);
-  uiItemR(col, ptr, "default_max", UI_ITEM_NONE, IFACE_("Max"), ICON_NONE);
+  blender::ui::Layout *col = &layout.column(true);
+  col->prop(ptr, "reference_value", UI_ITEM_NONE, IFACE_("Reference"), ICON_NONE);
+  col->prop(ptr, "default_min", UI_ITEM_NONE, IFACE_("Min"), ICON_NONE);
+  col->prop(ptr, "default_max", UI_ITEM_NONE, IFACE_("Max"), ICON_NONE);
 
   /* Control points list. */
 
-  row = uiLayoutRow(layout, false);
-  uiBlock *block = uiLayoutGetBlock(row);
+  blender::ui::Layout *row = &layout.row(false);
+  uiBlock *block = row->block();
 
   uiBut *but = uiDefBut(block,
-                        UI_BTYPE_BUT,
-                        B_FMODIFIER_REDRAW,
+                        ButType::But,
                         IFACE_("Add Control Point"),
                         0,
                         0,
@@ -701,10 +693,11 @@ static void envelope_panel_draw(const bContext *C, Panel *panel)
                         0,
                         0,
                         TIP_("Add a new control-point to the envelope on the current frame"));
+  UI_but_retval_set(but, B_FMODIFIER_REDRAW);
   UI_but_func_set(but, fmod_envelope_addpoint_cb, env, nullptr);
 
-  col = uiLayoutColumn(layout, false);
-  uiLayoutSetPropSep(col, false);
+  col = &layout.column(false);
+  col->use_property_split_set(false);
 
   FCM_EnvelopeData *fed = env->data;
   for (int i = 0; i < env->totvert; i++, fed++) {
@@ -712,16 +705,15 @@ static void envelope_panel_draw(const bContext *C, Panel *panel)
         owner_id, &RNA_FModifierEnvelopeControlPoint, fed);
 
     /* get a new row to operate on */
-    row = uiLayoutRow(col, true);
-    block = uiLayoutGetBlock(row);
+    row = &col->row(true);
+    block = row->block();
 
-    uiItemR(row, &ctrl_ptr, "frame", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    uiItemR(row, &ctrl_ptr, "min", UI_ITEM_NONE, IFACE_("Min"), ICON_NONE);
-    uiItemR(row, &ctrl_ptr, "max", UI_ITEM_NONE, IFACE_("Max"), ICON_NONE);
+    row->prop(&ctrl_ptr, "frame", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    row->prop(&ctrl_ptr, "min", UI_ITEM_NONE, IFACE_("Min"), ICON_NONE);
+    row->prop(&ctrl_ptr, "max", UI_ITEM_NONE, IFACE_("Max"), ICON_NONE);
 
     but = uiDefIconBut(block,
-                       UI_BTYPE_BUT,
-                       B_FMODIFIER_REDRAW,
+                       ButType::But,
                        ICON_X,
                        0,
                        0,
@@ -731,6 +723,7 @@ static void envelope_panel_draw(const bContext *C, Panel *panel)
                        0.0,
                        0.0,
                        TIP_("Delete envelope control point"));
+    UI_but_retval_set(but, B_FMODIFIER_REDRAW);
     UI_but_func_set(but, fmod_envelope_deletepoint_cb, env, POINTER_FROM_INT(i));
     UI_block_align_begin(block);
   }
@@ -761,41 +754,40 @@ static void panel_register_envelope(ARegionType *region_type,
 
 static void limits_panel_draw(const bContext *C, Panel *panel)
 {
-  uiLayout *col, *row, *sub;
-  uiLayout *layout = panel->layout;
+  blender::ui::Layout &layout = *panel->layout;
 
   PointerRNA *ptr = fmodifier_get_pointers(C, panel, nullptr);
 
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout.use_property_split_set(true);
+  layout.use_property_decorate_set(false);
 
   /* Minimums. */
-  col = uiLayoutColumn(layout, false);
-  row = uiLayoutRowWithHeading(col, true, IFACE_("Minimum X"));
-  uiItemR(row, ptr, "use_min_x", UI_ITEM_NONE, "", ICON_NONE);
-  sub = uiLayoutColumn(row, true);
-  uiLayoutSetActive(sub, RNA_boolean_get(ptr, "use_min_x"));
-  uiItemR(sub, ptr, "min_x", UI_ITEM_NONE, "", ICON_NONE);
+  blender::ui::Layout *col = &layout.column(false);
+  blender::ui::Layout *row = &col->row(true, IFACE_("Minimum X"));
+  row->prop(ptr, "use_min_x", UI_ITEM_NONE, "", ICON_NONE);
+  blender::ui::Layout *sub = &row->column(true);
+  sub->active_set(RNA_boolean_get(ptr, "use_min_x"));
+  sub->prop(ptr, "min_x", UI_ITEM_NONE, "", ICON_NONE);
 
-  row = uiLayoutRowWithHeading(col, true, IFACE_("Y"));
-  uiItemR(row, ptr, "use_min_y", UI_ITEM_NONE, "", ICON_NONE);
-  sub = uiLayoutColumn(row, true);
-  uiLayoutSetActive(sub, RNA_boolean_get(ptr, "use_min_y"));
-  uiItemR(sub, ptr, "min_y", UI_ITEM_NONE, "", ICON_NONE);
+  row = &col->row(true, IFACE_("Y"));
+  row->prop(ptr, "use_min_y", UI_ITEM_NONE, "", ICON_NONE);
+  sub = &row->column(true);
+  sub->active_set(RNA_boolean_get(ptr, "use_min_y"));
+  sub->prop(ptr, "min_y", UI_ITEM_NONE, "", ICON_NONE);
 
   /* Maximums. */
-  col = uiLayoutColumn(layout, false);
-  row = uiLayoutRowWithHeading(col, true, IFACE_("Maximum X"));
-  uiItemR(row, ptr, "use_max_x", UI_ITEM_NONE, "", ICON_NONE);
-  sub = uiLayoutColumn(row, true);
-  uiLayoutSetActive(sub, RNA_boolean_get(ptr, "use_max_x"));
-  uiItemR(sub, ptr, "max_x", UI_ITEM_NONE, "", ICON_NONE);
+  col = &layout.column(false);
+  row = &col->row(true, IFACE_("Maximum X"));
+  row->prop(ptr, "use_max_x", UI_ITEM_NONE, "", ICON_NONE);
+  sub = &row->column(true);
+  sub->active_set(RNA_boolean_get(ptr, "use_max_x"));
+  sub->prop(ptr, "max_x", UI_ITEM_NONE, "", ICON_NONE);
 
-  row = uiLayoutRowWithHeading(col, true, IFACE_("Y"));
-  uiItemR(row, ptr, "use_max_y", UI_ITEM_NONE, "", ICON_NONE);
-  sub = uiLayoutColumn(row, true);
-  uiLayoutSetActive(sub, RNA_boolean_get(ptr, "use_max_y"));
-  uiItemR(sub, ptr, "max_y", UI_ITEM_NONE, "", ICON_NONE);
+  row = &col->row(true, IFACE_("Y"));
+  row->prop(ptr, "use_max_y", UI_ITEM_NONE, "", ICON_NONE);
+  sub = &row->column(true);
+  sub->active_set(RNA_boolean_get(ptr, "use_max_y"));
+  sub->prop(ptr, "max_y", UI_ITEM_NONE, "", ICON_NONE);
 
   fmodifier_influence_draw(layout, ptr);
 }
@@ -823,32 +815,31 @@ static void panel_register_limits(ARegionType *region_type,
 
 static void stepped_panel_draw(const bContext *C, Panel *panel)
 {
-  uiLayout *col, *sub, *row;
-  uiLayout *layout = panel->layout;
+  blender::ui::Layout &layout = *panel->layout;
 
   PointerRNA *ptr = fmodifier_get_pointers(C, panel, nullptr);
 
-  uiLayoutSetPropSep(layout, true);
-  uiLayoutSetPropDecorate(layout, false);
+  layout.use_property_split_set(true);
+  layout.use_property_decorate_set(false);
 
   /* Stepping Settings. */
-  col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "frame_step", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  uiItemR(col, ptr, "frame_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  blender::ui::Layout &col = layout.column(false);
+  col.prop(ptr, "frame_step", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  col.prop(ptr, "frame_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   /* Start range settings. */
-  row = uiLayoutRowWithHeading(layout, true, IFACE_("Start Frame"));
-  uiItemR(row, ptr, "use_frame_start", UI_ITEM_NONE, "", ICON_NONE);
-  sub = uiLayoutColumn(row, true);
-  uiLayoutSetActive(sub, RNA_boolean_get(ptr, "use_frame_start"));
-  uiItemR(sub, ptr, "frame_start", UI_ITEM_NONE, "", ICON_NONE);
+  blender::ui::Layout *row = &layout.row(true, IFACE_("Start Frame"));
+  row->prop(ptr, "use_frame_start", UI_ITEM_NONE, "", ICON_NONE);
+  blender::ui::Layout *sub = &row->column(true);
+  sub->active_set(RNA_boolean_get(ptr, "use_frame_start"));
+  sub->prop(ptr, "frame_start", UI_ITEM_NONE, "", ICON_NONE);
 
   /* End range settings. */
-  row = uiLayoutRowWithHeading(layout, true, IFACE_("End Frame"));
-  uiItemR(row, ptr, "use_frame_end", UI_ITEM_NONE, "", ICON_NONE);
-  sub = uiLayoutColumn(row, true);
-  uiLayoutSetActive(sub, RNA_boolean_get(ptr, "use_frame_end"));
-  uiItemR(sub, ptr, "frame_end", UI_ITEM_NONE, "", ICON_NONE);
+  row = &layout.row(true, IFACE_("End Frame"));
+  row->prop(ptr, "use_frame_end", UI_ITEM_NONE, "", ICON_NONE);
+  sub = &row->column(true);
+  sub->active_set(RNA_boolean_get(ptr, "use_frame_end"));
+  sub->prop(ptr, "frame_end", UI_ITEM_NONE, "", ICON_NONE);
 
   fmodifier_influence_draw(layout, ptr);
 }
@@ -889,8 +880,7 @@ void ANIM_fmodifier_panels(const bContext *C,
       char panel_idname[MAX_NAME];
       panel_id_fn(fcm, panel_idname);
 
-      PointerRNA *fcm_ptr = static_cast<PointerRNA *>(
-          MEM_mallocN(sizeof(PointerRNA), "panel customdata"));
+      PointerRNA *fcm_ptr = MEM_new<PointerRNA>("panel customdata");
       *fcm_ptr = RNA_pointer_create_discrete(owner_id, &RNA_FModifier, fcm);
 
       UI_panel_add_instanced(C, region, &region->panels, panel_idname, fcm_ptr);

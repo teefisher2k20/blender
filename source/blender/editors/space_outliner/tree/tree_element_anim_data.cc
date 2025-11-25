@@ -6,11 +6,10 @@
  * \ingroup spoutliner
  */
 
-#include "BLI_listbase_wrapper.hh"
-
 #include "DNA_anim_types.h"
-#include "DNA_listBase.h"
 #include "DNA_outliner_types.h"
+
+#include "BLI_listbase.h"
 
 #include "BLT_translation.hh"
 
@@ -44,6 +43,11 @@ void TreeElementAnimData::expand(SpaceOutliner & /*space_outliner*/) const
 
   expand_drivers();
   expand_NLA_tracks();
+}
+
+animrig::slot_handle_t TreeElementAnimData::get_slot_handle() const
+{
+  return this->anim_data_.slot_handle;
 }
 
 void TreeElementAnimData::expand_drivers() const

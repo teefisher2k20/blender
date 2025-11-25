@@ -35,9 +35,7 @@
 #include "BLI_function_ref.hh"
 #include "BLI_index_range.hh"
 #include "BLI_lazy_threading.hh"
-#include "BLI_span.hh"
 #include "BLI_task_size_hints.hh"
-#include "BLI_utildefines.h"
 
 namespace blender {
 
@@ -190,6 +188,30 @@ inline Value parallel_reduce_aligned(const IndexRange range,
         function(aligned_range, ident);
       },
       reduction);
+}
+
+template<typename Value, typename Function, typename Reduction>
+inline Value parallel_deterministic_reduce(IndexRange range,
+                                           int64_t grain_size,
+                                           const Value &identity,
+                                           const Function &function,
+                                           const Reduction &reduction)
+{
+#ifdef WITH_TBB
+  if (range.size() >= grain_size) {
+    lazy_threading::send_hint();
+    return tbb::parallel_deterministic_reduce(
+        tbb::blocked_range<int64_t>(range.first(), range.one_after_last(), grain_size),
+        identity,
+        [&](const tbb::blocked_range<int64_t> &subrange, const Value &ident) {
+          return function(IndexRange(subrange.begin(), subrange.size()), ident);
+        },
+        reduction);
+  }
+#else
+  UNUSED_VARS(grain_size, reduction);
+#endif
+  return function(range, identity);
 }
 
 /**

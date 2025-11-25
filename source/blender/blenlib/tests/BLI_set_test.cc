@@ -14,7 +14,7 @@
 #include "BLI_timeit.hh"
 #include "BLI_vector.hh"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 namespace blender {
 namespace tests {
@@ -412,6 +412,38 @@ TEST(set, IntrusiveIntKey)
   EXPECT_TRUE(set.remove(4));
 }
 
+struct IntKeyModHash {
+  uint64_t operator()(const int key) const
+  {
+    EXPECT_GE(key, 0);
+    return uint64_t(key % 10);
+  }
+};
+
+struct IntKeyModEq {
+  bool operator()(const int a, const int b) const
+  {
+    EXPECT_GE(a, 0);
+    EXPECT_GE(b, 0);
+    return a % 10 == b % 10;
+  }
+};
+
+TEST(set, IntrusiveIntKeyCustomEq)
+{
+  Set<int, 2, DefaultProbingStrategy, IntKeyModHash, IntKeyModEq, IntegerSetSlot<int, -1, -2>> set;
+  EXPECT_TRUE(set.add(1));
+  EXPECT_TRUE(set.add(2));
+  EXPECT_FALSE(set.add(1));
+  EXPECT_FALSE(set.add(11));
+  EXPECT_FALSE(set.add(101));
+  EXPECT_TRUE(set.add(103));
+  EXPECT_TRUE(set.contains(3));
+  EXPECT_FALSE(set.remove(54));
+  EXPECT_TRUE(set.remove(52));
+  EXPECT_FALSE(set.contains(2));
+}
+
 struct MyKeyType {
   uint32_t key;
   int32_t attached_data;
@@ -469,6 +501,17 @@ TEST(set, LookupKeyOrAdd)
   EXPECT_EQ(set.size(), 3);
   EXPECT_EQ(set.lookup_key_or_add({3, 60}).attached_data, 40);
   EXPECT_EQ(set.size(), 3);
+}
+
+TEST(set, LookupKeyOrAddCb)
+{
+  Set<MyKeyType> set;
+  EXPECT_EQ(set.lookup_key_or_add_cb({1, 10}, [&]() { return MyKeyType{1, 100}; }).attached_data,
+            100);
+  EXPECT_EQ(set.lookup_key_or_add_cb({1, 5}, [&]() { return MyKeyType{1, 50}; }).attached_data,
+            100);
+  EXPECT_EQ(set.lookup_key_or_add_cb({2, 20}, [&]() { return MyKeyType{2, 200}; }).attached_data,
+            200);
 }
 
 TEST(set, StringViewKeys)
@@ -624,6 +667,41 @@ TEST(set, Equality)
   EXPECT_NE(d, a);
   EXPECT_NE(e, a);
   EXPECT_NE(f, a);
+}
+
+namespace {
+struct KeyWithData {
+  int key;
+  std::string data;
+
+  uint64_t hash() const
+  {
+    return uint64_t(this->key);
+  }
+
+  friend bool operator==(const KeyWithData &a, const KeyWithData &b)
+  {
+    return a.key == b.key;
+  }
+};
+}  // namespace
+
+TEST(set, AddOverwrite)
+{
+  Set<KeyWithData> set;
+  EXPECT_TRUE(set.add_overwrite(KeyWithData{1, "a"}));
+  EXPECT_EQ(set.size(), 1);
+  EXPECT_FALSE(set.add(KeyWithData{1, "b"}));
+  EXPECT_EQ(set.size(), 1);
+  EXPECT_EQ(set.lookup_key(KeyWithData{1, "_"}).data, "a");
+  EXPECT_FALSE(set.add_overwrite(KeyWithData{1, "c"}));
+  EXPECT_EQ(set.size(), 1);
+  EXPECT_EQ(set.lookup_key(KeyWithData{1, "_"}).data, "c");
+
+  const KeyWithData key{2, "d"};
+  EXPECT_TRUE(set.add_overwrite(key));
+  EXPECT_EQ(set.size(), 2);
+  EXPECT_EQ(set.lookup_key(key).data, "d");
 }
 
 /**

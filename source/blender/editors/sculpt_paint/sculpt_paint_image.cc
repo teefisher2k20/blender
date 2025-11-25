@@ -8,10 +8,12 @@
 #include "DNA_brush_types.h"
 #include "DNA_image_types.h"
 #include "DNA_object_types.h"
+#include "DNA_userdef_types.h"
 
 #include "ED_paint.hh"
 
 #include "BLI_bit_vector.hh"
+#include "BLI_listbase.h"
 #include "BLI_math_color_blend.h"
 #include "BLI_math_geom.h"
 #ifdef DEBUG_PIXEL_NODES
@@ -168,7 +170,7 @@ template<typename ImageBuffer> class PaintingKernel {
   const char *last_used_color_space_ = nullptr;
 
  public:
-  explicit PaintingKernel() {}
+  explicit PaintingKernel() = default;
 
   bool paint(const Brush &brush,
              const PackedPixelRow &pixel_row,
@@ -208,11 +210,7 @@ template<typename ImageBuffer> class PaintingKernel {
       return;
     }
 
-    /* NOTE: Brush colors are stored in sRGB. We use math color to follow other areas that
-     * use brush colors. From there on we use IMB_colormanagement to convert the brush color to the
-     * colorspace of the texture. This isn't ideal, but would need more refactoring to make sure
-     * that brush colors are stored in scene linear by default. */
-    srgb_to_linearrgb_v3_v3(brush_color_, in_brush_color);
+    copy_v3_v3(brush_color_, in_brush_color);
     brush_color_[3] = 1.0f;
 
     const char *from_colorspace = IMB_colormanagement_role_colorspace_name_get(
@@ -249,8 +247,7 @@ static BitVector<> init_uv_primitives_brush_test(SculptSession &ss,
   return brush_test;
 }
 
-static void do_paint_pixels(const Scene &scene,
-                            const Depsgraph &depsgraph,
+static void do_paint_pixels(const Depsgraph &depsgraph,
                             Object &object,
                             const Paint &paint,
                             const Brush &brush,
@@ -280,8 +277,8 @@ static void do_paint_pixels(const Scene &scene,
   brush_color[2] = float((hash >> 16) & 255) / 255.0f;
 #else
   copy_v3_v3(brush_color,
-             ss.cache->invert ? BKE_brush_secondary_color_get(&scene, &paint, &brush) :
-                                BKE_brush_color_get(&scene, &paint, &brush));
+             ss.cache->invert ? BKE_brush_secondary_color_get(&paint, &brush) :
+                                BKE_brush_color_get(&paint, &brush));
 #endif
 
   brush_color[3] = 1.0f;
@@ -497,8 +494,7 @@ bool SCULPT_use_image_paint_brush(PaintModeSettings &settings, Object &ob)
   return BKE_paint_canvas_image_get(&settings, &ob, &image, &image_user);
 }
 
-void SCULPT_do_paint_brush_image(const Scene &scene,
-                                 const Depsgraph &depsgraph,
+void SCULPT_do_paint_brush_image(const Depsgraph &depsgraph,
                                  PaintModeSettings &paint_mode_settings,
                                  const Sculpt &sd,
                                  Object &ob,
@@ -519,7 +515,7 @@ void SCULPT_do_paint_brush_image(const Scene &scene,
     do_push_undo_tile(*image_data.image, *image_data.image_user, nodes[i]);
   });
   node_mask.foreach_index(GrainSize(1), [&](const int i) {
-    do_paint_pixels(scene, depsgraph, ob, sd.paint, *brush, image_data, nodes[i]);
+    do_paint_pixels(depsgraph, ob, sd.paint, *brush, image_data, nodes[i]);
   });
 
   fix_non_manifold_seam_bleeding(ob, *image_data.image, *image_data.image_user, nodes, node_mask);

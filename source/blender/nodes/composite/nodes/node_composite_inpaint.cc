@@ -11,10 +11,7 @@
 #include "BLI_math_vector.hh"
 #include "BLI_math_vector_types.hh"
 
-#include "UI_interface.hh"
 #include "UI_resources.hh"
-
-#include "DNA_scene_types.h"
 
 #include "COM_algorithm_jump_flooding.hh"
 #include "COM_algorithm_symmetric_separable_blur_variable_size.hh"
@@ -29,15 +26,16 @@ namespace blender::nodes::node_composite_inpaint_cc {
 
 static void cmp_node_inpaint_declare(NodeDeclarationBuilder &b)
 {
+  b.use_custom_socket_order();
+  b.allow_any_socket_order();
   b.add_input<decl::Color>("Image")
       .default_value({1.0f, 1.0f, 1.0f, 1.0f})
-      .compositor_domain_priority(0);
-  b.add_output<decl::Color>("Image");
-}
+      .hide_value()
+      .structure_type(StructureType::Dynamic);
+  b.add_output<decl::Color>("Image").structure_type(StructureType::Dynamic).align_with_previous();
 
-static void node_composit_buts_inpaint(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
-{
-  uiItemR(layout, ptr, "distance", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+  b.add_input<decl::Int>("Size").default_value(0).min(0).description(
+      "The size of the inpaint in pixels");
 }
 
 using namespace blender::compositor;
@@ -48,10 +46,10 @@ class InpaintOperation : public NodeOperation {
 
   void execute() override
   {
-    Result &input = get_input("Image");
-    Result &output = get_result("Image");
-    if (input.is_single_value() || get_max_distance() == 0) {
-      input.pass_through(output);
+    const Result &input = this->get_input("Image");
+    if (input.is_single_value() || this->get_max_distance() == 0) {
+      Result &output = this->get_result("Image");
+      output.share_data(input);
       return;
     }
 
@@ -63,9 +61,8 @@ class InpaintOperation : public NodeOperation {
     inpainting_boundary.release();
 
     Result filled_region = context().create_result(ResultType::Color);
-    Result distance_to_boundary = context().create_result(ResultType::Float,
-                                                          ResultPrecision::Half);
-    Result smoothing_radius = context().create_result(ResultType::Float, ResultPrecision::Half);
+    Result distance_to_boundary = context().create_result(ResultType::Float);
+    Result smoothing_radius = context().create_result(ResultType::Float);
     fill_inpainting_region(
         flooded_boundary, filled_region, distance_to_boundary, smoothing_radius);
     flooded_boundary.release();
@@ -95,8 +92,8 @@ class InpaintOperation : public NodeOperation {
 
   Result compute_inpainting_boundary_gpu()
   {
-    GPUShader *shader = context().get_shader("compositor_inpaint_compute_boundary",
-                                             ResultPrecision::Half);
+    gpu::Shader *shader = context().get_shader("compositor_inpaint_compute_boundary",
+                                               ResultPrecision::Half);
     GPU_shader_bind(shader);
 
     const Result &input = get_input("Image");
@@ -107,7 +104,7 @@ class InpaintOperation : public NodeOperation {
     inpainting_boundary.allocate_texture(domain);
     inpainting_boundary.bind_as_image(shader, "boundary_img");
 
-    compute_dispatch_threads_at_least(shader, domain.size);
+    compute_dispatch_threads_at_least(shader, domain.data_size);
 
     input.unbind_as_texture();
     inpainting_boundary.unbind_as_image();
@@ -132,7 +129,7 @@ class InpaintOperation : public NodeOperation {
      * Technically, we needn't restrict the output to just the boundary pixels, since the algorithm
      * can still operate if the interior of the region was also included. However, the algorithm
      * operates more accurately when the number of pixels to be flooded is minimum. */
-    parallel_for(domain.size, [&](const int2 texel) {
+    parallel_for(domain.data_size, [&](const int2 texel) {
       /* Identify if any of the 8 neighbors around the center pixel are transparent. */
       bool has_transparent_neighbors = false;
       for (int j = -1; j <= 1; j++) {
@@ -141,7 +138,7 @@ class InpaintOperation : public NodeOperation {
 
           /* Exempt the center pixel. */
           if (offset != int2(0)) {
-            if (input.load_pixel_extended<float4>(texel + offset).w < 1.0f) {
+            if (input.load_pixel_extended<Color>(texel + offset).a < 1.0f) {
               has_transparent_neighbors = true;
               break;
             }
@@ -150,7 +147,7 @@ class InpaintOperation : public NodeOperation {
       }
 
       /* The pixels at the boundary are those that are opaque and have transparent neighbors. */
-      bool is_opaque = input.load_pixel<float4>(texel).w == 1.0f;
+      bool is_opaque = input.load_pixel<Color>(texel).a == 1.0f;
       bool is_boundary_pixel = is_opaque && has_transparent_neighbors;
 
       /* Encode the boundary information in the format expected by the jump flooding algorithm. */
@@ -184,7 +181,7 @@ class InpaintOperation : public NodeOperation {
                                   Result &distance_to_boundary,
                                   Result &smoothing_radius)
   {
-    GPUShader *shader = context().get_shader("compositor_inpaint_fill_region");
+    gpu::Shader *shader = context().get_shader("compositor_inpaint_fill_region");
     GPU_shader_bind(shader);
 
     GPU_shader_uniform_1i(shader, "max_distance", get_max_distance());
@@ -204,7 +201,7 @@ class InpaintOperation : public NodeOperation {
     smoothing_radius.allocate_texture(domain);
     smoothing_radius.bind_as_image(shader, "smoothing_radius_img");
 
-    compute_dispatch_threads_at_least(shader, domain.size);
+    compute_dispatch_threads_at_least(shader, domain.data_size);
 
     input.unbind_as_texture();
     flooded_boundary.unbind_as_texture();
@@ -231,12 +228,12 @@ class InpaintOperation : public NodeOperation {
     /* Fill the inpainting region by sampling the color of the nearest boundary pixel.
      * Additionally, compute some information about the inpainting region, like the distance to the
      * boundary, as well as the blur radius to use to smooth out that region. */
-    parallel_for(domain.size, [&](const int2 texel) {
-      float4 color = input.load_pixel<float4>(texel);
+    parallel_for(domain.data_size, [&](const int2 texel) {
+      float4 color = float4(input.load_pixel<Color>(texel));
 
       /* An opaque pixel, not part of the inpainting region. */
       if (color.w == 1.0f) {
-        filled_region.store_pixel(texel, color);
+        filled_region.store_pixel(texel, Color(color));
         smoothing_radius_image.store_pixel(texel, 0.0f);
         distance_to_boundary_image.store_pixel(texel, 0.0f);
         return;
@@ -262,8 +259,8 @@ class InpaintOperation : public NodeOperation {
 
       /* Mix the boundary color with the original color using its alpha because semi-transparent
        * areas are considered to be partially inpainted. */
-      float4 boundary_color = input.load_pixel<float4>(closest_boundary_texel);
-      filled_region.store_pixel(texel, math::interpolate(boundary_color, color, color.w));
+      float4 boundary_color = float4(input.load_pixel_extended<Color>(closest_boundary_texel));
+      filled_region.store_pixel(texel, Color(math::interpolate(boundary_color, color, color.w)));
     });
   }
 
@@ -283,7 +280,7 @@ class InpaintOperation : public NodeOperation {
   void compute_inpainting_region_gpu(const Result &inpainted_region,
                                      const Result &distance_to_boundary)
   {
-    GPUShader *shader = context().get_shader("compositor_inpaint_compute_region");
+    gpu::Shader *shader = context().get_shader("compositor_inpaint_compute_region");
     GPU_shader_bind(shader);
 
     GPU_shader_uniform_1i(shader, "max_distance", get_max_distance());
@@ -299,7 +296,7 @@ class InpaintOperation : public NodeOperation {
     output.allocate_texture(domain);
     output.bind_as_image(shader, "output_img");
 
-    compute_dispatch_threads_at_least(shader, domain.size);
+    compute_dispatch_threads_at_least(shader, domain.data_size);
 
     input.unbind_as_texture();
     inpainted_region.unbind_as_texture();
@@ -319,12 +316,12 @@ class InpaintOperation : public NodeOperation {
     Result &output = this->get_result("Image");
     output.allocate_texture(domain);
 
-    parallel_for(domain.size, [&](const int2 texel) {
-      float4 color = input.load_pixel<float4>(texel);
+    parallel_for(domain.data_size, [&](const int2 texel) {
+      float4 color = float4(input.load_pixel<Color>(texel));
 
       /* An opaque pixel, not part of the inpainting region, write the original color. */
       if (color.w == 1.0f) {
-        output.store_pixel(texel, color);
+        output.store_pixel(texel, Color(color));
         return;
       }
 
@@ -333,21 +330,22 @@ class InpaintOperation : public NodeOperation {
       /* Further than the inpainting distance, not part of the inpainting region, write the
        * original color. */
       if (distance_to_boundary > max_distance) {
-        output.store_pixel(texel, color);
+        output.store_pixel(texel, Color(color));
         return;
       }
 
       /* Mix the inpainted color with the original color using its alpha because semi-transparent
        * areas are considered to be partially inpainted. */
-      float4 inpainted_color = inpainted_region.load_pixel<float4>(texel);
+      float4 inpainted_color = float4(inpainted_region.load_pixel<Color>(texel));
       output.store_pixel(
-          texel, float4(math::interpolate(inpainted_color.xyz(), color.xyz(), color.w), 1.0f));
+          texel,
+          Color(float4(math::interpolate(inpainted_color.xyz(), color.xyz(), color.w), 1.0f)));
     });
   }
 
   int get_max_distance()
   {
-    return bnode().custom2;
+    return math::max(0, this->get_input("Size").get_single_value_default(0));
   }
 };
 
@@ -358,7 +356,7 @@ static NodeOperation *get_compositor_operation(Context &context, DNode node)
 
 }  // namespace blender::nodes::node_composite_inpaint_cc
 
-void register_node_type_cmp_inpaint()
+static void register_node_type_cmp_inpaint()
 {
   namespace file_ns = blender::nodes::node_composite_inpaint_cc;
 
@@ -370,8 +368,8 @@ void register_node_type_cmp_inpaint()
   ntype.enum_name_legacy = "INPAINT";
   ntype.nclass = NODE_CLASS_OP_FILTER;
   ntype.declare = file_ns::cmp_node_inpaint_declare;
-  ntype.draw_buttons = file_ns::node_composit_buts_inpaint;
   ntype.get_compositor_operation = file_ns::get_compositor_operation;
 
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
+NOD_REGISTER_NODE(register_node_type_cmp_inpaint)

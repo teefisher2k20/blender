@@ -2,8 +2,6 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BKE_geometry_fields.hh"
-
 #include "node_geometry_util.hh"
 
 namespace blender::nodes::node_geo_input_instance_transform_cc {
@@ -15,7 +13,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_geo_exec(GeoNodeExecParams params)
 {
-  Field<float4x4> position_field{AttributeFieldInput::Create<float4x4>("instance_transform")};
+  Field<float4x4> position_field{AttributeFieldInput::from<float4x4>("instance_transform")};
   params.set_output("Transform", std::move(position_field));
 }
 
@@ -30,7 +28,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_INPUT;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
-  blender::bke::node_register_type(&ntype);
+  blender::bke::node_register_type(ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

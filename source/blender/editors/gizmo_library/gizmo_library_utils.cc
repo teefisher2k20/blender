@@ -18,6 +18,7 @@
 #include "BKE_main.hh"
 #include "BKE_screen.hh"
 
+#include "BLI_listbase.h"
 #include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
@@ -35,7 +36,7 @@
 /* own includes */
 #include "gizmo_library_intern.hh"
 
-static CLG_LogRef LOG = {"ed.gizmo.library_utils"};
+static CLG_LogRef LOG = {"tool.gizmo"};
 
 /* factor for precision tweaking */
 #define GIZMO_PRECISION_FAC 0.05f
@@ -253,11 +254,12 @@ bool gizmo_window_project_3d(
 /** \name RNA Utils
  * \{ */
 
-/* Based on 'rna_GizmoProperties_find_operator'. */
 wmGizmo *gizmo_find_from_properties(const IDProperty *properties,
                                     const int spacetype,
                                     const int regionid)
 {
+  /* Based on #rna_GizmoProperties_find_operator. */
+
   for (bScreen *screen = static_cast<bScreen *>(G_MAIN->screens.first); screen;
        screen = static_cast<bScreen *>(screen->id.next))
   {

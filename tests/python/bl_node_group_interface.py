@@ -71,8 +71,6 @@ class NodeGroupInterfaceTests:
             return (0.3, 5.0, -42)
         elif (socket_type == "NodeSocketString"):
             return "Hello World!"
-        elif (socket_type == "NodeSocketTexture"):
-            return bpy.data.textures.new("test", 'MAGIC')
         elif (socket_type == "NodeSocketVector"):
             return (4.0, -1.0, 0.0)
 
@@ -93,8 +91,7 @@ class NodeGroupInterfaceTests:
                             "NodeSocketMaterial",
                             "NodeSocketObject",
                             "NodeSocketRotation",
-                            "NodeSocketString",
-                            "NodeSocketTexture"}):
+                            "NodeSocketString"}):
             return cmp_default
         elif (socket_type in {"NodeSocketColor",
                               "NodeSocketVector"}):
@@ -360,7 +357,7 @@ class GeometryNodeGroupInterfaceTest(AbstractNodeGroupInterfaceTest, NodeGroupIn
         self.do_test_socket_type("NodeSocketRotation")
         self.do_test_invalid_socket_type("NodeSocketShader")
         self.do_test_socket_type("NodeSocketString")
-        self.do_test_socket_type("NodeSocketTexture")
+        self.do_test_invalid_socket_type("NodeSocketTexture")
         self.do_test_socket_type("NodeSocketVector")
         self.do_test_invalid_socket_type("NodeSocketVirtual")
 
@@ -384,7 +381,6 @@ class ShaderNodeGroupInterfaceTest(AbstractNodeGroupInterfaceTest, NodeGroupInte
     def setUp(self):
         super().setUp()
         self.material = bpy.data.materials.new("test")
-        self.material.use_nodes = True
         self.main_tree = self.material.node_tree
 
     def test_invalid_socket_type(self):
@@ -430,8 +426,8 @@ class CompositorNodeGroupInterfaceTest(AbstractNodeGroupInterfaceTest, NodeGroup
     def setUp(self):
         super().setUp()
         self.scene = bpy.data.scenes.new("test")
-        self.scene.use_nodes = True
-        self.main_tree = self.scene.node_tree
+        self.main_tree = bpy.data.node_groups.new("test node tree", "CompositorNodeTree")
+        self.scene.compositing_node_group = self.main_tree
 
     def test_invalid_socket_type(self):
         self.do_test_invalid_socket_type("INVALID_SOCKET_TYPE_11!1")
@@ -440,7 +436,7 @@ class CompositorNodeGroupInterfaceTest(AbstractNodeGroupInterfaceTest, NodeGroup
         self.do_test_sockets_in_out("NodeSocketFloat")
 
     def test_all_socket_types(self):
-        self.do_test_invalid_socket_type("NodeSocketBool")
+        self.do_test_socket_type("NodeSocketBool")
         self.do_test_invalid_socket_type("NodeSocketCollection")
         self.do_test_socket_type("NodeSocketColor")
         self.do_test_socket_type("NodeSocketFloat")
@@ -451,7 +447,7 @@ class CompositorNodeGroupInterfaceTest(AbstractNodeGroupInterfaceTest, NodeGroup
         self.do_test_invalid_socket_type("NodeSocketObject")
         self.do_test_invalid_socket_type("NodeSocketRotation")
         self.do_test_invalid_socket_type("NodeSocketShader")
-        self.do_test_invalid_socket_type("NodeSocketString")
+        self.do_test_socket_type("NodeSocketString")
         self.do_test_invalid_socket_type("NodeSocketTexture")
         self.do_test_socket_type("NodeSocketVector")
         self.do_test_invalid_socket_type("NodeSocketVirtual")
@@ -467,6 +463,36 @@ class CompositorNodeGroupInterfaceTest(AbstractNodeGroupInterfaceTest, NodeGroup
 
     def test_remove(self):
         self.do_test_remove("NodeSocketFloat")
+
+
+class NodeTreeItemsIteratorTest(AbstractNodeGroupInterfaceTest, NodeGroupInterfaceTests):
+    tree_type = "ShaderNodeTree"
+    group_node_type = "ShaderNodeGroup"
+
+    def setUp(self):
+        super().setUp()
+        self.material = bpy.data.materials.new("test")
+        self.main_tree = self.material.node_tree
+
+    # Regression test for changes while iterating over tree interface items (#143551).
+    # The iterator should remain valid when changing properties of a tree item.
+    def test_items_iterator(self):
+        tree, group_node = self.make_group_and_instance()
+
+        tree.interface.new_socket("Input 0", socket_type="NodeSocketFloat", in_out='INPUT')
+        tree.interface.new_socket("Input 1", socket_type="NodeSocketBool", in_out='INPUT')
+        # The cache vector has a fixed buffer for small sizes, add enough sockets to force reallocation.
+        for i in range(20):
+            tree.interface.new_socket(f"Input {2+i}", socket_type="NodeSocketColor", in_out='INPUT')
+
+        # Iterate over items and change properties. The loop iterator must remain valid.
+        for item in tree.interface.items_tree:
+            if item.socket_type == "NodeSocketFloat":
+                item.default_value = 500.0
+            elif item.socket_type == "NodeSocketColor":
+                item.default_value = (1, 0, 0, 1)
+            elif item.socket_type == "NodeSocketBool":
+                item.default_value = True
 
 
 def main():

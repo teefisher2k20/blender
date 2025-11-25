@@ -15,9 +15,10 @@
 #include "DNA_userdef_types.h"
 #include "DNA_windowmanager_types.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
+#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_utildefines.h"
 
 #include "RNA_access.hh"
@@ -90,6 +91,8 @@ void WM_event_print(const wmEvent *event)
           {"CTRL", KM_CTRL},
           {"ALT", KM_ALT},
           {"OS", KM_OSKEY},
+          {"HYPER", KM_HYPER},
+
       };
       event_ids_from_flag(
           modifier_id, sizeof(modifier_id), flag_data, ARRAY_SIZE(flag_data), event->modifier);
@@ -130,13 +133,34 @@ void WM_event_print(const wmEvent *event)
 
 #ifdef WITH_INPUT_NDOF
     if (ISNDOF(event->type)) {
-      const wmNDOFMotionData *ndof = static_cast<const wmNDOFMotionData *>(event->customdata);
+      const wmNDOFMotionData &ndof = *static_cast<const wmNDOFMotionData *>(event->customdata);
       if (event->type == NDOF_MOTION) {
-        printf(", ndof: rot: (%.4f %.4f %.4f), tx: (%.4f %.4f %.4f), dt: %.4f, progress: %d",
-               UNPACK3(ndof->rvec),
-               UNPACK3(ndof->tvec),
-               ndof->dt,
-               ndof->progress);
+        const char *ndof_progress = unknown;
+
+#  define CASE_NDOF_PROGRESS(id) \
+    case P_##id: { \
+      ndof_progress = STRINGIFY(id); \
+      break; \
+    }
+        switch (ndof.progress) {
+          CASE_NDOF_PROGRESS(NOT_STARTED);
+          CASE_NDOF_PROGRESS(STARTING);
+          CASE_NDOF_PROGRESS(IN_PROGRESS);
+          CASE_NDOF_PROGRESS(FINISHING);
+          CASE_NDOF_PROGRESS(FINISHED);
+        }
+#  undef CASE_NDOF_PROGRESS
+
+        printf(
+            ", ndof: "
+            "rot: (%.4f %.4f %.4f), "
+            "tx: (%.4f %.4f %.4f), "
+            "time_delta: %.4f, "
+            "progress: %s",
+            UNPACK3(ndof.rvec),
+            UNPACK3(ndof.tvec),
+            ndof.time_delta,
+            ndof_progress);
       }
       else {
         /* NDOF buttons printed already. */
@@ -149,8 +173,8 @@ void WM_event_print(const wmEvent *event)
       printf(", tablet: active: %d, pressure %.4f, tilt: (%.4f %.4f)",
              wmtab->active,
              wmtab->pressure,
-             wmtab->x_tilt,
-             wmtab->y_tilt);
+             wmtab->tilt.x,
+             wmtab->tilt.y);
     }
     printf("\n");
   }
@@ -228,14 +252,14 @@ bool WM_event_is_modal_drag_exit(const wmEvent *event,
   if (U.flag & USER_RELEASECONFIRM) {
     /* Option on, so can exit with km-release. */
     if (event->val == KM_RELEASE) {
-      if ((init_event_val == KM_CLICK_DRAG) && (event->type == init_event_type)) {
+      if ((init_event_val == KM_PRESS_DRAG) && (event->type == init_event_type)) {
         return true;
       }
     }
     else {
       /* If the initial event wasn't a drag event then
        * ignore #USER_RELEASECONFIRM setting: see #26756. */
-      if (init_event_val != KM_CLICK_DRAG) {
+      if (init_event_val != KM_PRESS_DRAG) {
         return true;
       }
     }
@@ -253,7 +277,7 @@ bool WM_event_is_modal_drag_exit(const wmEvent *event,
 
 bool WM_event_is_mouse_drag(const wmEvent *event)
 {
-  return (ISMOUSE_BUTTON(event->type) && (event->val == KM_CLICK_DRAG));
+  return (ISMOUSE_BUTTON(event->type) && (event->val == KM_PRESS_DRAG));
 }
 
 bool WM_event_is_mouse_drag_or_press(const wmEvent *event)
@@ -356,8 +380,8 @@ bool WM_event_consecutive_gesture_test_break(const wmWindow *win, const wmEvent 
     }
   }
   else if (ISKEYBOARD_OR_BUTTON(event->type)) {
-    /* Modifiers are excluded because from a user perspective,
-     * releasing a modifier (for e.g.) should not begin a new action. */
+    /* Modifiers are excluded because from a user perspective.
+     * For example, releasing a modifier should not begin a new action. */
     if (!ISKEYMODIFIER(event->type)) {
       return true;
     }
@@ -415,21 +439,21 @@ bool WM_event_drag_test(const wmEvent *event, const int prev_xy[2])
 
 void WM_event_drag_start_mval(const wmEvent *event, const ARegion *region, int r_mval[2])
 {
-  const int *xy = (event->val == KM_CLICK_DRAG) ? event->prev_press_xy : event->xy;
+  const int *xy = (event->val == KM_PRESS_DRAG) ? event->prev_press_xy : event->xy;
   r_mval[0] = xy[0] - region->winrct.xmin;
   r_mval[1] = xy[1] - region->winrct.ymin;
 }
 
 void WM_event_drag_start_mval_fl(const wmEvent *event, const ARegion *region, float r_mval[2])
 {
-  const int *xy = (event->val == KM_CLICK_DRAG) ? event->prev_press_xy : event->xy;
+  const int *xy = (event->val == KM_PRESS_DRAG) ? event->prev_press_xy : event->xy;
   r_mval[0] = xy[0] - region->winrct.xmin;
   r_mval[1] = xy[1] - region->winrct.ymin;
 }
 
 void WM_event_drag_start_xy(const wmEvent *event, int r_xy[2])
 {
-  copy_v2_v2_int(r_xy, (event->val == KM_CLICK_DRAG) ? event->prev_press_xy : event->xy);
+  copy_v2_v2_int(r_xy, (event->val == KM_PRESS_DRAG) ? event->prev_press_xy : event->xy);
 }
 
 /** \} */
@@ -484,41 +508,86 @@ int WM_userdef_event_type_from_keymap_type(int kmitype)
 
 #ifdef WITH_INPUT_NDOF
 
-void WM_event_ndof_pan_get(const wmNDOFMotionData *ndof, float r_pan[3], const bool use_zoom)
+static blender::float3 event_ndof_translation_get_with_sign(const wmNDOFMotionData &ndof,
+                                                            const float sign)
 {
-  int z_flag = use_zoom ? NDOF_ZOOM_INVERT : NDOF_PANZ_INVERT_AXIS;
-  r_pan[0] = ndof->tvec[0] * ((U.ndof_flag & NDOF_PANX_INVERT_AXIS) ? -1.0f : 1.0f);
-  r_pan[1] = ndof->tvec[1] * ((U.ndof_flag & NDOF_PANY_INVERT_AXIS) ? -1.0f : 1.0f);
-  r_pan[2] = ndof->tvec[2] * ((U.ndof_flag & z_flag) ? -1.0f : 1.0f);
+  int ndof_flag = U.ndof_flag;
+  int x = 0, y = 1, z = 2;
+  if (ndof_flag & NDOF_SWAP_YZ_AXIS) {
+    /* Map `{x, y, z}` -> `{x, -z, y}`. */
+    std::swap(y, z);
+    ndof_flag ^= NDOF_PANY_INVERT_AXIS;
+  }
+  return {
+      ndof.tvec[x] * ((ndof_flag & NDOF_PANX_INVERT_AXIS) ? -sign : sign),
+      ndof.tvec[y] * ((ndof_flag & NDOF_PANY_INVERT_AXIS) ? -sign : sign),
+      ndof.tvec[z] * ((ndof_flag & NDOF_PANZ_INVERT_AXIS) ? -sign : sign),
+  };
 }
 
-void WM_event_ndof_rotate_get(const wmNDOFMotionData *ndof, float r_rot[3])
+static blender::float3 event_ndof_rotation_get_with_sign(const wmNDOFMotionData &ndof,
+                                                         const float sign)
 {
-  r_rot[0] = ndof->rvec[0] * ((U.ndof_flag & NDOF_ROTX_INVERT_AXIS) ? -1.0f : 1.0f);
-  r_rot[1] = ndof->rvec[1] * ((U.ndof_flag & NDOF_ROTY_INVERT_AXIS) ? -1.0f : 1.0f);
-  r_rot[2] = ndof->rvec[2] * ((U.ndof_flag & NDOF_ROTZ_INVERT_AXIS) ? -1.0f : 1.0f);
+  int ndof_flag = U.ndof_flag;
+  int x = 0, y = 1, z = 2;
+  if (ndof_flag & NDOF_SWAP_YZ_AXIS) {
+    /* Map `{x, y, z}` -> `{x, -z, y}`. */
+    std::swap(y, z);
+    ndof_flag ^= NDOF_ROTY_INVERT_AXIS;
+  }
+  return {
+      ndof.rvec[x] * ((ndof_flag & NDOF_ROTX_INVERT_AXIS) ? -sign : sign),
+      ndof.rvec[y] * ((ndof_flag & NDOF_ROTY_INVERT_AXIS) ? -sign : sign),
+      ndof.rvec[z] * ((ndof_flag & NDOF_ROTZ_INVERT_AXIS) ? -sign : sign),
+  };
 }
 
-float WM_event_ndof_to_axis_angle(const wmNDOFMotionData *ndof, float axis[3])
+blender::float3 WM_event_ndof_translation_get_for_navigation(const wmNDOFMotionData &ndof)
 {
-  float angle;
-  angle = normalize_v3_v3(axis, ndof->rvec);
-
-  axis[0] = axis[0] * ((U.ndof_flag & NDOF_ROTX_INVERT_AXIS) ? -1.0f : 1.0f);
-  axis[1] = axis[1] * ((U.ndof_flag & NDOF_ROTY_INVERT_AXIS) ? -1.0f : 1.0f);
-  axis[2] = axis[2] * ((U.ndof_flag & NDOF_ROTZ_INVERT_AXIS) ? -1.0f : 1.0f);
-
-  return ndof->dt * angle;
+  const float sign = (U.ndof_navigation_mode == NDOF_NAVIGATION_MODE_OBJECT) ? -1.0f : 1.0f;
+  return event_ndof_translation_get_with_sign(ndof, sign);
 }
 
-void WM_event_ndof_to_quat(const wmNDOFMotionData *ndof, float q[4])
+blender::float3 WM_event_ndof_rotation_get_for_navigation(const wmNDOFMotionData &ndof)
 {
-  float axis[3];
-  float angle;
-
-  angle = WM_event_ndof_to_axis_angle(ndof, axis);
-  axis_angle_to_quat(q, axis, angle);
+  const float sign = (U.ndof_navigation_mode == NDOF_NAVIGATION_MODE_OBJECT) ? -1.0f : 1.0f;
+  return event_ndof_rotation_get_with_sign(ndof, sign);
 }
+
+blender::float3 WM_event_ndof_translation_get(const wmNDOFMotionData &ndof)
+{
+  return event_ndof_translation_get_with_sign(ndof, 1.0f);
+}
+
+blender::float3 WM_event_ndof_rotation_get(const wmNDOFMotionData &ndof)
+{
+  return event_ndof_rotation_get_with_sign(ndof, 1.0f);
+}
+
+float WM_event_ndof_rotation_get_axis_angle_for_navigation(const wmNDOFMotionData &ndof,
+                                                           float axis[3])
+{
+  const blender::float3 rvec = WM_event_ndof_rotation_get_for_navigation(ndof);
+  return normalize_v3_v3(axis, rvec);
+}
+
+float WM_event_ndof_rotation_get_axis_angle(const wmNDOFMotionData &ndof, float axis[3])
+{
+  const blender::float3 rvec = WM_event_ndof_rotation_get(ndof);
+  return normalize_v3_v3(axis, rvec);
+}
+
+bool WM_event_ndof_translation_has_pan(const wmNDOFMotionData &ndof)
+{
+  return (U.ndof_flag & NDOF_SWAP_YZ_AXIS) ? ((ndof.tvec[0] != 0.0f) || (ndof.tvec[2] != 0.0f)) :
+                                             ((ndof.tvec[0] != 0.0f) || (ndof.tvec[1] != 0.0f));
+}
+
+bool WM_event_ndof_translation_has_zoom(const wmNDOFMotionData &ndof)
+{
+  return ndof.tvec[(U.ndof_flag & NDOF_SWAP_YZ_AXIS) ? 1 : 2] != 0.0f;
+}
+
 #endif /* WITH_INPUT_NDOF */
 
 /** \} */
@@ -558,8 +627,7 @@ float wm_pressure_curve(float raw_pressure)
 float WM_event_tablet_data(const wmEvent *event, bool *r_pen_flip, float r_tilt[2])
 {
   if (r_tilt) {
-    r_tilt[0] = event->tablet.x_tilt;
-    r_tilt[1] = event->tablet.y_tilt;
+    copy_v2_v2(r_tilt, event->tablet.tilt);
   }
 
   if (r_pen_flip) {

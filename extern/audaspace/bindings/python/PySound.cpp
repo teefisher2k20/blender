@@ -14,6 +14,7 @@
  * limitations under the License.
  ******************************************************************************/
 
+#include "PyAnimateableProperty.h"
 #include "PySound.h"
 #include "PySource.h"
 #include "PyThreadPool.h"
@@ -59,9 +60,17 @@
 #include "sequence/PingPong.h"
 #include "sequence/Superpose.h"
 
+#include "fx/Echo.h"
+
 #ifdef WITH_CONVOLUTION
 #include "fx/BinauralSound.h"
 #include "fx/ConvolverSound.h"
+#endif
+
+
+#ifdef WITH_RUBBERBAND
+#include "fx/AnimateableTimeStretchPitchScale.h"
+#include "fx/TimeStretchPitchScale.h"
 #endif
 
 #include <cstring>
@@ -444,7 +453,7 @@ PyDoc_STRVAR(M_aud_Sound_sawtooth_doc,
 			 "   :arg frequency: The frequency of the sawtooth wave in Hz.\n"
 			 "   :type frequency: float\n"
 			 "   :arg rate: The sampling rate in Hz. It's recommended to set this\n"
-			 "      value to the playback device's samling rate to avoid resamping.\n"
+			 "      value to the playback device's sampling rate to avoid resampling.\n"
 			 "   :type rate: int\n"
 			 "   :return: The created :class:`Sound` object.\n"
 			 "   :rtype: :class:`Sound`");
@@ -482,7 +491,7 @@ PyDoc_STRVAR(M_aud_Sound_silence_doc,
 			 ".. classmethod:: silence(rate=48000)\n\n"
 			 "   Creates a silence sound which plays simple silence.\n\n"
 			 "   :arg rate: The sampling rate in Hz. It's recommended to set this\n"
-			 "      value to the playback device's samling rate to avoid resamping.\n"
+			 "      value to the playback device's sampling rate to avoid resampling.\n"
 			 "   :type rate: int\n"
 			 "   :return: The created :class:`Sound` object.\n"
 			 "   :rtype: :class:`Sound`");
@@ -521,7 +530,7 @@ PyDoc_STRVAR(M_aud_Sound_sine_doc,
 			 "   :arg frequency: The frequency of the sine wave in Hz.\n"
 			 "   :type frequency: float\n"
 			 "   :arg rate: The sampling rate in Hz. It's recommended to set this\n"
-			 "      value to the playback device's samling rate to avoid resamping.\n"
+			 "      value to the playback device's sampling rate to avoid resampling.\n"
 			 "   :type rate: int\n"
 			 "   :return: The created :class:`Sound` object.\n"
 			 "   :rtype: :class:`Sound`");
@@ -561,7 +570,7 @@ PyDoc_STRVAR(M_aud_Sound_square_doc,
 			 "   :arg frequency: The frequency of the square wave in Hz.\n"
 			 "   :type frequency: float\n"
 			 "   :arg rate: The sampling rate in Hz. It's recommended to set this\n"
-			 "      value to the playback device's samling rate to avoid resamping.\n"
+			 "      value to the playback device's sampling rate to avoid resampling.\n"
 			 "   :type rate: int\n"
 			 "   :return: The created :class:`Sound` object.\n"
 			 "   :rtype: :class:`Sound`");
@@ -601,7 +610,7 @@ PyDoc_STRVAR(M_aud_Sound_triangle_doc,
 			 "   :arg frequency: The frequency of the triangle wave in Hz.\n"
 			 "   :type frequency: float\n"
 			 "   :arg rate: The sampling rate in Hz. It's recommended to set this\n"
-			 "      value to the playback device's samling rate to avoid resamping.\n"
+			 "      value to the playback device's sampling rate to avoid resampling.\n"
 			 "   :type rate: int\n"
 			 "   :return: The created :class:`Sound` object.\n"
 			 "   :rtype: :class:`Sound`");
@@ -1678,6 +1687,53 @@ Sound_list_addSound(Sound* self, PyObject* object)
 	}
 }
 
+PyDoc_STRVAR(M_aud_Sound_echo_doc, ".. method:: Echo(delay, feedback, mix)\n\n"
+                                                    "   Adds Echo effect to the sound.\n\n"
+                                                    "   :arg delay: The delay time in seconds.\n"
+                                                    "   :type delay: float\n"
+                                                    "   :arg feedback: The feedback amount (0.0 to 1.0).\n"
+                                                    "   :type feedback: float\n"
+                                                    "   :arg mix: The wet/dry mix (0.0 to 1.0).\n"
+                                                    "   :type mix: float\n"
+                                                    "   :arg reset_buffer: Whether to reset the delay buffer on seek.\n"
+                                                    "   :type reset_buffer: bool\n"
+                                                    "   :return: The created :class:`Sound` object.\n"
+                                                    "   :rtype: :class:`Sound`");
+static PyObject* Sound_echo(Sound* self, PyObject* args, PyObject* kwds)
+{
+	float delay = 0.5;
+	float feedback = 0.5;
+	float mix = 0.5;
+	bool reset_buffer = true;
+	static const char* kwlist[] = {"delay", "feedback", "mix", "reset_buffer", nullptr};
+
+	if(!PyArg_ParseTupleAndKeywords(args, kwds, "fff|b:echo", const_cast<char**>(kwlist), &delay, &feedback, &mix, &reset_buffer))
+	{
+		return nullptr;
+	}
+
+	PyTypeObject* type = Py_TYPE(self);
+	Sound* parent = (Sound*) type->tp_alloc(type, 0);
+
+	if(parent != nullptr)
+	{
+		try
+		{
+			auto input = *reinterpret_cast<std::shared_ptr<ISound>*>(self->sound);
+			auto echo = std::make_shared<Echo>(input, delay, feedback, mix, reset_buffer);
+			parent->sound = new std::shared_ptr<ISound>(echo);
+		}
+		catch(Exception& e)
+		{
+			Py_DECREF(parent);
+			PyErr_SetString(AUDError, e.what());
+			return nullptr;
+		}
+	}
+
+	return (PyObject*)parent;
+}
+
 #ifdef WITH_CONVOLUTION
 
 PyDoc_STRVAR(M_aud_Sound_convolver_doc,
@@ -1783,6 +1839,163 @@ Sound_binaural(Sound* self, PyObject* args)
 	}
 
 	return (PyObject *)parent;
+}
+
+#endif
+
+#ifdef WITH_RUBBERBAND
+
+PyDoc_STRVAR(M_aud_Sound_timeStretchPitchScale_doc, ".. method:: timeStretchPitchScale(time_stretch, pitch_scale, quality, preserve_formant)\n\n"
+                                                    "   Applies time-stretching and pitch-scaling to the sound.\n\n"
+                                                    "   :arg time_stretch: The factor by which to stretch or compress time.\n"
+                                                    "   :type time_stretch: float\n"
+                                                    "   :arg pitch_scale: The factor by which to adjust the pitch.\n"
+                                                    "   :type pitch_scale: float\n"
+                                                    "   :arg quality: Rubberband stretcher quality (STRETCHER_QUALITY_*).\n"
+                                                    "   :type quality: int\n"
+                                                    "   :arg preserve_formant: Whether to preserve the vocal formants during pitch-shifting.\n"
+                                                    "   :type preserve_formant: bool\n"
+                                                    "   :return: The created :class:`Sound` object.\n"
+                                                    "   :rtype: :class:`Sound`");
+static PyObject* Sound_timeStretchPitchScale(Sound* self, PyObject* args, PyObject* kwds)
+{
+	double time_stretch = 1.0;
+	double pitch_scale = 1.0;
+	int quality = 0;
+	int preserve_formant = 0;
+	static const char* kwlist[] = {"time_stretch", "pitch_scale", "quality", "preserve_formant", nullptr};
+
+	if(!PyArg_ParseTupleAndKeywords(args, kwds, "|ddip:timeStretchPitchScale", const_cast<char**>(kwlist), &time_stretch, &pitch_scale, &quality, &preserve_formant))
+	{
+		return nullptr;
+	}
+
+	if(quality < 0 || quality > 2)
+	{
+		PyErr_WarnEx(PyExc_UserWarning, "Invalid quality value: using default (0 = STRETCHER_QUALITY_HIGH)", 1);
+		quality = 0;
+	}
+
+	PyTypeObject* type = Py_TYPE(self);
+	Sound* parent = (Sound*) type->tp_alloc(type, 0);
+
+	if(parent != nullptr)
+	{
+		try
+		{
+			parent->sound = new std::shared_ptr<ISound>(new TimeStretchPitchScale(*reinterpret_cast<std::shared_ptr<ISound>*>(self->sound), time_stretch, pitch_scale,
+			                                                                      static_cast<StretcherQuality>(quality), preserve_formant != 0));
+		}
+		catch(Exception& e)
+		{
+			Py_DECREF(parent);
+			PyErr_SetString(AUDError, e.what());
+			return nullptr;
+		}
+	}
+
+	return (PyObject*)parent;
+}
+
+PyDoc_STRVAR(M_aud_Sound_animateableTimeStretchPitchScale_doc, ".. method:: animateableTimeStretchPitchScale(fps[, time_stretch, pitch_scale, quality, preserve_formant])\n\n"
+                                                               "   Applies time-stretching and pitch-scaling to the sound.\n\n"
+                                                               "   :arg fps: The FPS of the animation system.\n"
+                                                               "   :type fps: float\n"
+                                                               "   :arg time_stretch: The factor by which to stretch or compress time.\n"
+                                                               "   :type time_stretch: float or :class:`AnimateablePropertyP`\n"
+                                                               "   :arg pitch_scale: The factor by which to adjust the pitch.\n"
+                                                               "   :type pitch_scale: float or :class:`AnimateablePropertyP`\n "
+                                                               "   :arg quality: Rubberband stretcher quality (STRETCHER_QUALITY_*).\n"
+                                                               "   :type quality: int\n"
+                                                               "   :arg preserve_formant: Whether to preserve the vocal formants during pitch-shifting.\n"
+                                                               "   :type preserve_formant: bool\n"
+                                                               "   :return: The created :class:`Sound` object.\n"
+                                                               "   :rtype: :class:`Sound`");
+static PyObject* Sound_animateableTimeStretchPitchScale(Sound* self, PyObject* args, PyObject* kwds)
+{
+	float fps;
+	PyObject* object1 = Py_None;
+	PyObject* object2 = Py_None;
+	int quality = 0;
+	int preserve_formant = 0;
+
+	static const char* kwlist[] = {"fps", "time_stretch", "pitch_scale", "quality", "preserve_formant", nullptr};
+
+	if(!PyArg_ParseTupleAndKeywords(args, kwds, "f|OOip:animateableTimeStretchPitchScale", const_cast<char**>(kwlist), &fps, &object1, &object2, &quality, &preserve_formant))
+	{
+		return nullptr;
+	}
+
+	std::shared_ptr<aud::AnimateableProperty> time_stretch;
+	std::shared_ptr<aud::AnimateableProperty> pitch_scale;
+
+	if(fps <= 0)
+	{
+		PyErr_SetString(PyExc_ValueError, "FPS must be greater 0!");
+		return nullptr;
+	}
+
+	if(object1 == Py_None)
+	{
+		time_stretch = std::make_shared<aud::AnimateableProperty>(1, 1.0);
+	}
+	else if(PyNumber_Check(object1))
+	{
+		time_stretch = std::make_shared<aud::AnimateableProperty>(1, PyFloat_AsDouble(object1));
+	}
+	else
+	{
+		AnimateablePropertyP* time_stretch_prop = checkAnimateableProperty(object1);
+		if(!time_stretch_prop)
+		{
+			return nullptr;
+		}
+		time_stretch = *reinterpret_cast<std::shared_ptr<aud::AnimateableProperty>*>(time_stretch_prop->animateableProperty);
+	}
+
+	if(object2 == Py_None)
+	{
+		pitch_scale = std::make_shared<aud::AnimateableProperty>(1, 1.0);
+	}
+	else if(PyNumber_Check(object2))
+	{
+		pitch_scale = std::make_shared<aud::AnimateableProperty>(1, PyFloat_AsDouble(object2));
+	}
+	else
+	{
+		AnimateablePropertyP* pitch_scale_prop = checkAnimateableProperty(object2);
+		if(!pitch_scale_prop)
+		{
+			return nullptr;
+		}
+		pitch_scale = *reinterpret_cast<std::shared_ptr<aud::AnimateableProperty>*>(pitch_scale_prop->animateableProperty);
+	}
+
+	if(quality < 0 || quality > 2)
+	{
+		PyErr_WarnEx(PyExc_UserWarning, "Invalid quality value: using default (0 = STRETCHER_QUALITY_HIGH)", 1);
+		quality = 0;
+	}
+
+	PyTypeObject* type = Py_TYPE(self);
+	Sound* parent = (Sound*) type->tp_alloc(type, 0);
+
+	if(parent != nullptr)
+	{
+		try
+		{
+			parent->sound = new std::shared_ptr<ISound>(new AnimateableTimeStretchPitchScale(*reinterpret_cast<std::shared_ptr<ISound>*>(self->sound), fps, time_stretch,
+			                                                                                 pitch_scale, static_cast<StretcherQuality>(quality), preserve_formant != 0));
+		}
+		catch(Exception& e)
+		{
+			Py_DECREF(parent);
+			PyErr_SetString(AUDError, e.what());
+			return nullptr;
+		}
+	}
+
+	return (PyObject*) parent;
 }
 
 #endif
@@ -1893,6 +2106,9 @@ static PyMethodDef Sound_methods[] = {
 	{ "addSound", (PyCFunction)Sound_list_addSound, METH_O,
 	M_aud_Sound_list_addSound_doc
 	},
+	{"echo", (PyCFunction)Sound_echo, METH_VARARGS | METH_KEYWORDS,
+	M_aud_Sound_echo_doc},
+
 #ifdef WITH_CONVOLUTION
 	{ "convolver", (PyCFunction)Sound_convolver, METH_VARARGS,
 	M_aud_Sound_convolver_doc
@@ -1900,6 +2116,12 @@ static PyMethodDef Sound_methods[] = {
 	{ "binaural", (PyCFunction)Sound_binaural, METH_VARARGS,
 	M_aud_Sound_binaural_doc
 	},
+#endif
+#ifdef WITH_RUBBERBAND
+	{"timeStretchPitchScale", (PyCFunction)Sound_timeStretchPitchScale, METH_VARARGS | METH_KEYWORDS,
+	M_aud_Sound_timeStretchPitchScale_doc},
+	{"animateableTimeStretchPitchScale", (PyCFunction) Sound_animateableTimeStretchPitchScale, METH_VARARGS | METH_KEYWORDS, 
+	M_aud_Sound_animateableTimeStretchPitchScale_doc},
 #endif
 	{nullptr}  /* Sentinel */
 };

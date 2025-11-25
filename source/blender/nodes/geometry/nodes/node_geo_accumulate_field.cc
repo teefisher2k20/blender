@@ -15,7 +15,7 @@
 
 #include "node_geometry_util.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
 namespace blender::nodes::node_geo_accumulate_field_cc {
@@ -51,6 +51,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
   b.add_input<decl::Int>("Group ID", "Group Index")
       .supports_field()
+      .hide_value()
       .description("An index used to group values together for multiple separate accumulations");
 
   if (node != nullptr) {
@@ -70,13 +71,13 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "data_type", UI_ITEM_NONE, "", ICON_NONE);
-  uiItemR(layout, ptr, "domain", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "data_type", UI_ITEM_NONE, "", ICON_NONE);
+  layout->prop(ptr, "domain", UI_ITEM_NONE, "", ICON_NONE);
 }
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
 {
-  NodeAccumulateField *data = MEM_cnew<NodeAccumulateField>(__func__);
+  NodeAccumulateField *data = MEM_callocN<NodeAccumulateField>(__func__);
   data->data_type = CD_PROP_FLOAT;
   data->domain = int16_t(AttrDomain::Point);
   node->storage = data;
@@ -99,7 +100,7 @@ static std::optional<eCustomDataType> node_type_from_other_socket(const bNodeSoc
     case SOCK_MATRIX:
       return CD_PROP_FLOAT4X4;
     default:
-      return {};
+      return std::nullopt;
   }
 }
 
@@ -184,8 +185,8 @@ class AccumulateFieldInput final : public bke::GeometryFieldInput {
                        Field<int> group_index,
                        AccumulationMode accumulation_mode)
       : bke::GeometryFieldInput(input.cpp_type(), "Accumulation"),
-        input_(input),
-        group_index_(group_index),
+        input_(std::move(input)),
+        group_index_(std::move(group_index)),
         source_domain_(source_domain),
         accumulation_mode_(accumulation_mode)
   {
@@ -251,11 +252,17 @@ class AccumulateFieldInput final : public bke::GeometryFieldInput {
           }
         }
 
-        g_output = VArray<T>::ForContainer(std::move(outputs));
+        g_output = VArray<T>::from_container(std::move(outputs));
       }
     });
 
     return attributes.adapt_domain(std::move(g_output), source_domain_, context.domain());
+  }
+
+  void for_each_field_input_recursive(FunctionRef<void(const FieldInput &)> fn) const final
+  {
+    input_.node().for_each_field_input_recursive(fn);
+    group_index_.node().for_each_field_input_recursive(fn);
   }
 
   uint64_t hash() const override
@@ -292,8 +299,8 @@ class TotalFieldInput final : public bke::GeometryFieldInput {
  public:
   TotalFieldInput(const AttrDomain source_domain, GField input, Field<int> group_index)
       : bke::GeometryFieldInput(input.cpp_type(), "Total Value"),
-        input_(input),
-        group_index_(group_index),
+        input_(std::move(input)),
+        group_index_(std::move(group_index)),
         source_domain_(source_domain)
   {
   }
@@ -326,7 +333,7 @@ class TotalFieldInput final : public bke::GeometryFieldInput {
           for (const int i : values.index_range()) {
             accumulation = AccumulationInfo<T>::accumulate(accumulation, values[i]);
           }
-          g_outputs = VArray<T>::ForSingle(accumulation, domain_size);
+          g_outputs = VArray<T>::from_single(accumulation, domain_size);
         }
         else {
           Map<int, T> accumulations;
@@ -339,12 +346,18 @@ class TotalFieldInput final : public bke::GeometryFieldInput {
           for (const int i : values.index_range()) {
             outputs[i] = accumulations.lookup(group_indices[i]);
           }
-          g_outputs = VArray<T>::ForContainer(std::move(outputs));
+          g_outputs = VArray<T>::from_container(std::move(outputs));
         }
       }
     });
 
     return attributes.adapt_domain(std::move(g_outputs), source_domain_, context.domain());
+  }
+
+  void for_each_field_input_recursive(FunctionRef<void(const FieldInput &)> fn) const final
+  {
+    input_.node().for_each_field_input_recursive(fn);
+    group_index_.node().for_each_field_input_recursive(fn);
   }
 
   uint64_t hash() const override
@@ -397,10 +410,14 @@ static void node_geo_exec(GeoNodeExecParams params)
 static void node_rna(StructRNA *srna)
 {
   static EnumPropertyItem items[] = {
-      {CD_PROP_FLOAT, "FLOAT", 0, "Float", "Add floating point values"},
-      {CD_PROP_INT32, "INT", 0, "Integer", "Add integer values"},
-      {CD_PROP_FLOAT3, "FLOAT_VECTOR", 0, "Vector", "Add 3D vector values"},
-      {CD_PROP_FLOAT4X4, "TRANSFORM", 0, "Transform", "Multiply transformation matrices"},
+      {CD_PROP_FLOAT, "FLOAT", ICON_NODE_SOCKET_FLOAT, "Float", "Add floating point values"},
+      {CD_PROP_INT32, "INT", ICON_NODE_SOCKET_INT, "Integer", "Add integer values"},
+      {CD_PROP_FLOAT3, "FLOAT_VECTOR", ICON_NODE_SOCKET_VECTOR, "Vector", "Add 3D vector values"},
+      {CD_PROP_FLOAT4X4,
+       "TRANSFORM",
+       ICON_NODE_SOCKET_MATRIX,
+       "Transform",
+       "Multiply transformation matrices"},
       {0, nullptr, 0, nullptr, nullptr},
   };
 
@@ -439,8 +456,8 @@ static void node_register()
   ntype.declare = node_declare;
   ntype.gather_link_search_ops = node_gather_link_searches;
   blender::bke::node_type_storage(
-      &ntype, "NodeAccumulateField", node_free_standard_storage, node_copy_standard_storage);
-  blender::bke::node_register_type(&ntype);
+      ntype, "NodeAccumulateField", node_free_standard_storage, node_copy_standard_storage);
+  blender::bke::node_register_type(ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

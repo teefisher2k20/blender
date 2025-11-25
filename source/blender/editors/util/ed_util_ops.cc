@@ -15,10 +15,12 @@
 
 #include "BLI_fileops.h"
 #include "BLI_utildefines.h"
+#include "BLI_vector.hh"
 
 #include "BKE_context.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_lib_override.hh"
+#include "BKE_library.hh"
 #include "BKE_preview_image.hh"
 #include "BKE_report.hh"
 
@@ -36,8 +38,65 @@
 #include "WM_types.hh"
 
 /* -------------------------------------------------------------------- */
+/** \name Context Query Helpers
+ * \{ */
+
+blender::Vector<PointerRNA> ED_operator_single_id_from_context_as_vec(const bContext *C)
+{
+  blender::Vector<PointerRNA> ids;
+  PointerRNA idptr = CTX_data_pointer_get_type(C, "id", &RNA_ID);
+  if (idptr.data) {
+    ids.append(idptr);
+  }
+  return ids;
+}
+
+blender::Vector<PointerRNA> ED_operator_get_ids_from_context_as_vec(const bContext *C)
+{
+  blender::Vector<PointerRNA> ids;
+
+  /* "selected_ids" context member. */
+  CTX_data_selected_ids(C, &ids);
+  if (!ids.is_empty()) {
+    return ids;
+  }
+
+  /* "id" context member. */
+  return ED_operator_single_id_from_context_as_vec(C);
+}
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
 /** \name ID Previews
  * \{ */
+
+static bool lib_id_preview_editing_poll_ex(const ID *id, const char **r_disabled_hint)
+{
+  if (!id) {
+    return false;
+  }
+  if (!ID_IS_EDITABLE(id)) {
+    if (r_disabled_hint) {
+      *r_disabled_hint = "Cannot edit external library data";
+    }
+    return false;
+  }
+  if (ID_IS_OVERRIDE_LIBRARY(id)) {
+    if (r_disabled_hint) {
+      *r_disabled_hint = "Cannot edit previews of overridden library data";
+    }
+    return false;
+  }
+  if (!BKE_previewimg_id_get_p(id)) {
+    if (r_disabled_hint) {
+      *r_disabled_hint = "Data-block does not support previews";
+    }
+    return false;
+  }
+
+  return true;
+}
 
 static bool lib_id_preview_editing_poll(bContext *C)
 {
@@ -45,19 +104,9 @@ static bool lib_id_preview_editing_poll(bContext *C)
   BLI_assert(!idptr.data || RNA_struct_is_ID(idptr.type));
 
   const ID *id = (ID *)idptr.data;
-  if (!id) {
-    return false;
-  }
-  if (!ID_IS_EDITABLE(id)) {
-    CTX_wm_operator_poll_msg_set(C, "Can't edit external library data");
-    return false;
-  }
-  if (ID_IS_OVERRIDE_LIBRARY(id)) {
-    CTX_wm_operator_poll_msg_set(C, "Can't edit previews of overridden library data");
-    return false;
-  }
-  if (!BKE_previewimg_id_get_p(id)) {
-    CTX_wm_operator_poll_msg_set(C, "Data-block does not support previews");
+  const char *disabled_hint = nullptr;
+  if (!lib_id_preview_editing_poll_ex(id, &disabled_hint)) {
+    CTX_wm_operator_poll_msg_set(C, disabled_hint);
     return false;
   }
 
@@ -75,7 +124,7 @@ static ID *lib_id_load_custom_preview_id_get(bContext *C, const wmOperator *op)
   return static_cast<ID *>(idptr.data);
 }
 
-static int lib_id_load_custom_preview_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus lib_id_load_custom_preview_exec(bContext *C, wmOperator *op)
 {
   char filepath[FILE_MAX];
 
@@ -106,7 +155,9 @@ static int lib_id_load_custom_preview_exec(bContext *C, wmOperator *op)
  * confirmation, leading to failure to obtain the ID at that point. So get it before spawning the
  * File Browser (store it in the operator custom data).
  */
-static int lib_id_load_custom_preview_invoke(bContext *C, wmOperator *op, const wmEvent *event)
+static wmOperatorStatus lib_id_load_custom_preview_invoke(bContext *C,
+                                                          wmOperator *op,
+                                                          const wmEvent *event)
 {
   op->customdata = lib_id_load_custom_preview_id_get(C, op);
   return WM_operator_filesel(C, op, event);
@@ -118,7 +169,7 @@ static void ED_OT_lib_id_load_custom_preview(wmOperatorType *ot)
   ot->description = "Choose an image to help identify the data-block visually";
   ot->idname = "ED_OT_lib_id_load_custom_preview";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->poll = lib_id_preview_editing_poll;
   ot->exec = lib_id_load_custom_preview_exec;
   ot->invoke = lib_id_load_custom_preview_invoke;
@@ -135,37 +186,95 @@ static void ED_OT_lib_id_load_custom_preview(wmOperatorType *ot)
                                  FILE_SORT_DEFAULT);
 }
 
-static bool lib_id_generate_preview_poll(bContext *C)
+/**
+ * Helper for batch editing previews. Gets selected or active IDs from context and calls \a
+ * foreach_id for each ID that supports previews.
+ */
+static void lib_id_batch_edit_previews(bContext *C, blender::FunctionRef<void(ID *)> foreach_id)
 {
-  if (!lib_id_preview_editing_poll(C)) {
-    return false;
-  }
+  blender::Vector<PointerRNA> id_pointers = ED_operator_get_ids_from_context_as_vec(C);
+  for (PointerRNA &idptr : id_pointers) {
+    ID *id = static_cast<ID *>(idptr.data);
 
-  const PointerRNA idptr = CTX_data_pointer_get(C, "id");
-  const ID *id = (ID *)idptr.data;
-  const char *disabled_hint = nullptr;
-  if (!ED_preview_id_is_supported(id, &disabled_hint)) {
-    CTX_wm_operator_poll_msg_set(C, disabled_hint);
-    return false;
+    if (lib_id_preview_editing_poll_ex(id, nullptr)) {
+      foreach_id(id);
+    }
   }
-
-  return true;
 }
 
-static int lib_id_generate_preview_exec(bContext *C, wmOperator * /*op*/)
+/**
+ * Helper for batch editing previews. Check if at least one of the selected or active IDs supports
+ * previews, setting a disabled hint if not. Note that only one disabled hint can be set, this
+ * simply uses the first one set while polling individual IDs. That's more useful than a generic
+ * message still.
+ *
+ * \param additional_condition: When set, IDs need to additionally pass this check (return true) to
+ * be considered as supporting this operation.
+ */
+static bool lib_id_batch_editing_preview_poll(
+    bContext *C,
+    blender::FunctionRef<bool(const ID *, const char **r_disabled_hint)> additional_condition =
+        nullptr)
+{
+  blender::Vector<PointerRNA> id_pointers = ED_operator_get_ids_from_context_as_vec(C);
+  if (id_pointers.is_empty()) {
+    CTX_wm_operator_poll_msg_set(C, "No data-block selected or active");
+    return false;
+  }
+
+  const char *disabled_hint = nullptr;
+
+  for (const PointerRNA &idptr : id_pointers) {
+    const ID *id = static_cast<const ID *>(idptr.data);
+
+    const char *iter_disabled_hint = nullptr;
+    if (lib_id_preview_editing_poll_ex(id, &iter_disabled_hint) &&
+        (!additional_condition || additional_condition(id, &iter_disabled_hint)))
+    {
+      /* Operator can run if there's at least one ID supporting previews. */
+      return true;
+    }
+
+    if (iter_disabled_hint && !disabled_hint) {
+      disabled_hint = iter_disabled_hint;
+    }
+  }
+
+  /* Will only hold the first disabled hint set. That often gives some more specific information,
+   * so it's more useful than a generic message. */
+  if (disabled_hint) {
+    CTX_wm_operator_poll_msg_set(C, disabled_hint);
+  }
+  else {
+    CTX_wm_operator_poll_msg_set(C, "None of the selected data-blocks supports previews");
+  }
+  return false;
+}
+
+static bool lib_id_generate_preview_poll(bContext *C)
+{
+  return lib_id_batch_editing_preview_poll(C, [](const ID *id, const char **r_disabled_hint) {
+    return ED_preview_id_is_supported(id, r_disabled_hint);
+  });
+}
+
+static wmOperatorStatus lib_id_generate_preview_exec(bContext *C, wmOperator * /*op*/)
 {
   using namespace blender::ed;
-  PointerRNA idptr = CTX_data_pointer_get(C, "id");
-  ID *id = (ID *)idptr.data;
 
   ED_preview_kill_jobs(CTX_wm_manager(C), CTX_data_main(C));
 
-  PreviewImage *preview = BKE_previewimg_id_get(id);
-  if (preview) {
-    BKE_previewimg_clear(preview);
-  }
+  lib_id_batch_edit_previews(C, [&](ID *id) {
+    if (ED_preview_id_is_supported(id, nullptr)) {
+      PreviewImage *preview = BKE_previewimg_id_get(id);
 
-  UI_icon_render_id(C, nullptr, id, ICON_SIZE_PREVIEW, true);
+      if (preview) {
+        BKE_previewimg_clear(preview);
+      }
+
+      UI_icon_render_id(C, nullptr, id, ICON_SIZE_PREVIEW, true);
+    }
+  });
 
   WM_event_add_notifier(C, NC_ASSET | NA_EDITED, nullptr);
   asset::list::storage_tag_main_data_dirty();
@@ -179,7 +288,7 @@ static void ED_OT_lib_id_generate_preview(wmOperatorType *ot)
   ot->description = "Create an automatic preview for the selected data-block";
   ot->idname = "ED_OT_lib_id_generate_preview";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->poll = lib_id_generate_preview_poll;
   ot->exec = lib_id_generate_preview_exec;
 
@@ -189,28 +298,42 @@ static void ED_OT_lib_id_generate_preview(wmOperatorType *ot)
 
 static bool lib_id_generate_preview_from_object_poll(bContext *C)
 {
-  if (!lib_id_preview_editing_poll(C)) {
+  /* This already checks if the IDs in context (e.g. selected in the Asset browser) can generate
+   * previews... */
+  if (!lib_id_batch_editing_preview_poll(C)) {
     return false;
   }
-  if (CTX_data_active_object(C) == nullptr) {
+
+  /* ... but we also need to check this for the active object (since this is what is being
+   * rendered). */
+  Object *object_to_render = CTX_data_active_object(C);
+  if (object_to_render == nullptr) {
     return false;
   }
+  const char *disabled_hint = nullptr;
+  if (!ED_preview_id_is_supported(&object_to_render->id, &disabled_hint)) {
+    CTX_wm_operator_poll_msg_set(C, disabled_hint);
+    return false;
+  }
+
   return true;
 }
 
-static int lib_id_generate_preview_from_object_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus lib_id_generate_preview_from_object_exec(bContext *C, wmOperator * /*op*/)
 {
   using namespace blender::ed;
-  PointerRNA idptr = CTX_data_pointer_get(C, "id");
-  ID *id = (ID *)idptr.data;
 
   ED_preview_kill_jobs(CTX_wm_manager(C), CTX_data_main(C));
 
   Object *object_to_render = CTX_data_active_object(C);
 
-  BKE_previewimg_id_free(id);
-  PreviewImage *preview_image = BKE_previewimg_id_ensure(id);
-  UI_icon_render_id_ex(C, nullptr, &object_to_render->id, ICON_SIZE_PREVIEW, true, preview_image);
+  lib_id_batch_edit_previews(C, [&](ID *id) {
+    BKE_previewimg_id_free(id);
+
+    PreviewImage *preview_image = BKE_previewimg_id_ensure(id);
+    UI_icon_render_id_ex(
+        C, nullptr, &object_to_render->id, ICON_SIZE_PREVIEW, true, preview_image);
+  });
 
   WM_event_add_notifier(C, NC_ASSET | NA_EDITED, nullptr);
   asset::list::storage_tag_main_data_dirty();
@@ -224,7 +347,7 @@ static void ED_OT_lib_id_generate_preview_from_object(wmOperatorType *ot)
   ot->description = "Create a preview for this asset by rendering the active object";
   ot->idname = "ED_OT_lib_id_generate_preview_from_object";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->poll = lib_id_generate_preview_from_object_poll;
   ot->exec = lib_id_generate_preview_from_object_exec;
 
@@ -234,18 +357,18 @@ static void ED_OT_lib_id_generate_preview_from_object(wmOperatorType *ot)
 
 static bool lib_id_remove_preview_poll(bContext *C)
 {
-  if (!lib_id_preview_editing_poll(C)) {
+  if (!lib_id_batch_editing_preview_poll(C)) {
     return false;
   }
 
-  const PointerRNA idptr = CTX_data_pointer_get(C, "id");
-  const ID *id = static_cast<const ID *>(idptr.data);
-  if (!id) {
-    return false;
-  }
+  bool has_any_removable = false;
+  lib_id_batch_edit_previews(C, [&](ID *id) {
+    if (BKE_previewimg_id_get(id)) {
+      has_any_removable = true;
+    }
+  });
 
-  const PreviewImage *preview = BKE_previewimg_id_get(id);
-  if (!preview) {
+  if (!has_any_removable) {
     CTX_wm_operator_poll_msg_set(C, "No preview available to remove");
     return false;
   }
@@ -253,18 +376,9 @@ static bool lib_id_remove_preview_poll(bContext *C)
   return true;
 }
 
-static int lib_id_remove_preview_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus lib_id_remove_preview_exec(bContext *C, wmOperator * /*op*/)
 {
-  const PointerRNA idptr = CTX_data_pointer_get(C, "id");
-  ID *id = static_cast<ID *>(idptr.data);
-
-  if (!id) {
-    BKE_report(
-        op->reports, RPT_ERROR, "Failed to remove preview: no ID in context (incorrect context?)");
-    return OPERATOR_CANCELLED;
-  }
-
-  BKE_previewimg_id_free(id);
+  lib_id_batch_edit_previews(C, [&](ID *id) { BKE_previewimg_id_free(id); });
 
   WM_event_add_notifier(C, NC_ASSET | NA_EDITED, nullptr);
 
@@ -278,7 +392,7 @@ static void ED_OT_lib_id_remove_preview(wmOperatorType *ot)
   ot->description = "Remove the preview of this data-block";
   ot->idname = "ED_OT_lib_id_remove_preview";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->poll = lib_id_remove_preview_poll;
   ot->exec = lib_id_remove_preview_exec;
 
@@ -292,7 +406,7 @@ static void ED_OT_lib_id_remove_preview(wmOperatorType *ot)
 /** \name Generic ID Operators
  * \{ */
 
-static int lib_id_fake_user_toggle_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus lib_id_fake_user_toggle_exec(bContext *C, wmOperator *op)
 {
   PropertyPointerRNA pprop;
   PointerRNA idptr = PointerRNA_NULL;
@@ -335,14 +449,14 @@ static void ED_OT_lib_id_fake_user_toggle(wmOperatorType *ot)
   ot->description = "Save this data-block even if it has no users";
   ot->idname = "ED_OT_lib_id_fake_user_toggle";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = lib_id_fake_user_toggle_exec;
 
   /* flags */
   ot->flag = OPTYPE_UNDO | OPTYPE_INTERNAL;
 }
 
-static int lib_id_unlink_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus lib_id_unlink_exec(bContext *C, wmOperator *op)
 {
   PropertyPointerRNA pprop;
   PointerRNA idptr;
@@ -373,7 +487,7 @@ static void ED_OT_lib_id_unlink(wmOperatorType *ot)
   ot->description = "Remove a usage of a data-block, clearing the assignment";
   ot->idname = "ED_OT_lib_id_unlink";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = lib_id_unlink_exec;
 
   /* flags */
@@ -388,7 +502,7 @@ static bool lib_id_override_editable_toggle_poll(bContext *C)
   return id && ID_IS_OVERRIDE_LIBRARY_REAL(id) && !ID_IS_LINKED(id);
 }
 
-static int lib_id_override_editable_toggle_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus lib_id_override_editable_toggle_exec(bContext *C, wmOperator * /*op*/)
 {
   Main *bmain = CTX_data_main(C);
   const PointerRNA id_ptr = CTX_data_pointer_get_type(C, "id", &RNA_ID);
@@ -419,7 +533,7 @@ static void ED_OT_lib_id_override_editable_toggle(wmOperatorType *ot)
   ot->description = "Set if this library override data-block can be edited";
   ot->idname = "ED_OT_lib_id_override_editable_toggle";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->poll = lib_id_override_editable_toggle_poll;
   ot->exec = lib_id_override_editable_toggle_exec;
 
@@ -433,7 +547,7 @@ static void ED_OT_lib_id_override_editable_toggle(wmOperatorType *ot)
 /** \name General editor utils.
  * \{ */
 
-static int ed_flush_edits_exec(bContext *C, wmOperator * /*op*/)
+static wmOperatorStatus ed_flush_edits_exec(bContext *C, wmOperator * /*op*/)
 {
   Main *bmain = CTX_data_main(C);
   ED_editors_flush_edits(bmain);
@@ -447,7 +561,7 @@ static void ED_OT_flush_edits(wmOperatorType *ot)
   ot->description = "Flush edit data from active editing modes";
   ot->idname = "ED_OT_flush_edits";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = ed_flush_edits_exec;
 
   /* flags */

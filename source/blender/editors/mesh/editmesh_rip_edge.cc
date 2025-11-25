@@ -34,7 +34,9 @@ using blender::Vector;
 /* uses total number of selected edges around a vertex to choose how to extend */
 #define USE_TRICKY_EXTEND
 
-static int edbm_rip_edge_invoke(bContext *C, wmOperator * /*op*/, const wmEvent *event)
+static wmOperatorStatus edbm_rip_edge_invoke(bContext *C,
+                                             wmOperator * /*op*/,
+                                             const wmEvent *event)
 {
   ARegion *region = CTX_wm_region(C);
   RegionView3D *rv3d = CTX_wm_region_view3d(C);
@@ -195,6 +197,36 @@ static int edbm_rip_edge_invoke(bContext *C, wmOperator * /*op*/, const wmEvent 
           }
           BM_elem_flag_enable(v_new, BM_ELEM_TAG); /* prevent further splitting */
 
+          /* When UV sync select is enabled, the wrong UV's will be selected
+           * because the existing loops will have the selection and the new ones won't.
+           * transfer the selection state to the new loops. */
+          if (bm->uv_select_sync_valid) {
+            if (e_best->l) {
+              BMLoop *l_iter, *l_first;
+              l_iter = l_first = e_best->l;
+              do {
+                bool was_select = false;
+                if (l_iter->next->e == e_new) {
+                  if (BM_elem_flag_test(l_iter, BM_ELEM_SELECT_UV)) {
+                    BM_loop_edge_uvselect_set(bm, l_iter->next, false);
+                    was_select = true;
+                  }
+                }
+                else {
+                  BLI_assert(l_iter->prev->e == e_new);
+                  if (BM_elem_flag_test(l_iter->prev, BM_ELEM_SELECT_UV)) {
+                    BM_loop_edge_uvselect_set(bm, l_iter->prev, false);
+                    was_select = true;
+                  }
+                }
+                if (was_select) {
+                  BM_loop_edge_uvselect_set(bm, l_iter, true);
+                }
+
+              } while ((l_iter = l_iter->radial_next) != l_first);
+            }
+          }
+
           changed = true;
         }
       }
@@ -223,7 +255,7 @@ void MESH_OT_rip_edge(wmOperatorType *ot)
   ot->idname = "MESH_OT_rip_edge";
   ot->description = "Extend vertices along the edge closest to the cursor";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->invoke = edbm_rip_edge_invoke;
   ot->poll = EDBM_view3d_poll;
 
@@ -231,5 +263,5 @@ void MESH_OT_rip_edge(wmOperatorType *ot)
   ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO | OPTYPE_DEPENDS_ON_CURSOR;
 
   /* to give to transform */
-  Transform_Properties(ot, P_PROPORTIONAL | P_MIRROR_DUMMY);
+  blender::ed::transform::properties_register(ot, P_PROPORTIONAL | P_MIRROR_DUMMY);
 }

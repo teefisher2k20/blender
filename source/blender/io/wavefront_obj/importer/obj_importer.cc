@@ -8,7 +8,10 @@
 
 #include <string>
 
+#include "BLI_bounds.hh"
+#include "BLI_listbase.h"
 #include "BLI_map.hh"
+#include "BLI_math_vector.h"
 #include "BLI_set.hh"
 #include "BLI_sort.hh"
 #include "BLI_string.h"
@@ -19,6 +22,8 @@
 #include "BKE_geometry_set.hh"
 #include "BKE_instances.hh"
 #include "BKE_layer.hh"
+#include "BKE_lib_id.hh"
+#include "BKE_object.hh"
 
 #include "DEG_depsgraph_build.hh"
 
@@ -90,11 +95,11 @@ static void geometry_to_blender_geometry_set(const OBJImportParams &import_param
     }
     else if (geometry->geom_type_ == GEOM_CURVE) {
       CurveFromGeometry curve_ob_from_geometry(*geometry, global_vertices);
-      Curve *curve = curve_ob_from_geometry.create_curve(import_params);
-      Curves *curves_id = bke::curve_legacy_to_curves(*curve);
+      Curves *curves_id = curve_ob_from_geometry.create_curve(import_params);
       geometry_set = bke::GeometrySet::from_curves(curves_id);
     }
 
+    geometry_set.name = geometry->geometry_name_;
     geometries.append(std::move(geometry_set));
   }
 }
@@ -144,6 +149,23 @@ static void geometry_to_blender_objects(Main *bmain,
 
       BKE_collection_object_add(bmain, target_collection, obj);
       objects.append(obj);
+    }
+  }
+
+  /* Clamp object size if needed. */
+  if (import_params.clamp_size > 0.0f) {
+    std::optional<Bounds<float3>> bounds = std::nullopt;
+    for (Object *obj : objects) {
+      bounds = blender::bounds::merge(bounds, BKE_object_boundbox_get(obj));
+    }
+    if (bounds.has_value()) {
+      const float max_diff = math::reduce_max(bounds->max - bounds->min);
+      if (import_params.clamp_size < max_diff * import_params.global_scale) {
+        const float scale = import_params.clamp_size / max_diff;
+        for (Object *obj : objects) {
+          copy_v3_fl(obj->scale, scale);
+        }
+      }
     }
   }
 
@@ -205,6 +227,7 @@ void importer_main(Main *bmain,
   OBJParser obj_parser{import_params, read_buffer_size};
   obj_parser.parse(all_geometries, global_vertices);
 
+  /* Parse all referenced MTL files */
   for (StringRefNull mtl_library : obj_parser.mtl_libraries()) {
     MTLParser mtl_parser{mtl_library, import_params.filepath};
     mtl_parser.parse_and_store(materials);
@@ -213,6 +236,8 @@ void importer_main(Main *bmain,
   if (import_params.clear_selection) {
     BKE_view_layer_base_deselect_all(scene, view_layer);
   }
+
+  /* Create Blender objects from the parsed geometries */
   geometry_to_blender_objects(bmain,
                               scene,
                               view_layer,

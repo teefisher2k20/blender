@@ -10,8 +10,11 @@
  * However, semantically, these types may have non-trivial copy-constructors and destructors.
  */
 
+#pragma once
+
 #include "MEM_guardedalloc.h"
 
+#include "BLI_function_ref.hh"
 #include "BLI_index_range.hh"
 #include "BLI_utildefines.h"
 
@@ -32,7 +35,7 @@ inline void remove_index(
   const int new_items_num = old_items_num - 1;
 
   T *old_items = *items;
-  T *new_items = MEM_cnew_array<T>(new_items_num, __func__);
+  T *new_items = MEM_calloc_arrayN<T>(new_items_num, __func__);
 
   std::copy_n(old_items, index, new_items);
   std::copy_n(old_items + index + 1, old_items_num - index - 1, new_items + index);
@@ -49,6 +52,28 @@ inline void remove_index(
         0, old_active_index == new_items_num ? new_items_num - 1 : old_active_index);
     *active_index = new_active_index;
   }
+}
+
+/**
+ * Removes all elements for which the predicate is true. The remaining ones stay in the order they
+ * were in before.
+ */
+template<typename T>
+inline void remove_if(T **items,
+                      int *items_num,
+                      FunctionRef<bool(const T &)> predicate,
+                      void (*destruct_item)(T *))
+{
+  static_assert(std::is_trivial_v<T>);
+  /* This sorts the items-to-remove to the back. */
+  const int remaining = std::stable_partition(*items,
+                                              *items + *items_num,
+                                              [&](const T &value) { return !predicate(value); }) -
+                        *items;
+  for (const int i : IndexRange::from_begin_end(remaining, *items_num)) {
+    destruct_item(&(*items)[i]);
+  }
+  *items_num = remaining;
 }
 
 /**

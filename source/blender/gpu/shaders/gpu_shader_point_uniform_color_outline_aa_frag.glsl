@@ -2,13 +2,13 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "infos/gpu_shader_2D_point_uniform_size_uniform_color_outline_aa_info.hh"
+#include "infos/gpu_shader_2D_point_uniform_size_uniform_color_outline_aa_infos.hh"
 
 FRAGMENT_SHADER_CREATE_INFO(gpu_shader_2D_point_uniform_size_uniform_color_outline_aa)
 
 void main()
 {
-  float dist = length(gl_PointCoord - vec2(0.5));
+  float dist = length(gl_PointCoord - float2(0.5f));
 
   /* transparent outside of point
    * --- 0 ---
@@ -22,17 +22,17 @@ void main()
    * ...
    * dist = 0 at center of point */
 
-  float midStroke = 0.5 * (radii[1] + radii[2]);
+  float midStroke = 0.5f * (radii[1] + radii[2]);
 
   if (dist > midStroke) {
     fragColor.rgb = outlineColor.rgb;
-    fragColor.a = mix(outlineColor.a, 0.0, smoothstep(radii[1], radii[0], dist));
+    fragColor.a = mix(outlineColor.a, 0.0f, smoothstep(radii[1], radii[0], dist));
   }
   else {
     fragColor = mix(color, outlineColor, smoothstep(radii[3], radii[2], dist));
   }
 
-  if (fragColor.a == 0.0) {
-    discard;
+  if (fragColor.a == 0.0f) {
+    gpu_discard_fragment();
   }
 }

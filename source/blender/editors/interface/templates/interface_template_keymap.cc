@@ -13,7 +13,7 @@
 
 #include "WM_api.hh"
 
-#include "UI_interface.hh"
+#include "UI_interface_layout.hh"
 #include "interface_intern.hh"
 
 static void keymap_item_modified(bContext * /*C*/, void *kmi_p, void * /*unused*/)
@@ -25,13 +25,13 @@ static void keymap_item_modified(bContext * /*C*/, void *kmi_p, void * /*unused*
 
 static void template_keymap_item_properties(uiLayout *layout, const char *title, PointerRNA *ptr)
 {
-  uiItemS(layout);
+  layout->separator();
 
   if (title) {
-    uiItemL(layout, title, ICON_NONE);
+    layout->label(title, ICON_NONE);
   }
 
-  uiLayout *flow = uiLayoutColumnFlow(layout, 2, false);
+  uiLayout *flow = &layout->column_flow(2, false);
 
   RNA_STRUCT_BEGIN_SKIP_RNA_TYPE (ptr, prop) {
     const bool is_set = RNA_property_is_set(ptr, prop);
@@ -48,30 +48,30 @@ static void template_keymap_item_properties(uiLayout *layout, const char *title,
       }
     }
 
-    uiLayout *box = uiLayoutBox(flow);
-    uiLayoutSetActive(box, is_set);
-    uiLayout *row = uiLayoutRow(box, false);
+    uiLayout *box = &flow->box();
+    box->active_set(is_set);
+    uiLayout *row = &box->row(false);
 
     /* property value */
-    uiItemFullR(row, ptr, prop, -1, 0, UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    row->prop(ptr, prop, -1, 0, UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
     if (is_set) {
       /* unset operator */
-      uiBlock *block = uiLayoutGetBlock(row);
-      UI_block_emboss_set(block, UI_EMBOSS_NONE);
+      uiBlock *block = row->block();
+      UI_block_emboss_set(block, blender::ui::EmbossType::None);
       but = uiDefIconButO(block,
-                          UI_BTYPE_BUT,
+                          ButType::But,
                           "UI_OT_unset_property_button",
-                          WM_OP_EXEC_DEFAULT,
+                          blender::wm::OpCallContext::ExecDefault,
                           ICON_X,
                           0,
                           0,
                           UI_UNIT_X,
                           UI_UNIT_Y,
-                          nullptr);
+                          std::nullopt);
       but->rnapoin = *ptr;
       but->rnaprop = prop;
-      UI_block_emboss_set(block, UI_EMBOSS);
+      UI_block_emboss_set(block, blender::ui::EmbossType::Emboss);
     }
   }
   RNA_STRUCT_END;
@@ -82,14 +82,18 @@ void uiTemplateKeymapItemProperties(uiLayout *layout, PointerRNA *ptr)
   PointerRNA propptr = RNA_pointer_get(ptr, "properties");
 
   if (propptr.data) {
-    uiBut *but = static_cast<uiBut *>(uiLayoutGetBlock(layout)->buttons.last);
+    uiBlock *block = layout->block();
+    int i = layout->block()->buttons.size() - 1;
 
     WM_operator_properties_sanitize(&propptr, false);
     template_keymap_item_properties(layout, nullptr, &propptr);
-
+    if (i < 0) {
+      return;
+    }
     /* attach callbacks to compensate for missing properties update,
      * we don't know which keymap (item) is being modified there */
-    for (; but; but = but->next) {
+    for (; i < block->buttons.size(); i++) {
+      uiBut *but = block->buttons[i].get();
       /* operator buttons may store props for use (file selector, #36492) */
       if (but->rnaprop) {
         UI_but_func_set(but, keymap_item_modified, ptr->data, nullptr);

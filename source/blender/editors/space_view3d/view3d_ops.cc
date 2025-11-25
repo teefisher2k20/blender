@@ -6,12 +6,11 @@
  * \ingroup spview3d
  */
 
-#include <cmath>
-
 #include "DNA_object_types.h"
 #include "DNA_screen_types.h"
 #include "DNA_space_types.h"
 
+#include "BLI_listbase.h"
 #include "BLI_path_utils.hh"
 
 #include "BKE_appdir.hh"
@@ -19,6 +18,8 @@
 #include "BKE_blendfile.hh"
 #include "BKE_context.hh"
 #include "BKE_report.hh"
+
+#include "BLO_readfile.hh"
 
 #include "RNA_access.hh"
 #include "RNA_define.hh"
@@ -52,28 +53,51 @@ static void view3d_copybuffer_filepath_get(char filepath[FILE_MAX], size_t filep
 /** \name Viewport Copy Operator
  * \{ */
 
-static int view3d_copybuffer_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus view3d_copybuffer_exec(bContext *C, wmOperator *op)
 {
   using namespace blender::bke::blendfile;
 
   Main *bmain = CTX_data_main(C);
-  PartialWriteContext copybuffer{BKE_main_blendfile_path(bmain)};
+  PartialWriteContext copybuffer{*bmain};
+
+  Object *obact = CTX_data_active_object(C);
+  Object *obact_copy = nullptr;
 
   /* context, selection, could be generalized */
   CTX_DATA_BEGIN (C, Object *, ob, selected_objects) {
-    copybuffer.id_add(&ob->id,
-                      PartialWriteContext::IDAddOptions{
-                          (PartialWriteContext::IDAddOperations::SET_FAKE_USER |
-                           PartialWriteContext::IDAddOperations::SET_CLIPBOARD_MARK |
-                           PartialWriteContext::IDAddOperations::ADD_DEPENDENCIES)},
-                      nullptr);
+    ID *ob_id_copy = copybuffer.id_add(
+        &ob->id,
+        PartialWriteContext::IDAddOptions{
+            (PartialWriteContext::IDAddOperations::SET_FAKE_USER |
+             PartialWriteContext::IDAddOperations::SET_CLIPBOARD_MARK |
+             PartialWriteContext::IDAddOperations::ADD_DEPENDENCIES)},
+        nullptr);
+
+    if (obact && (obact == ob)) {
+      obact_copy = reinterpret_cast<Object *>(ob_id_copy);
+    }
   }
   CTX_DATA_END;
 
   /* Explicitly adding an object to the copy/paste buffer _may_ add others as dependencies (e.g. a
    * parent object). So count to total amount of objects added, to get a matching number with the
    * one reported by the "paste" operation. */
-  const int num_copied = BLI_listbase_count(&copybuffer.bmain.objects);
+  int num_copied = 0;
+
+  /* Count & mark the active as done (when set). */
+  LISTBASE_FOREACH (Object *, ob, &copybuffer.bmain.objects) {
+    ob->flag &= ~OB_FLAG_ACTIVE_CLIPBOARD;
+    num_copied += 1;
+  }
+
+  if (num_copied == 0) {
+    BKE_report(op->reports, RPT_INFO, "No objects selected to copy");
+    return OPERATOR_CANCELLED;
+  }
+
+  if (obact_copy) {
+    obact_copy->flag |= OB_FLAG_ACTIVE_CLIPBOARD;
+  }
 
   char filepath[FILE_MAX];
   view3d_copybuffer_filepath_get(filepath, sizeof(filepath));
@@ -91,7 +115,7 @@ static void VIEW3D_OT_copybuffer(wmOperatorType *ot)
   ot->idname = "VIEW3D_OT_copybuffer";
   ot->description = "Copy the selected objects to the internal clipboard";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = view3d_copybuffer_exec;
   ot->poll = ED_operator_scene;
 }
@@ -102,13 +126,13 @@ static void VIEW3D_OT_copybuffer(wmOperatorType *ot)
 /** \name Viewport Paste Operator
  * \{ */
 
-static int view3d_pastebuffer_exec(bContext *C, wmOperator *op)
+static wmOperatorStatus view3d_pastebuffer_exec(bContext *C, wmOperator *op)
 {
   char filepath[FILE_MAX];
-  short flag = 0;
+  int flag = 0;
 
   if (RNA_boolean_get(op->ptr, "autoselect")) {
-    flag |= FILE_AUTOSELECT;
+    flag |= FILE_AUTOSELECT | BLO_LIBLINK_APPEND_SET_OB_ACTIVE_CLIPBOARD;
   }
   if (RNA_boolean_get(op->ptr, "active_collection")) {
     flag |= FILE_ACTIVE_COLLECTION;
@@ -123,6 +147,7 @@ static int view3d_pastebuffer_exec(bContext *C, wmOperator *op)
   }
 
   WM_event_add_notifier(C, NC_WINDOW, nullptr);
+  WM_event_add_notifier(C, NC_SCENE | ND_OB_SELECT, nullptr);
   ED_outliner_select_sync_from_object_tag(C);
 
   BKE_reportf(op->reports, RPT_INFO, "%d object(s) pasted", num_pasted);
@@ -138,7 +163,7 @@ static void VIEW3D_OT_pastebuffer(wmOperatorType *ot)
   ot->idname = "VIEW3D_OT_pastebuffer";
   ot->description = "Paste objects from the internal clipboard";
 
-  /* api callbacks */
+  /* API callbacks. */
   ot->exec = view3d_pastebuffer_exec;
   ot->poll = ED_operator_scene_editable;
 
@@ -231,7 +256,7 @@ void view3d_operatortypes()
   WM_operatortype_append(VIEW3D_OT_ruler_add);
   WM_operatortype_append(VIEW3D_OT_ruler_remove);
 
-  transform_operatortypes();
+  blender::ed::transform::transform_operatortypes();
 }
 
 void view3d_keymap(wmKeyConfig *keyconf)

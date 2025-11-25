@@ -6,6 +6,13 @@
  * \ingroup imbuf
  */
 
+#ifdef _MSC_VER
+/* This needs to be included first to prevent ffmpegs headers adding defines for various math
+ * constants leading to duplicate definitions. */
+#  define _USE_MATH_DEFINES
+#  include <cmath>
+#endif
+
 #include "movie_util.hh"
 #include "movie_write.hh"
 
@@ -22,10 +29,14 @@
 #  include "DNA_scene_types.h"
 
 #  include "BLI_string.h"
-#  include "BLI_threads.h"
 #  include "BLI_utildefines.h"
 
-#  include "BKE_sound.h"
+#  include "BKE_report.hh"
+#  include "BKE_sound.hh"
+
+#  include "CLG_log.h"
+
+static CLG_LogRef LOG = {"video.write"};
 
 /* If any of these codecs, we prefer the float sample format (if supported) */
 static bool request_float_audio_buffer(int codec_id)
@@ -90,7 +101,7 @@ static int write_audio_frame(MovieWriter *context)
   if (ret < 0) {
     /* Can't send frame to encoder. This shouldn't happen. */
     av_make_error_string(error_str, AV_ERROR_MAX_STRING_SIZE, ret);
-    fprintf(stderr, "Can't send audio frame: %s\n", error_str);
+    CLOG_ERROR(&LOG, "Can't send audio frame: %s", error_str);
     success = -1;
   }
 
@@ -104,7 +115,7 @@ static int write_audio_frame(MovieWriter *context)
     }
     if (ret < 0) {
       av_make_error_string(error_str, AV_ERROR_MAX_STRING_SIZE, ret);
-      fprintf(stderr, "Error encoding audio frame: %s\n", error_str);
+      CLOG_ERROR(&LOG, "Error encoding audio frame: %s", error_str);
       success = -1;
     }
 
@@ -119,7 +130,7 @@ static int write_audio_frame(MovieWriter *context)
     int write_ret = av_interleaved_write_frame(context->outfile, pkt);
     if (write_ret != 0) {
       av_make_error_string(error_str, AV_ERROR_MAX_STRING_SIZE, ret);
-      fprintf(stderr, "Error writing audio packet: %s\n", error_str);
+      CLOG_ERROR(&LOG, "Error writing audio packet: %s", error_str);
       success = -1;
       break;
     }
@@ -132,8 +143,12 @@ static int write_audio_frame(MovieWriter *context)
 }
 #  endif /* #ifdef WITH_AUDASPACE */
 
-bool movie_audio_open(
-    MovieWriter *context, const Scene *scene, int start_frame, int mixrate, float volume)
+bool movie_audio_open(MovieWriter *context,
+                      const Scene *scene,
+                      int start_frame,
+                      int mixrate,
+                      float volume,
+                      ReportList *reports)
 {
   bool success = true;
 #  ifdef WITH_AUDASPACE
@@ -164,6 +179,7 @@ bool movie_audio_open(
         specs.format = AUD_FORMAT_FLOAT64;
         break;
       default:
+        BKE_report(reports, RPT_ERROR, "Audio sample format unsupported");
         success = false;
         break;
     }
@@ -174,7 +190,7 @@ bool movie_audio_open(
     }
   }
 #  else
-  UNUSED_VARS(context, scene, start_frame, mixrate, volume);
+  UNUSED_VARS(context, scene, start_frame, mixrate, volume, reports);
 #  endif
   return success;
 }
@@ -214,14 +230,14 @@ AVStream *alloc_audio_stream(MovieWriter *context,
 
   codec = avcodec_find_encoder(codec_id);
   if (!codec) {
-    fprintf(stderr, "Couldn't find valid audio codec\n");
+    CLOG_ERROR(&LOG, "Couldn't find valid audio codec");
     context->audio_codec = nullptr;
     return nullptr;
   }
 
   context->audio_codec = avcodec_alloc_context3(codec);
   AVCodecContext *c = context->audio_codec;
-  c->thread_count = BLI_system_thread_count();
+  c->thread_count = MOV_thread_count();
   c->thread_type = FF_THREAD_SLICE;
 
   c->sample_rate = audio_mixrate;
@@ -261,13 +277,14 @@ AVStream *alloc_audio_stream(MovieWriter *context,
     c->sample_fmt = AV_SAMPLE_FMT_FLT;
   }
 
-  if (codec->sample_fmts) {
+  const enum AVSampleFormat *sample_fmts = ffmpeg_get_sample_fmts(c, codec);
+  if (sample_fmts) {
     /* Check if the preferred sample format for this codec is supported.
      * this is because, depending on the version of LIBAV,
      * and with the whole FFMPEG/LIBAV fork situation,
      * you have various implementations around.
      * Float samples in particular are not always supported. */
-    const enum AVSampleFormat *p = codec->sample_fmts;
+    const enum AVSampleFormat *p = sample_fmts;
     for (; *p != -1; p++) {
       if (*p == c->sample_fmt) {
         break;
@@ -275,12 +292,13 @@ AVStream *alloc_audio_stream(MovieWriter *context,
     }
     if (*p == -1) {
       /* sample format incompatible with codec. Defaulting to a format known to work */
-      c->sample_fmt = codec->sample_fmts[0];
+      c->sample_fmt = sample_fmts[0];
     }
   }
 
-  if (codec->supported_samplerates) {
-    const int *p = codec->supported_samplerates;
+  const int *supported_samplerates = ffmpeg_get_sample_rates(c, codec);
+  if (supported_samplerates) {
+    const int *p = supported_samplerates;
     int best = 0;
     int best_dist = INT_MAX;
     for (; *p; p++) {
@@ -303,7 +321,7 @@ AVStream *alloc_audio_stream(MovieWriter *context,
   if (ret < 0) {
     char error_str[AV_ERROR_MAX_STRING_SIZE];
     av_make_error_string(error_str, AV_ERROR_MAX_STRING_SIZE, ret);
-    fprintf(stderr, "Couldn't initialize audio codec: %s\n", error_str);
+    CLOG_ERROR(&LOG, "Couldn't initialize audio codec: %s", error_str);
     BLI_strncpy(error, ffmpeg_last_error(), error_size);
     avcodec_free_context(&c);
     context->audio_codec = nullptr;
@@ -315,12 +333,12 @@ AVStream *alloc_audio_stream(MovieWriter *context,
   c->time_base.num = 1;
   c->time_base.den = c->sample_rate;
 
-  if (c->frame_size == 0) {
-    /* Used to be if ((c->codec_id >= CODEC_ID_PCM_S16LE) && (c->codec_id <= CODEC_ID_PCM_DVD))
-     * not sure if that is needed anymore, so let's try out if there are any
-     * complaints regarding some FFMPEG versions users might have. */
-    context->audio_input_samples = AV_INPUT_BUFFER_MIN_SIZE * 8 / c->bits_per_coded_sample /
-                                   audio_channels;
+  if (c->codec->capabilities & AV_CODEC_CAP_VARIABLE_FRAME_SIZE) {
+    /* If the audio format has a variable frame size, default to 1024.
+     * This is because we won't try to encode any variable frame size.
+     * 1024 seems to be a good compromize between size and speed.
+     */
+    context->audio_input_samples = 1024;
   }
   else {
     context->audio_input_samples = c->frame_size;

@@ -13,9 +13,9 @@
 #include <optional>
 #include <string>
 
+#include "../blenlib/BLI_enum_flags.hh"
 #include "../blenlib/BLI_function_ref.hh"
 #include "../blenlib/BLI_sys_types.h"
-#include "../blenlib/BLI_utildefines.h"
 #include "../blenlib/BLI_vector.hh"
 
 struct BlenderRNA;
@@ -29,6 +29,17 @@ struct StructRNA;
 struct bContext;
 
 /**
+ * An ancestor of a given PointerRNA. The owner ID is not needed here, it is assumed to always be
+ * the same as the owner ID of the PropertyRNA itself.
+ */
+struct AncestorPointerRNA {
+  StructRNA *type;
+  void *data;
+};
+/** Allows to benefit from the `max_full_copy_size` optimization on copy of #blender::Vector. */
+constexpr int64_t ANCESTOR_POINTERRNA_DEFAULT_SIZE = 2;
+
+/**
  * Pointer
  *
  * RNA pointers are not a single C pointer but include the type,
@@ -40,23 +51,109 @@ struct PointerRNA {
   ID *owner_id = nullptr;
   StructRNA *type = nullptr;
   void *data = nullptr;
+
+  /**
+   * A chain of ancestors of this PointerRNA, if known. The last item is the closest ancestor.
+   *
+   * E.g. Parsing `vgroup = C.object.data.vertices[0].groups[0]` would result in the PointerRNA of
+   * `vgroup` having two ancestors: `vertices[0]` and `data` (aka the Mesh ID).
+   *
+   * By definition, PointerRNA of IDs are currently always 'discrete', i.e. do not have ancestors
+   * information, since an ID PointerRNA should always be its own root.
+   *
+   * \note: Currently, it is assumed that embedded or evaluated IDs can also be discrete
+   * PointerRNA. This should be fine, since they should all have their 'owner ID' or 'orig ID'
+   * pointer info. This may become a problem e.g. if in the future we allow embedded IDs into
+   * sub-structs of IDs.
+   *
+   * There is no guarantee that this chain is always (fully) valid and will lead to the root owner
+   * of the wrapped data (an ID). Depending on how the PointerRNA was created, and the available
+   * information at that time, it could be empty or only feature a partial ancestors chain. This
+   * can happen if the initial pointer is created as discrete (e.g. from an operator that does not
+   * have access to/knowledge of the whole ancestor chain), and a sub-struct is accessed through
+   * regular RNA property access (like a call to RNA_property_pointer_get etc.).
+   */
+  blender::Vector<AncestorPointerRNA, ANCESTOR_POINTERRNA_DEFAULT_SIZE> ancestors = {};
+
+  PointerRNA() = default;
+  PointerRNA(const PointerRNA &) = default;
+  PointerRNA(PointerRNA &&) = default;
+  PointerRNA &operator=(const PointerRNA &other) = default;
+  PointerRNA &operator=(PointerRNA &&other) = default;
+
+  PointerRNA(ID *owner_id, StructRNA *type, void *data)
+      : owner_id(owner_id), type(type), data(data), ancestors{}
+  {
+  }
+  PointerRNA(ID *owner_id, StructRNA *type, void *data, const PointerRNA &parent)
+      : owner_id(owner_id), type(type), data(data), ancestors(parent.ancestors)
+  {
+    this->ancestors.append({parent.type, parent.data});
+  }
+  PointerRNA(ID *owner_id, StructRNA *type, void *data, blender::Span<AncestorPointerRNA> parents)
+      : owner_id(owner_id), type(type), data(data), ancestors(parents)
+  {
+  }
+
+  /** Reset the pointer to its initial empty state, such that it equals to PointerRNA_NULL. */
+  void reset()
+  {
+    *this = {};
+  }
+
+  /**
+   * Make the pointer invalid.
+   *
+   * This is especially important for the Python API, as any access to an invalid PointerRNA should
+   * raise an exception in `bpy` code.
+   */
+  void invalidate()
+  {
+    this->reset();
+  }
+
+  /**
+   * Get the data as a specific type. This expects that the caller knows what the type is and has
+   * undefined behavior otherwise. Using this method is less verbose than casting the type at the
+   * call-site and allows us to potentially add run-time type checks in the future.
+   *
+   * This method is intentionally const while still returning a non-const pointer. This is because
+   * the constness of the `PointerRNA` is not propagated to the data it references. One can always
+   * just copy the `PointerRNA` to get a non-const version of it.
+   */
+  template<typename T> T *data_as() const
+  {
+    return static_cast<T *>(this->data);
+  }
+
+  /**
+   * Get the immediate parent pointer, if any.
+   */
+  PointerRNA parent() const
+  {
+    if (ancestors.is_empty()) {
+      return PointerRNA();
+    }
+
+    return PointerRNA(owner_id, ancestors.last().type, ancestors.last().data);
+  }
 };
 
 extern const PointerRNA PointerRNA_NULL;
 
 struct PropertyPointerRNA {
-  PointerRNA ptr;
-  PropertyRNA *prop;
+  PointerRNA ptr = {};
+  PropertyRNA *prop = nullptr;
 };
 
 /**
  * Stored result of a RNA path lookup (as used by anim-system)
  */
 struct PathResolvedRNA {
-  PointerRNA ptr;
-  PropertyRNA *prop;
+  PointerRNA ptr = {};
+  PropertyRNA *prop = nullptr;
   /** -1 for non-array access. */
-  int prop_index;
+  int prop_index = -1;
 };
 
 /* Property */
@@ -90,7 +187,7 @@ enum PropertyUnit {
   PROP_UNIT_COLOR_TEMPERATURE = (14 << 16), /* K */
   PROP_UNIT_FREQUENCY = (15 << 16),         /* Hz */
 };
-ENUM_OPERATORS(PropertyUnit, PROP_UNIT_TEMPERATURE)
+ENUM_OPERATORS(PropertyUnit)
 
 /**
  * Use values besides #PROP_SCALE_LINEAR
@@ -129,7 +226,7 @@ enum PropertyScaleType {
 #define RNA_STACK_ARRAY 32
 
 /**
- * \note Also update enums in `bpy_props.cc` and `rna_rna.cc` when adding items here.
+ * \note Also update enums in `rna_rna.cc` when adding items here.
  * Watch it: these values are written to files as part of node socket button sub-types!
  */
 enum PropertySubType {
@@ -193,11 +290,13 @@ enum PropertySubType {
   PROP_COLOR_TEMPERATURE = 45 | PROP_UNIT_COLOR_TEMPERATURE,
 
   PROP_FREQUENCY = 46 | PROP_UNIT_FREQUENCY,
+  PROP_PIXEL_DIAMETER = 47,
+  PROP_DISTANCE_DIAMETER = 48 | PROP_UNIT_LENGTH,
 };
 
 /* Make sure enums are updated with these */
 /* HIGHEST FLAG IN USE: 1u << 31
- * FREE FLAGS: 13, 14, 15. */
+ * FREE FLAGS: 13. */
 enum PropertyFlag {
   /**
    * Editable means the property is editable in the user
@@ -250,6 +349,18 @@ enum PropertyFlag {
   PROP_PROPORTIONAL = (1 << 26),
 
   /* pointers */
+
+  /**
+   * Mark this property as handling ID user count.
+   *
+   * This is done automatically by the auto-generated setter function. If an RNA property has a
+   * custom setter, it's the setter's responsibility to correctly update the user count.
+   *
+   * \note In most basic cases, makesrna will automatically set this flag, based on the
+   * `STRUCT_ID_REFCOUNT` flag of the defined pointer type. This only works if makesrna can find a
+   * matching DNA property though, 'virtual' RNA properties (using both a getter and setter) will
+   * never get this flag defined automatically.
+   */
   PROP_ID_REFCOUNT = (1 << 6),
 
   /**
@@ -338,11 +449,48 @@ enum PropertyFlag {
    * as having the +/- operators available in the file browser.
    */
   PROP_PATH_OUTPUT = (1 << 2),
+  /**
+   * Path supports relative prefix: `//`,
+   * paths which don't support the relative suffix show a warning if the suffix is used.
+   */
+  PROP_PATH_SUPPORTS_BLEND_RELATIVE = (1 << 15),
+
+  /**
+   * Paths that are evaluated with templating.
+   *
+   * Note that this doesn't cause the property to support templating, but rather
+   * *indicates* to other parts of Blender whether it supports templating.
+   * Support for templating needs to be manually implemented.
+   *
+   * When this is set, the property's `path_template_type` field should also be
+   * set.
+   *
+   * \see The top-level documentation of BKE_path_templates.hh.
+   */
+  PROP_PATH_SUPPORTS_TEMPLATES = (1 << 14),
 
   /** Do not write in presets (#PROP_HIDDEN and #PROP_SKIP_SAVE won't either). */
   PROP_SKIP_PRESET = (1 << 11),
 };
-ENUM_OPERATORS(PropertyFlag, PROP_TEXTEDIT_UPDATE)
+ENUM_OPERATORS(PropertyFlag)
+
+/**
+ * For properties that support path templates, this indicates which
+ * purpose-specific variables (if any) should be available to them and how those
+ * variables should be built.
+ *
+ * \see The top-level documentation of BKE_path_templates.hh.
+ */
+enum PropertyPathTemplateType {
+  /* Only supports general and type-specific variables, no purpose-specific
+   * variables. */
+  PROP_VARIABLES_NONE = 0,
+
+  /* Supports render output variables.
+   *
+   * \see BKE_add_template_variables_for_render_path() */
+  PROP_VARIABLES_RENDER_OUTPUT,
+};
 
 /**
  * Flags related to comparing and overriding RNA properties.
@@ -367,7 +515,7 @@ enum PropertyOverrideFlag {
    * Unlike NO_COMPARISON, it can still be used by diffing code, but no override operation will be
    * created for it, and no attempt to restore the data from linked reference either.
    *
-   * WARNING: This flag should be used with a lot of caution, as it completely by-passes override
+   * WARNING: This flag should be used with a lot of caution, as it completely bypasses override
    * system. It is currently only used for ID's names, since we cannot prevent local override to
    * get a different name from the linked reference, and ID names are 'rna name property' (i.e. are
    * used in overrides of collections of IDs). See also `BKE_lib_override_library_update()` where
@@ -387,7 +535,7 @@ enum PropertyOverrideFlag {
    */
   PROPOVERRIDE_NO_PROP_NAME = (1 << 11),
 };
-ENUM_OPERATORS(PropertyOverrideFlag, PROPOVERRIDE_NO_PROP_NAME);
+ENUM_OPERATORS(PropertyOverrideFlag);
 
 /**
  * Function parameters flags.
@@ -398,15 +546,17 @@ enum ParameterFlag {
   PARM_OUTPUT = (1 << 1),
   PARM_RNAPTR = (1 << 2),
   /**
-   * This allows for non-breaking API updates,
-   * when adding non-critical new parameter to a callback function.
+   * This allows for non-breaking API updates when adding non-critical new parameters
+   * to functions which Python classes register.
    * This way, old Python code defining functions without that parameter would still work.
-   * WARNING: any parameter after the first PYFUNC_OPTIONAL one will be considered as optional!
+   *
+   * WARNING: any parameter after the first #PARM_PYFUNC_REGISTER_OPTIONAL
+   * one will be considered as optional!
    * \note only for input parameters!
    */
-  PARM_PYFUNC_OPTIONAL = (1 << 3),
+  PARM_PYFUNC_REGISTER_OPTIONAL = (1 << 3),
 };
-ENUM_OPERATORS(ParameterFlag, PARM_PYFUNC_OPTIONAL)
+ENUM_OPERATORS(ParameterFlag)
 
 struct CollectionPropertyIterator;
 struct Link;
@@ -492,7 +642,7 @@ struct RawArray {
 };
 
 /**
- * This struct is are typically defined in arrays which define an *enum* for RNA,
+ * This struct is typically defined in arrays which define an *enum* for RNA,
  * which is used by the RNA API both for user-interface and the Python API.
  */
 struct EnumPropertyItem {
@@ -520,44 +670,101 @@ struct EnumPropertyItem {
  * By convention the value should be a non-empty string or NULL when there is no description
  * (never an empty string).
  */
-#define RNA_ENUM_ITEM_HEADING(name, description) \
-  { \
-    0, "", 0, name, description \
-  }
+#define RNA_ENUM_ITEM_HEADING(name, description) {0, "", 0, name, description}
 
 /** Separator for RNA enum items (shown in the UI). */
-#define RNA_ENUM_ITEM_SEPR \
-  { \
-    0, "", 0, NULL, NULL \
-  }
+#define RNA_ENUM_ITEM_SEPR {0, "", 0, NULL, NULL}
 
 /** Separator for RNA enum that begins a new column in menus (shown in the UI). */
 #define RNA_ENUM_ITEM_SEPR_COLUMN RNA_ENUM_ITEM_HEADING("", NULL)
 
-/* extended versions with PropertyRNA argument */
+/* Extended versions with PropertyRNA argument. Used in particular by the bpy code to wrap all the
+ * py-defined callbacks when defining a property using `bpy.props` module.
+ *
+ * The 'Transform' ones allow to add a transform step (applied after getting, or before setting the
+ * value), which only modifies the value, but does not handle actual storage. Currently only used
+ * by `bpy`, more details in the documentation of #BPyPropStore.
+ */
 using BooleanPropertyGetFunc = bool (*)(PointerRNA *ptr, PropertyRNA *prop);
 using BooleanPropertySetFunc = void (*)(PointerRNA *ptr, PropertyRNA *prop, bool value);
-using BooleanArrayPropertyGetFunc = void (*)(PointerRNA *ptr, PropertyRNA *prop, bool *values);
+using BooleanPropertyGetTransformFunc = bool (*)(PointerRNA *ptr,
+                                                 PropertyRNA *prop,
+                                                 bool value,
+                                                 bool is_set);
+using BooleanPropertySetTransformFunc =
+    bool (*)(PointerRNA *ptr, PropertyRNA *prop, bool new_value, bool curr_value, bool is_set);
+
+using BooleanArrayPropertyGetFunc = void (*)(PointerRNA *ptr, PropertyRNA *prop, bool *r_values);
 using BooleanArrayPropertySetFunc = void (*)(PointerRNA *ptr,
                                              PropertyRNA *prop,
-                                             const bool *values);
+                                             const bool *r_values);
+using BooleanArrayPropertyGetTransformFunc = void (*)(
+    PointerRNA *ptr, PropertyRNA *prop, const bool *curr_values, bool is_set, bool *r_values);
+using BooleanArrayPropertySetTransformFunc = void (*)(PointerRNA *ptr,
+                                                      PropertyRNA *prop,
+                                                      const bool *new_values,
+                                                      const bool *curr_values,
+                                                      bool is_set,
+                                                      bool *r_values);
+
 using IntPropertyGetFunc = int (*)(PointerRNA *ptr, PropertyRNA *prop);
 using IntPropertySetFunc = void (*)(PointerRNA *ptr, PropertyRNA *prop, int value);
+using IntPropertyGetTransformFunc = int (*)(PointerRNA *ptr,
+                                            PropertyRNA *prop,
+                                            int value,
+                                            bool is_set);
+using IntPropertySetTransformFunc =
+    int (*)(PointerRNA *ptr, PropertyRNA *prop, int new_value, int curr_value, bool is_set);
 using IntArrayPropertyGetFunc = void (*)(PointerRNA *ptr, PropertyRNA *prop, int *values);
 using IntArrayPropertySetFunc = void (*)(PointerRNA *ptr, PropertyRNA *prop, const int *values);
+using IntArrayPropertyGetTransformFunc = void (*)(
+    PointerRNA *ptr, PropertyRNA *prop, const int *curr_values, bool is_set, int *r_values);
+using IntArrayPropertySetTransformFunc = void (*)(PointerRNA *ptr,
+                                                  PropertyRNA *prop,
+                                                  const int *new_values,
+                                                  const int *curr_values,
+                                                  bool is_set,
+                                                  int *r_values);
 using IntPropertyRangeFunc =
     void (*)(PointerRNA *ptr, PropertyRNA *prop, int *min, int *max, int *softmin, int *softmax);
+
 using FloatPropertyGetFunc = float (*)(PointerRNA *ptr, PropertyRNA *prop);
 using FloatPropertySetFunc = void (*)(PointerRNA *ptr, PropertyRNA *prop, float value);
+using FloatPropertyGetTransformFunc = float (*)(PointerRNA *ptr,
+                                                PropertyRNA *prop,
+                                                float value,
+                                                bool is_set);
+using FloatPropertySetTransformFunc =
+    float (*)(PointerRNA *ptr, PropertyRNA *prop, float new_value, float curr_value, bool is_set);
 using FloatArrayPropertyGetFunc = void (*)(PointerRNA *ptr, PropertyRNA *prop, float *values);
 using FloatArrayPropertySetFunc = void (*)(PointerRNA *ptr,
                                            PropertyRNA *prop,
                                            const float *values);
+using FloatArrayPropertyGetTransformFunc = void (*)(
+    PointerRNA *ptr, PropertyRNA *prop, const float *curr_values, bool is_set, float *r_values);
+using FloatArrayPropertySetTransformFunc = void (*)(PointerRNA *ptr,
+                                                    PropertyRNA *prop,
+                                                    const float *new_values,
+                                                    const float *curr_values,
+                                                    bool is_set,
+                                                    float *r_values);
 using FloatPropertyRangeFunc = void (*)(
     PointerRNA *ptr, PropertyRNA *prop, float *min, float *max, float *softmin, float *softmax);
-using StringPropertyGetFunc = void (*)(PointerRNA *ptr, PropertyRNA *prop, char *value);
+
+using StringPropertyGetFunc = std::string (*)(PointerRNA *ptr, PropertyRNA *prop);
 using StringPropertyLengthFunc = int (*)(PointerRNA *ptr, PropertyRNA *prop);
-using StringPropertySetFunc = void (*)(PointerRNA *ptr, PropertyRNA *prop, const char *value);
+using StringPropertySetFunc = void (*)(PointerRNA *ptr,
+                                       PropertyRNA *prop,
+                                       const std::string &value);
+using StringPropertyGetTransformFunc = std::string (*)(PointerRNA *ptr,
+                                                       PropertyRNA *prop,
+                                                       const std::string &value,
+                                                       bool is_set);
+using StringPropertySetTransformFunc = std::string (*)(PointerRNA *ptr,
+                                                       PropertyRNA *prop,
+                                                       const std::string &new_value,
+                                                       const std::string &curr_value,
+                                                       bool is_set);
 
 struct StringPropertySearchVisitParams {
   /** Text being searched for. */
@@ -584,7 +791,7 @@ enum eStringPropertySearchFlag {
    */
   PROP_STRING_SEARCH_SUGGESTION = (1 << 2),
 };
-ENUM_OPERATORS(eStringPropertySearchFlag, PROP_STRING_SEARCH_SUGGESTION)
+ENUM_OPERATORS(eStringPropertySearchFlag)
 
 /**
  * \param C: context, may be NULL (in this case all available items should be shown).
@@ -592,7 +799,7 @@ ENUM_OPERATORS(eStringPropertySearchFlag, PROP_STRING_SEARCH_SUGGESTION)
  * \param prop: RNA property. This must have its #StringPropertyRNA.search callback set,
  * to check this use `RNA_property_string_search_flag(prop) & PROP_STRING_SEARCH_SUPPORTED`.
  * \param edit_text: Optionally use the string being edited by the user as a basis
- * for the search results (auto-complete Python attributes for e.g.).
+ * for the search results (auto-complete Python attributes for example).
  * \param visit_fn: This function is called with every search candidate and is typically
  * responsible for storing the search results.
  */
@@ -603,10 +810,24 @@ using StringPropertySearchFunc =
              const char *edit_text,
              blender::FunctionRef<void(StringPropertySearchVisitParams)> visit_fn);
 
+/**
+ * Returns an optional glob pattern (e.g. `*.png`) that can be passed to the file browser to filter
+ * valid files for this property.
+ */
+using StringPropertyPathFilterFunc = std::optional<std::string> (*)(const bContext *C,
+                                                                    PointerRNA *ptr,
+                                                                    PropertyRNA *prop);
+
 using EnumPropertyGetFunc = int (*)(PointerRNA *ptr, PropertyRNA *prop);
 using EnumPropertySetFunc = void (*)(PointerRNA *ptr, PropertyRNA *prop, int value);
+using EnumPropertyGetTransformFunc = int (*)(PointerRNA *ptr,
+                                             PropertyRNA *prop,
+                                             int value,
+                                             bool is_set);
+using EnumPropertySetTransformFunc =
+    int (*)(PointerRNA *ptr, PropertyRNA *prop, int new_value, int curr_value, bool is_set);
 /* same as PropEnumItemFunc */
-using EnumPropertyItemFunc = const EnumPropertyItem *(*)(bContext *C,
+using EnumPropertyItemFunc = const EnumPropertyItem *(*)(bContext * C,
                                                          PointerRNA *ptr,
                                                          PropertyRNA *prop,
                                                          bool *r_free);
@@ -668,8 +889,20 @@ enum FunctionFlag {
   FUNC_USE_SELF_ID = (1 << 11),
 
   /**
+   * Pass 'self' data as a PointerRNA (by value), rather than as a pointer of the relevant DNA
+   * type.
+   *
+   * Mutually exclusive with #FUNC_NO_SELF and #FUNC_USE_SELF_TYPE.
+   *
+   * Useful for functions that need to access `self` as RNA data, not as DNA data (e.g. when doing
+   * 'generic', type-agnostic processing).
+   */
+  FUNC_SELF_AS_RNA = (1 << 13),
+  /**
    * Do not pass the object (DNA struct pointer) from which it is called,
    * used to define static or class functions.
+   *
+   * Mutually exclusive with #FUNC_SELF_AS_RNA.
    */
   FUNC_NO_SELF = (1 << 0),
   /** Pass RNA type, used to define class functions, only valid when #FUNC_NO_SELF is set. */
@@ -716,8 +949,13 @@ struct FunctionRNA;
 /* Struct */
 
 enum StructFlag {
-  /** Indicates that this struct is an ID struct, and to use reference-counting. */
+  /** Indicates that this struct is an ID struct. */
   STRUCT_ID = (1 << 0),
+  /**
+   * Indicates that this ID type's usages should typically be refcounted (i.e. makesrna will
+   * automatically set `PROP_ID_REFCOUNT` to PointerRNA properties that have this RNA type
+   * assigned).
+   */
   STRUCT_ID_REFCOUNT = (1 << 1),
   /** defaults on, indicates when changes in members of a StructRNA should trigger undo steps. */
   STRUCT_UNDO = (1 << 2),
@@ -750,7 +988,7 @@ using StructCallbackFunc = int (*)(bContext *C,
                                    FunctionRNA *func,
                                    ParameterList *list);
 using StructFreeFunc = void (*)(void *data);
-using StructRegisterFunc = StructRNA *(*)(Main *bmain,
+using StructRegisterFunc = StructRNA *(*)(Main * bmain,
                                           ReportList *reports,
                                           void *data,
                                           const char *identifier,
@@ -759,7 +997,7 @@ using StructRegisterFunc = StructRNA *(*)(Main *bmain,
                                           StructFreeFunc free);
 /** Return true when `type` was successfully unregistered & freed. */
 using StructUnregisterFunc = bool (*)(Main *bmain, StructRNA *type);
-using StructInstanceFunc = void **(*)(PointerRNA *ptr);
+using StructInstanceFunc = void **(*)(PointerRNA * ptr);
 
 struct StructRNA;
 
@@ -777,10 +1015,33 @@ struct BlenderRNA;
  * order to make them definable through RNA.
  */
 struct ExtensionRNA {
+  /**
+   * \note For Python types this holds the Python class but does *not* own a reference.
+   * The same value is typically stored in `srna->py_type` which does own a reference.
+   */
   void *data;
   StructRNA *srna;
   StructCallbackFunc call;
   StructFreeFunc free;
+};
+
+/**
+ * Information about deprecated properties.
+ *
+ * Used by the API documentation and Python API to print warnings
+ * when accessing a deprecated property.
+ */
+struct DeprecatedRNA {
+  /** Single line deprecation message, suggest alternatives where possible. */
+  const char *note;
+  /** The released version this was deprecated. */
+  short version;
+  /**
+   * The version this will be removed.
+   * The value represents major, minor versions (sub-version isn't supported).
+   * Compatible with #Main::versionfile (e.g. `502` for `v5.2`).
+   */
+  short removal_version;
 };
 
 /* Primitive types. */
